@@ -121,7 +121,18 @@ commits.
     triples (orthonormal basis, matches analytic forward). Total 688k checks,
     0 failures. On-device checks green.
 
+- **3.1b** `engine/cvar.{c,h}`: port of WinQuake `cvar.c`. `cvar_t.value` is
+  `q_fixed` (20.12), not `float` — PSn00bSDK has no `atof`/`%f`. New
+  `Q_atofix` / `Q_fixtoa` in `qcommon` (`"-1.5"` ⇄ 20.12, trims zeros).
+  `Cvar_WriteVariables` deferred to phase 10.
+- **3.1c** `engine/cmd.{c,h}`: `Cbuf_*` (text buffer, `\n`/`;` lines) + `Cmd_*`
+  core (`TokenizeString`, `AddCommand`, `Exists`, `ExecuteString`,
+  `Argc`/`Argv`/`Args`). Aliases, `exec`/`stuffcmds`/`wait`, `ForwardToServer`
+  deferred. Added `Q_strcasecmp`/`Q_strncasecmp` (not in PSn00bSDK libc).
+- `engine/selftest.c`: +cvar/cmd checks (register/set/parse, tokenize, buffer
+  dispatch, cvar-set-via-command). All green headless; hunk clean afterwards.
+
 ### Next step
 
-- **3.1b** `cvar` (value as `q_fixed`), **3.1c** `cmd`, **3.1d** `edict_t`;
-  then **3.3** PAK parser, **3.4** raw `progs.dat` load.
+- **3.3** PAK parser (list `pak0.pak` over serial), **3.4** raw `progs.dat`
+  load + `edict_t`/`entvars_t` structs (3.1d).

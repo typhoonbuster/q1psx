@@ -17,6 +17,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "q_fixed.h"
+
 typedef uint8_t byte;
 typedef int     qboolean;   /* Quake code uses bare true/false (stdbool) */
 
@@ -77,10 +79,14 @@ float BigFloat(float l);
 #define Q_strcat(d, s)       strcat((d), (s))
 #define Q_strcmp(a, b)       strcmp((a), (b))
 #define Q_strncmp(a, b, c)   strncmp((a), (b), (c))
-#define Q_strcasecmp(a, b)   strcasecmp((a), (b))
-#define Q_strncasecmp(a, b, n) strncasecmp((a), (b), (n))
 
-int Q_atoi(const char *str);
+/* PSn00bSDK's libc has no str*casecmp */
+int     Q_strcasecmp(const char *s1, const char *s2);
+int     Q_strncasecmp(const char *s1, const char *s2, int n);
+
+int     Q_atoi(const char *str);
+q_fixed Q_atofix(const char *str);              /* "-1.5" / "800" / "0x20" -> 20.12 */
+void    Q_fixtoa(q_fixed v, char *buf, int cap); /* 20.12 -> "1.5" (trims zeros)     */
 
 /* --------------------------------------------------------------- parsing -- */
 

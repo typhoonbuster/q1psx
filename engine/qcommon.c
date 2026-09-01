@@ -75,6 +75,38 @@ int   BigLong(int l)       { return LongSwap(l); }
 float LittleFloat(float l) { return l; }
 float BigFloat(float l)    { return FloatSwap(l); }
 
+/* ======================================================== case-insensitive == */
+
+static int lower(int c)
+{
+	return (c >= 'A' && c <= 'Z') ? c + ('a' - 'A') : c;
+}
+
+int Q_strcasecmp(const char *s1, const char *s2)
+{
+	for (;; s1++, s2++) {
+		int a = lower((unsigned char) *s1);
+		int b = lower((unsigned char) *s2);
+		if (a != b)
+			return a - b;
+		if (!a)
+			return 0;
+	}
+}
+
+int Q_strncasecmp(const char *s1, const char *s2, int n)
+{
+	for (; n > 0; n--, s1++, s2++) {
+		int a = lower((unsigned char) *s1);
+		int b = lower((unsigned char) *s2);
+		if (a != b)
+			return a - b;
+		if (!a)
+			return 0;
+	}
+	return 0;
+}
+
 /* ================================================================ Q_atoi == */
 
 int Q_atoi(const char *str)
@@ -110,6 +142,66 @@ int Q_atoi(const char *str)
 			return val * sign;
 		val = val * 10 + c - '0';
 	}
+}
+
+q_fixed Q_atofix(const char *str)
+{
+	int sign = 1;
+
+	if (*str == '-') { sign = -1; str++; }
+	else if (*str == '+') str++;
+
+	/* hex integer, like Quake's Q_atof */
+	if (str[0] == '0' && (str[1] == 'x' || str[1] == 'X'))
+		return sign * Q_FIX(Q_atoi(str));
+
+	int32_t ip = 0;
+	while (*str >= '0' && *str <= '9')
+		ip = ip * 10 + (*str++ - '0');
+
+	q_fixed result = Q_FIX(ip);
+
+	if (*str == '.') {
+		str++;
+		int64_t fp = 0, scale = 1;
+		while (*str >= '0' && *str <= '9' && scale <= 100000000) {
+			fp = fp * 10 + (*str++ - '0');
+			scale *= 10;
+		}
+		result += (q_fixed)(((int64_t)fp << Q_FIX_SHIFT) / scale);
+	}
+
+	return sign * result;
+}
+
+void Q_fixtoa(q_fixed v, char *buf, int cap)
+{
+	char *p = buf;
+	char *end = buf + cap - 1;
+
+	if (v < 0 && p < end) {
+		*p++ = '-';
+		v = -v;
+	}
+
+	int32_t  ip = v >> Q_FIX_SHIFT;
+	uint32_t fp = (uint32_t)(v & Q_FIX_MASK);
+
+	p += snprintf(p, (int)(end - p), "%d", ip);
+
+	if (fp && p < end) {
+		/* four decimal digits, then trim trailing zeros */
+		int digits = (int)((fp * 10000u) >> Q_FIX_SHIFT);
+		char frac[8];
+		snprintf(frac, sizeof frac, ".%04d", digits);
+		int fl = (int)strlen(frac);
+		while (fl > 1 && frac[fl - 1] == '0')
+			frac[--fl] = 0;
+		for (int i = 0; i < fl && p < end; i++)
+			*p++ = frac[i];
+	}
+
+	*p = 0;
 }
 
 /* ================================================================ sizebuf == */

@@ -17,6 +17,8 @@
 #include "qcommon.h"
 #include "q_fixed.h"
 #include "mathlib.h"
+#include "cvar.h"
+#include "cmd.h"
 #include "selftest.h"
 
 static int failures;
@@ -141,9 +143,21 @@ static void test_qcommon(void)
 	CHECK(BigLong(0x11223344) == 0x44332211, "BigLong swaps");
 	CHECK(BigShort((short) 0x1234) == (short) 0x3412, "BigShort swaps");
 
-	/* --- Q_atoi --- */
+	/* --- Q_atoi / fixed-point string conversion --- */
 	CHECK(Q_atoi("42") == 42 && Q_atoi("-7") == -7 && Q_atoi("0x1F") == 31,
 	      "Q_atoi handles decimal, sign and hex");
+	CHECK(Q_atofix("800") == Q_FIX(800) && Q_atofix("-1.5") == -(Q_FIX_ONE + Q_FIX_HALF) &&
+	      Q_atofix("0.25") == Q_FIX_ONE / 4, "Q_atofix parses int/frac/sign");
+	{
+		char buf[32];
+		Q_fixtoa(Q_FIX(800), buf, sizeof buf);
+		int a = !strcmp(buf, "800");
+		Q_fixtoa(Q_FIX_ONE + Q_FIX_HALF, buf, sizeof buf);
+		int b = !strcmp(buf, "1.5");
+		Q_fixtoa(-(Q_FIX_ONE / 4), buf, sizeof buf);
+		int c = !strcmp(buf, "-0.25");
+		CHECK(a && b && c, "Q_fixtoa formats and trims");
+	}
 
 	/* --- sizebuf (hunk-backed; SZ_Alloc clamps startsize up to 256) --- */
 	int mark = Hunk_LowMark();
@@ -247,6 +261,59 @@ static void test_mathlib(void)
 	      "AngleVectors basis is orthogonal");
 }
 
+/* --------------------------------------------------- cvar + cmd (3.1b/3.1c) */
+
+static int cmd_hit;
+static void cmd_hit_fn(void) { cmd_hit = Cmd_Argc(); }
+
+static void test_cvar_cmd(void)
+{
+	printf("[selftest] cvar + cmd\n");
+
+	cvar_t *saved_vars = cvar_vars;
+	cvar_vars = NULL;
+	Cbuf_Init();
+
+	static cvar_t sv_test = { "sv_test", "320" };
+	Cvar_RegisterVariable(&sv_test);
+	CHECK(sv_test.value == Q_FIX(320), "cvar registered: value parsed from string");
+	CHECK(Cvar_VariableValue("sv_test") == Q_FIX(320), "Cvar_VariableValue by name");
+	CHECK(Cvar_FindVar("nope") == NULL, "Cvar_FindVar misses unknown");
+
+	Cvar_Set("sv_test", "1.5");
+	CHECK(sv_test.value == Q_FIX_ONE + Q_FIX_HALF && !strcmp(sv_test.string, "1.5"),
+	      "Cvar_Set updates string and value");
+	Cvar_SetValue("sv_test", Q_FIX(2));
+	CHECK(sv_test.value == Q_FIX(2) && !strcmp(sv_test.string, "2"), "Cvar_SetValue");
+
+	Cmd_AddCommand("test_hit", cmd_hit_fn);
+	CHECK(Cmd_Exists("test_hit") && !Cmd_Exists("test_miss"), "Cmd_Exists");
+
+	Cmd_TokenizeString("test_hit alpha \"two words\"");
+	CHECK(Cmd_Argc() == 3 && !strcmp(Cmd_Argv(1), "alpha") &&
+	      !strcmp(Cmd_Argv(2), "two words"), "Cmd_TokenizeString splits args + quotes");
+	CHECK(Cmd_Argv(9)[0] == 0, "Cmd_Argv out of range is empty string");
+
+	cmd_hit = -1;
+	Cbuf_AddText("test_hit one two\n");
+	Cbuf_Execute();
+	CHECK(cmd_hit == 3, "Cbuf_Execute dispatched the command with its args");
+
+	Cbuf_AddText("sv_test 5\n");   /* cvar set via the command path */
+	Cbuf_Execute();
+	CHECK(sv_test.value == Q_FIX(5), "Cvar_Command sets a cvar from the buffer");
+
+	Cbuf_AddText("a ; b\n");       /* ';' separates commands */
+	Cbuf_Execute();
+	CHECK(Cbuf_Pending() == 0, "Cbuf drains ';'-separated lines");
+
+	/* tear down so run_selftests can roll the hunk back */
+	Z_Free(sv_test.string);
+	sv_test.string = NULL;
+	cvar_vars = saved_vars;
+	Cmd_Shutdown();
+}
+
 /* ----------------------------------------------------------------- driver */
 
 int run_selftests(void)
@@ -259,6 +326,7 @@ int run_selftests(void)
 	test_allocator();
 	test_qcommon();
 	test_mathlib();
+	test_cvar_cmd();
 
 	Hunk_FreeToLowMark(start_mark);
 
