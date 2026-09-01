@@ -54,6 +54,9 @@ commits.
   manual — no working headless screenshot path on this setup yet (PCSX-Redux
   `-no-ui` has no GPU backend, GUI + `-webserver` crashes). See `TESTING.md`.
 
+  **2.1 validated on screen** (2026-09-01): stable background,
+  marker slides with no tearing/flicker, frame counter increments.
+
 ### Next step
 
-- **2.1** confirm on screen (no tearing/flicker), then **2.2** controller read.
+- **2.2** basic controller read shown on screen in debug.
