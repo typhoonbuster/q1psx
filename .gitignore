@@ -43,6 +43,9 @@ rogue/
 /third_party/*
 !/third_party/README.md
 
+# --- Host tool build output ---
+/tools/mathtest/mathtest
+
 # --- Editor / OS ---
 *.swp
 *~

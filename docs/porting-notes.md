@@ -269,7 +269,60 @@ prints PASS/FAIL to serial. Result is also shown in the on-screen overlay.
 
 ---
 
-## §4 — Detailed porting conventions (to be completed)
+## §4 — Fixed-point math (Phase 3.2)
 
-_Fixed-point layer, cooked asset formats, GTE render pipeline: sections to fill
-in over phases 3-5._
+### 4.1 Scalar core — `engine/q_fixed.h`
+
+`q_fixed` = `int32_t` in **20.12** (`Q_FIX_ONE == 4096 == 1.0`), per the Phase 0.2
+decision (§2.1). Plain C + `<stdint.h>` so the whole math layer also builds on
+the host for unit testing.
+
+- `Q_FIX(n)` int→fixed (multiply, not shift — left-shifting negatives is UB),
+  `Q_FIX_INT(a)` fixed→int (arithmetic `>>`, floors toward −∞),
+  `Q_FIX_ROUND`, `Q_FIX_FRAC`.
+- `Q_FIX_FROM_FLOAT` / `Q_FIX_TO_FLOAT` are **host-only** (`#if !defined(__mips__)`)
+  — for asset cooking and tests; a stray use on-device fails to compile.
+- `q_mul` / `q_div` go through `int64_t` (products/dividends before the shift
+  exceed 32 bits).
+- `q_sqrt` / `q_sqrt_big` — digit-by-digit binary sqrt, no division, no float.
+  `q_sqrt_big` takes a possibly-wide 20.12 value (a squared length) and needs
+  input `< 2^52`. On hot paths the GTE `SquareRoot12()` can replace it later.
+
+**Representable range** ≈ ±524287. Fine for coordinates (Quake maps ±4096) but a
+product/dot of two large vectors overflows the *result*. Rule: at least one
+operand of `DotProduct`/`CrossProduct` should be ~unit scale (a normal, a
+direction) — which is how Quake uses them. For squared magnitudes use
+`Length` / `VectorNormalize` (they accumulate in `int64` and call `q_sqrt_big`).
+
+### 4.2 Vectors — `engine/mathlib.{c,h}`
+
+Port of WinQuake `mathlib.{c,h}`. Names kept (`vec_t`, `vec3_t`,
+`VectorAdd`/`Subtract`/`Copy` macros, `PITCH`/`YAW`/`ROLL`). Changes vs stock:
+
+- `DotProduct` is now a **function** (fixed point needs a wide intermediate and
+  a shift), not a bare macro. `VectorScale`/`VectorMA`/`CrossProduct` use
+  `q_mul` / wide intermediates.
+- `VectorNormalize` divides each component by the length directly instead of
+  `ilength = 1/length; v *= ilength` — a sub-1.0 reciprocal quantises to 1/4096
+  and long vectors normalise several percent short otherwise.
+- Deferred to 3.2b: trig (`q_sin`/`q_cos` table), `AngleVectors`, `anglemod`,
+  `R_ConcatRotations`/`Transforms`. Deferred further: `BoxOnPlaneSide`,
+  `RotatePointAroundVector`, `FloorDivMod`, GCD (pull in when phase 5/6 needs
+  them).
+
+### 4.3 Tests — `tools/mathtest/`
+
+Host build (`make -C tools/mathtest run`): unity-compiles `q_fixed.h` +
+`mathlib.c` and compares every op against a `double` reference over ~50k random
+inputs per op. Inputs are quantised to 20.12 first and the reference uses those
+quantised values, so the tests isolate the op's own rounding (bound
+= `abs_units/4096 + |ref|·rel`, `rel` ≈ 3e-4). **650k checks, 0 failures.**
+`engine/selftest.c` re-checks known-answer cases on-device (no float reference
+there).
+
+---
+
+## §5 — Detailed porting conventions (to be completed)
+
+_Cooked asset formats, GTE render pipeline: sections to fill in over phases
+4-5._

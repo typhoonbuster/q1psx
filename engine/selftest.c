@@ -15,6 +15,8 @@
 
 #include "zone.h"
 #include "qcommon.h"
+#include "q_fixed.h"
+#include "mathlib.h"
 #include "selftest.h"
 
 static int failures;
@@ -186,6 +188,48 @@ static void test_qcommon(void)
 	CHECK(strcmp(path, "config.cfg") == 0, "COM_DefaultExtension no-ops when present");
 }
 
+/* --------------------------------------------------- fixed-point math (3.2) */
+/* Device build has no float reference (see tools/mathtest for that); check a
+ * handful of exact / known-answer cases to confirm the port runs on MIPS. */
+
+static int q_close(q_fixed got, q_fixed want, q_fixed tol)
+{
+	return q_abs(got - want) <= tol;
+}
+
+static void test_mathlib(void)
+{
+	printf("[selftest] mathlib (fixed 20.12)\n");
+
+	CHECK(q_mul(Q_FIX(3), Q_FIX(4)) == Q_FIX(12), "q_mul integer case exact");
+	CHECK(q_mul(Q_FIX_HALF, Q_FIX_HALF) == (Q_FIX_ONE >> 2), "q_mul 0.5*0.5 = 0.25");
+	CHECK(q_div(Q_FIX(12), Q_FIX(4)) == Q_FIX(3), "q_div integer case exact");
+	CHECK(q_sqrt(Q_FIX(4)) == Q_FIX(2) && q_sqrt(Q_FIX(9)) == Q_FIX(3),
+	      "q_sqrt of perfect squares");
+	CHECK(q_close(q_sqrt(Q_FIX(2)), 5793 /* ~1.41421*4096 */, 2), "q_sqrt(2) ~ 1.4142");
+
+	vec3_t a = { Q_FIX(1), Q_FIX(2), Q_FIX(3) };
+	vec3_t b = { Q_FIX(4), Q_FIX(-5), Q_FIX(6) };
+	CHECK(DotProduct(a, b) == Q_FIX(1 * 4 + 2 * -5 + 3 * 6), "DotProduct known vectors");
+
+	vec3_t x = { Q_FIX(1), 0, 0 }, y = { 0, Q_FIX(1), 0 }, cr;
+	CrossProduct(x, y, cr);
+	CHECK(cr[0] == 0 && cr[1] == 0 && cr[2] == Q_FIX(1), "CrossProduct X x Y = Z");
+
+	vec3_t v = { Q_FIX(3), Q_FIX(4), 0 };
+	vec_t  len = VectorNormalize(v);
+	CHECK(q_close(len, Q_FIX(5), 2), "VectorNormalize returns length 5 for (3,4,0)");
+	CHECK(q_close(v[0], (3 * Q_FIX_ONE) / 5, 3) && q_close(v[1], (4 * Q_FIX_ONE) / 5, 3),
+	      "normalized (3,4,0) ~ (0.6, 0.8, 0)");
+	CHECK(q_close(Length(v), Q_FIX_ONE, 4), "normalized vector has unit length");
+
+	vec3_t s, m;
+	VectorScale(a, Q_FIX(2), s);
+	CHECK(s[0] == Q_FIX(2) && s[2] == Q_FIX(6), "VectorScale");
+	VectorMA(a, Q_FIX(3), b, m);
+	CHECK(m[1] == Q_FIX(2) + Q_FIX(3 * -5), "VectorMA");
+}
+
 /* ----------------------------------------------------------------- driver */
 
 int run_selftests(void)
@@ -197,6 +241,7 @@ int run_selftests(void)
 
 	test_allocator();
 	test_qcommon();
+	test_mathlib();
 
 	Hunk_FreeToLowMark(start_mark);
 

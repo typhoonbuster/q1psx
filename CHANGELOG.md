@@ -96,7 +96,22 @@ commits.
 - `engine/zone.c`: `Memory_Init` now 16-aligns the hunk base (the PS1 libc
   heap only guarantees 8) — stock Quake trusts malloc for this.
 
+- **3.2a** Fixed-point math layer (20.12):
+  - `engine/q_fixed.h`: `q_fixed` scalar, `Q_FIX*` conversions, `q_mul`/`q_div`
+    (int64 intermediates), `q_sqrt`/`q_sqrt_big` (binary digit method, no
+    float). Float conversions are host-only (`#if !defined(__mips__)`).
+  - `engine/mathlib.{c,h}`: port of WinQuake `mathlib` — `vec_t`/`vec3_t`,
+    `Vector*` macros, `DotProduct` (now a function), `CrossProduct`,
+    `VectorScale`/`MA`/`Compare`/`Inverse`, `Length`, `VectorNormalize`
+    (per-component divide, not reciprocal-multiply).
+  - `tools/mathtest/`: host build (`make -C tools/mathtest run`) comparing
+    every op to a `double` reference over quantised inputs — 650k checks,
+    0 failures.
+  - `engine/selftest.c`: on-device known-answer checks (all green headless).
+  Range note: dot/cross results must fit ~±524288, so one operand should be
+  near unit scale (`docs/porting-notes.md` §4).
+
 ### Next step
 
-- **3.2** fixed-point 20.12 math layer (needed before `cvar.value` / `vec3_t`),
-  tested on PC. Then 3.1b `cvar`, 3.1c `cmd`, 3.1d `edict_t`.
+- **3.2b** trig table + `AngleVectors`; then **3.1b** `cvar`, **3.1c** `cmd`,
+  **3.1d** `edict_t`; then **3.3** PAK parser.
