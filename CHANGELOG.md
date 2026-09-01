@@ -191,7 +191,21 @@ owned game; the player picks game + fidelity from the menu.
   (`qtx_open: 81 textures`, `qtx_upload … tpage=0088 clut=4b20`); on-screen
   check pending.
 
+  **4.3 validated on screen** — the `tech08_1` texture renders
+  correctly. **First visual render of the project.**
+
+- **Loading screen + video refactor:**
+  - `engine/vid.{c,h}`: the framebuffer / ordering-table / per-frame primitive
+    buffer, extracted from `main.c` (`vid_init` / `vid_alloc` / `vid_text` /
+    `vid_flip` / `vid_set_bg`), OT length 16.
+  - `engine/loading.{c,h}`: `load_begin(n)` / `load_step("label")` /
+    `load_done()` — draws a title + progress bar + step label and flips each
+    step, so slow CD loads no longer look like a crash.
+  - `main.c` slimmed to a clean boot sequence (`load_step` per stage) + a
+    tidier demo loop; dropped the now-redundant `pak_list` / function-probe
+    debug prints.
+
 ### Next step
 
-- **4.3** confirm the texture on screen (first visual render), then cook the
-  full `cooked/` tree (all maps / all games) and give it a real CD dir layout.
+- Cook the full `cooked/` tree (all maps / all games) with a real CD dir
+  layout, then **Phase 5.1** — wireframe BSP room via the GTE.

@@ -1,14 +1,10 @@
 /*
  * q1psx — Quake for the PlayStation 1
  *
- * Phase 2.1: minimal boot with double buffering.
- * Phase 2.2: read controller port 1 and show its state on screen.
- * Phase 2.3: load a test file off the CD and show it worked.
- *
- * Two framebuffers stacked in VRAM, swapped during vblank. A marker slides
- * across a solid background (steerable with the d-pad), and a debug overlay
- * prints the pad state plus the result of reading HELLO.TXT from the disc.
- * No Quake engine code yet.
+ * Boot so far (phases 2-4): bring up video/pad/CD, the Hunk/Zone allocator,
+ * run the self-tests, then stream pak0.pak + progs.dat + a cooked texture pack
+ * off the disc behind a progress bar. The loop is still a validation harness
+ * (debug overlay, a steerable marker, one drawn texture) — no game yet.
  */
 
 #include <stdint.h>
@@ -18,6 +14,8 @@
 #include <psxgpu.h>
 #include <psxpad.h>
 
+#include "vid.h"
+#include "loading.h"
 #include "pad.h"
 #include "cd.h"
 #include "pak.h"
@@ -30,251 +28,177 @@
 
 /*
  * Main Quake memory block. Retail PS1 has ~1.94 MB of APP_RAM; PSn00bSDK's
- * startup hands almost all of it to malloc. We take one contiguous slice here
- * and let Hunk/Zone manage it, leaving the rest for the stack and psxcd's
- * internal allocations. Tunable — revisit in phase 11 with real level data.
+ * startup hands almost all of it to malloc. We take one contiguous slice and
+ * let Hunk/Zone manage it, leaving the rest for the stack and psxcd. Tunable —
+ * revisit in phase 11 with real level data.
  */
 #define HUNK_SIZE  (1536 * 1024)
 
-#define SCREEN_W 320
-#define SCREEN_H 240
+/* --- boot-time state kept for the demo overlay --------------------------- */
+static int        g_selftest_fail;
+static int        g_hello_size;
+static uint32_t   g_hello_sum;
+static char       g_hello_line[40];
+static vram_tex_t g_demo_tex;
+static int        g_demo_tex_ok;
 
-#define OT_LEN       8
-#define PACKET_BYTES 8192
+static uint32_t cd_scratch[512];   /* one sector, word-aligned */
 
-typedef struct {
-	DISPENV  disp;
-	DRAWENV  draw;
-	uint32_t ot[OT_LEN];
-	uint8_t  packets[PACKET_BYTES];
-} Framebuffer;
-
-static Framebuffer fb[2];
-static int         back;
-static uint8_t    *packet_top;
-
-/* one CD sector, word-aligned for CdRead() */
-static uint32_t cd_buf[512];
-
-static void video_init(void)
+static void first_line(char *dst, int cap, const char *src, int n)
 {
-	ResetGraph(0);
+	int k = 0;
+	for (; k < n && k < cap - 1 && src[k] != '\n' && src[k] != '\r'; k++)
+		dst[k] = (src[k] >= 32 && src[k] < 127) ? src[k] : '.';
+	dst[k] = 0;
+}
 
-	SetDefDrawEnv(&fb[0].draw, 0, 0,        SCREEN_W, SCREEN_H);
-	SetDefDispEnv(&fb[0].disp, 0, 0,        SCREEN_W, SCREEN_H);
-	SetDefDrawEnv(&fb[1].draw, 0, SCREEN_H, SCREEN_W, SCREEN_H);
-	SetDefDispEnv(&fb[1].disp, 0, SCREEN_H, SCREEN_W, SCREEN_H);
+/* ------------------------------------------------------------- boot steps -- */
 
-	for (int i = 0; i < 2; i++) {
-		setRGB0(&fb[i].draw, 40, 20, 80);
-		fb[i].draw.isbg = 1;
+static void boot_selftests(void)
+{
+	g_selftest_fail = run_selftests();
+	Mem_Report();
+}
+
+static void boot_read_hello(void)
+{
+	g_hello_size = cd_load("\\HELLO.TXT;1", cd_scratch, sizeof cd_scratch);
+	g_hello_sum  = 0;
+	if (g_hello_size > 0) {
+		const uint8_t *b = (const uint8_t *) cd_scratch;
+		for (int i = 0; i < g_hello_size; i++)
+			g_hello_sum += b[i];
+		first_line(g_hello_line, sizeof g_hello_line, (const char *) cd_scratch, g_hello_size);
+	} else {
+		snprintf(g_hello_line, sizeof g_hello_line, "<read failed>");
 	}
-
-	back       = 0;
-	packet_top = fb[0].packets;
-	ClearOTagR(fb[0].ot, OT_LEN);
-
-	FntLoad(960, 0);
-	SetDispMask(1);
 }
 
-static void video_flip(void)
+static pak_t g_pak0;
+static int   g_pak0_ok;
+
+static void boot_open_pak(void)
 {
-	DrawSync(0);
-	VSync(0);
-
-	Framebuffer *drawn = &fb[back];
-	Framebuffer *shown = &fb[back ^ 1];
-
-	PutDispEnv(&shown->disp);
-	DrawOTagEnv(&drawn->ot[OT_LEN - 1], &drawn->draw);
-
-	back       = back ^ 1;
-	packet_top = fb[back].packets;
-	ClearOTagR(fb[back].ot, OT_LEN);
+	g_pak0_ok = pak_open("\\PAK0.PAK;1", &g_pak0);
 }
 
-static void *packet_alloc(int bucket, int size)
+static void boot_load_progs(void)
 {
-	uint8_t *p = packet_top;
-
-	addPrim(&fb[back].ot[bucket], p);
-	packet_top += size;
-	return p;
+	if (g_pak0_ok)
+		PR_LoadProgs(&g_pak0);
 }
+
+static void boot_load_textures(void)
+{
+	cd_file_t qf;
+	if (!cd_find("\\START.QTX;1", &qf)) {
+		printf("q1psx: START.QTX not on disc (run scripts/cook.sh)\n");
+		return;
+	}
+	int   padded = (qf.size + 2047) & ~2047;
+	void *blob   = Hunk_AllocName(padded, "qtx");
+	if (cd_read_at(&qf, 0, blob, qf.size) < 0 || qtx_open(blob, qf.size) <= 0)
+		return;
+
+	const char *want[] = { "tech08_1", "wbrick1_5", "city4_6" };
+	for (unsigned i = 0; i < sizeof(want) / sizeof(want[0]); i++)
+		if ((g_demo_tex_ok = qtx_upload(want[i], &g_demo_tex)))
+			break;
+}
+
+/* ------------------------------------------------------------- demo loop -- */
 
 static void describe_buttons(char *buf, int cap, uint16_t held)
 {
 	static const struct { uint16_t mask; const char *name; } BTN[] = {
-		{ PAD_UP, "UP" },       { PAD_DOWN, "DOWN" },
-		{ PAD_LEFT, "LEFT" },   { PAD_RIGHT, "RIGHT" },
-		{ PAD_TRIANGLE, "TRI" },{ PAD_CIRCLE, "CIR" },
-		{ PAD_CROSS, "CRO" },   { PAD_SQUARE, "SQR" },
-		{ PAD_L1, "L1" },       { PAD_R1, "R1" },
-		{ PAD_L2, "L2" },       { PAD_R2, "R2" },
-		{ PAD_SELECT, "SEL" },  { PAD_START, "STA" },
+		{ PAD_UP, "UP" }, { PAD_DOWN, "DOWN" }, { PAD_LEFT, "LEFT" }, { PAD_RIGHT, "RIGHT" },
+		{ PAD_TRIANGLE, "TRI" }, { PAD_CIRCLE, "CIR" }, { PAD_CROSS, "CRO" }, { PAD_SQUARE, "SQR" },
+		{ PAD_L1, "L1" }, { PAD_R1, "R1" }, { PAD_L2, "L2" }, { PAD_R2, "R2" },
+		{ PAD_SELECT, "SEL" }, { PAD_START, "STA" },
 	};
-
 	buf[0] = 0;
-	for (unsigned i = 0; i < sizeof(BTN) / sizeof(BTN[0]); i++) {
+	for (unsigned i = 0; i < sizeof(BTN) / sizeof(BTN[0]); i++)
 		if (held & BTN[i].mask) {
-			int len = (int) strlen(buf);
-			snprintf(buf + len, cap - len, " %s", BTN[i].name);
+			int l = (int) strlen(buf);
+			snprintf(buf + l, cap - l, " %s", BTN[i].name);
 		}
-	}
 	if (!buf[0])
 		snprintf(buf, cap, " (none)");
 }
 
-/* Copy the first line of a text blob into dst, replacing non-printables. */
-static void first_line(char *dst, int cap, const char *src, int src_len)
+static void demo_loop(void)
 {
-	int n = 0;
-	for (; n < src_len && n < cap - 1 && src[n] != '\n' && src[n] != '\r'; n++)
-		dst[n] = (src[n] >= 32 && src[n] < 127) ? src[n] : '.';
-	dst[n] = 0;
+	vid_set_bg(40, 20, 80);
+
+	int      mx = VID_W / 2 - 12, mdx = 2;
+	uint32_t frame = 0;
+	PadState pad;
+	char     held[96], overlay[320];
+
+	for (;;) {
+		pad_read(&pad);
+
+		if      (pad.buttons & PAD_LEFT)  mx -= 3;
+		else if (pad.buttons & PAD_RIGHT) mx += 3;
+		else                              mx += mdx;
+		if      (mx <= 0)            { mx = 0;            mdx = +2; }
+		else if (mx >= VID_W - 24)   { mx = VID_W - 24;   mdx = -2; }
+
+		TILE *marker = vid_alloc(1, sizeof(TILE));
+		setTile(marker);
+		setXY0(marker, mx, VID_H / 2 - 12);
+		setWH(marker, 24, 24);
+		setRGB0(marker, 230, 230, 40);
+
+		if (g_demo_tex_ok) {
+			POLY_FT4 *q = vid_alloc(2, sizeof(POLY_FT4));
+			setPolyFT4(q);
+			setRGB0(q, 128, 128, 128);
+			setXYWH(q, VID_W - g_demo_tex.w - 8, VID_H - g_demo_tex.h - 8,
+			        g_demo_tex.w, g_demo_tex.h);
+			setUVWH(q, 0, 0, g_demo_tex.w - 1, g_demo_tex.h - 1);
+			q->tpage = g_demo_tex.tpage;
+			q->clut  = g_demo_tex.clut;
+		}
+
+		describe_buttons(held, sizeof held, pad.buttons);
+		snprintf(overlay, sizeof overlay,
+			"q1psx  frame %u\n\n"
+			"mem: %d KiB hunk, selftests %s\n"
+			"CD HELLO.TXT: %d B  sum 0x%X\n  \"%s\"\n\n"
+			"pad1: %s  type 0x%X  btn 0x%04X\n"
+			"held:%s",
+			frame, Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
+			g_hello_size, g_hello_sum, g_hello_line,
+			pad.connected ? "connected" : "no device", pad.type, pad.buttons, held);
+		vid_text(0, 8, 8, overlay);
+
+		vid_flip();
+		frame++;
+	}
 }
+
+/* ------------------------------------------------------------------ main -- */
 
 int main(void)
 {
-	video_init();
+	vid_init();
 	pad_init();
 	cd_init();
 
-	/* --- phase 2.4: bring up the Hunk/Zone allocator --- */
 	void *hunk = malloc(HUNK_SIZE);
 	if (!hunk)
 		Sys_Error("no RAM for a %d-byte hunk", HUNK_SIZE);
 	Memory_Init(hunk, HUNK_SIZE);
 
-	/* --- phases 2.4 + 3.1: exercise the ported foundations --- */
-	int st_fail = run_selftests();
-	Mem_Report();
+	load_begin(5);
+	load_step("running self-tests");   boot_selftests();
+	load_step("reading disc");         boot_read_hello();
+	load_step("opening pak0.pak");     boot_open_pak();
+	load_step("loading progs.dat");    boot_load_progs();
+	load_step("loading textures");     boot_load_textures();
+	load_done();
 
-	/* --- phase 2.3: read a file off the disc, once, at boot --- */
-	int      cd_size = cd_load("\\HELLO.TXT;1", cd_buf, sizeof(cd_buf));
-	uint32_t cd_sum  = 0;
-	char     cd_line[40];
-	if (cd_size > 0) {
-		const uint8_t *bytes = (const uint8_t *) cd_buf;
-		for (int i = 0; i < cd_size; i++)
-			cd_sum += bytes[i];
-		first_line(cd_line, sizeof(cd_line), (const char *) cd_buf, cd_size);
-	} else {
-		snprintf(cd_line, sizeof(cd_line), "<read failed>");
-	}
-
-	/* also log to serial so headless boots can be checked without a screen */
-	printf("q1psx: cd_load HELLO.TXT -> size=%d sum=0x%X line=\"%s\"\n",
-	       cd_size, cd_sum, cd_line);
-
-	/* --- phase 3.3: open pak0.pak and list its directory --- */
-	static pak_t pak0;
-	int pak_ok = pak_open("\\PAK0.PAK;1", &pak0);
-	if (pak_ok) {
-		pak_list(&pak0);
-
-		/* --- phase 3.4: load progs.dat off the pak (no execution) --- */
-		PR_LoadProgs(&pak0);
-		const char *probe[] = { "main", "worldspawn", "SUB_Null", "PlayerPreThink" };
-		for (unsigned i = 0; i < sizeof(probe) / sizeof(probe[0]); i++) {
-			int fi = PR_FindFunction(probe[i]);
-			printf("  fn %-16s -> %s (first_statement %d)\n", probe[i],
-			       fi >= 0 ? "found" : "MISSING",
-			       fi >= 0 ? pr_functions[fi].first_statement : 0);
-		}
-	}
-
-	/* --- phase 4.3: load a cooked texture pack, show one texture --- */
-	vram_tex_t demo_tex;
-	int demo_tex_ok = 0;
-	{
-		cd_file_t qf;
-		if (cd_find("\\START.QTX;1", &qf)) {
-			int padded = (qf.size + 2047) & ~2047;
-			void *blob = Hunk_AllocName(padded, "qtx");
-			if (cd_read_at(&qf, 0, blob, qf.size) >= 0 && qtx_open(blob, qf.size) > 0) {
-				const char *want[] = { "tech08_1", "wbrick1_5", "city4_6" };
-				for (unsigned i = 0; i < sizeof(want) / sizeof(want[0]); i++)
-					if ((demo_tex_ok = qtx_upload(want[i], &demo_tex)))
-						break;
-			}
-		} else {
-			printf("q1psx: START.QTX not on disc (run scripts/cook.sh)\n");
-		}
-	}
-
-	int      marker_x  = SCREEN_W / 2 - 12;
-	int      marker_dx = 2;
-	uint32_t frame     = 0;
-
-	PadState pad;
-	char     held_str[96];
-	char     overlay[320];
-
-	for (;;) {
-		pad_read(&pad);
-
-		if (pad.buttons & PAD_LEFT)
-			marker_x -= 3;
-		else if (pad.buttons & PAD_RIGHT)
-			marker_x += 3;
-		else
-			marker_x += marker_dx;
-
-		if (marker_x <= 0) {
-			marker_x = 0;
-			marker_dx = +2;
-		} else if (marker_x >= SCREEN_W - 24) {
-			marker_x = SCREEN_W - 24;
-			marker_dx = -2;
-		}
-
-		TILE *marker = packet_alloc(1, sizeof(TILE));
-		setTile(marker);
-		setXY0(marker, marker_x, SCREEN_H / 2 - 12);
-		setWH(marker, 24, 24);
-		setRGB0(marker, 230, 230, 40);
-
-		if (demo_tex_ok) {
-			int dx = SCREEN_W - demo_tex.w - 8;
-			int dy = SCREEN_H - demo_tex.h - 8;
-			POLY_FT4 *q = packet_alloc(2, sizeof(POLY_FT4));
-			setPolyFT4(q);
-			setRGB0(q, 128, 128, 128);           /* neutral: no tint */
-			setXYWH(q, dx, dy, demo_tex.w, demo_tex.h);
-			setUVWH(q, 0, 0, demo_tex.w - 1, demo_tex.h - 1);
-			q->tpage = demo_tex.tpage;
-			q->clut  = demo_tex.clut;
-		}
-
-		describe_buttons(held_str, sizeof(held_str), pad.buttons);
-		snprintf(overlay, sizeof(overlay),
-			"q1psx  frame %u\n"
-			"\n"
-			"mem: %d KiB hunk, selftests %s\n"
-			"CD HELLO.TXT: size=%d sum=0x%X\n"
-			"  \"%s\"\n"
-			"\n"
-			"pad1: %s   type=0x%X\n"
-			"btn word: 0x%04X\n"
-			"held:%s",
-			frame,
-			Hunk_TotalSize() / 1024,
-			st_fail == 0 ? "OK" : "FAIL",
-			cd_size,
-			cd_sum,
-			cd_line,
-			pad.connected ? "connected" : "no device",
-			pad.type,
-			pad.buttons,
-			held_str);
-
-		packet_top = FntSort(&fb[back].ot[0], packet_top, 8, 8, overlay);
-
-		video_flip();
-		frame++;
-	}
-
+	demo_loop();
 	return 0;
 }
