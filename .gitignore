@@ -1,0 +1,51 @@
+# --- Reference clones: not part of this project's source ---
+/reference/
+
+# --- Local per-developer machine paths (never versioned) ---
+/local.env
+/local.config.json
+
+# --- Local notes (never versioned) ---
+/PROJECT_BRIEF.md
+
+# --- Proprietary Quake data: NEVER commit ---
+# Raw game data
+*.pak
+*.PAK
+*.wad
+*.WAD
+# Extracted / derived game assets (also proprietary)
+*.bsp
+*.lmp
+*.mdl
+*.spr
+*.dat
+id1/
+hipnotic/
+rogue/
+# Cooked asset output (derived from proprietary data)
+/assets/
+/cooked/
+
+# --- PS1 build / CD image output ---
+/build/
+*.o
+*.a
+*.elf
+*.map
+*.bin
+*.cue
+*.iso
+*.exe
+*.ps-exe
+
+# --- Prebuilt PSn00bSDK if extracted into the tree (keep only the README) ---
+/third_party/*
+!/third_party/README.md
+
+# --- Editor / OS ---
+*.swp
+*~
+.DS_Store
+.idea/
+.vscode/
