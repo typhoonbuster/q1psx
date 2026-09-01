@@ -16,6 +16,7 @@
 
 #include "vid.h"
 #include "loading.h"
+#include "render.h"
 #include "pad.h"
 #include "cd.h"
 #include "pak.h"
@@ -126,29 +127,43 @@ static void describe_buttons(char *buf, int cap, uint16_t held)
 		snprintf(buf, cap, " (none)");
 }
 
+/* an inside-out box in Quake coords (X fwd, Y left, Z up), world units */
+static const SVECTOR ROOM_VERTS[8] = {
+	{   0, -256, -128 }, {   0,  256, -128 }, {   0,  256,  128 }, {   0, -256,  128 },
+	{ 768, -256, -128 }, { 768,  256, -128 }, { 768,  256,  128 }, { 768, -256,  128 },
+};
+static const uint16_t ROOM_EDGES[24] = {
+	0,1, 1,2, 2,3, 3,0,          /* near wall  */
+	4,5, 5,6, 6,7, 7,4,          /* far wall   */
+	0,4, 1,5, 2,6, 3,7,          /* stringers  */
+};
+
 static void demo_loop(void)
 {
-	vid_set_bg(40, 20, 80);
+	vid_set_bg(8, 8, 16);
+	r_init();
 
-	int      mx = VID_W / 2 - 12, mdx = 2;
-	uint32_t frame = 0;
+	int32_t  cam[3] = { 64, 0, 0 };
+	int32_t  yaw    = 0;              /* q1psx degrees, 20.12 */
+	uint32_t frame  = 0;
 	PadState pad;
 	char     held[96], overlay[320];
 
 	for (;;) {
 		pad_read(&pad);
 
-		if      (pad.buttons & PAD_LEFT)  mx -= 3;
-		else if (pad.buttons & PAD_RIGHT) mx += 3;
-		else                              mx += mdx;
-		if      (mx <= 0)            { mx = 0;            mdx = +2; }
-		else if (mx >= VID_W - 24)   { mx = VID_W - 24;   mdx = -2; }
+		if (pad.buttons & PAD_LEFT)  yaw += Q_FIX(3);
+		if (pad.buttons & PAD_RIGHT) yaw -= Q_FIX(3);
+		vec3_t ang = { 0, yaw, 0 };
 
-		TILE *marker = vid_alloc(1, sizeof(TILE));
-		setTile(marker);
-		setXY0(marker, mx, VID_H / 2 - 12);
-		setWH(marker, 24, 24);
-		setRGB0(marker, 230, 230, 40);
+		vec3_t f, r, u;
+		AngleVectors(ang, f, r, u);
+		int step = (pad.buttons & PAD_UP) ? 8 : (pad.buttons & PAD_DOWN) ? -8 : 0;
+		cam[0] += (f[0] * step) >> Q_FIX_SHIFT;
+		cam[1] += (f[1] * step) >> Q_FIX_SHIFT;
+
+		r_begin_view(cam, ang);
+		r_wireframe(ROOM_VERTS, 8, ROOM_EDGES, 12, 90, 220, 120);
 
 		if (g_demo_tex_ok) {
 			POLY_FT4 *q = vid_alloc(2, sizeof(POLY_FT4));
@@ -164,13 +179,16 @@ static void demo_loop(void)
 		describe_buttons(held, sizeof held, pad.buttons);
 		snprintf(overlay, sizeof overlay,
 			"q1psx  frame %u\n\n"
-			"mem: %d KiB hunk, selftests %s\n"
-			"CD HELLO.TXT: %d B  sum 0x%X\n  \"%s\"\n\n"
-			"pad1: %s  type 0x%X  btn 0x%04X\n"
+			"wireframe room (GTE)\n"
+			"  d-pad: LR turn, UD move\n"
+			"  cam x=%d y=%d yaw=%d\n\n"
+			"mem %d KiB  selftests %s\n"
+			"pad1 %s  btn 0x%04X\n"
 			"held:%s",
-			frame, Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
-			g_hello_size, g_hello_sum, g_hello_line,
-			pad.connected ? "connected" : "no device", pad.type, pad.buttons, held);
+			frame,
+			cam[0], cam[1], yaw >> Q_FIX_SHIFT,
+			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
+			pad.connected ? "connected" : "no device", pad.buttons, held);
 		vid_text(0, 8, 8, overlay);
 
 		vid_flip();

@@ -205,7 +205,20 @@ owned game; the player picks game + fidelity from the menu.
     tidier demo loop; dropped the now-redundant `pak_list` / function-probe
     debug prints.
 
+### Phase 5 — minimal 3D
+
+- **5.1a** `engine/render.{c,h}` — GTE wireframe:
+  - `r_init`: `InitGeom`, `gte_SetGeomOffset(160,120)`, `gte_SetGeomScreen(160)`.
+  - `r_begin_view(pos, ang)`: `AngleVectors` (world = Quake coords: X fwd,
+    Y left, Z up) → view `MATRIX` (rows right / -up / forward, 1.3.12 == our
+    20.12), `t = -M*campos`, `gte_SetRotMatrix`/`SetTransMatrix`.
+  - `r_wireframe(verts, nverts, edges, nedges, rgb)`: `gte_ldv0`+`gte_rtps`
+    per vertex, `gte_stsz` near-plane skip, `LINE_F2` per visible edge.
+  - `main.c`: hand-made 768×512×256 room, d-pad flies the camera. Headless
+    boot clean; on-screen check pending.
+
 ### Next step
 
-- Cook the full `cooked/` tree (all maps / all games) with a real CD dir
-  layout, then **Phase 5.1** — wireframe BSP room via the GTE.
+- **5.1b** cook BSP geometry (`qcook geometry` → SVECTOR verts + dedup edges),
+  wireframe the real `start.bsp`. Then 5.2 texturing, 5.3 free camera,
+  5.4 PVS/culling.
