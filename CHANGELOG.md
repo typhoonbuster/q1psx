@@ -132,7 +132,19 @@ commits.
 - `engine/selftest.c`: +cvar/cmd checks (register/set/parse, tokenize, buffer
   dispatch, cvar-set-via-command). All green headless; hunk clean afterwards.
 
+- **3.3** PAK reader:
+  - `engine/cd.c`: `cd_find` (CdSearchFile wrapper) + `cd_read_at` — reads an
+    arbitrary byte range from a file (sector-aligned bounce via the high hunk).
+  - `engine/pak.{c,h}`: `pak_open` (header + directory, LE), `pak_find`
+    (case-insensitive), `pak_read_lump` (stream one lump), `pak_list`.
+  - `CMakeLists.txt` + `iso/iso.xml`: bundle `pak0.pak` into the dev CD image
+    from `local.env`'s `QUAKE_PAK0` (`@PAK0_ENTRY@`); never committed. Build
+    logs whether it was found.
+  - **Validated:** boot lists all 339 entries off the disc; dirofs 18254423,
+    dirlen 21696, count 339, and lump sizes match a Python cross-check exactly
+    (`progs.dat` index 266 = 413116 B).
+
 ### Next step
 
-- **3.3** PAK parser (list `pak0.pak` over serial), **3.4** raw `progs.dat`
-  load + `edict_t`/`entvars_t` structs (3.1d).
+- **3.4** raw `progs.dat` load (no execution) + `edict_t`/`entvars_t` structs
+  (3.1d). Then Phase 4 — offline asset cooking.

@@ -20,6 +20,7 @@
 
 #include "pad.h"
 #include "cd.h"
+#include "pak.h"
 #include "sys.h"
 #include "zone.h"
 #include "qcommon.h"
@@ -164,6 +165,16 @@ int main(void)
 	/* also log to serial so headless boots can be checked without a screen */
 	printf("q1psx: cd_load HELLO.TXT -> size=%d sum=0x%X line=\"%s\"\n",
 	       cd_size, cd_sum, cd_line);
+
+	/* --- phase 3.3: open pak0.pak and list its directory --- */
+	static pak_t pak0;
+	int pak_ok = pak_open("\\PAK0.PAK;1", &pak0);
+	if (pak_ok) {
+		pak_list(&pak0);
+		int pi = pak_find(&pak0, "progs.dat");
+		printf("q1psx: pak_find(progs.dat) -> index %d, %d bytes\n",
+		       pi, pi >= 0 ? pak0.files[pi].filelen : -1);
+	}
 
 	int      marker_x  = SCREEN_W / 2 - 12;
 	int      marker_dx = 2;

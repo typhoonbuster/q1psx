@@ -333,7 +333,49 @@ there).
 
 ---
 
-## §5 — Detailed porting conventions (to be completed)
+## §5 — CD-ROM and PAK access (Phase 3.3)
+
+### 5.1 `engine/cd.c`
+
+- `cd_init` → `CdInit`.
+- `cd_load(name, buf, cap)` — whole-file load (used for small files like
+  `HELLO.TXT`; useless for an 18 MB pak).
+- `cd_find(name, &cd_file_t)` — `CdSearchFile` wrapper. Blocking; caches the ISO
+  path table on first use (~2 KB libc malloc). ISO paths are
+  `"\\NAME.EXT;1"` (backslash or slash, `;1` optional, case-insensitive).
+- `cd_read_at(file, offset, buf, len)` — read an arbitrary byte range. Computes
+  the start sector from `CdPosToInt(&file->pos)`, allocates a sector-aligned
+  bounce on the **high hunk**, does one `CdRead(nsec, …)`, `memcpy`s `len` from
+  the intra-sector offset, frees the bounce. One seek + one multi-sector read
+  per call — fine for now; batching / a sector cache is a Phase 4-5 concern.
+
+### 5.2 `engine/pak.{c,h}`
+
+PAK format (id-Software/Quake `common.c:1225`), little-endian:
+
+```
+header  (12 B):  char id[4]="PACK";  int32 dirofs;  int32 dirlen
+entry   (64 B):  char name[56];      int32 filepos; int32 filelen   (x dirlen/64)
+```
+
+`pak_open` reads the header via `cd_read_at`, sanity-checks `"PACK"` +
+`dirlen/64`, then caches the whole directory on the **low hunk**
+(`pak_entry_t` == the on-disk 64-byte layout, so it loads straight in;
+`LittleLong` on `filepos`/`filelen` is a no-op on the LE R3000 but kept).
+`pak_find` is case-insensitive (`Q_strcasecmp`). `pak_read_lump` streams one
+lump via `cd_read_at`.
+
+`pak0.pak` (18.7 MB) is bundled into the dev CD image by `CMakeLists.txt`
+reading `QUAKE_PAK0` from `local.env` and substituting `@PAK0_ENTRY@` in
+`iso/iso.xml`. It is shareware data (freely redistributable) but still never
+committed. Verified: 339 entries, all offsets/sizes match a host Python parse.
+
+The CD layout (`iso.xml` order, `mkpsxiso`) is not yet optimised for streaming
+— that is a Phase 11 concern once we know the real per-level access pattern.
+
+---
+
+## §6 — Detailed porting conventions (to be completed)
 
 _Cooked asset formats, GTE render pipeline: sections to fill in over phases
 4-5._
