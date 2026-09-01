@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+	Processed by CMake, consumed by mkpsxiso. Paths are relative to the build
+	directory unless prefixed with ${PROJECT_SOURCE_DIR}.
+
+	Cooked Quake assets (BSP/textures/lightmaps converted offline) will be added
+	here from Phase 4 onward. Raw pak0.pak is never placed on the disc directly.
+-->
+<iso_project>
+	<track type="data">
+		<identifiers
+			system         ="PLAYSTATION"
+			volume         ="Q1PSX"
+			volume_set     ="Q1PSX"
+			publisher      ="TYPHOONBUSTER"
+			data_preparer  ="PSN00BSDK ${PSN00BSDK_VERSION}"
+			application    ="PLAYSTATION"
+			copyright      ="README.TXT;1"
+		/>
+
+		<directory_tree>
+			<file name="SYSTEM.CNF" type="data" source="${PROJECT_SOURCE_DIR}/iso/system.cnf" />
+			<file name="Q1PSX.EXE"  type="data" source="q1psx.exe" />
+
+			<dummy sectors="1024"/>
+		</directory_tree>
+	</track>
+</iso_project>
