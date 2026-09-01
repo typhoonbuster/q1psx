@@ -45,6 +45,7 @@ rogue/
 
 # --- Host tool build output ---
 /tools/mathtest/mathtest
+/tools/qcook/qcook
 
 # --- Editor / OS ---
 *.swp

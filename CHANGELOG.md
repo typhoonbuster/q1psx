@@ -161,7 +161,26 @@ commits.
 
 **Phase 3 complete.**
 
+### Phase 4 — offline asset cooking
+
+Design: cook tool is **C**; ONE CD image holds all 4 fidelity levels
+(`low`/`medium`/`high`/`ultra`, defined in `tools/qcook/fidelity.h`) and every
+owned game; the player picks game + fidelity from the menu.
+
+- **4.1 (textures)** `tools/qcook/`:
+  - reads a `.pak`, builds a PS1 BGR555 CLUT from `gfx/palette.lmp`, extracts
+    the BSP texture lump (miptex, 8bpp indexed), downscales per fidelity
+    (closest box-filtered mip + aspect-preserving nearest-neighbour), writes a
+    `QTX1` container (`qtx.h`: header + CLUT + entries + 8bpp pixel data;
+    little-endian, no swap needed either side).
+  - `qcook textures --pak … --map … --fidelity … --out …` and `qcook info …`.
+  - **Verified** on `maps/start.bsp`: 81/81 textures extracted (count matches a
+    Python parse), palette + pixels render correctly (PNG dump vs Quake's
+    palette). `high` → 128px cap, `ultra` → native.
+  - BSP geometry + lightmap cooking deferred to Phase 5.1.
+
 ### Next step
 
-- **Phase 4** — offline asset pipeline ("cooking"): PC tool converting
-  BSP/textures/lightmaps to a PS1 format.
+- **4.1 cont.** cook every fidelity for every owned game into one `cooked/`
+  tree; then **4.2** put it on a `mkpsxiso` image, **4.3** engine loads a QTX,
+  uploads CLUT + one texture to VRAM, draws it (first visual render).

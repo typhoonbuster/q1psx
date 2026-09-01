@@ -406,7 +406,47 @@ comparisons, `OP_*_V`) become `q_mul` / `q_div` / fixed compares.
 
 ---
 
-## §7 — Detailed porting conventions (to be completed)
+## §7 — Asset cooking (Phase 4)
 
-_Cooked asset formats, GTE render pipeline: sections to fill in over phases
-4-5._
+### 7.1 Model
+
+The cook tool `tools/qcook/` is **C** (host build). **One CD image** carries
+**all four fidelity levels** *and* every game at hand (`id1` + optional
+`hipnotic` / `rogue`); the player chooses game + fidelity from the in-game menu
+(Phase 10.3). A PS1 CD is ~650 MB and everything-cooked is ~200-250 MB, so disc
+size is not the constraint — runtime RAM/VRAM is, which is exactly what the
+fidelity knob trades. Levels: `tools/qcook/fidelity.h`.
+
+| level | max texture | lightmap | geometry | intent |
+|---|---|---|---|---|
+| low | 64 | none | heavy merge | ep1-4 + packs all fit |
+| medium | 64 | ¼-res | light decimation | ep1-4 fit, lit |
+| high (default) | 128 | ½-res | full BSP | ep1 target |
+| ultra | ≤256 (native) | full-res | full BSP | ep1 showcase |
+
+World textures tile, and the PS1 GPU only wraps power-of-two sizes inside a
+256×256 page — but Quake textures are only guaranteed multiples of 16 (e.g.
+`quake` is 288×64). The renderer will subdivide surfaces per texture tile
+anyway, so `qcook` keeps the real (non-pow2) sizes and just fits them under the
+fidelity cap with aspect preserved.
+
+### 7.2 QTX1 texture container (`tools/qcook/qtx.h`)
+
+`qcook textures` output: `qtx_header` (magic + 256-entry BGR555 CLUT + count)
+then `qtx_entry[]` (name, cooked w/h, source w/h, flags, data offset/len) then
+4-byte-aligned 8bpp indexed pixel blocks. Little-endian — host x86 and the PS1
+R3000 are both LE, so it maps in with no swapping.
+
+- Palette: Quake's global 256-colour `gfx/palette.lmp` → `r>>3 | g>>3<<5 |
+  b>>3<<10` (PS1 `0BBBBBGGGGGRRRRR`). One CLUT, all textures reference it.
+- Downscale: pick the built-in mip closest to the cap without undershooting,
+  then aspect-preserving nearest-neighbour to the exact size (dims kept even).
+- Flags: `sky*` → SKY, `*` → LIQUID, `{` → MASKED (palette index 255 = clear).
+
+BSP geometry / lightmap / MDL / SPR cooking comes with the renderer (Phase 5+).
+
+---
+
+## §8 — Detailed porting conventions (to be completed)
+
+_GTE render pipeline: fill in over phase 5._
