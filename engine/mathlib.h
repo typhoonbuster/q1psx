@@ -9,12 +9,15 @@
  * port unchanged. The one semantic change vs stock: DotProduct is a function
  * (fixed-point needs a wide intermediate and a shift), not a bare macro.
  *
- * Phase 3.2a: scalars + vector ops. Trig / AngleVectors land in 3.2b.
+ * Phase 3.2a: scalars + vector ops.
+ * Phase 3.2b: trig (table-based), AngleVectors, anglemod, matrix concat.
  */
 
 #pragma once
 
 #include "q_fixed.h"
+
+#define Q_DEG(n)  Q_FIX(n)   /* an angle literal, in degrees */
 
 typedef q_fixed vec_t;
 typedef vec_t   vec3_t[3];
@@ -48,3 +51,15 @@ int   VectorCompare(const vec3_t v1, const vec3_t v2);
 vec_t Length(const vec3_t v);
 vec_t VectorNormalize(vec3_t v);          /* returns the original length */
 void  VectorInverse(vec3_t v);
+
+/* --- trig (phase 3.2b): angles in DEGREES, 20.12; results in [-1.0, 1.0] --- */
+vec_t q_sin(vec_t degrees);
+vec_t q_cos(vec_t degrees);
+vec_t anglemod(vec_t a);                   /* wraps to [0, 360) */
+
+/* build the forward/right/up basis from an angles vec3_t (PITCH/YAW/ROLL, deg).
+   Any of the outputs may be NULL. */
+void AngleVectors(const vec3_t angles, vec3_t forward, vec3_t right, vec3_t up);
+
+void R_ConcatRotations(const vec_t in1[3][3], const vec_t in2[3][3], vec_t out[3][3]);
+void R_ConcatTransforms(const vec_t in1[3][4], const vec_t in2[3][4], vec_t out[3][4]);

@@ -12,7 +12,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "mathlib.c"   /* unity build: pulls in q_fixed.h + mathlib.h too */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
+#include "mathlib.c"        /* unity build: pulls in q_fixed.h + mathlib.h too */
+#include "q_trig_table.c"   /* the generated sine table */
 
 static int failures;
 static int checks;
@@ -156,11 +161,48 @@ static void test_vectors(void)
 	   "vec3_origin is zero");
 }
 
+static void test_trig(void)
+{
+	printf("[mathtest] trig / angles\n");
+
+	for (int deg = -720; deg <= 720; deg++) {
+		double rad = deg * M_PI / 180.0;
+		/* table is 1024 steps + 8-bit lerp; worst case a few units off */
+		near_rel(q_sin(Q_FIX(deg)), sin(rad), 6, 0.0, "q_sin");
+		near_rel(q_cos(Q_FIX(deg)), cos(rad), 6, 0.0, "q_cos");
+	}
+
+	ok(anglemod(Q_FIX(370)) == Q_FIX(10), "anglemod 370 -> 10");
+	ok(anglemod(Q_FIX(-90)) == Q_FIX(270), "anglemod -90 -> 270");
+	ok(anglemod(Q_FIX(0)) == 0 && anglemod(Q_FIX(359)) == Q_FIX(359), "anglemod identity in range");
+
+	/* AngleVectors: forward for yaw=90 is +Y; the basis is orthonormal */
+	for (int i = 0; i < 5000; i++) {
+		vec3_t ang = { Q_FIX_FROM_FLOAT(frand(-80, 80)),
+		               Q_FIX_FROM_FLOAT(frand(-360, 360)),
+		               Q_FIX_FROM_FLOAT(frand(-40, 40)) };
+		vec3_t f, r, u;
+		AngleVectors(ang, f, r, u);
+
+		double pf = Q_FIX_TO_FLOAT(ang[PITCH]) * M_PI / 180.0;
+		double yf = Q_FIX_TO_FLOAT(ang[YAW])   * M_PI / 180.0;
+		near_rel(f[0], cos(pf) * cos(yf), 8, 0.0, "AngleVectors forward.x");
+		near_rel(f[1], cos(pf) * sin(yf), 8, 0.0, "AngleVectors forward.y");
+		near_rel(f[2], -sin(pf),          8, 0.0, "AngleVectors forward.z");
+
+		near_rel(DotProduct(f, r), 0.0, 12, 0.0, "forward . right ~ 0");
+		near_rel(DotProduct(f, u), 0.0, 12, 0.0, "forward . up ~ 0");
+		near_rel(Length(f), 1.0, 6, 2e-3, "|forward| ~ 1");
+		near_rel(Length(r), 1.0, 6, 2e-3, "|right| ~ 1");
+	}
+}
+
 int main(void)
 {
 	srand(1234);
 	test_scalars();
 	test_vectors();
+	test_trig();
 
 	printf("mathtest: %s  (%d checks, %d failure%s)\n",
 	       failures ? "FAIL" : "OK", checks, failures, failures == 1 ? "" : "s");

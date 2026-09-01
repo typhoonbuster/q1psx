@@ -228,6 +228,23 @@ static void test_mathlib(void)
 	CHECK(s[0] == Q_FIX(2) && s[2] == Q_FIX(6), "VectorScale");
 	VectorMA(a, Q_FIX(3), b, m);
 	CHECK(m[1] == Q_FIX(2) + Q_FIX(3 * -5), "VectorMA");
+
+	/* --- trig / angles (3.2b) --- */
+	CHECK(q_close(q_sin(0), 0, 2) && q_close(q_sin(Q_FIX(90)), Q_FIX_ONE, 4),
+	      "q_sin 0 and 90 deg");
+	CHECK(q_close(q_cos(0), Q_FIX_ONE, 4) && q_close(q_cos(Q_FIX(180)), -Q_FIX_ONE, 4),
+	      "q_cos 0 and 180 deg");
+	CHECK(q_close(q_sin(Q_FIX(30)), Q_FIX_ONE / 2, 8), "q_sin 30 deg ~ 0.5");
+	CHECK(anglemod(Q_FIX(370)) == Q_FIX(10) && anglemod(Q_FIX(-90)) == Q_FIX(270),
+	      "anglemod wraps");
+
+	vec3_t ang = { 0, Q_FIX(90), 0 };   /* look along +Y */
+	vec3_t fwd, rgt, up;
+	AngleVectors(ang, fwd, rgt, up);
+	CHECK(q_close(fwd[0], 0, 4) && q_close(fwd[1], Q_FIX_ONE, 4) && q_close(fwd[2], 0, 4),
+	      "AngleVectors yaw 90 -> forward +Y");
+	CHECK(q_abs(DotProduct(fwd, rgt)) < 8 && q_abs(DotProduct(fwd, up)) < 8,
+	      "AngleVectors basis is orthogonal");
 }
 
 /* ----------------------------------------------------------------- driver */

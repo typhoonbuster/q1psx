@@ -111,7 +111,17 @@ commits.
   Range note: dot/cross results must fit ~±524288, so one operand should be
   near unit scale (`docs/porting-notes.md` §4).
 
+- **3.2b** Trig / angles:
+  - `tools/gen_sintab.py` -> `engine/q_trig_table.c` (1024-entry 20.12 sine
+    table, +1 wrap guard).
+  - `engine/mathlib.c`: `q_sin`/`q_cos` (table lookup + 8-bit lerp, degrees),
+    `anglemod`, `AngleVectors` (near-verbatim port), `R_ConcatRotations` /
+    `R_ConcatTransforms` (3x3 / 3x4 products).
+  - `tools/mathtest`: +trig checks over -720..720 deg and 5k random angle
+    triples (orthonormal basis, matches analytic forward). Total 688k checks,
+    0 failures. On-device checks green.
+
 ### Next step
 
-- **3.2b** trig table + `AngleVectors`; then **3.1b** `cvar`, **3.1c** `cmd`,
-  **3.1d** `edict_t`; then **3.3** PAK parser.
+- **3.1b** `cvar` (value as `q_fixed`), **3.1c** `cmd`, **3.1d** `edict_t`;
+  then **3.3** PAK parser, **3.4** raw `progs.dat` load.

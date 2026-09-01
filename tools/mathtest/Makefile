@@ -7,7 +7,10 @@ BIN      = mathtest
 
 SRC = main.c
 
-$(BIN): $(SRC) ../../engine/q_fixed.h ../../engine/mathlib.c ../../engine/mathlib.h
+DEPS = ../../engine/q_fixed.h ../../engine/mathlib.c ../../engine/mathlib.h \
+       ../../engine/q_trig_table.c ../../engine/q_trig_table.h
+
+$(BIN): $(SRC) $(DEPS)
 	$(CC) $(CFLAGS) -o $@ $(SRC) -lm
 
 .PHONY: run clean

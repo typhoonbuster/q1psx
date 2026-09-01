@@ -305,10 +305,21 @@ Port of WinQuake `mathlib.{c,h}`. Names kept (`vec_t`, `vec3_t`,
 - `VectorNormalize` divides each component by the length directly instead of
   `ilength = 1/length; v *= ilength` — a sub-1.0 reciprocal quantises to 1/4096
   and long vectors normalise several percent short otherwise.
-- Deferred to 3.2b: trig (`q_sin`/`q_cos` table), `AngleVectors`, `anglemod`,
-  `R_ConcatRotations`/`Transforms`. Deferred further: `BoxOnPlaneSide`,
-  `RotatePointAroundVector`, `FloorDivMod`, GCD (pull in when phase 5/6 needs
-  them).
+
+### 4.2b Trig — `q_sin` / `q_cos` / `AngleVectors` (phase 3.2b)
+
+Angles stay in **degrees** (as in stock Quake, so `AngleVectors` ports almost
+verbatim). `q_sin(deg)` / `q_cos(deg)` do a lookup into `q_sintab` (generated
+by `tools/gen_sintab.py` into `engine/q_trig_table.c` — 1024 entries/turn +1
+wrap guard, 20.12) with 8-bit linear interpolation. The one `/360` per call is
+fine — `AngleVectors` runs a handful of times per frame, never per vertex.
+`anglemod` reduces mod 360 (plain `%`, 360° is not a power of two in 20.12).
+`R_ConcatRotations` / `R_ConcatTransforms` are the 3×3 / 3×4 matrix products
+(int64 row-dot then shift). On-device the GTE can take over rotation matrices
+later.
+
+Still deferred: `BoxOnPlaneSide`, `RotatePointAroundVector`, `FloorDivMod`,
+GCD — pull in when phase 5/6 needs them.
 
 ### 4.3 Tests — `tools/mathtest/`
 
