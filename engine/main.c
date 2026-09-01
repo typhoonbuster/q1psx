@@ -13,12 +13,25 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <psxgpu.h>
 #include <psxpad.h>
 
 #include "pad.h"
 #include "cd.h"
+#include "sys.h"
+#include "zone.h"
+#include "memtest.h"
+
+/*
+ * Main Quake memory block. Retail PS1 has ~1.94 MB of APP_RAM; PSn00bSDK's
+ * startup hands almost all of it to malloc. We take one contiguous slice here
+ * and let Hunk/Zone manage it, leaving the rest for the stack and psxcd's
+ * internal allocations. Tunable — revisit in phase 11 with real level data.
+ */
+#define HUNK_SIZE     (1536 * 1024)
+#define MEMTEST_SIZE  (96 * 1024)
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -125,6 +138,18 @@ int main(void)
 	pad_init();
 	cd_init();
 
+	/* --- phase 2.4: bring up the Hunk/Zone allocator --- */
+	void *hunk = malloc(HUNK_SIZE);
+	if (!hunk)
+		Sys_Error("no RAM for a %d-byte hunk", HUNK_SIZE);
+
+	void *testblk = malloc(MEMTEST_SIZE);
+	int   mem_fail = testblk ? mem_selftest(testblk, MEMTEST_SIZE) : -1;
+	free(testblk);
+
+	Memory_Init(hunk, HUNK_SIZE);
+	Mem_Report();
+
 	/* --- phase 2.3: read a file off the disc, once, at boot --- */
 	int      cd_size = cd_load("\\HELLO.TXT;1", cd_buf, sizeof(cd_buf));
 	uint32_t cd_sum  = 0;
@@ -178,20 +203,23 @@ int main(void)
 		snprintf(overlay, sizeof(overlay),
 			"q1psx  frame %u\n"
 			"\n"
+			"mem: %d KiB hunk, selftest %s\n"
+			"CD HELLO.TXT: size=%d sum=0x%X\n"
+			"  \"%s\"\n"
+			"\n"
 			"pad1: %s   type=0x%X\n"
 			"btn word: 0x%04X\n"
-			"held:%s\n"
-			"\n"
-			"CD HELLO.TXT: size=%d  sum=0x%X\n"
-			"  \"%s\"",
+			"held:%s",
 			frame,
+			Hunk_TotalSize() / 1024,
+			mem_fail == 0 ? "OK" : "FAIL",
+			cd_size,
+			cd_sum,
+			cd_line,
 			pad.connected ? "connected" : "no device",
 			pad.type,
 			pad.buttons,
-			held_str,
-			cd_size,
-			cd_sum,
-			cd_line);
+			held_str);
 
 		packet_top = FntSort(&fb[back].ot[0], packet_top, 8, 8, overlay);
 

@@ -217,7 +217,59 @@ Answered via a questionnaire.
 
 ---
 
-## §3 — Detailed porting conventions (to be completed)
+## §3 — Memory architecture (Phase 2.4, decided 2026-09-01)
 
-_Memory management (PS1 hunk/zone), cooked asset formats, GTE render pipeline:
-sections to fill in over phases 2-5._
+The aim: **whatever is fastest — target is constant 60 fps NTSC.**
+
+### 3.1 Allocator: faithful Hunk + Zone port, no Cache
+
+`engine/zone.{c,h}` is a near-verbatim port of WinQuake `zone.c`:
+
+- **Hunk** — one contiguous block, allocated stack-style from both ends. Low
+  end = permanent data for the current level; high end = temp / file loading.
+  16-byte aligned. Reclaimed only by resetting a mark
+  (`Hunk_FreeToLowMark` / `Hunk_FreeToHighMark`).
+- **Zone** — 48 KiB (`DYNAMIC_SIZE 0xc000`), carved as the first hunk-low
+  allocation. First-fit free list with coalescing, for small dynamic blocks
+  (`Z_Malloc` / `Z_Free`).
+- **Cache (LRU-evictable)** — **not implemented.** In stock Quake it swaps
+  sounds/models in and out under memory pressure; on the PS1 sound lives in SPU
+  RAM and we keep level data resident, so eviction would only buy disk hitches
+  against the 60 fps target. `Cache_*` call sites (alias-model loader, phase 8)
+  will be shimmed to `Hunk_AllocName`. Revisit only if a real map genuinely
+  cannot fit.
+
+Rationale for a linear Hunk over a general allocator: pointer-bump allocation is
+the fastest possible, zero fragmentation, sequential layout = good access
+patterns, and **no per-frame allocation** at all (everything is allocated at
+level load). This is the performance-optimal choice.
+
+Divergences from `zone.c`: `byte` → `uint8_t`; `Con_Printf` → `printf`;
+`Q_memset`/`Q_strncpy` → libc; `Sys_Error` is `engine/sys.c` (logs to serial,
+parks the CPU); the `-zone` command-line override is dropped.
+
+### 3.2 RAM budget
+
+Retail PS1: 2 MB total − 64 KiB BIOS/kernel = `APP_RAM` ≈ **1.94 MiB**.
+PSn00bSDK's crt0 hands almost all of `APP_RAM` (from `_end` to just below the
+stack, ~1.93 MiB) to the libc `malloc` heap.
+
+`engine/main.c` takes **1536 KiB** via one `malloc()` and passes it to
+`Memory_Init`. The remainder (~340 KiB minus code/stack) stays with libc malloc
+for the stack and psxcd's internal allocations (`CdSearchFile` caches the ISO
+path table + directory records). `HUNK_SIZE` is a `#define`, to be tuned in
+phase 11 once real BSPs load.
+
+### 3.3 Self-test
+
+`engine/memtest.c` runs a boot-time battery against a private 96 KiB block
+(alignment, non-overlap, zero-fill, mark/free-to-mark round-trips on both ends,
+`Hunk_TempAlloc` reuse, `Z_Malloc`/`Z_Free` + `Z_CheckHeap` + coalescing) and
+prints PASS/FAIL to serial. Result is also shown in the on-screen overlay.
+
+---
+
+## §4 — Detailed porting conventions (to be completed)
+
+_Fixed-point layer, cooked asset formats, GTE render pipeline: sections to fill
+in over phases 3-5._

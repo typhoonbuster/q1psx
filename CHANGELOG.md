@@ -73,6 +73,16 @@ commits.
   overlay. `engine/main.c` also now logs boot milestones to serial (`printf`)
   so headless runs can be checked without a screen.
 
+- **2.4** Memory allocator (`engine/zone.{c,h}`): faithful port of WinQuake
+  `zone.c` — double-ended Hunk (16-byte aligned, mark/free-to-mark) + 48 KiB
+  Zone (first-fit + coalescing). Cache (LRU eviction) deliberately omitted;
+  `Cache_*` will be shimmed to `Hunk_Alloc` later. The aim: optimise for
+  speed (target 60 fps NTSC) → a linear Hunk with zero per-frame allocation.
+  `engine/sys.c` adds `Sys_Error` (serial + halt). `engine/main.c` takes a
+  1536 KiB block via `malloc`; `engine/memtest.c` boot self-test passes all
+  20 checks headless, `Mem_Report` shows 1523 KiB free after the zone.
+  Rationale in `docs/porting-notes.md` §3.
+
 ### Next step
 
-- **2.4** Quake-style Hunk/Zone allocator sized for the ~1.9 MB budget.
+- **3.1** Port the base Quake data structures (`edict_t`, `cvar_t`, …).
