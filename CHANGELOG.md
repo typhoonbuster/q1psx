@@ -57,6 +57,13 @@ commits.
   **2.1 validated on screen** (2026-09-01): stable background,
   marker slides with no tearing/flicker, frame counter increments.
 
+- **2.2** Controller input (`engine/pad.{c,h}`): BIOS pad driver on port 1,
+  decoded to a `PadState` — connection flag, device type, active-high button
+  mask, edge-triggered `pressed` set. `main.c` gained a debug overlay
+  (device / type / raw button word / held key names) and the d-pad ←→ now
+  steers the marker. Headless boot clean.
+
 ### Next step
 
-- **2.2** basic controller read shown on screen in debug.
+- **2.2** on-screen check with a real pad, then **2.3** read a test file from
+  the CD.
