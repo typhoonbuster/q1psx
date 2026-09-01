@@ -23,6 +23,7 @@
 			<file name="Q1PSX.EXE"  type="data" source="q1psx.exe" />
 			<file name="HELLO.TXT"  type="data" source="${PROJECT_SOURCE_DIR}/iso/hello.txt" />
 			@PAK0_ENTRY@
+			@COOKED_ENTRIES@
 
 			<dummy sectors="1024"/>
 		</directory_tree>

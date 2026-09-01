@@ -179,8 +179,19 @@ owned game; the player picks game + fidelity from the menu.
     palette). `high` → 128px cap, `ultra` → native.
   - BSP geometry + lightmap cooking deferred to Phase 5.1.
 
+- **4.2** `scripts/cook.sh` builds `qcook` and cooks all 4 fidelities of
+  `start.qtx` into `cooked/id1/…`. `CMakeLists.txt` + `iso/iso.xml` bundle
+  `cooked/id1/high/start.qtx` onto the disc as `START.QTX` (`@COOKED_ENTRIES@`).
+  Shared format headers moved to `formats/` (included by both the tool and the
+  engine).
+- **4.3** `engine/tex.{c,h}`: `qtx_open` uploads the shared 256-entry CLUT to
+  VRAM (512,300); `qtx_upload` DMAs an 8bpp texture to a scratch page (512,0)
+  and returns its `getTPage`/`getClut` ids. `main.c` loads `START.QTX` off the
+  disc and draws one texture (`tech08_1`) as a `POLY_FT4`. Headless boot clean
+  (`qtx_open: 81 textures`, `qtx_upload … tpage=0088 clut=4b20`); on-screen
+  check pending.
+
 ### Next step
 
-- **4.1 cont.** cook every fidelity for every owned game into one `cooked/`
-  tree; then **4.2** put it on a `mkpsxiso` image, **4.3** engine loads a QTX,
-  uploads CLUT + one texture to VRAM, draws it (first visual render).
+- **4.3** confirm the texture on screen (first visual render), then cook the
+  full `cooked/` tree (all maps / all games) and give it a real CD dir layout.

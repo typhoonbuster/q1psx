@@ -16,7 +16,7 @@ project(
 file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS engine/*.c engine/*.s)
 
 psn00bsdk_add_executable(q1psx GPREL ${ENGINE_SOURCES})
-target_include_directories(q1psx PRIVATE engine)
+target_include_directories(q1psx PRIVATE engine formats)
 
 # --- optional Quake game data on the disc ------------------------------------
 # pak0.pak is never committed. If the developer pointed local.env at their copy,
@@ -36,6 +36,16 @@ if(_pak0_path AND EXISTS "${_pak0_path}")
 	set(PAK0_ENTRY "<file name=\"PAK0.PAK\" type=\"data\" source=\"${_pak0_path}\" />")
 else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
+endif()
+
+# Cooked assets (scripts/cook.sh -> cooked/). Phase 4.3: one QTX on the disc as
+# START.QTX; the full cooked/ tree gets a proper dir layout later.
+set(COOKED_ENTRIES "")
+if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/high/start.qtx")
+	message(STATUS "q1psx: bundling cooked/id1/high/start.qtx as START.QTX")
+	set(COOKED_ENTRIES "<file name=\"START.QTX\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/high/start.qtx\" />")
+else()
+	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")
 endif()
 
 # --- CD image ---------------------------------------------------------------

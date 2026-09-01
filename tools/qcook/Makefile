@@ -3,7 +3,7 @@
 #   make run        cook maps/start.bsp from $QUAKE_PAK0 into cooked/
 
 CC     ?= cc
-CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L
+CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Werror -D_POSIX_C_SOURCE=200809L -I../../formats
 BIN     = qcook
 
 # QUAKE_PAK0 comes from ../../local.env if not already set
@@ -11,7 +11,7 @@ ifndef QUAKE_PAK0
 QUAKE_PAK0 := $(shell sed -n 's/^[[:space:]]*QUAKE_PAK0[[:space:]]*=[[:space:]]*//p' ../../local.env 2>/dev/null)
 endif
 
-$(BIN): qcook.c fidelity.h qtx.h
+$(BIN): qcook.c ../../formats/fidelity.h ../../formats/qtx.h
 	$(CC) $(CFLAGS) -o $@ qcook.c
 
 .PHONY: run info clean

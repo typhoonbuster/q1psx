@@ -22,6 +22,7 @@
 #include "cd.h"
 #include "pak.h"
 #include "progs.h"
+#include "tex.h"
 #include "sys.h"
 #include "zone.h"
 #include "qcommon.h"
@@ -184,6 +185,25 @@ int main(void)
 		}
 	}
 
+	/* --- phase 4.3: load a cooked texture pack, show one texture --- */
+	vram_tex_t demo_tex;
+	int demo_tex_ok = 0;
+	{
+		cd_file_t qf;
+		if (cd_find("\\START.QTX;1", &qf)) {
+			int padded = (qf.size + 2047) & ~2047;
+			void *blob = Hunk_AllocName(padded, "qtx");
+			if (cd_read_at(&qf, 0, blob, qf.size) >= 0 && qtx_open(blob, qf.size) > 0) {
+				const char *want[] = { "tech08_1", "wbrick1_5", "city4_6" };
+				for (unsigned i = 0; i < sizeof(want) / sizeof(want[0]); i++)
+					if ((demo_tex_ok = qtx_upload(want[i], &demo_tex)))
+						break;
+			}
+		} else {
+			printf("q1psx: START.QTX not on disc (run scripts/cook.sh)\n");
+		}
+	}
+
 	int      marker_x  = SCREEN_W / 2 - 12;
 	int      marker_dx = 2;
 	uint32_t frame     = 0;
@@ -215,6 +235,18 @@ int main(void)
 		setXY0(marker, marker_x, SCREEN_H / 2 - 12);
 		setWH(marker, 24, 24);
 		setRGB0(marker, 230, 230, 40);
+
+		if (demo_tex_ok) {
+			int dx = SCREEN_W - demo_tex.w - 8;
+			int dy = SCREEN_H - demo_tex.h - 8;
+			POLY_FT4 *q = packet_alloc(2, sizeof(POLY_FT4));
+			setPolyFT4(q);
+			setRGB0(q, 128, 128, 128);           /* neutral: no tint */
+			setXYWH(q, dx, dy, demo_tex.w, demo_tex.h);
+			setUVWH(q, 0, 0, demo_tex.w - 1, demo_tex.h - 1);
+			q->tpage = demo_tex.tpage;
+			q->clut  = demo_tex.clut;
+		}
 
 		describe_buttons(held_str, sizeof(held_str), pad.buttons);
 		snprintf(overlay, sizeof(overlay),
