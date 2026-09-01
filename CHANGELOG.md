@@ -63,7 +63,8 @@ commits.
   (device / type / raw button word / held key names) and the d-pad ←→ now
   steers the marker. Headless boot clean.
 
+  **2.2 validated on screen** (2026-09-01) with a real pad.
+
 ### Next step
 
-- **2.2** on-screen check with a real pad, then **2.3** read a test file from
-  the CD.
+- **2.3** read a test file from the CD (CD-ROM pipeline validated).
