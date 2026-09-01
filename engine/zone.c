@@ -376,10 +376,19 @@ void Memory_Init(void *buf, int size)
 {
 	int zonesize = DYNAMIC_SIZE;
 
-	hunk_base      = buf;
-	hunk_size      = size;
-	hunk_low_used  = 0;
-	hunk_high_used = 0;
+	/*
+	 * Stock Quake trusts malloc() to hand back a well-aligned membase. On the
+	 * PS1 the libc heap only guarantees 8-byte alignment, so nudge the base up
+	 * to 16 and trim the size to keep both ends of the hunk 16-aligned.
+	 */
+	uintptr_t base = ((uintptr_t) buf + 15) & ~(uintptr_t) 15;
+	size -= (int) (base - (uintptr_t) buf);
+	size &= ~15;
+
+	hunk_base       = (byte *) base;
+	hunk_size       = size;
+	hunk_low_used   = 0;
+	hunk_high_used  = 0;
 	hunk_tempactive = 0;
 	hunk_tempmark   = 0;
 

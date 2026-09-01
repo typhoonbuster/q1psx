@@ -83,6 +83,20 @@ commits.
   20 checks headless, `Mem_Report` shows 1523 KiB free after the zone.
   Rationale in `docs/porting-notes.md` §3.
 
+### Phase 3 — Engine foundations
+
+- **3.1a** `engine/qcommon.{c,h}`: ported from WinQuake `common.{c,h}` — `byte`
+  / `qboolean` (stdbool), `link_t` + `ClearLink`/`RemoveLink`/`InsertLink*` +
+  `STRUCT_FROM_LINK`, `sizebuf_t` + `SZ_*` (Hunk-backed), byte-order helpers
+  (`LittleLong` identity / `BigLong` swap on the LE R3000), `Q_atoi`,
+  `COM_Parse`, `va`, `COM_FileBase`/`StripExtension`/`DefaultExtension`.
+  Deferred: `MSG_*` (no networking), the file system (phase 3.3).
+- Self-tests reorganised into `engine/selftest.{c,h}` (was `memtest`), now run
+  against the live allocator and cover both 2.4 and 3.1a. All green headless.
+- `engine/zone.c`: `Memory_Init` now 16-aligns the hunk base (the PS1 libc
+  heap only guarantees 8) — stock Quake trusts malloc for this.
+
 ### Next step
 
-- **3.1** Port the base Quake data structures (`edict_t`, `cvar_t`, …).
+- **3.2** fixed-point 20.12 math layer (needed before `cvar.value` / `vec3_t`),
+  tested on PC. Then 3.1b `cvar`, 3.1c `cmd`, 3.1d `edict_t`.

@@ -22,7 +22,8 @@
 #include "cd.h"
 #include "sys.h"
 #include "zone.h"
-#include "memtest.h"
+#include "qcommon.h"
+#include "selftest.h"
 
 /*
  * Main Quake memory block. Retail PS1 has ~1.94 MB of APP_RAM; PSn00bSDK's
@@ -30,8 +31,7 @@
  * and let Hunk/Zone manage it, leaving the rest for the stack and psxcd's
  * internal allocations. Tunable — revisit in phase 11 with real level data.
  */
-#define HUNK_SIZE     (1536 * 1024)
-#define MEMTEST_SIZE  (96 * 1024)
+#define HUNK_SIZE  (1536 * 1024)
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -142,12 +142,10 @@ int main(void)
 	void *hunk = malloc(HUNK_SIZE);
 	if (!hunk)
 		Sys_Error("no RAM for a %d-byte hunk", HUNK_SIZE);
-
-	void *testblk = malloc(MEMTEST_SIZE);
-	int   mem_fail = testblk ? mem_selftest(testblk, MEMTEST_SIZE) : -1;
-	free(testblk);
-
 	Memory_Init(hunk, HUNK_SIZE);
+
+	/* --- phases 2.4 + 3.1: exercise the ported foundations --- */
+	int st_fail = run_selftests();
 	Mem_Report();
 
 	/* --- phase 2.3: read a file off the disc, once, at boot --- */
@@ -203,7 +201,7 @@ int main(void)
 		snprintf(overlay, sizeof(overlay),
 			"q1psx  frame %u\n"
 			"\n"
-			"mem: %d KiB hunk, selftest %s\n"
+			"mem: %d KiB hunk, selftests %s\n"
 			"CD HELLO.TXT: size=%d sum=0x%X\n"
 			"  \"%s\"\n"
 			"\n"
@@ -212,7 +210,7 @@ int main(void)
 			"held:%s",
 			frame,
 			Hunk_TotalSize() / 1024,
-			mem_fail == 0 ? "OK" : "FAIL",
+			st_fail == 0 ? "OK" : "FAIL",
 			cd_size,
 			cd_sum,
 			cd_line,
