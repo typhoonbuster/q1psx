@@ -375,7 +375,38 @@ The CD layout (`iso.xml` order, `mkpsxiso`) is not yet optimised for streaming
 
 ---
 
-## §6 — Detailed porting conventions (to be completed)
+## §6 — QuakeC progs.dat (Phase 3.4)
+
+`engine/pr_comp.h` (bytecode structs + opcodes) and `engine/progdefs.h`
+(`globalvars_t` / `entvars_t`) are near-verbatim from Quake. The **field order
+and count in `progdefs.h` are frozen** — the compiled `progs.dat` and
+`PROGHEADER_CRC` (5927) depend on them. The only change is the leaf type:
+stock `float` → `vec_t` (20.12). Since both are 4 bytes the byte layout is
+identical and the `.field` offsets baked into `progs.dat` still line up.
+
+`engine/progs.c` `PR_LoadProgs`:
+1. `pak_read_lump("progs.dat")` into a low-hunk buffer (~404 KiB).
+2. `pr_crc` = CRC-16 of the whole file (for a future client/server match).
+3. byte-swap the 15-int header (LE no-op), check `version == 6` and
+   `crc == PROGHEADER_CRC`.
+4. point `pr_functions` / `pr_strings` / `pr_globaldefs` / `pr_fielddefs` /
+   `pr_statements` / `pr_global_struct` / `pr_globals` into the buffer.
+5. `pr_edict_size = entityfields*4 + sizeof(edict_t) - sizeof(entvars_t)`
+   (832 B here — our `edict_t` drops stock's `entity_state_t baseline`, a
+   network snapshot type, to be restored in Phase 8 if needed).
+6. byte-swap all 6 lump tables.
+
+**Deferred to Phase 7 (the interpreter):** `pr_globals` still holds IEEE-float
+bit patterns for `ev_float` / `ev_vector` slots. A conversion pass must walk
+`pr_globaldefs`, and for each `ev_float`/`ev_vector` def rewrite
+`pr_globals[def.ofs]` from `float` to 20.12. Anonymous compiler temporaries
+(not covered by a def) are typically zero at load and get written at runtime by
+ops that will already be fixed-point. The QuakeC ops (`OP_MUL_F`, `OP_DIV_F`,
+comparisons, `OP_*_V`) become `q_mul` / `q_div` / fixed compares.
+
+---
+
+## §7 — Detailed porting conventions (to be completed)
 
 _Cooked asset formats, GTE render pipeline: sections to fill in over phases
 4-5._

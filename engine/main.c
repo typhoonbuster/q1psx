@@ -21,6 +21,7 @@
 #include "pad.h"
 #include "cd.h"
 #include "pak.h"
+#include "progs.h"
 #include "sys.h"
 #include "zone.h"
 #include "qcommon.h"
@@ -171,9 +172,16 @@ int main(void)
 	int pak_ok = pak_open("\\PAK0.PAK;1", &pak0);
 	if (pak_ok) {
 		pak_list(&pak0);
-		int pi = pak_find(&pak0, "progs.dat");
-		printf("q1psx: pak_find(progs.dat) -> index %d, %d bytes\n",
-		       pi, pi >= 0 ? pak0.files[pi].filelen : -1);
+
+		/* --- phase 3.4: load progs.dat off the pak (no execution) --- */
+		PR_LoadProgs(&pak0);
+		const char *probe[] = { "main", "worldspawn", "SUB_Null", "PlayerPreThink" };
+		for (unsigned i = 0; i < sizeof(probe) / sizeof(probe[0]); i++) {
+			int fi = PR_FindFunction(probe[i]);
+			printf("  fn %-16s -> %s (first_statement %d)\n", probe[i],
+			       fi >= 0 ? "found" : "MISSING",
+			       fi >= 0 ? pr_functions[fi].first_statement : 0);
+		}
 	}
 
 	int      marker_x  = SCREEN_W / 2 - 12;

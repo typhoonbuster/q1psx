@@ -144,7 +144,24 @@ commits.
     dirlen 21696, count 339, and lump sizes match a Python cross-check exactly
     (`progs.dat` index 266 = 413116 B).
 
+- **3.1d / 3.4** progs.dat structures + loader:
+  - `engine/pr_comp.h`: verbatim QuakeC bytecode structs + opcode enum
+    (`dprograms_t`, `dstatement_t`, `ddef_t`, `dfunction_t`, `PROG_VERSION 6`).
+  - `engine/progdefs.h`: `globalvars_t` / `entvars_t` from `progdefs.q1`, field
+    order frozen, `float` → `vec_t` (same 4-byte layout). `PROGHEADER_CRC 5927`.
+  - `engine/progs.{c,h}`: `edict_t`, the `pr_*` globals, and `PR_LoadProgs` —
+    streams `progs.dat` off the pak, whole-file CRC, byte-swaps header + all 6
+    lumps, checks `version` / `crc`, computes `pr_edict_size`. No interpreter,
+    no float→fixed of the globals yet (Phase 7).
+  - `engine/crc.{c,h}`: CRC-16/CCITT (XMODEM), verbatim from Quake `crc.c`.
+  - **Validated:** boot output matches a Python parse exactly — 20940
+    statements, 2091 functions, 4287 globaldefs, 218 fielddefs, 11471 globals,
+    195 entityfields; file CRC-16 24778; `main`/`worldspawn`/`SUB_Null`/
+    `PlayerPreThink` resolve.
+
+**Phase 3 complete.**
+
 ### Next step
 
-- **3.4** raw `progs.dat` load (no execution) + `edict_t`/`entvars_t` structs
-  (3.1d). Then Phase 4 — offline asset cooking.
+- **Phase 4** — offline asset pipeline ("cooking"): PC tool converting
+  BSP/textures/lightmaps to a PS1 format.
