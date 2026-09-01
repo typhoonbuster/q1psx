@@ -7,7 +7,8 @@
 #include "mathlib.h"
 #include "render.h"
 
-#define R_MAXVERTS 4096
+#define R_MAXVERTS 12288
+#define R_MAXLINES 2500   /* per-frame line budget (no culling yet) */
 #define NEAR_Z     16     /* skip vertices closer than this along view Z */
 
 static int16_t scr_x[R_MAXVERTS];
@@ -51,9 +52,9 @@ void r_begin_view(const int32_t pos[3], const vec3_t ang)
 	gte_SetTransMatrix(&m);
 }
 
-void r_wireframe(const SVECTOR *verts, int nverts,
-                 const uint16_t *edges, int nedges,
-                 int r, int g, int b)
+int r_wireframe(const SVECTOR *verts, int nverts,
+                const uint16_t *edges, int nedges,
+                int r, int g, int b)
 {
 	if (nverts > R_MAXVERTS)
 		nverts = R_MAXVERTS;
@@ -73,8 +74,9 @@ void r_wireframe(const SVECTOR *verts, int nverts,
 		scr_y[i]  = (int16_t) (xy >> 16);
 	}
 
-	for (int e = 0; e < nedges; e++) {
-		int a = edges[e * 2 + 0];
+	int drawn = 0;
+	for (int e = 0; e < nedges && drawn < R_MAXLINES; e++) {
+		int a  = edges[e * 2 + 0];
 		int b2 = edges[e * 2 + 1];
 		if (a >= nverts || b2 >= nverts || !scr_ok[a] || !scr_ok[b2])
 			continue;
@@ -83,5 +85,7 @@ void r_wireframe(const SVECTOR *verts, int nverts,
 		setLineF2(ln);
 		setRGB0(ln, r, g, b);
 		setXY2(ln, scr_x[a], scr_y[a], scr_x[b2], scr_y[b2]);
+		drawn++;
 	}
+	return drawn;
 }

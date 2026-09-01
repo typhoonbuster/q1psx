@@ -17,6 +17,7 @@
 #include "vid.h"
 #include "loading.h"
 #include "render.h"
+#include "geo.h"
 #include "pad.h"
 #include "cd.h"
 #include "pak.h"
@@ -89,22 +90,42 @@ static void boot_load_progs(void)
 		PR_LoadProgs(&g_pak0);
 }
 
+static void *load_disc_file(const char *iso_name, const char *tag, int *out_size)
+{
+	cd_file_t f;
+	if (!cd_find(iso_name, &f)) {
+		printf("q1psx: %s not on disc (run scripts/cook.sh)\n", iso_name);
+		return NULL;
+	}
+	int   padded = (f.size + 2047) & ~2047;
+	void *blob   = Hunk_AllocName(padded, tag);
+	if (cd_read_at(&f, 0, blob, f.size) < 0)
+		return NULL;
+	*out_size = f.size;
+	return blob;
+}
+
 static void boot_load_textures(void)
 {
-	cd_file_t qf;
-	if (!cd_find("\\START.QTX;1", &qf)) {
-		printf("q1psx: START.QTX not on disc (run scripts/cook.sh)\n");
-		return;
-	}
-	int   padded = (qf.size + 2047) & ~2047;
-	void *blob   = Hunk_AllocName(padded, "qtx");
-	if (cd_read_at(&qf, 0, blob, qf.size) < 0 || qtx_open(blob, qf.size) <= 0)
+	int   size;
+	void *blob = load_disc_file("\\START.QTX;1", "qtx", &size);
+	if (!blob || qtx_open(blob, size) <= 0)
 		return;
 
 	const char *want[] = { "tech08_1", "wbrick1_5", "city4_6" };
 	for (unsigned i = 0; i < sizeof(want) / sizeof(want[0]); i++)
 		if ((g_demo_tex_ok = qtx_upload(want[i], &g_demo_tex)))
 			break;
+}
+
+static geo_t g_geo;
+static int   g_geo_ok;
+
+static void boot_load_geometry(void)
+{
+	int   size;
+	void *blob = load_disc_file("\\START.QGE;1", "geo", &size);
+	g_geo_ok = blob && geo_load(blob, size, &g_geo);
 }
 
 /* ------------------------------------------------------------- demo loop -- */
@@ -143,27 +164,43 @@ static void demo_loop(void)
 	vid_set_bg(8, 8, 16);
 	r_init();
 
-	int32_t  cam[3] = { 64, 0, 0 };
-	int32_t  yaw    = 0;              /* q1psx degrees, 20.12 */
-	uint32_t frame  = 0;
+	int32_t cam[3] = { 64, 0, 0 };
+	if (g_geo_ok) {
+		cam[0] = (g_geo.mins[0] + g_geo.maxs[0]) / 2;
+		cam[1] = (g_geo.mins[1] + g_geo.maxs[1]) / 2;
+		cam[2] = (g_geo.mins[2] + g_geo.maxs[2]) / 2;
+	}
+
+	int32_t  yaw   = 0;              /* q1psx degrees, 20.12 */
+	int32_t  pitch = 0;
+	uint32_t frame = 0;
+	int      lines = 0;
 	PadState pad;
 	char     held[96], overlay[320];
 
 	for (;;) {
 		pad_read(&pad);
 
-		if (pad.buttons & PAD_LEFT)  yaw += Q_FIX(3);
-		if (pad.buttons & PAD_RIGHT) yaw -= Q_FIX(3);
-		vec3_t ang = { 0, yaw, 0 };
+		if (pad.buttons & PAD_LEFT)  yaw   += Q_FIX(3);
+		if (pad.buttons & PAD_RIGHT) yaw   -= Q_FIX(3);
+		if (pad.buttons & PAD_L1)    pitch += Q_FIX(2);
+		if (pad.buttons & PAD_R1)    pitch -= Q_FIX(2);
+		if (pitch >  Q_FIX(89)) pitch =  Q_FIX(89);
+		if (pitch < -Q_FIX(89)) pitch = -Q_FIX(89);
+		vec3_t ang = { pitch, yaw, 0 };
 
 		vec3_t f, r, u;
 		AngleVectors(ang, f, r, u);
-		int step = (pad.buttons & PAD_UP) ? 8 : (pad.buttons & PAD_DOWN) ? -8 : 0;
-		cam[0] += (f[0] * step) >> Q_FIX_SHIFT;
-		cam[1] += (f[1] * step) >> Q_FIX_SHIFT;
+		int step = (pad.buttons & PAD_UP) ? 16 : (pad.buttons & PAD_DOWN) ? -16 : 0;
+		for (int k = 0; k < 3; k++)
+			cam[k] += (f[k] * step) >> Q_FIX_SHIFT;
 
 		r_begin_view(cam, ang);
-		r_wireframe(ROOM_VERTS, 8, ROOM_EDGES, 12, 90, 220, 120);
+		if (g_geo_ok)
+			lines = r_wireframe(g_geo.verts, g_geo.num_verts,
+			                    g_geo.edges, g_geo.num_edges, 90, 200, 120);
+		else
+			lines = r_wireframe(ROOM_VERTS, 8, ROOM_EDGES, 12, 90, 220, 120);
 
 		if (g_demo_tex_ok) {
 			POLY_FT4 *q = vid_alloc(2, sizeof(POLY_FT4));
@@ -179,16 +216,18 @@ static void demo_loop(void)
 		describe_buttons(held, sizeof held, pad.buttons);
 		snprintf(overlay, sizeof overlay,
 			"q1psx  frame %u\n\n"
-			"wireframe room (GTE)\n"
-			"  d-pad: LR turn, UD move\n"
-			"  cam x=%d y=%d yaw=%d\n\n"
+			"%s wireframe (GTE)\n"
+			"  dpad LR turn / UD move, L1R1 pitch\n"
+			"  cam %d %d %d  yaw %d pitch %d\n"
+			"  %d lines\n\n"
 			"mem %d KiB  selftests %s\n"
-			"pad1 %s  btn 0x%04X\n"
 			"held:%s",
 			frame,
-			cam[0], cam[1], yaw >> Q_FIX_SHIFT,
+			g_geo_ok ? "start.bsp" : "test room",
+			cam[0], cam[1], cam[2], yaw >> Q_FIX_SHIFT, pitch >> Q_FIX_SHIFT,
+			lines,
 			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
-			pad.connected ? "connected" : "no device", pad.buttons, held);
+			held);
 		vid_text(0, 8, 8, overlay);
 
 		vid_flip();
@@ -209,12 +248,13 @@ int main(void)
 		Sys_Error("no RAM for a %d-byte hunk", HUNK_SIZE);
 	Memory_Init(hunk, HUNK_SIZE);
 
-	load_begin(5);
+	load_begin(6);
 	load_step("running self-tests");   boot_selftests();
 	load_step("reading disc");         boot_read_hello();
 	load_step("opening pak0.pak");     boot_open_pak();
 	load_step("loading progs.dat");    boot_load_progs();
 	load_step("loading textures");     boot_load_textures();
+	load_step("loading geometry");     boot_load_geometry();
 	load_done();
 
 	demo_loop();

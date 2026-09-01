@@ -22,7 +22,8 @@ void r_begin_view(const int32_t pos[3], const vec3_t ang);
 
 /* Draw an edge list as flat-colour lines. `verts` are world-space SVECTORs,
    `edges` is `2*nedges` vertex indices. Lines with an endpoint behind the near
-   plane are skipped. */
-void r_wireframe(const SVECTOR *verts, int nverts,
-                 const uint16_t *edges, int nedges,
-                 int r, int g, int b);
+   plane are skipped. Returns the number of lines actually emitted (capped —
+   no culling yet, phase 5.4). */
+int r_wireframe(const SVECTOR *verts, int nverts,
+                const uint16_t *edges, int nedges,
+                int r, int g, int b);

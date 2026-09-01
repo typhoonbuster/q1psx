@@ -217,8 +217,24 @@ owned game; the player picks game + fidelity from the menu.
   - `main.c`: hand-made 768×512×256 room, d-pad flies the camera. Headless
     boot clean; on-screen check pending.
 
+  **5.1a validated on screen** — the hand-made room renders in
+  perspective and the camera responds.
+
+- **5.1b** BSP geometry:
+  - `tools/qcook` `geometry` command + `formats/qgeo.h` (QGE1): world model
+    vertices → SVECTOR (int16 Quake units, X fwd/Y left/Z up), unique edges
+    used by model 0's faces. Verified vs a Python parse (7757 verts, 12215 of
+    13710 edges for `start.bsp`).
+  - `scripts/cook.sh` cooks `start.qgeo` (geometry doesn't vary by fidelity
+    yet); `CMakeLists.txt` + `iso.xml` bundle it as `START.QGE`.
+  - `engine/geo.{c,h}`: parse a QGE1 blob in RAM. `main.c`: boot step 6 loads
+    it, `demo_loop` wireframes the real map (camera at the bounds centre, L1/R1
+    pitch), 2500-line budget until culling.
+  - `engine/vid.c`: `vid_alloc` / `vid_text` now guard against overflowing the
+    per-frame primitive buffer (was corrupting RAM → dynarec crash).
+
 ### Next step
 
-- **5.1b** cook BSP geometry (`qcook geometry` → SVECTOR verts + dedup edges),
-  wireframe the real `start.bsp`. Then 5.2 texturing, 5.3 free camera,
-  5.4 PVS/culling.
+- On-screen check of the `start.bsp` wireframe, then **5.2** texture the faces
+  (needs surface cooking: per-face verts + UVs + texinfo), **5.3** free camera,
+  **5.4** PVS / frustum culling.

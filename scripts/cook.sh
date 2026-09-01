@@ -33,6 +33,10 @@ cook_game() {
 		"$QCOOK" textures --pak "$pak" --map maps/start.bsp \
 		         --fidelity "$fid" --out "$out/start.qtx"
 	done
+	# geometry does not vary by fidelity yet (decimation is a later step)
+	mkdir -p "cooked/$game/common"
+	"$QCOOK" geometry --pak "$pak" --map maps/start.bsp \
+	         --out "cooked/$game/common/start.qgeo"
 }
 
 cook_game id1 "$QUAKE_PAK0"

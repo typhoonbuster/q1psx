@@ -1,9 +1,10 @@
 #include <stdint.h>
+#include <string.h>
 #include <psxgpu.h>
 
 #include "vid.h"
 
-#define PRIM_BYTES 16384   /* per-frame primitive scratch */
+#define PRIM_BYTES 65536   /* per-frame primitive scratch (~5k lines) */
 
 typedef struct {
 	DISPENV  disp;
@@ -48,8 +49,14 @@ void vid_set_bg(int r, int g, int b)
 		setRGB0(&fb[i].draw, bg_r, bg_g, bg_b);
 }
 
+static uint8_t prim_overflow_sink[128];  /* absorb allocs once the buffer is full */
+
 void *vid_alloc(int z, int size)
 {
+	uint8_t *end = fb[back].prims + PRIM_BYTES;
+	if (prim_top + size > end)
+		return prim_overflow_sink;        /* drop the primitive, don't corrupt RAM */
+
 	uint8_t *p = prim_top;
 	addPrim(&fb[back].ot[z], p);
 	prim_top += size;
@@ -58,6 +65,10 @@ void *vid_alloc(int z, int size)
 
 void vid_text(int z, int x, int y, const char *s)
 {
+	/* FntSort emits up to ~4 words per glyph; keep well clear of the end */
+	uint8_t *end = fb[back].prims + PRIM_BYTES;
+	if (prim_top + 24 * ((int) strlen(s) + 1) > end)
+		return;
 	prim_top = FntSort(&fb[back].ot[z], prim_top, x, y, s);
 }
 

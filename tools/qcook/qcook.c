@@ -10,6 +10,7 @@
  *   qcook info <file.qtx>
  */
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -18,6 +19,7 @@
 
 #include "fidelity.h"
 #include "qtx.h"
+#include "qgeo.h"
 
 /* ------------------------------------------------------------------- util -- */
 
@@ -40,6 +42,14 @@ static void *xmalloc(size_t n)
 	return p;
 }
 
+static const char *arg_after(int argc, char **argv, const char *key)
+{
+	for (int i = 1; i < argc - 1; i++)
+		if (!strcmp(argv[i], key))
+			return argv[i + 1];
+	return NULL;
+}
+
 static uint8_t *read_file(const char *path, long *out_len)
 {
 	FILE *f = fopen(path, "rb");
@@ -60,6 +70,22 @@ static uint32_t rd_u32(const uint8_t *p) /* little-endian */
 {
 	return (uint32_t) p[0] | ((uint32_t) p[1] << 8) |
 	       ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
+}
+
+static uint16_t rd_u16(const uint8_t *p)
+{
+	return (uint16_t) ((uint16_t) p[0] | ((uint16_t) p[1] << 8));
+}
+
+static int32_t rd_i32(const uint8_t *p) { return (int32_t) rd_u32(p); }
+static int16_t rd_i16(const uint8_t *p) { return (int16_t) rd_u16(p); }
+
+static float rd_f32(const uint8_t *p) /* host is LE IEEE-754 */
+{
+	float f;
+	uint32_t u = rd_u32(p);
+	memcpy(&f, &u, 4);
+	return f;
 }
 
 /* -------------------------------------------------------------------- pak -- */
@@ -280,6 +306,137 @@ static void write_qtx(const char *path, const uint16_t clut[256],
 	printf("qcook: wrote %s — %d textures, %u bytes\n", path, n, cur);
 }
 
+/* --------------------------------------------------------------- geometry -- */
+
+#define LUMP_VERTEXES  3
+#define LUMP_FACES     7
+#define LUMP_EDGES    12
+#define LUMP_SURFEDGES 13
+#define LUMP_MODELS   14
+
+static const uint8_t *bsp_lump(const uint8_t *bsp, uint32_t bsp_len, int idx, uint32_t *len)
+{
+	const uint8_t *l = bsp + 4 + idx * 8;
+	uint32_t ofs = rd_u32(l), l4 = rd_u32(l + 4);
+	if (ofs + l4 > bsp_len)
+		die("bad lump %d", idx);
+	*len = l4;
+	return bsp + ofs;
+}
+
+static int cook_geometry(const uint8_t *bsp, uint32_t bsp_len, const char *out)
+{
+	if (bsp_len < 4 + HEADER_LUMPS * 8 || rd_u32(bsp) != BSPVERSION)
+		die("not a v%d BSP", BSPVERSION);
+
+	uint32_t vlen, elen, selen, mlen, flen;
+	const uint8_t *vlump  = bsp_lump(bsp, bsp_len, LUMP_VERTEXES,  &vlen);
+	const uint8_t *elump  = bsp_lump(bsp, bsp_len, LUMP_EDGES,     &elen);
+	const uint8_t *selump = bsp_lump(bsp, bsp_len, LUMP_SURFEDGES, &selen);
+	const uint8_t *mlump  = bsp_lump(bsp, bsp_len, LUMP_MODELS,    &mlen);
+	const uint8_t *flump  = bsp_lump(bsp, bsp_len, LUMP_FACES,     &flen);
+
+	int nverts    = (int) (vlen / 12);
+	int nedges    = (int) (elen / 4);
+	int nsurfedge = (int) (selen / 4);
+	int nfaces    = (int) (flen / 20);
+	if (mlen < 64)
+		die("no worldmodel");
+
+	/* SVECTOR verts + bounds */
+	int16_t *verts = xmalloc((size_t) nverts * 8);
+	int16_t mins[3] = { 32767, 32767, 32767 }, maxs[3] = { -32768, -32768, -32768 };
+	for (int i = 0; i < nverts; i++) {
+		for (int k = 0; k < 3; k++) {
+			long v = lround(rd_f32(vlump + i * 12 + k * 4));
+			if (v < -32768) v = -32768;
+			if (v >  32767) v =  32767;
+			verts[i * 4 + k] = (int16_t) v;
+			if (v < mins[k]) mins[k] = (int16_t) v;
+			if (v > maxs[k]) maxs[k] = (int16_t) v;
+		}
+		verts[i * 4 + 3] = 0;
+	}
+
+	/* mark the edges used by worldmodel (model 0) faces */
+	int firstface = rd_i32(mlump + 56);
+	int numfaces  = rd_i32(mlump + 60);
+	uint8_t *used = xmalloc((size_t) (nedges > 0 ? nedges : 1));
+	memset(used, 0, (size_t) (nedges > 0 ? nedges : 1));
+
+	for (int f = firstface; f < firstface + numfaces && f < nfaces; f++) {
+		const uint8_t *face = flump + (long) f * 20;
+		int fe = rd_i32(face + 4);
+		int ne = rd_i16(face + 8);
+		for (int s = fe; s < fe + ne && s < nsurfedge; s++) {
+			int se  = rd_i32(selump + (long) s * 4);
+			int idx = se < 0 ? -se : se;
+			if (idx > 0 && idx < nedges)
+				used[idx] = 1;
+		}
+	}
+
+	int nout = 0;
+	for (int i = 0; i < nedges; i++)
+		if (used[i])
+			nout++;
+
+	uint16_t *edges = xmalloc((size_t) nout * 4);
+	int w = 0;
+	for (int i = 0; i < nedges; i++) {
+		if (!used[i])
+			continue;
+		edges[w * 2 + 0] = rd_u16(elump + i * 4 + 0);
+		edges[w * 2 + 1] = rd_u16(elump + i * 4 + 2);
+		w++;
+	}
+
+	FILE *fp = fopen(out, "wb");
+	if (!fp)
+		die("cannot write %s", out);
+
+	qgeo_header h;
+	memset(&h, 0, sizeof h);
+	memcpy(h.magic, QGEO_MAGIC, 4);
+	h.num_verts = (uint32_t) nverts;
+	h.num_edges = (uint32_t) nout;
+	memcpy(h.mins, mins, sizeof mins);
+	memcpy(h.maxs, maxs, sizeof maxs);
+
+	fwrite(&h, sizeof h, 1, fp);
+	fwrite(verts, 8, (size_t) nverts, fp);
+	fwrite(edges, 4, (size_t) nout, fp);
+	fclose(fp);
+
+	printf("qcook: %s — %d verts, %d edges (of %d), bounds [%d %d %d]..[%d %d %d]\n",
+	       out, nverts, nout, nedges,
+	       mins[0], mins[1], mins[2], maxs[0], maxs[1], maxs[2]);
+
+	free(verts);
+	free(used);
+	free(edges);
+	return 0;
+}
+
+static int cmd_geometry(int argc, char **argv)
+{
+	const char *pak_path = arg_after(argc, argv, "--pak");
+	const char *map      = arg_after(argc, argv, "--map");
+	const char *out      = arg_after(argc, argv, "--out");
+	if (!pak_path || !map || !out)
+		die("usage: qcook geometry --pak <pak> --map <name> --out <file.qgeo>");
+
+	pak_t pak;
+	pak_load(&pak, pak_path);
+
+	uint32_t bsp_len;
+	const uint8_t *bsp = pak_lump(&pak, map, &bsp_len);
+	if (!bsp)
+		die("%s not found in %s", map, pak_path);
+
+	return cook_geometry(bsp, bsp_len, out);
+}
+
 /* ------------------------------------------------------------------- info -- */
 
 static int cmd_info(const char *path)
@@ -315,14 +472,6 @@ static int cmd_info(const char *path)
 }
 
 /* ------------------------------------------------------------------- main -- */
-
-static const char *arg_after(int argc, char **argv, const char *key)
-{
-	for (int i = 1; i < argc - 1; i++)
-		if (!strcmp(argv[i], key))
-			return argv[i + 1];
-	return NULL;
-}
 
 static int cmd_textures(int argc, char **argv)
 {
@@ -373,12 +522,15 @@ int main(int argc, char **argv)
 {
 	if (argc >= 2 && !strcmp(argv[1], "textures"))
 		return cmd_textures(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "geometry"))
+		return cmd_geometry(argc, argv);
 	if (argc == 3 && !strcmp(argv[1], "info"))
 		return cmd_info(argv[2]);
 
 	fprintf(stderr,
 	        "usage:\n"
 	        "  qcook textures --pak <pak> --map <name> --out <file.qtx> [--fidelity low|medium|high|ultra]\n"
+	        "  qcook geometry --pak <pak> --map <name> --out <file.qgeo>\n"
 	        "  qcook info <file.qtx>\n");
 	return 2;
 }
