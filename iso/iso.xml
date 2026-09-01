@@ -21,6 +21,7 @@
 		<directory_tree>
 			<file name="SYSTEM.CNF" type="data" source="${PROJECT_SOURCE_DIR}/iso/system.cnf" />
 			<file name="Q1PSX.EXE"  type="data" source="q1psx.exe" />
+			<file name="HELLO.TXT"  type="data" source="${PROJECT_SOURCE_DIR}/iso/hello.txt" />
 
 			<dummy sectors="1024"/>
 		</directory_tree>

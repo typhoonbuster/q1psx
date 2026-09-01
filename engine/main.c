@@ -3,10 +3,11 @@
  *
  * Phase 2.1: minimal boot with double buffering.
  * Phase 2.2: read controller port 1 and show its state on screen.
+ * Phase 2.3: load a test file off the CD and show it worked.
  *
  * Two framebuffers stacked in VRAM, swapped during vblank. A marker slides
- * across a solid background (steerable with the d-pad once a pad is plugged
- * in), and a debug overlay prints the raw button word plus the pressed keys.
+ * across a solid background (steerable with the d-pad), and a debug overlay
+ * prints the pad state plus the result of reading HELLO.TXT from the disc.
  * No Quake engine code yet.
  */
 
@@ -17,6 +18,7 @@
 #include <psxpad.h>
 
 #include "pad.h"
+#include "cd.h"
 
 #define SCREEN_W 320
 #define SCREEN_H 240
@@ -34,6 +36,9 @@ typedef struct {
 static Framebuffer fb[2];
 static int         back;
 static uint8_t    *packet_top;
+
+/* one CD sector, word-aligned for CdRead() */
+static uint32_t cd_buf[512];
 
 static void video_init(void)
 {
@@ -82,7 +87,6 @@ static void *packet_alloc(int bucket, int size)
 	return p;
 }
 
-/* Append " NAME" to buf for each held button, for the debug overlay. */
 static void describe_buttons(char *buf, int cap, uint16_t held)
 {
 	static const struct { uint16_t mask; const char *name; } BTN[] = {
@@ -106,10 +110,37 @@ static void describe_buttons(char *buf, int cap, uint16_t held)
 		snprintf(buf, cap, " (none)");
 }
 
+/* Copy the first line of a text blob into dst, replacing non-printables. */
+static void first_line(char *dst, int cap, const char *src, int src_len)
+{
+	int n = 0;
+	for (; n < src_len && n < cap - 1 && src[n] != '\n' && src[n] != '\r'; n++)
+		dst[n] = (src[n] >= 32 && src[n] < 127) ? src[n] : '.';
+	dst[n] = 0;
+}
+
 int main(void)
 {
 	video_init();
 	pad_init();
+	cd_init();
+
+	/* --- phase 2.3: read a file off the disc, once, at boot --- */
+	int      cd_size = cd_load("\\HELLO.TXT;1", cd_buf, sizeof(cd_buf));
+	uint32_t cd_sum  = 0;
+	char     cd_line[40];
+	if (cd_size > 0) {
+		const uint8_t *bytes = (const uint8_t *) cd_buf;
+		for (int i = 0; i < cd_size; i++)
+			cd_sum += bytes[i];
+		first_line(cd_line, sizeof(cd_line), (const char *) cd_buf, cd_size);
+	} else {
+		snprintf(cd_line, sizeof(cd_line), "<read failed>");
+	}
+
+	/* also log to serial so headless boots can be checked without a screen */
+	printf("q1psx: cd_load HELLO.TXT -> size=%d sum=0x%X line=\"%s\"\n",
+	       cd_size, cd_sum, cd_line);
 
 	int      marker_x  = SCREEN_W / 2 - 12;
 	int      marker_dx = 2;
@@ -117,12 +148,11 @@ int main(void)
 
 	PadState pad;
 	char     held_str[96];
-	char     overlay[256];
+	char     overlay[320];
 
 	for (;;) {
 		pad_read(&pad);
 
-		/* d-pad steers the marker; otherwise it bounces on its own */
 		if (pad.buttons & PAD_LEFT)
 			marker_x -= 3;
 		else if (pad.buttons & PAD_RIGHT)
@@ -150,12 +180,18 @@ int main(void)
 			"\n"
 			"pad1: %s   type=0x%X\n"
 			"btn word: 0x%04X\n"
-			"held:%s",
+			"held:%s\n"
+			"\n"
+			"CD HELLO.TXT: size=%d  sum=0x%X\n"
+			"  \"%s\"",
 			frame,
 			pad.connected ? "connected" : "no device",
 			pad.type,
 			pad.buttons,
-			held_str);
+			held_str,
+			cd_size,
+			cd_sum,
+			cd_line);
 
 		packet_top = FntSort(&fb[back].ot[0], packet_top, 8, 8, overlay);
 

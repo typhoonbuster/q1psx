@@ -65,6 +65,14 @@ commits.
 
   **2.2 validated on screen** (2026-09-01) with a real pad.
 
+- **2.3** CD-ROM read (`engine/cd.{c,h}`): `CdInit` → `CdSearchFile` →
+  `CdControl(CdlSetloc)` → `CdRead`/`CdReadSync`. `iso/hello.txt` (142 B) added to
+  the disc image; the engine loads it at boot and prints the result to serial.
+  **Validated:** headless boot log shows `size=142 sum=0x2E47`, matching the
+  host-side byte checksum — full, correct read. Also shown in the on-screen
+  overlay. `engine/main.c` also now logs boot milestones to serial (`printf`)
+  so headless runs can be checked without a screen.
+
 ### Next step
 
-- **2.3** read a test file from the CD (CD-ROM pipeline validated).
+- **2.4** Quake-style Hunk/Zone allocator sized for the ~1.9 MB budget.
