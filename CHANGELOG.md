@@ -44,8 +44,16 @@ commits.
   ./build` → `build/q1psx.{bin,cue,exe}`. `q1psx.exe` recognized as a valid
   PS-EXE. Procedure in `README.md`.
 
+### Phase 2 — PS1 application skeleton
+
+- **2.1** Double buffering (`engine/main.c`): two framebuffers stacked in VRAM,
+  swapped on `DrawSync(0)` + `VSync(0)`; solid background via `draw.isbg`; a
+  sliding marker + frame counter make tearing/flicker visible in motion.
+  `scripts/run-emu.sh` launches an image in PCSX-Redux. Headless boot log is
+  clean (`psxgpu: setup done`, no CPU exception); on-screen no-tearing check is
+  manual — no working headless screenshot path on this setup yet (PCSX-Redux
+  `-no-ui` has no GPU backend, GUI + `-webserver` crashes). See `TESTING.md`.
+
 ### Next step
 
-- **2.1** Double buffering + anti-tearing validation (solid background + boot is
-  already in place). Also build a non-intrusive headless PCSX-Redux harness for
-  validation screenshots.
+- **2.1** confirm on screen (no tearing/flicker), then **2.2** controller read.

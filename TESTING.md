@@ -13,6 +13,22 @@ test is additionally required before checking it off.
 
 ⚠️ Do not use ePSXe or MAME-based cores (inaccurate — PSn00bSDK docs).
 
+### Running an image
+
+`scripts/run-emu.sh [image.bin]` builds if needed and launches PCSX-Redux
+(OpenBIOS, no PS1 BIOS required).
+
+**No reliable headless screenshot path yet.** PCSX-Redux `-no-ui` runs the CPU
+but has no GPU backend, so its web API (`/api/v1/gpu/vram/raw`) returns empty
+VRAM; the GUI + `-webserver` combination crashes on this machine. Until that is
+solved, two checks are used:
+
+1. **Automated:** boot the image headless (`pcsx-redux -no-ui -run -loadiso …`)
+   and confirm a clean kernel log — `psxgpu: setup done` reached, no CPU
+   exception. Proves the program loads and runs `main()`.
+2. **Manual:** run `scripts/run-emu.sh` and look at the output (needed for
+   anything about motion, tearing, flicker, or "does it look right").
+
 ## Per-step validation matrix
 
 | Step | Validation criterion | Emulator | Real hardware |
