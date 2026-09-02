@@ -37,3 +37,12 @@ void vid_set_bg(int r, int g, int b);
 
 /* 1 if a vid_alloc since the last flip hit the per-frame buffer limit. */
 int vid_prim_overflowed(void);
+
+/* Rough frame timing, updated each vid_flip():
+   - vid_frame_vbl():  vblanks the last frame took (1 == 60 fps, 2 == 30, ...).
+   - vid_gpu_busy():   1 if the GPU was still drawing when the CPU came back
+                       (i.e. we are GPU-bound).
+   - vid_prim_used():  bytes of the per-frame primitive buffer used last frame. */
+int vid_frame_vbl(void);
+int vid_gpu_busy(void);
+int vid_prim_used(void);

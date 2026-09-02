@@ -219,7 +219,7 @@ static const uint16_t ROOM_EDGES[24] = {
 
 static void demo_loop(void)
 {
-	vid_set_bg(8, 8, 16);
+	vid_set_bg(22, 26, 38);   /* flat "sky" seen through skybox faces */
 	r_init();
 
 	pmove_t player;
@@ -247,10 +247,10 @@ static void demo_loop(void)
 	int have_surf  = g_surf_ok && g_qtx_ok;
 	int view = have_world ? 0 : have_surf ? 1 : 2;
 
-	uint32_t frame = 0;
-	int      drawn = 0;
+	int      drawn   = 0;
+	int      vbl_avg = 1 << 4;   /* 4.4 fixed, smoothed vblanks/frame */
 	PadState pad;
-	char     held[96], overlay[320];
+	char     held[96], overlay[352];
 
 	for (;;) {
 		pad_read(&pad);
@@ -284,17 +284,24 @@ static void demo_loop(void)
 			mode  = "test room";
 		}
 
+		int vbl = vid_frame_vbl();
+		vbl_avg = (vbl_avg * 7 + (vbl << 4)) >> 3;   /* 4.4 fixed, ~1s smoothing */
+
 		describe_buttons(held, sizeof held, pad.buttons);
 		snprintf(overlay, sizeof overlay,
-			"q1psx  frame %u   %s   %d prims%s\n\n"
+			"q1psx  %s   %d faces  %d prim B%s\n"
+			"  %d.%d vbl/frame  ~%d fps  %s\n\n"
 			"  dpad LR turn / UD move   SQ CI strafe\n"
 			"  L1 R1 look   CR jump   TR walk\n"
 			"  START %s   L2+R2 home   SEL view\n"
 			"  pos %d %d %d  vel %d  %s\n\n"
-			"mem %d KiB   selftests %s\n"
+			"mem %d KiB   sel %s\n"
 			"held:%s",
-			frame, mode, drawn,
-			vid_prim_overflowed() ? " OVERFLOW" : "",
+			mode, drawn, vid_prim_used(),
+			vid_prim_overflowed() ? " OVF" : "",
+			vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
+			vbl ? 60 / vbl : 60,
+			vid_gpu_busy() ? "GPU-bound" : "cpu/ok",
 			player.noclip ? "noclip" : "clip  ",
 			player.pos[0], player.pos[1], player.pos[2],
 			(int) q_sqrt_big(((int64_t) player.vel[0] * player.vel[0]
@@ -305,7 +312,6 @@ static void demo_loop(void)
 		vid_text(0, 8, 8, overlay);
 
 		vid_flip();
-		frame++;
 	}
 }
 

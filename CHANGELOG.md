@@ -363,7 +363,28 @@ owned game; the player picks game + fidelity from the menu.
   (544, 288, 32) yaw 90; host sim confirms it is open space and the player
   settles on the floor at z≈29. L2+R2 now also restores the spawn facing.
 
-### Next step
+### Performance & clean-rendering pass (priority — before any more features)
 
-- Phase-5 deferred work (perf pass: batch faces by texture; near-plane
-  clipping), then the full `cooked/` tree, then **Phase 7** (QuakeC VM).
+The goal: **map + textures only** (no lighting, no models) at a
+constant 60 fps NTSC, no flicker, nothing vanishing.
+
+- **Instrumentation.** `engine/vid.c` installs a `VSyncCallback` counter;
+  `vid_flip` records `frame_vbl` (vblanks the last frame took — 1 = 60 fps,
+  2 = 30, …), whether the GPU was still busy on return (`vid_gpu_busy` →
+  GPU-bound), and prim-buffer bytes used. The overlay shows smoothed
+  vbl/frame, an fps estimate, the bound, face count and prim bytes.
+- **Near-plane clipping.** `draw_face` no longer drops a whole face when a
+  vertex is behind the camera — it Sutherland-Hodgman-clips the polygon
+  against `view_z == NEAR_CLIP` (20), projecting the new edge-crossing
+  vertices (world-space lerp + `rtps`, UVs lerped too). `r_begin_view`
+  stashes the forward matrix row for the view-space Z test.
+- **Fewer primitives.** Faces triangulate as a fan of `POLY_FT4` quads (+ one
+  odd `POLY_FT3`) instead of all `POLY_FT3` — roughly halves the prim/DMA
+  count for the quad-heavy world.
+- **Sky.** `QTX_F_SKY` faces are skipped (a 64 px tile stretched over a
+  skybox face thrashes the texture cache and looks wrong); the flat
+  background colour (now a dim blue-grey) shows through as sky.
+
+Next, guided by the on-device numbers: cut overdraw / tpage churn, maybe a
+lower internal resolution, then the full `cooked/` tree and **Phase 7**
+(QuakeC VM).

@@ -8,20 +8,27 @@
 #include "mathlib.h"
 #include "surf.h"
 #include "tex.h"
+#include "qtx.h"
 #include "bsp.h"
 #include "render.h"
 
 #define R_MAXVERTS 12288
 #define R_MAXLINES 2500   /* per-frame line budget (no culling yet)          */
 #define R_MAXFACES 600    /* per-frame face budget for the un-culled path    */
-#define R_MAXWORLD 800    /* per-frame face budget for the PVS-culled path   */
+#define R_MAXWORLD 900    /* per-frame face budget for the PVS-culled path   */
 #define R_MAXFACEIDX 8192 /* > any map's world-face count (MAX_MAP_FACES-ish) */
 #define R_FAN_MAX  22     /* largest cooked face polygon */
 #define NEAR_Z     16     /* skip vertices closer than this along view Z */
+#define NEAR_CLIP  20     /* view-space plane the world polygons are clipped to */
+#define CLIPBUF    (R_FAN_MAX + 6)
 
 static int16_t scr_x[R_MAXVERTS];
 static int16_t scr_y[R_MAXVERTS];
 static uint8_t scr_ok[R_MAXVERTS];
+
+/* view matrix stashed by r_begin_view, for the near-plane clip's view-space Z */
+static int32_t vm_row2[3];   /* forward basis, 1.3.12 */
+static int32_t vm_t2;        /* forward translation, world units */
 
 void r_init(void)
 {
@@ -58,6 +65,20 @@ void r_begin_view(const int32_t pos[3], const vec3_t ang)
 
 	gte_SetRotMatrix(&m);
 	gte_SetTransMatrix(&m);
+
+	vm_row2[0] = m.m[2][0];
+	vm_row2[1] = m.m[2][1];
+	vm_row2[2] = m.m[2][2];
+	vm_t2      = m.t[2];
+}
+
+/* view-space Z (distance along the forward axis) of a world-space vertex */
+static int32_t view_z(const SVECTOR *v)
+{
+	int64_t d = (int64_t) vm_row2[0] * v->vx
+	          + (int64_t) vm_row2[1] * v->vy
+	          + (int64_t) vm_row2[2] * v->vz;
+	return (int32_t) (d >> Q_FIX_SHIFT) + vm_t2;
 }
 
 int r_wireframe(const SVECTOR *verts, int nverts,
@@ -118,8 +139,29 @@ static void project(const SVECTOR *verts, int i)
 	sv_state[i] = (sz > NEAR_Z) ? 1 : 2;
 }
 
-/* Project (cached), back-face cull on screen winding, fan-triangulate one face
-   into POLY_FT3s preceded by its DR_TWIN. Returns 1 if it emitted, else 0. */
+/* screen-space polygon after near-plane clipping */
+static int16_t cx[CLIPBUF], cy[CLIPBUF];
+static uint8_t cu[CLIPBUF], cv[CLIPBUF];
+static int     cn_np;
+
+static void emit_screen_vert(const SVECTOR *w, int u, int v)
+{
+	if (cn_np >= CLIPBUF)
+		return;
+	gte_ldv0(w);
+	gte_rtps();
+	uint32_t xy;
+	gte_stsxy(&xy);
+	cx[cn_np] = (int16_t) (xy & 0xffff);
+	cy[cn_np] = (int16_t) (xy >> 16);
+	cu[cn_np] = (uint8_t) u;
+	cv[cn_np] = (uint8_t) v;
+	cn_np++;
+}
+
+/* Near-plane-clip a face to a screen polygon, back-face cull, triangulate as a
+   fan of POLY_FT4 quads (+ an odd POLY_FT3) preceded by its DR_TWIN.
+   Returns 1 if it emitted, else 0. */
 static int draw_face(const surf_t *s, int f)
 {
 	const qsrf_face     *face = &s->faces[f];
@@ -128,19 +170,72 @@ static int draw_face(const surf_t *s, int f)
 	if (n < 3 || n > R_FAN_MAX)
 		return 0;
 
+	int32_t vz[R_FAN_MAX];
+	int     nfront = 0;
 	for (int k = 0; k < n; k++) {
-		int vi = fv[k].vert;
-		if (vi >= sv_nv)
+		if (fv[k].vert >= sv_nv)
 			return 0;
-		if (!sv_state[vi])
-			project(s->verts, vi);
-		if (sv_state[vi] == 2)
-			return 0;
+		vz[k] = view_z(&s->verts[fv[k].vert]);
+		if (vz[k] >= NEAR_CLIP)
+			nfront++;
+	}
+	if (nfront == 0)
+		return 0;
+
+	cn_np = 0;
+	if (nfront == n) {
+		for (int k = 0; k < n; k++) {
+			int vi = fv[k].vert;
+			if (!sv_state[vi])
+				project(s->verts, vi);
+			cx[k] = sv_x[vi];
+			cy[k] = sv_y[vi];
+			cu[k] = fv[k].u;
+			cv[k] = fv[k].v;
+		}
+		cn_np = n;
+	} else {
+		/* Sutherland-Hodgman against the plane view_z == NEAR_CLIP */
+		for (int k = 0; k < n; k++) {
+			int a = k, b = (k + 1) % n;
+			int af = vz[a] >= NEAR_CLIP, bf = vz[b] >= NEAR_CLIP;
+			const SVECTOR *va = &s->verts[fv[a].vert];
+			const SVECTOR *vb = &s->verts[fv[b].vert];
+			if (af) {
+				int vi = fv[a].vert;
+				if (!sv_state[vi])
+					project(s->verts, vi);
+				if (cn_np < CLIPBUF) {
+					cx[cn_np] = sv_x[vi]; cy[cn_np] = sv_y[vi];
+					cu[cn_np] = fv[a].u;  cv[cn_np] = fv[a].v;
+					cn_np++;
+				}
+			}
+			if (af != bf) {
+				int32_t denom = vz[b] - vz[a];
+				if (!denom)
+					continue;
+				int32_t t = (int32_t) (((int64_t) (NEAR_CLIP - vz[a]) << Q_FIX_SHIFT) / denom);
+				if (t < 0) t = 0;
+				if (t > Q_FIX_ONE) t = Q_FIX_ONE;
+				SVECTOR ip = {
+					(int16_t) (va->vx + (((vb->vx - va->vx) * t) >> Q_FIX_SHIFT)),
+					(int16_t) (va->vy + (((vb->vy - va->vy) * t) >> Q_FIX_SHIFT)),
+					(int16_t) (va->vz + (((vb->vz - va->vz) * t) >> Q_FIX_SHIFT)),
+					0,
+				};
+				int iu = fv[a].u + (((fv[b].u - fv[a].u) * t) >> Q_FIX_SHIFT);
+				int iv = fv[a].v + (((fv[b].v - fv[a].v) * t) >> Q_FIX_SHIFT);
+				emit_screen_vert(&ip, iu, iv);
+			}
+		}
 	}
 
-	int i0 = fv[0].vert, i1 = fv[1].vert, i2 = fv[2].vert;
-	int cross = (sv_x[i1] - sv_x[i0]) * (sv_y[i2] - sv_y[i0])
-	          - (sv_y[i1] - sv_y[i0]) * (sv_x[i2] - sv_x[i0]);
+	if (cn_np < 3)
+		return 0;
+
+	int cross = (cx[1] - cx[0]) * (cy[2] - cy[0])
+	          - (cy[1] - cy[0]) * (cx[2] - cx[0]);
 	if (cross >= 0)
 		return 0;
 
@@ -148,20 +243,37 @@ static int draw_face(const surf_t *s, int f)
 	if (!qtx_slot(face->tex, &slot))
 		return 0;
 
-	/* fan: emit tris reversed, then the texture window, so on the OT the
-	   window runs immediately before this face's triangles */
-	int ntri = n - 2;
-	for (int k = ntri; k >= 1; k--) {
-		int a = fv[0].vert, b = fv[k].vert, c = fv[k + 1].vert;
-		POLY_FT3 *t = vid_alloc_raw(sizeof(POLY_FT3));
-		setPolyFT3(t);
-		setRGB0(t, 128, 128, 128);
-		setXY3(t, sv_x[a], sv_y[a], sv_x[b], sv_y[b], sv_x[c], sv_y[c]);
-		setUV3(t, fv[0].u, fv[0].v, fv[k].u, fv[k].v, fv[k + 1].u, fv[k + 1].v);
-		t->tpage = slot.tpage;
-		t->clut  = slot.clut;
-		vid_link(4, t);
+	/* Sky: don't texture it (a 64px tile stretched over a skybox face is both
+	   slow — texture-cache thrash — and ugly). The dark background shows
+	   through as flat sky; a proper sky comes later. */
+	if (slot.flags & QTX_F_SKY)
+		return 0;
+
+	/* fan-strip: each pair of fan triangles (0,k,k+1) + (0,k+1,k+2) is one
+	   convex quad (0,k,k+1,k+2), fed to POLY_FT4 as (k,0,k+1,k+2) so the GPU's
+	   (0,1,2)+(1,2,3) split covers it. Leftover odd triangle -> POLY_FT3. */
+	for (int k = 1; k + 1 < cn_np; k += 2) {
+		if (k + 2 < cn_np) {
+			POLY_FT4 *t = vid_alloc_raw(sizeof(POLY_FT4));
+			setPolyFT4(t);
+			setRGB0(t, 128, 128, 128);
+			setXY4(t, cx[k], cy[k], cx[0], cy[0], cx[k + 1], cy[k + 1], cx[k + 2], cy[k + 2]);
+			setUV4(t, cu[k], cv[k], cu[0], cv[0], cu[k + 1], cv[k + 1], cu[k + 2], cv[k + 2]);
+			t->tpage = slot.tpage;
+			t->clut  = slot.clut;
+			vid_link(4, t);
+		} else {
+			POLY_FT3 *t = vid_alloc_raw(sizeof(POLY_FT3));
+			setPolyFT3(t);
+			setRGB0(t, 128, 128, 128);
+			setXY3(t, cx[0], cy[0], cx[k], cy[k], cx[k + 1], cy[k + 1]);
+			setUV3(t, cu[0], cv[0], cu[k], cv[k], cu[k + 1], cv[k + 1]);
+			t->tpage = slot.tpage;
+			t->clut  = slot.clut;
+			vid_link(4, t);
+		}
 	}
+
 	DR_TWIN *tw = vid_alloc_raw(sizeof(DR_TWIN));
 	setTexWindow(tw, &slot.twin);
 	vid_link(4, tw);

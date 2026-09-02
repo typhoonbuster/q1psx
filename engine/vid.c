@@ -18,6 +18,15 @@ static int          back;
 static uint8_t     *prim_top;
 static uint8_t      bg_r = 40, bg_g = 20, bg_b = 80;
 
+/* --- frame timing ------------------------------------------------------- */
+static volatile uint32_t vbl_count;      /* incremented every vblank */
+static uint32_t          last_flip_vbl;
+static uint8_t           frame_vbl = 1;  /* vblanks the last frame took (1 == 60 Hz) */
+static uint8_t           gpu_was_busy;   /* GPU still drawing when we came back */
+static uint32_t          prim_used_last;
+
+static void vbl_tick(void) { vbl_count++; }
+
 void vid_init(void)
 {
 	ResetGraph(0);
@@ -35,6 +44,8 @@ void vid_init(void)
 	back     = 0;
 	prim_top = fb[0].prims;
 	ClearOTagR(fb[0].ot, VID_OT_LEN);
+
+	VSyncCallback(vbl_tick);
 
 	FntLoad(960, 0);
 	SetDispMask(1);
@@ -93,9 +104,17 @@ int vid_prim_overflowed(void)
 
 void vid_flip(void)
 {
+	gpu_was_busy   = DrawSync(1) != 0;   /* was the GPU still drawing last frame? */
+	prim_used_last = (uint32_t) (prim_top - fb[back].prims);
+
 	DrawSync(0);
 	VSync(0);
 	prim_overflowed = 0;
+
+	uint32_t now = vbl_count;
+	uint32_t d   = now - last_flip_vbl;
+	frame_vbl    = d > 255 ? 255 : (d < 1 ? 1 : (uint8_t) d);
+	last_flip_vbl = now;
 
 	vid_buffer_t *drawn = &fb[back];
 	vid_buffer_t *shown = &fb[back ^ 1];
@@ -107,3 +126,7 @@ void vid_flip(void)
 	prim_top = fb[back].prims;
 	ClearOTagR(fb[back].ot, VID_OT_LEN);
 }
+
+int vid_frame_vbl(void)  { return frame_vbl; }
+int vid_gpu_busy(void)   { return gpu_was_busy; }
+int vid_prim_used(void)  { return (int) prim_used_last; }
