@@ -643,3 +643,41 @@ The debug fly-cam sweeps hull 1 for its whole per-frame delta (a swept test,
 so fast moves can't tunnel). `startsolid`/`allsolid` → the move is allowed raw
 (so you can fly out of solid); otherwise stop at `endpos`. No wall-slide yet —
 that is `SV_FlyMove` in 6.3. **START** toggles clip; **L2+R2** snap to spawn.
+
+### 9.3 Player movement (6.2 / 6.3)
+
+`engine/pmove.{c,h}` — a 60 Hz fixed-point port of Quake's player physics
+(`sv_user.c` friction/accel, `sv_phys.c` `SV_FlyMove`/`ClipVelocity`,
+`client.qc` jump). No entities/QuakeC yet; it drives the debug camera.
+
+**Number representation.** Velocities are plain `int32` **units per second**
+(range ±2000, no fixed-point needed). Positions are `int32` world units — the
+trace only speaks integers — with a per-axis `pos_acc` carry so displacements
+under 1 u/frame still accumulate. Gravity has its own `grav_acc` carry. Plane
+normals are the cooked ×4096 (`q12`); a `vel · n` dot is `int64`, `>>12` back
+to units/s. `host_frametime` is a constant `1/PM_HZ`, folded into the
+`* / PM_HZ` in each term.
+
+**Per tick** (`pmove_step`): `categorize_position` (2 u down-trace → onground,
+kill downward vel) → build wishdir/wishspeed from yaw (horizontal only —
+pitch is aim, not motion) → jump → ground friction → accelerate (ground:
+cap = wishspeed; air: cap = 30, rate = wishspeed — the `SV_AirAccelerate`
+asymmetry that permits air-strafing) → gravity → `slide_move`.
+
+**`slide_move`** = `SV_FlyMove`: for up to 4 bumps, `bsp_hull_trace` the
+remaining displacement, advance to `endpos`, and on a hit clip the velocity —
+trying each stored plane, falling back to the two-plane crease
+(`cross(p0,p1)·v · dir`), dead-stopping if the result reverses the original
+push. `ClipVelocity` with `overbounce` 1; a `< 2 u/s` component is snapped to
+0 (Quake's `STOP_EPSILON`).
+
+**Step-up**: if a grounded move was wall-blocked, redo it from `start + (0,0,18)`
+then trace `-(18+2)` back down; keep the stepped result only if it landed on a
+walkable floor *and* covered more horizontal ground than the flat attempt
+(`SV_WalkMove`). Lets the player walk stairs / ledges ≤ 18 u.
+
+Constants are Quake defaults: maxspeed 320, accel 10, friction 4, stopspeed
+100, gravity 800, jump 270, stepsize 18, floor normal z > 0.7. Host sim on
+`start.qbsp`: jump apex ≈ 44 u, accel to 320 in ~0.3 s, dead stop at walls.
+Known rough edges: no edge-friction dropoff boost, no water, no `pos_acc`
+consistency when a move is clipped mid-frame (bounded, cosmetic).

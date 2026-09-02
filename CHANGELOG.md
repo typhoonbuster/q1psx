@@ -334,8 +334,28 @@ owned game; the player picks game + fidelity from the menu.
   - Host trace test (grid classify + axis sweeps on the real `start.qbsp`) +
     headless boot clean. Awaiting on-screen check.
 
+- **6.2 / 6.3** — player movement (`engine/pmove.{c,h}`). A 60 Hz fixed-point
+  port of Quake's player physics:
+  - friction (`SV_UserFriction`) + acceleration toward a wished direction
+    (`SV_Accelerate`), with the weak-air-control variant (`SV_AirAccelerate`:
+    accel cap 30 u/s in the air) when not grounded;
+  - `slide_move` = `SV_FlyMove` + `ClipVelocity`: up to 4 trace-and-clip
+    bumps, the multi-plane / crease-slide logic, dead-stop on reversal;
+  - gravity (800 u/s²) and jump (270 u/s off the ground), each with a
+    sub-unit accumulator so 60 Hz integer steps stay accurate;
+  - `categorize_position`: a 2-unit down-trace each tick for ground state;
+  - step-up: when a wall blocks a grounded move, retry lifted by 18 units and
+    trace back down (`SV_WalkMove`), keep it only if it got further onto a
+    floor.
+  - Velocities are integer units/s; positions integer world units with a
+    per-axis carry. `engine/main.c` now drives a `pmove_t` (d-pad turn/move,
+    Square/Circle strafe, L1/R1 look, Cross jump, Triangle walk, START
+    noclip, L2+R2 home); the view is the player eye + 22 units.
+  - Host sim on the real `start.qbsp`: settles on floors, jump apex ≈ 44 u
+    (Quake ≈ 45), accelerates to 320 u/s in ~0.3 s, stops dead at walls.
+    Headless boot clean. Awaiting on-screen check.
+
 ### Next step
 
-- **6.2 / 6.3** — player controller: gravity + jump, `SV_FlyMove`-style slide
-  along walls/floors, step-up. Then the deferred Phase-5 perf pass, and the
-  full `cooked/` tree.
+- Phase-5 deferred work (perf pass: batch faces by texture; near-plane
+  clipping), then the full `cooked/` tree, then **Phase 7** (QuakeC VM).

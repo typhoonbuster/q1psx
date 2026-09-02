@@ -21,6 +21,7 @@
 #include "geo.h"
 #include "surf.h"
 #include "bsp.h"
+#include "pmove.h"
 #include "tex.h"
 #include "pad.h"
 #include "cd.h"
@@ -163,76 +164,44 @@ static void describe_buttons(char *buf, int cap, uint16_t held)
 		snprintf(buf, cap, " (none)");
 }
 
-/* ------------------------------------------------------------ fly camera -- */
+/* ---------------------------------------------------------- player input -- */
 /*
- * Debug fly camera. Pad map:
- *   d-pad L/R       yaw
+ * Debug player camera (Phase 6). Pad map:
+ *   d-pad L/R       turn (yaw)
  *   d-pad U/D       move forward / back
  *   Square/Circle   strafe left / right
- *   Triangle/Cross  move up / down (world Z, stays intuitive when pitched)
- *   L1/R1           pitch up / down (clamped +-89 deg)
- *   R2 / L2 (hold)  move fast / slow
- *   L2 + R2 (hold)  snap back to the spawn pose
- *   START           toggle collision (Phase 6.1: sweep the player box through
- *                   the BSP clip hull; off = noclip flight)
+ *   L1/R1           look up / down (pitch, clamped +-89 deg)
+ *   Cross           jump          (noclip: move down)
+ *   Triangle        walk (hold)   (noclip: move up)
+ *   L2 + R2 (hold)  snap back to spawn
+ *   START           toggle noclip (free flight, no collision)
  * (SELECT cycles the view — handled in demo_loop.)
  */
-typedef struct {
-	int32_t pos[3];      /* world units                       */
-	int32_t yaw, pitch;  /* q1psx degrees, 20.12              */
-	int32_t home[3];     /* L2+R2 restores this               */
-	int     collide;     /* 1 = trace moves against the world */
-} fly_cam_t;
-
-static void fly_cam_update(fly_cam_t *c, const PadState *pad, const bsp_t *b)
+static void read_player_cmd(pmove_t *pm, pmove_cmd_t *cmd, const PadState *pad)
 {
 	if (pad->pressed & PAD_START)
-		c->collide = !c->collide;
+		pm->noclip = !pm->noclip;
 
 	if ((pad->buttons & PAD_L2) && (pad->buttons & PAD_R2)) {
 		for (int k = 0; k < 3; k++)
-			c->pos[k] = c->home[k];
-		c->yaw = c->pitch = 0;
-		return;
+			pm->pos[k] = pm->home[k];
+		pm->vel[0] = pm->vel[1] = pm->vel[2] = 0;
+		pm->pos_acc[0] = pm->pos_acc[1] = pm->pos_acc[2] = 0;
+		pm->yaw = pm->pitch = 0;
 	}
 
-	if (pad->buttons & PAD_LEFT)  c->yaw   += Q_FIX(4);
-	if (pad->buttons & PAD_RIGHT) c->yaw   -= Q_FIX(4);
-	if (pad->buttons & PAD_L1)    c->pitch += Q_FIX(3);
-	if (pad->buttons & PAD_R1)    c->pitch -= Q_FIX(3);
-	if (c->pitch >  Q_FIX(89)) c->pitch =  Q_FIX(89);
-	if (c->pitch < -Q_FIX(89)) c->pitch = -Q_FIX(89);
+	if (pad->buttons & PAD_LEFT)  pm->yaw   += Q_FIX(4);
+	if (pad->buttons & PAD_RIGHT) pm->yaw   -= Q_FIX(4);
+	if (pad->buttons & PAD_L1)    pm->pitch += Q_FIX(3);
+	if (pad->buttons & PAD_R1)    pm->pitch -= Q_FIX(3);
+	if (pm->pitch >  Q_FIX(89)) pm->pitch =  Q_FIX(89);
+	if (pm->pitch < -Q_FIX(89)) pm->pitch = -Q_FIX(89);
 
-	int spd = 32;
-	if (pad->buttons & PAD_R2) spd = 160;   /* fast */
-	if (pad->buttons & PAD_L2) spd = 8;     /* slow */
-
-	int32_t fb = 0, lr = 0, ud = 0;
-	if (pad->buttons & PAD_UP)       fb += spd;
-	if (pad->buttons & PAD_DOWN)     fb -= spd;
-	if (pad->buttons & PAD_CIRCLE)   lr += spd;
-	if (pad->buttons & PAD_SQUARE)   lr -= spd;
-	if (pad->buttons & PAD_TRIANGLE) ud += spd;
-	if (pad->buttons & PAD_CROSS)    ud -= spd;
-
-	vec3_t ang = { c->pitch, c->yaw, 0 };
-	vec3_t fwd, right, up;
-	AngleVectors(ang, fwd, right, up);
-
-	int32_t want[3];
-	for (int k = 0; k < 3; k++)
-		want[k] = c->pos[k] + ((fwd[k] * fb + right[k] * lr) >> Q_FIX_SHIFT);
-	want[2] += ud;
-
-	if (c->collide && b) {
-		trace_t tr;
-		bsp_hull_trace(b, 1, c->pos, want, &tr);
-		for (int k = 0; k < 3; k++)
-			c->pos[k] = tr.endpos[k];
-	} else {
-		for (int k = 0; k < 3; k++)
-			c->pos[k] = want[k];
-	}
+	cmd->fwd  = (pad->buttons & PAD_UP)     ? 1 : (pad->buttons & PAD_DOWN)   ? -1 : 0;
+	cmd->side = (pad->buttons & PAD_CIRCLE) ? 1 : (pad->buttons & PAD_SQUARE) ? -1 : 0;
+	cmd->up   = (pad->buttons & PAD_TRIANGLE) ? 1 : (pad->buttons & PAD_CROSS) ? -1 : 0;
+	cmd->jump = (pad->pressed & PAD_CROSS) ? 1 : 0;
+	cmd->walk = (pad->buttons & PAD_TRIANGLE) ? 1 : 0;
 }
 
 /* an inside-out box in Quake coords (X fwd, Y left, Z up), world units */
@@ -251,14 +220,16 @@ static void demo_loop(void)
 	vid_set_bg(8, 8, 16);
 	r_init();
 
-	fly_cam_t cam = { .pos = { 64, 0, 0 }, .collide = 1 };
+	pmove_t player;
+	memset(&player, 0, sizeof player);
+	player.pos[0] = 64;
 	if (g_geo_ok) {
-		cam.pos[0] = (g_geo.mins[0] + g_geo.maxs[0]) / 2;
-		cam.pos[1] = (g_geo.mins[1] + g_geo.maxs[1]) / 2;
-		cam.pos[2] = (g_geo.mins[2] + g_geo.maxs[2]) / 2;
+		player.pos[0] = (g_geo.mins[0] + g_geo.maxs[0]) / 2;
+		player.pos[1] = (g_geo.mins[1] + g_geo.maxs[1]) / 2;
+		player.pos[2] = (g_geo.mins[2] + g_geo.maxs[2]) / 2;
 	}
 	for (int k = 0; k < 3; k++)
-		cam.home[k] = cam.pos[k];
+		player.home[k] = player.pos[k];
 
 	const bsp_t *clip_bsp = g_bsp_ok ? &g_bsp : NULL;
 
@@ -280,14 +251,18 @@ static void demo_loop(void)
 				view = (view + 1) % 3;
 			while ((view == 0 && !have_world) || (view == 1 && !have_surf));
 		}
-		fly_cam_update(&cam, &pad, clip_bsp);
 
-		vec3_t ang = { cam.pitch, cam.yaw, 0 };
-		r_begin_view(cam.pos, ang);
+		pmove_cmd_t cmd;
+		read_player_cmd(&player, &cmd, &pad);
+		pmove_step(&player, &cmd, clip_bsp);
+
+		int32_t eye[3] = { player.pos[0], player.pos[1], player.pos[2] + 22 };
+		vec3_t  ang    = { player.pitch, player.yaw, 0 };
+		r_begin_view(eye, ang);
 
 		const char *mode;
 		if (view == 0) {
-			drawn = r_world(&g_surf, &g_bsp, cam.pos, ang);
+			drawn = r_world(&g_surf, &g_bsp, eye, ang);
 			mode  = "world PVS+frustum";
 		} else if (view == 1) {
 			drawn = r_surfaces(&g_surf);
@@ -304,17 +279,19 @@ static void demo_loop(void)
 		describe_buttons(held, sizeof held, pad.buttons);
 		snprintf(overlay, sizeof overlay,
 			"q1psx  frame %u   %s   %d prims%s\n\n"
-			"  dpad LR yaw / UD move   SQ CI strafe\n"
-			"  TR CR up-down   L1 R1 pitch   R2 L2 spd\n"
-			"  START clip:%s   L2+R2 home   SEL view\n"
-			"  pos %d %d %d   yaw %d  pitch %d\n\n"
+			"  dpad LR turn / UD move   SQ CI strafe\n"
+			"  L1 R1 look   CR jump   TR walk\n"
+			"  START %s   L2+R2 home   SEL view\n"
+			"  pos %d %d %d  vel %d  %s\n\n"
 			"mem %d KiB   selftests %s\n"
 			"held:%s",
 			frame, mode, drawn,
 			vid_prim_overflowed() ? " OVERFLOW" : "",
-			cam.collide ? "ON " : "OFF",
-			cam.pos[0], cam.pos[1], cam.pos[2],
-			cam.yaw >> Q_FIX_SHIFT, cam.pitch >> Q_FIX_SHIFT,
+			player.noclip ? "noclip" : "clip  ",
+			player.pos[0], player.pos[1], player.pos[2],
+			(int) q_sqrt_big(((int64_t) player.vel[0] * player.vel[0]
+			               + (int64_t) player.vel[1] * player.vel[1]) << Q_FIX_SHIFT) >> Q_FIX_SHIFT,
+			player.onground ? "onground" : "air",
 			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
 			held);
 		vid_text(0, 8, 8, overlay);
