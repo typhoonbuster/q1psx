@@ -365,6 +365,15 @@ owned game; the player picks game + fidelity from the menu.
 
 ### Performance & clean-rendering pass (priority — before any more features)
 
+**The big one: the build was `CMAKE_BUILD_TYPE: Debug` (`-O0`) the whole
+time.** Every too-slow measurement above was on an unoptimised build.
+`CMakePresets.json` now uses `RelWithDebInfo` (`-O2 -g`). Profiling with a
+Hblank-timer stopwatch had shown the BSP walk at ~53 µs/node and `draw_face`
+at ~76 µs/face — ~10× what the code should cost — which is exactly an `-O0`
+penalty. All the int32 / marking / culling work above still stands and
+compounds with `-O2`.
+
+
 The goal: **map + textures only** (no lighting, no models) at a
 constant 60 fps NTSC, no flicker, nothing vanishing.
 
