@@ -18,6 +18,12 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS engine/*.c engine/*.s)
 psn00bsdk_add_executable(q1psx GPREL ${ENGINE_SOURCES})
 target_include_directories(q1psx PRIVATE engine formats)
 
+# The engine maps cooked structs straight onto byte blobs (QBS/QSF/QTX/PAK)
+# everywhere — the same idiom Quake itself relies on. Turn off the two -O2
+# assumptions that idiom violates: type-based alias analysis, and "signed
+# arithmetic never overflows".
+target_compile_options(q1psx PRIVATE -fno-strict-aliasing -fwrapv)
+
 # --- optional Quake game data on the disc ------------------------------------
 # pak0.pak is never committed. If the developer pointed local.env at their copy,
 # bundle it into the CD image so the engine can read it. iso.xml consumes
