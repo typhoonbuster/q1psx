@@ -243,12 +243,33 @@ owned game; the player picks game + fidelity from the menu.
     face-local min is 0), texture index. `start.bsp`: 7757 verts / 4934 faces
     / 24430 faceverts. Cross-checked vs a Python parse (69 distinct textures,
     winding + UV ranges sane).
+  - `qcook textures`: world tiles are now snapped to a power of two on each
+    axis (`snap_p2`, ≤ cap) — the PS1 texture window can only tile
+    power-of-two sizes, and Quake textures are multiples of 16, not always
+    p2. Non-square textures stretch to the nearest p2 per axis (a tradeoff).
   - `scripts/cook.sh` + `CMakeLists.txt` + `iso.xml`: cook + bundle
     `START.QSF`.
 
+- **5.2 (engine)** — textured surface rendering:
+  - `engine/tex.{c,h}` rewritten for `QTX2`: `qtx_open` uploads the whole
+    atlas + the shared 256-colour CLUT to VRAM in one pass; `qtx_slot(i)`
+    returns `{tpage, clut, RECT twin}` for face `i`. Texture window:
+    `mask = (256 - size) / 8`, offset from the cell's position in its tpage.
+  - `engine/surf.{c,h}`: map a `QSF1` blob in RAM (pointers into the Hunk
+    blob, no copy).
+  - `engine/render.c` `r_surfaces`: lazily GTE-projects each referenced
+    vertex (cached per frame), skips faces with any vertex behind the near
+    plane, back-face culls on screen winding, fan-triangulates into
+    `POLY_FT3`s preceded by one `DR_TWIN` (emitted reversed so the window
+    runs first on the OT). Face budget 600 until **5.4**.
+  - `engine/vid.{c,h}`: `vid_alloc_raw` / `vid_link` split (reserve without
+    linking, then link) so a `DR_TWIN` and its polys stay adjacent;
+    `PRIM_BYTES` 65536 → 81920; `vid_prim_overflowed()`.
+  - `engine/main.c`: 7th boot step loads `START.QSF`; `demo_loop` draws
+    `r_surfaces` when textures + surfaces both loaded, `SELECT` toggles back
+    to the wireframe. Headless boot clean; awaiting on-screen check.
+
 ### Next step
 
-- **5.2 (engine)** — `r_surfaces`: per face, GTE-transform + backface cull
-  (`nclip`), triangulate as a fan, `DR_TWIN` + `POLY_FT3` with the texture's
-  tpage/window (`Mask = (256-size)/8`, offset from the atlas slot). Face budget
-  until **5.4** culling. Then **5.3** free camera.
+- **5.3** free camera (largely already in `demo_loop`), then **5.4**
+  PVS/frustum culling to drop the face/line budgets.

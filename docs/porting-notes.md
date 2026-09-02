@@ -424,29 +424,92 @@ fidelity knob trades. Levels: `tools/qcook/fidelity.h`.
 | high (default) | 128 | ½-res | full BSP | ep1 target |
 | ultra | ≤256 (native) | full-res | full BSP | ep1 showcase |
 
-World textures tile, and the PS1 GPU only wraps power-of-two sizes inside a
-256×256 page — but Quake textures are only guaranteed multiples of 16 (e.g.
-`quake` is 288×64). The renderer will subdivide surfaces per texture tile
-anyway, so `qcook` keeps the real (non-pow2) sizes and just fits them under the
-fidelity cap with aspect preserved.
+World textures tile, and the PS1 texture window only wraps **power-of-two**
+sizes inside a 256×256 page — but Quake textures are only guaranteed multiples
+of 16 (e.g. `quake` is 288×64). Rather than subdivide every surface per tile in
+the renderer, `qcook` snaps each world tile to a power of two on each axis
+(`snap_p2`, ≤ the fidelity cap) and nearest-neighbour resamples from the
+closest built-in mip. Non-square textures stretch to the nearest p2 per axis —
+a visible-but-acceptable tradeoff for now; revisit with per-tile subdivision or
+NPOT-aware atlasing if it looks bad. Cooked UVs stay in original-texel units
+and the texture window wraps them, so tiling count across a face is unchanged.
 
-### 7.2 QTX1 texture container (`tools/qcook/qtx.h`)
+### 7.2 QTX2 texture container (`formats/qtx.h`)
 
-`qcook textures` output: `qtx_header` (magic + 256-entry BGR555 CLUT + count)
-then `qtx_entry[]` (name, cooked w/h, source w/h, flags, data offset/len) then
-4-byte-aligned 8bpp indexed pixel blocks. Little-endian — host x86 and the PS1
-R3000 are both LE, so it maps in with no swapping.
+`qcook textures` output: `qtx_header` (magic `"QTX2"` + 256-entry BGR555 CLUT +
+count) then `qtx_entry[]` (name, cooked w/h, source w/h, **VRAM atlas slot**,
+flags, data offset/len) then 4-byte-aligned 8bpp indexed pixel blocks.
+Little-endian — host x86 and the PS1 R3000 are both LE, so it maps in with no
+swapping.
 
+- Entries are **1:1 with the map's miptex list** (miptex `i` → entry `i`);
+  gaps get a 2×2 magenta marker so BSP faces index straight in.
+- Atlas: a 20×7 grid of 64-texel cells in the free VRAM region right of the
+  two framebuffers (x ≥ 320), CLUT one line below at (320, 480). Slot assigned
+  at cook time: `vram_x = 320 + (i%20)*32` words, `vram_y = (i/20)*64` lines.
 - Palette: Quake's global 256-colour `gfx/palette.lmp` → `r>>3 | g>>3<<5 |
   b>>3<<10` (PS1 `0BBBBBGGGGGRRRRR`). One CLUT, all textures reference it.
-- Downscale: pick the built-in mip closest to the cap without undershooting,
-  then aspect-preserving nearest-neighbour to the exact size (dims kept even).
 - Flags: `sky*` → SKY, `*` → LIQUID, `{` → MASKED (palette index 255 = clear).
 
-BSP geometry / lightmap / MDL / SPR cooking comes with the renderer (Phase 5+).
+### 7.3 QSF1 surface container (`formats/qsrf.h`)
+
+`qcook surfaces` output: `qsrf_header` then `int16 verts[][4]` (SVECTOR, shared
+vertex pool) then `qsrf_face[]` (texture index, first-facevert, count, flags)
+then `qsrf_facevert[]` (vertex index + `u8` texel UV). One entry per world-model
+(model 0) face: vertices gathered in winding order from the surfedges, per-vertex
+`s = pos·vecs[0] + vecs[0][3]` / `t` likewise, then shifted so the face-local
+min is 0 and clamped to 0..255 (Quake's max face texture extent is 256; the last
+texel is lost — noted, minor).
+
+MDL / SPR / lightmap cooking comes later (Phase 8+).
 
 ---
 
-## §8 — Detailed porting conventions (to be completed)
+## §8 — GTE render pipeline (Phase 5)
 
-_GTE render pipeline: fill in over phase 5._
+### 8.1 View + wireframe (5.1)
+
+- `r_begin_view(pos, ang)` builds one `MATRIX`: rows are the camera basis from
+  `AngleVectors` (world = Quake coords, X fwd / Y left / Z up). Screen Y points
+  down, so row 1 is `-up`. Translation `t = -M · pos` (world units, 20.12 → >>
+  12). `gte_SetRotMatrix` + `gte_SetTransMatrix`, once per frame.
+- `gte_SetGeomOffset(160,120)` + `gte_SetGeomScreen(160)` ≈ 90° FOV at 320×240.
+- Per vertex: `gte_ldv0` + `gte_rtps` + `gte_stsz` (Z) + `gte_stsxy` (packed
+  screen XY). A vertex with `sz ≤ NEAR_Z (16)` is "behind" — its primitives are
+  dropped (no near-plane clipping yet).
+
+### 8.2 Textured surfaces (5.2) — `r_surfaces`
+
+Per frame, per face (budget `R_MAXFACES 600` until PVS culling in 5.4):
+
+1. **Project** every referenced vertex once, cached in `sv_x/sv_y/sv_state`
+   indexed by the shared vertex pool (`sv_state` memset to 0 each frame). Skip
+   the whole face if any vertex is behind `NEAR_Z` — crude, but avoids
+   clipping.
+2. **Back-face cull** on the first triangle's *screen* winding:
+   `cross = (x1-x0)(y2-y0) - (y1-y0)(x2-x0)`; `cross ≥ 0` → cull. Quake winds
+   faces CCW in the (right-handed) world; the Y-flip to screen space makes
+   front faces CW → negative cross. *(Sign is reasoned, not yet screen-checked;
+   if the world renders inside-out, flip the comparison.)*
+3. **Texture window**: `qtx_slot(i)` gives `tpage` + `clut` + a `RECT` window.
+   The window tiles the atlas cell with a true `mod (w,h)`:
+   `mask = (256 - size) / 8`, offset `= (cell position in its tpage) / 8`, all
+   in 8-pixel units. `Texcoord = (Texcoord & ~(mask·8)) | ((offset & mask)·8)`.
+4. **Fan-triangulate** into `POLY_FT3`s. A `DR_TWIN` (set-texture-window
+   command) must run *before* its polys on the OT; `addPrim` prepends and a
+   higher OT bucket draws first, so within bucket 4 the triangles are linked
+   **reversed**, then the `DR_TWIN` last — it ends up in front of them.
+   `vid_alloc_raw` (reserve) + `vid_link` (link) keep the group together.
+
+Known gaps, in rough priority: no perspective-correct texturing (PS1 has none —
+affine, will warp on big near polys until surfaces are subdivided), no
+near-plane clipping, no depth sort within a face beyond the fan order, flat
+grey `setRGB0(128,128,128)` (no lightmaps — Phase 5 later / fidelity).
+
+### 8.3 Per-frame primitive buffer
+
+`PRIM_BYTES` (81920) of linear scratch per framebuffer. `vid_alloc*` bump-
+allocate; once full they return a shared sink and set `prim_overflowed` instead
+of corrupting RAM (a real overflow crashed the dynarec in 5.1b). `vid_text`
+guards the same way before `FntSort`. The overlay shows `(OVERFLOW)` when it
+trips — a sign the face budget or `PRIM_BYTES` needs tuning for that view.

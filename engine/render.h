@@ -12,6 +12,7 @@
 #include <psxgte.h>
 
 #include "mathlib.h"
+#include "surf.h"
 
 void r_init(void);
 
@@ -27,3 +28,8 @@ void r_begin_view(const int32_t pos[3], const vec3_t ang);
 int r_wireframe(const SVECTOR *verts, int nverts,
                 const uint16_t *edges, int nedges,
                 int r, int g, int b);
+
+/* Draw cooked textured surfaces from the current view. Backface-culled,
+   fan-triangulated, one DR_TWIN + POLY_FT3s per face. Face-budgeted until
+   PVS culling (5.4). Returns faces drawn. Needs qtx_open() first. */
+int r_surfaces(const surf_t *s);

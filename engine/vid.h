@@ -20,6 +20,12 @@ void vid_init(void);
    primitive into ordering-table bucket `z` (0 = drawn last / in front). */
 void *vid_alloc(int z, int size);
 
+/* Split version: reserve without linking, then link explicitly. `vid_link`
+   prepends, so to run prims A,B,C in that order, link C, then B, then A.
+   Used where several prims must stay adjacent (a DR_TWIN and its polys). */
+void *vid_alloc_raw(int size);
+void  vid_link(int z, void *prim);
+
 /* Append text via the debug font into bucket `z`, at pixel x,y. */
 void vid_text(int z, int x, int y, const char *s);
 
@@ -28,3 +34,6 @@ void vid_flip(void);
 
 /* Background clear colour applied on the next flip (both buffers). */
 void vid_set_bg(int r, int g, int b);
+
+/* 1 if a vid_alloc since the last flip hit the per-frame buffer limit. */
+int vid_prim_overflowed(void);

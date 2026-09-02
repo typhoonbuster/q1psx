@@ -18,6 +18,8 @@
 #include "loading.h"
 #include "render.h"
 #include "geo.h"
+#include "surf.h"
+#include "tex.h"
 #include "pad.h"
 #include "cd.h"
 #include "pak.h"
@@ -41,8 +43,9 @@ static int        g_selftest_fail;
 static int        g_hello_size;
 static uint32_t   g_hello_sum;
 static char       g_hello_line[40];
-static vram_tex_t g_demo_tex;
-static int        g_demo_tex_ok;
+static int      g_qtx_ok;
+static surf_t   g_surf;
+static int      g_surf_ok;
 
 static uint32_t cd_scratch[512];   /* one sector, word-aligned */
 
@@ -109,13 +112,7 @@ static void boot_load_textures(void)
 {
 	int   size;
 	void *blob = load_disc_file("\\START.QTX;1", "qtx", &size);
-	if (!blob || qtx_open(blob, size) <= 0)
-		return;
-
-	const char *want[] = { "tech08_1", "wbrick1_5", "city4_6" };
-	for (unsigned i = 0; i < sizeof(want) / sizeof(want[0]); i++)
-		if ((g_demo_tex_ok = qtx_upload(want[i], &g_demo_tex)))
-			break;
+	g_qtx_ok = blob && qtx_open(blob, size) > 0;
 }
 
 static geo_t g_geo;
@@ -126,6 +123,13 @@ static void boot_load_geometry(void)
 	int   size;
 	void *blob = load_disc_file("\\START.QGE;1", "geo", &size);
 	g_geo_ok = blob && geo_load(blob, size, &g_geo);
+}
+
+static void boot_load_surfaces(void)
+{
+	int   size;
+	void *blob = load_disc_file("\\START.QSF;1", "surf", &size);
+	g_surf_ok = blob && surf_load(blob, size, &g_surf);
 }
 
 /* ------------------------------------------------------------- demo loop -- */
@@ -174,12 +178,15 @@ static void demo_loop(void)
 	int32_t  yaw   = 0;              /* q1psx degrees, 20.12 */
 	int32_t  pitch = 0;
 	uint32_t frame = 0;
-	int      lines = 0;
+	int      drawn = 0;
+	int      wire  = 0;             /* toggle: textured surfaces vs wireframe */
 	PadState pad;
 	char     held[96], overlay[320];
 
 	for (;;) {
 		pad_read(&pad);
+		if (pad.pressed & PAD_SELECT)
+			wire = !wire;
 
 		if (pad.buttons & PAD_LEFT)  yaw   += Q_FIX(3);
 		if (pad.buttons & PAD_RIGHT) yaw   -= Q_FIX(3);
@@ -196,36 +203,32 @@ static void demo_loop(void)
 			cam[k] += (f[k] * step) >> Q_FIX_SHIFT;
 
 		r_begin_view(cam, ang);
-		if (g_geo_ok)
-			lines = r_wireframe(g_geo.verts, g_geo.num_verts,
-			                    g_geo.edges, g_geo.num_edges, 90, 200, 120);
-		else
-			lines = r_wireframe(ROOM_VERTS, 8, ROOM_EDGES, 12, 90, 220, 120);
 
-		if (g_demo_tex_ok) {
-			POLY_FT4 *q = vid_alloc(2, sizeof(POLY_FT4));
-			setPolyFT4(q);
-			setRGB0(q, 128, 128, 128);
-			setXYWH(q, VID_W - g_demo_tex.w - 8, VID_H - g_demo_tex.h - 8,
-			        g_demo_tex.w, g_demo_tex.h);
-			setUVWH(q, 0, 0, g_demo_tex.w - 1, g_demo_tex.h - 1);
-			q->tpage = g_demo_tex.tpage;
-			q->clut  = g_demo_tex.clut;
+		const char *mode;
+		if (g_surf_ok && g_qtx_ok && !wire) {
+			drawn = r_surfaces(&g_surf);
+			mode  = "start.bsp textured";
+		} else if (g_geo_ok) {
+			drawn = r_wireframe(g_geo.verts, g_geo.num_verts,
+			                    g_geo.edges, g_geo.num_edges, 90, 200, 120);
+			mode  = "start.bsp wireframe";
+		} else {
+			drawn = r_wireframe(ROOM_VERTS, 8, ROOM_EDGES, 12, 90, 220, 120);
+			mode  = "test room";
 		}
 
 		describe_buttons(held, sizeof held, pad.buttons);
 		snprintf(overlay, sizeof overlay,
 			"q1psx  frame %u\n\n"
-			"%s wireframe (GTE)\n"
-			"  dpad LR turn / UD move, L1R1 pitch\n"
+			"%s\n"
+			"  dpad LR/UD, L1R1 pitch, SEL toggle wire\n"
 			"  cam %d %d %d  yaw %d pitch %d\n"
-			"  %d lines\n\n"
+			"  %d prims%s\n\n"
 			"mem %d KiB  selftests %s\n"
 			"held:%s",
-			frame,
-			g_geo_ok ? "start.bsp" : "test room",
+			frame, mode,
 			cam[0], cam[1], cam[2], yaw >> Q_FIX_SHIFT, pitch >> Q_FIX_SHIFT,
-			lines,
+			drawn, vid_prim_overflowed() ? " (OVERFLOW)" : "",
 			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
 			held);
 		vid_text(0, 8, 8, overlay);
@@ -248,13 +251,14 @@ int main(void)
 		Sys_Error("no RAM for a %d-byte hunk", HUNK_SIZE);
 	Memory_Init(hunk, HUNK_SIZE);
 
-	load_begin(6);
+	load_begin(7);
 	load_step("running self-tests");   boot_selftests();
 	load_step("reading disc");         boot_read_hello();
 	load_step("opening pak0.pak");     boot_open_pak();
 	load_step("loading progs.dat");    boot_load_progs();
 	load_step("loading textures");     boot_load_textures();
 	load_step("loading geometry");     boot_load_geometry();
+	load_step("loading surfaces");     boot_load_surfaces();
 	load_done();
 
 	demo_loop();

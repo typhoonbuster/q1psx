@@ -4,7 +4,7 @@
 
 #include "vid.h"
 
-#define PRIM_BYTES 65536   /* per-frame primitive scratch (~5k lines) */
+#define PRIM_BYTES 81920   /* per-frame primitive scratch */
 
 typedef struct {
 	DISPENV  disp;
@@ -50,16 +50,30 @@ void vid_set_bg(int r, int g, int b)
 }
 
 static uint8_t prim_overflow_sink[128];  /* absorb allocs once the buffer is full */
+static int     prim_overflowed;
+
+void *vid_alloc_raw(int size)
+{
+	uint8_t *end = fb[back].prims + PRIM_BYTES;
+	if (prim_top + size > end) {
+		prim_overflowed = 1;
+		return prim_overflow_sink;         /* drop the primitive, don't corrupt RAM */
+	}
+	uint8_t *p = prim_top;
+	prim_top += size;
+	return p;
+}
+
+void vid_link(int z, void *prim)
+{
+	if (prim != prim_overflow_sink)
+		addPrim(&fb[back].ot[z], prim);
+}
 
 void *vid_alloc(int z, int size)
 {
-	uint8_t *end = fb[back].prims + PRIM_BYTES;
-	if (prim_top + size > end)
-		return prim_overflow_sink;        /* drop the primitive, don't corrupt RAM */
-
-	uint8_t *p = prim_top;
-	addPrim(&fb[back].ot[z], p);
-	prim_top += size;
+	void *p = vid_alloc_raw(size);
+	vid_link(z, p);
 	return p;
 }
 
@@ -72,10 +86,16 @@ void vid_text(int z, int x, int y, const char *s)
 	prim_top = FntSort(&fb[back].ot[z], prim_top, x, y, s);
 }
 
+int vid_prim_overflowed(void)
+{
+	return prim_overflowed;
+}
+
 void vid_flip(void)
 {
 	DrawSync(0);
 	VSync(0);
+	prim_overflowed = 0;
 
 	vid_buffer_t *drawn = &fb[back];
 	vid_buffer_t *shown = &fb[back ^ 1];
