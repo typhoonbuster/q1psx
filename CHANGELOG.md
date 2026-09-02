@@ -394,6 +394,17 @@ constant 60 fps NTSC, no flicker, nothing vanishing.
   skybox face thrashes the texture cache and looks wrong); the flat
   background colour (now a dim blue-grey) shows through as sky.
 
-Next, guided by the on-device numbers: cut overdraw / tpage churn, maybe a
-lower internal resolution, then the full `cooked/` tree and **Phase 7**
-(QuakeC VM).
+Progress so far (device): map renders correctly, ~20 fps (up from 12 on the
+`-O0` build). Back-face over-culling fixed (exact 3D plane test, `QSF1`→
+`QSF2` cooked face normals). BSP walk bounded by `R_MarkLeaves`-style node
+marking. `view_z` / `plane_dist` moved off `__muldi3`. `engine/gte_fix.h`
+works around a PSn00bSDK `-O2` GTE-macro miscompile. Overlay toggle on
+L1+R1; Hblank-timer profiling (`vid_ticks`).
+
+**Still open, next session:** (1) frame rate — a fresh `-O2` profile, then
+either overdraw (per-face frustum cull / lower res) or `draw_face` cost;
+(2) affine texture deformation when moving — PS1 has no perspective
+correction, fix = subdivide faces at cook time; (3) the floor face at the
+camera gets near-plane-clipped into a stretched triangle / hole —
+subdivision + a cleaner near-clip. Then the full `cooked/` tree and
+**Phase 7** (QuakeC VM).
