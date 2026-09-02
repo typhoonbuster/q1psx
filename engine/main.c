@@ -279,7 +279,7 @@ static void demo_loop(void)
 			"  nodes %d  leaves %d  faces %d  drawn %d\n"
 			"  drop near %d back %d sky %d slot %d\n"
 			"  vz [%d..%d]  vm %d %d %d t%d\n"
-			"  span vbl: pmove %u  render %u\n"
+			"  us: walk %d  draw %d   vbl pm %u rn %u\n"
 			"  pos %d %d %d  yaw %d pit %d  %s\n\n"
 			"  CR jump TR walk START %s L2+R2 home SEL view\n"
 			"mem %d KiB  sel %s",
@@ -292,6 +292,7 @@ static void demo_loop(void)
 			r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot,
 			r_dbg_vz_lo, r_dbg_vz_hi,
 			r_dbg_vm[0], r_dbg_vm[1], r_dbg_vm[2], r_dbg_vm[3],
+			r_dbg_us_walk, r_dbg_us_draw,
 			tp1 - tp0, tr1 - tp1,
 			player.pos[0], player.pos[1], player.pos[2],
 			player.yaw >> Q_FIX_SHIFT, player.pitch >> Q_FIX_SHIFT,

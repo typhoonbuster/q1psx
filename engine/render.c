@@ -36,6 +36,8 @@ int r_dbg_nodes, r_dbg_leaves, r_dbg_faces;
 int r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot;
 int r_dbg_vz_lo, r_dbg_vz_hi;   /* view_z range this frame */
 int r_dbg_vm[4];               /* vm_row2[3], vm_t2       */
+int r_dbg_us_walk, r_dbg_us_draw;  /* approx microseconds: traversal, draw_face */
+static uint32_t draw_us_acc;
 
 void r_init(void)
 {
@@ -491,7 +493,9 @@ static void world_node(const surf_t *s, const bsp_t *b, int nodeidx,
 			continue;
 		face_seen[f] = face_key;
 		r_dbg_faces++;
+		uint32_t da = vid_ticks();
 		*drawn += draw_face(s, f);
+		draw_us_acc += (vid_ticks() - da) & 0xffff;
 	}
 }
 
@@ -520,7 +524,13 @@ int r_world(const surf_t *s, const bsp_t *b,
 	const uint8_t *pvs = bsp_pvs(b, leaf);
 	mark_pvs_leaves(b, pvs);
 
+	draw_us_acc = 0;
+	uint32_t tw = vid_ticks();
 	int drawn = 0;
 	world_node(s, b, b->root, pos, pvs, CLIP_ALL, &drawn);
+	uint32_t te = vid_ticks();
+
+	r_dbg_us_draw = (int) (draw_us_acc * 64);
+	r_dbg_us_walk = (int) (((te - tw) & 0xffff) * 64) - r_dbg_us_draw;
 	return drawn;
 }

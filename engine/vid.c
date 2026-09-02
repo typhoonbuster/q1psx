@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <psxgpu.h>
+#include <hwregs_c.h>
 
 #include "vid.h"
 
@@ -47,8 +48,19 @@ void vid_init(void)
 
 	VSyncCallback(vbl_tick);
 
+	/* Timer 1, free-running off Hblank (~15.7 kHz NTSC): 1 tick ~= 63.6 us,
+	   wraps every ~4 s. A cheap microsecond-ish stopwatch for profiling. */
+	TIMER_CTRL(1)  = 1 << 8;
+	TIMER_RELOAD(1) = 0;
+
 	FntLoad(960, 0);
 	SetDispMask(1);
+}
+
+/* Raw Hblank-timer ticks (16-bit). (t1 - t0) & 0xffff, x64, ~= microseconds. */
+uint32_t vid_ticks(void)
+{
+	return TIMER_VALUE(1) & 0xffff;
 }
 
 void vid_set_bg(int r, int g, int b)

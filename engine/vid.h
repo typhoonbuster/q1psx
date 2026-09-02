@@ -50,3 +50,7 @@ int vid_prim_used(void);
 /* Raw vblank counter (increments in the vblank IRQ). Bracket a section with two
    reads to see roughly how many 16.7 ms vblank periods it spanned. */
 uint32_t vid_vbl_now(void);
+
+/* Free-running Hblank timer, 16-bit. `((t1 - t0) & 0xffff) * 64` ~= elapsed
+   microseconds (wraps ~every 4 s). Fine-grained profiling stopwatch. */
+uint32_t vid_ticks(void);
