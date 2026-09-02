@@ -4,6 +4,7 @@
 #include <psxgte.h>
 #include <inline_c.h>
 
+#include "gte_fix.h"   /* must follow <inline_c.h> */
 #include "vid.h"
 #include "mathlib.h"
 #include "surf.h"

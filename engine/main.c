@@ -231,6 +231,8 @@ static void demo_loop(void)
 
 	int      drawn   = 0;
 	int      vbl_avg = 1 << 4;   /* 4.4 fixed, smoothed vblanks/frame */
+	int      dbg     = 2;        /* overlay: 0 off, 1 fps only, 2 full */
+	int      both_l1r1_prev = 0;
 	PadState pad;
 	char     overlay[384];
 
@@ -241,6 +243,11 @@ static void demo_loop(void)
 				view = (view + 1) % 3;
 			while ((view == 0 && !have_world) || (view == 1 && !have_surf));
 		}
+		/* L1+R1 together cycles the debug overlay (pitch nets to zero) */
+		int both_l1r1 = (pad.buttons & PAD_L1) && (pad.buttons & PAD_R1);
+		if (both_l1r1 && !both_l1r1_prev)
+			dbg = (dbg + 1) % 3;
+		both_l1r1_prev = both_l1r1;
 
 		uint32_t tp0 = vid_vbl_now();
 		pmove_cmd_t cmd;
@@ -273,33 +280,44 @@ static void demo_loop(void)
 		int vbl = vid_frame_vbl();
 		vbl_avg = (vbl_avg * 7 + (vbl << 4)) >> 3;   /* 4.4 fixed, ~1s smoothing */
 
-		snprintf(overlay, sizeof overlay,
-			"q1psx  %s\n"
-			"  %d.%d vbl/frame  ~%d fps  %s   %d prim B%s\n\n"
-			"  nodes %d  leaves %d  faces %d  drawn %d\n"
-			"  drop near %d back %d sky %d slot %d\n"
-			"  vz [%d..%d]  vm %d %d %d t%d\n"
-			"  us: walk %d  draw %d   vbl pm %u rn %u\n"
-			"  pos %d %d %d  yaw %d pit %d  %s\n\n"
-			"  CR jump TR walk START %s L2+R2 home SEL view\n"
-			"mem %d KiB  sel %s",
-			mode,
-			vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
-			vbl ? 60 / vbl : 60,
-			vid_gpu_busy() ? "GPU-bound" : "cpu/ok",
-			vid_prim_used(), vid_prim_overflowed() ? " OVF" : "",
-			r_dbg_nodes, r_dbg_leaves, r_dbg_faces, drawn,
-			r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot,
-			r_dbg_vz_lo, r_dbg_vz_hi,
-			r_dbg_vm[0], r_dbg_vm[1], r_dbg_vm[2], r_dbg_vm[3],
-			r_dbg_us_walk, r_dbg_us_draw,
-			tp1 - tp0, tr1 - tp1,
-			player.pos[0], player.pos[1], player.pos[2],
-			player.yaw >> Q_FIX_SHIFT, player.pitch >> Q_FIX_SHIFT,
-			player.onground ? "ground" : "air",
-			player.noclip ? "noclip" : "clip",
-			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK");
-		vid_text(0, 8, 8, overlay);
+		if (dbg == 1) {
+			snprintf(overlay, sizeof overlay,
+				"~%d fps  %d.%d vbl  %s   %s",
+				vbl ? 60 / vbl : 60,
+				vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
+				vid_gpu_busy() ? "GPU" : "cpu",
+				mode);
+			vid_text(0, 8, 8, overlay);
+		} else if (dbg == 2) {
+			snprintf(overlay, sizeof overlay,
+				"q1psx  %s\n"
+				"  %d.%d vbl/frame  ~%d fps  %s   %d prim B%s\n\n"
+				"  nodes %d  leaves %d  faces %d  drawn %d\n"
+				"  drop near %d back %d sky %d slot %d\n"
+				"  vz [%d..%d]  vm %d %d %d t%d\n"
+				"  us: walk %d  draw %d   vbl pm %u rn %u\n"
+				"  pos %d %d %d  yaw %d pit %d  %s\n\n"
+				"  CR jump  TR walk  START %s  L2+R2 home\n"
+				"  SEL view   L1+R1 this overlay\n"
+				"mem %d KiB  sel %s",
+				mode,
+				vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
+				vbl ? 60 / vbl : 60,
+				vid_gpu_busy() ? "GPU-bound" : "cpu/ok",
+				vid_prim_used(), vid_prim_overflowed() ? " OVF" : "",
+				r_dbg_nodes, r_dbg_leaves, r_dbg_faces, drawn,
+				r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot,
+				r_dbg_vz_lo, r_dbg_vz_hi,
+				r_dbg_vm[0], r_dbg_vm[1], r_dbg_vm[2], r_dbg_vm[3],
+				r_dbg_us_walk, r_dbg_us_draw,
+				tp1 - tp0, tr1 - tp1,
+				player.pos[0], player.pos[1], player.pos[2],
+				player.yaw >> Q_FIX_SHIFT, player.pitch >> Q_FIX_SHIFT,
+				player.onground ? "ground" : "air",
+				player.noclip ? "noclip" : "clip",
+				Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK");
+			vid_text(0, 8, 8, overlay);
+		}
 
 		vid_flip();
 	}
