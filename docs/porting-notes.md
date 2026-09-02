@@ -504,6 +504,13 @@ MDL / SPR / lightmap cooking comes later (Phase 8+).
   `AngleVectors` (world = Quake coords, X fwd / Y left / Z up). Screen Y points
   down, so row 1 is `-up`. Translation `t = -M · pos` (world units, 20.12 → >>
   12). `gte_SetRotMatrix` + `gte_SetTransMatrix`, once per frame.
+  **PSn00bSDK v0.24 bug:** those two macros load the matrix via `$t0/$t1/$t2`
+  but only declare `$t2` clobbered. Harmless at `-O0`; at `-O2` GCC keeps `&m`
+  in `$t0` across the two calls and the second one loads garbage → dead view
+  transform, black screen. `engine/gte_fix.h` re-`#define`s both with the full
+  clobber list (include it after `<inline_c.h>`). The engine also builds with
+  `-fno-strict-aliasing -fwrapv` (`CMakeLists.txt`) — it maps cooked structs
+  onto byte blobs everywhere, same as Quake.
 - `gte_SetGeomOffset(160,120)` + `gte_SetGeomScreen(160)` ≈ 90° FOV at 320×240.
 - Per vertex: `gte_ldv0` + `gte_rtps` + `gte_stsz` (Z) + `gte_stsxy` (packed
   screen XY). A vertex with `sz ≤ NEAR_Z (16)` is "behind" — its primitives are
