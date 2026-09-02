@@ -273,7 +273,16 @@ owned game; the player picks game + fidelity from the menu.
     transformed and drawn every frame with no visibility culling. Expected;
     **5.4** (PVS + frustum) is the fix and no optimisation happens before it.
 
+- **5.3** — debug free-fly camera. `fly_cam_t` + `fly_cam_update` in
+  `engine/main.c`: d-pad L/R yaw + U/D forward-back, Square/Circle strafe,
+  Triangle/Cross world up-down, L1/R1 pitch (±89°), R2/L2 fast/slow, START
+  snaps back to the spawn pose. No collision or gravity (by design — that is
+  Phase 6). Overlay reworked to show the control map + camera pose. Headless
+  boot clean; awaiting on-screen check.
+
 ### Next step
 
-- **5.3** free camera (largely already in `demo_loop`), then **5.4**
-  PVS/frustum culling — the performance step. Drops the face/line budgets.
+- **5.4** PVS/frustum culling — the performance step. BSP leaf walk + PVS
+  (`LUMP_VISIBILITY` / `LUMP_LEAFS` / `LUMP_NODES`, cooked to a per-leaf
+  surface list) + frustum reject. Drops the face/line budgets. Needs a
+  cook-format decision first.

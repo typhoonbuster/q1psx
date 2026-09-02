@@ -489,8 +489,8 @@ Per frame, per face (budget `R_MAXFACES 600` until PVS culling in 5.4):
 2. **Back-face cull** on the first triangle's *screen* winding:
    `cross = (x1-x0)(y2-y0) - (y1-y0)(x2-x0)`; `cross ≥ 0` → cull. Quake winds
    faces CCW in the (right-handed) world; the Y-flip to screen space makes
-   front faces CW → negative cross. *(Sign is reasoned, not yet screen-checked;
-   if the world renders inside-out, flip the comparison.)*
+   front faces CW → negative cross. *(Sign confirmed on screen 2026-09-02 —
+   the world renders solid from inside.)*
 3. **Texture window**: `qtx_slot(i)` gives `tpage` + `clut` + a `RECT` window.
    The window tiles the atlas cell with a true `mod (w,h)`:
    `mask = (256 - size) / 8`, offset `= (cell position in its tpage) / 8`, all
@@ -511,5 +511,16 @@ grey `setRGB0(128,128,128)` (no lightmaps — Phase 5 later / fidelity).
 `PRIM_BYTES` (81920) of linear scratch per framebuffer. `vid_alloc*` bump-
 allocate; once full they return a shared sink and set `prim_overflowed` instead
 of corrupting RAM (a real overflow crashed the dynarec in 5.1b). `vid_text`
-guards the same way before `FntSort`. The overlay shows `(OVERFLOW)` when it
+guards the same way before `FntSort`. The overlay shows `OVERFLOW` when it
 trips — a sign the face budget or `PRIM_BYTES` needs tuning for that view.
+
+### 8.4 Debug free-fly camera (5.3)
+
+`fly_cam_t { int32 pos[3]; int32 yaw, pitch; int32 home[3]; }` +
+`fly_cam_update(cam, pad)` in `engine/main.c`. Pad map: d-pad L/R = yaw, U/D =
+forward/back along `AngleVectors` forward; Square/Circle = strafe along `right`;
+Triangle/Cross = **world** Z up/down (stays intuitive when pitched); L1/R1 =
+pitch (clamped ±89°); R2/L2 held = fast (160 u/frame) / slow (8); START =
+restore the spawn pose (`home`, set once to the geometry-bounds centre — no
+entity parsing yet). Speeds are per-frame, not time-scaled — retune once the
+frame rate is real (post 5.4). No collision or gravity: that is Phase 6.

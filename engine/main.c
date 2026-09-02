@@ -1,10 +1,11 @@
 /*
  * q1psx — Quake for the PlayStation 1
  *
- * Boot so far (phases 2-4): bring up video/pad/CD, the Hunk/Zone allocator,
- * run the self-tests, then stream pak0.pak + progs.dat + a cooked texture pack
- * off the disc behind a progress bar. The loop is still a validation harness
- * (debug overlay, a steerable marker, one drawn texture) — no game yet.
+ * Boot so far (phases 2-5): bring up video/pad/CD, the Hunk/Zone allocator,
+ * run the self-tests, then stream pak0.pak + progs.dat + the cooked texture
+ * atlas + geometry + surfaces off the disc behind a progress bar. The loop is
+ * still a validation harness: a debug free-fly camera over the textured
+ * `start.bsp` with an overlay — no game logic yet.
  */
 
 #include <stdint.h>
@@ -152,6 +153,59 @@ static void describe_buttons(char *buf, int cap, uint16_t held)
 		snprintf(buf, cap, " (none)");
 }
 
+/* ------------------------------------------------------------ fly camera -- */
+/*
+ * Phase 5.3 debug free-fly camera — no collision, no gravity. Pad map:
+ *   d-pad L/R       yaw
+ *   d-pad U/D       move forward / back
+ *   Square/Circle   strafe left / right
+ *   Triangle/Cross  move up / down (world Z, stays intuitive when pitched)
+ *   L1/R1           pitch up / down (clamped +-89 deg)
+ *   R2 / L2 (hold)  move fast / slow
+ *   START           snap back to the spawn pose
+ * (SELECT toggles textured/wireframe — handled in demo_loop.)
+ */
+typedef struct {
+	int32_t pos[3];      /* world units                       */
+	int32_t yaw, pitch;  /* q1psx degrees, 20.12              */
+	int32_t home[3];     /* START restores this               */
+} fly_cam_t;
+
+static void fly_cam_update(fly_cam_t *c, const PadState *pad)
+{
+	if (pad->pressed & PAD_START) {
+		for (int k = 0; k < 3; k++)
+			c->pos[k] = c->home[k];
+		c->yaw = c->pitch = 0;
+	}
+
+	if (pad->buttons & PAD_LEFT)  c->yaw   += Q_FIX(4);
+	if (pad->buttons & PAD_RIGHT) c->yaw   -= Q_FIX(4);
+	if (pad->buttons & PAD_L1)    c->pitch += Q_FIX(3);
+	if (pad->buttons & PAD_R1)    c->pitch -= Q_FIX(3);
+	if (c->pitch >  Q_FIX(89)) c->pitch =  Q_FIX(89);
+	if (c->pitch < -Q_FIX(89)) c->pitch = -Q_FIX(89);
+
+	int spd = 32;
+	if (pad->buttons & PAD_R2) spd = 160;   /* fast */
+	if (pad->buttons & PAD_L2) spd = 8;     /* slow */
+
+	int32_t fb = 0, lr = 0, ud = 0;
+	if (pad->buttons & PAD_UP)       fb += spd;
+	if (pad->buttons & PAD_DOWN)     fb -= spd;
+	if (pad->buttons & PAD_CIRCLE)   lr += spd;
+	if (pad->buttons & PAD_SQUARE)   lr -= spd;
+	if (pad->buttons & PAD_TRIANGLE) ud += spd;
+	if (pad->buttons & PAD_CROSS)    ud -= spd;
+
+	vec3_t ang = { c->pitch, c->yaw, 0 };
+	vec3_t fwd, right, up;
+	AngleVectors(ang, fwd, right, up);
+	for (int k = 0; k < 3; k++)
+		c->pos[k] += (fwd[k] * fb + right[k] * lr) >> Q_FIX_SHIFT;
+	c->pos[2] += ud;
+}
+
 /* an inside-out box in Quake coords (X fwd, Y left, Z up), world units */
 static const SVECTOR ROOM_VERTS[8] = {
 	{   0, -256, -128 }, {   0,  256, -128 }, {   0,  256,  128 }, {   0, -256,  128 },
@@ -168,15 +222,15 @@ static void demo_loop(void)
 	vid_set_bg(8, 8, 16);
 	r_init();
 
-	int32_t cam[3] = { 64, 0, 0 };
+	fly_cam_t cam = { .pos = { 64, 0, 0 } };
 	if (g_geo_ok) {
-		cam[0] = (g_geo.mins[0] + g_geo.maxs[0]) / 2;
-		cam[1] = (g_geo.mins[1] + g_geo.maxs[1]) / 2;
-		cam[2] = (g_geo.mins[2] + g_geo.maxs[2]) / 2;
+		cam.pos[0] = (g_geo.mins[0] + g_geo.maxs[0]) / 2;
+		cam.pos[1] = (g_geo.mins[1] + g_geo.maxs[1]) / 2;
+		cam.pos[2] = (g_geo.mins[2] + g_geo.maxs[2]) / 2;
 	}
+	for (int k = 0; k < 3; k++)
+		cam.home[k] = cam.pos[k];
 
-	int32_t  yaw   = 0;              /* q1psx degrees, 20.12 */
-	int32_t  pitch = 0;
 	uint32_t frame = 0;
 	int      drawn = 0;
 	int      wire  = 0;             /* toggle: textured surfaces vs wireframe */
@@ -187,31 +241,19 @@ static void demo_loop(void)
 		pad_read(&pad);
 		if (pad.pressed & PAD_SELECT)
 			wire = !wire;
+		fly_cam_update(&cam, &pad);
 
-		if (pad.buttons & PAD_LEFT)  yaw   += Q_FIX(3);
-		if (pad.buttons & PAD_RIGHT) yaw   -= Q_FIX(3);
-		if (pad.buttons & PAD_L1)    pitch += Q_FIX(2);
-		if (pad.buttons & PAD_R1)    pitch -= Q_FIX(2);
-		if (pitch >  Q_FIX(89)) pitch =  Q_FIX(89);
-		if (pitch < -Q_FIX(89)) pitch = -Q_FIX(89);
-		vec3_t ang = { pitch, yaw, 0 };
-
-		vec3_t f, r, u;
-		AngleVectors(ang, f, r, u);
-		int step = (pad.buttons & PAD_UP) ? 16 : (pad.buttons & PAD_DOWN) ? -16 : 0;
-		for (int k = 0; k < 3; k++)
-			cam[k] += (f[k] * step) >> Q_FIX_SHIFT;
-
-		r_begin_view(cam, ang);
+		vec3_t ang = { cam.pitch, cam.yaw, 0 };
+		r_begin_view(cam.pos, ang);
 
 		const char *mode;
 		if (g_surf_ok && g_qtx_ok && !wire) {
 			drawn = r_surfaces(&g_surf);
-			mode  = "start.bsp textured";
+			mode  = "textured";
 		} else if (g_geo_ok) {
 			drawn = r_wireframe(g_geo.verts, g_geo.num_verts,
 			                    g_geo.edges, g_geo.num_edges, 90, 200, 120);
-			mode  = "start.bsp wireframe";
+			mode  = "wireframe";
 		} else {
 			drawn = r_wireframe(ROOM_VERTS, 8, ROOM_EDGES, 12, 90, 220, 120);
 			mode  = "test room";
@@ -219,16 +261,17 @@ static void demo_loop(void)
 
 		describe_buttons(held, sizeof held, pad.buttons);
 		snprintf(overlay, sizeof overlay,
-			"q1psx  frame %u\n\n"
-			"%s\n"
-			"  dpad LR/UD, L1R1 pitch, SEL toggle wire\n"
-			"  cam %d %d %d  yaw %d pitch %d\n"
-			"  %d prims%s\n\n"
-			"mem %d KiB  selftests %s\n"
+			"q1psx  frame %u   %s   %d prims%s\n\n"
+			"  dpad LR yaw / UD move   SQ CI strafe\n"
+			"  TR CR up-down   L1 R1 pitch\n"
+			"  R2 L2 fast-slow   START reset   SEL wire\n"
+			"  pos %d %d %d   yaw %d  pitch %d\n\n"
+			"mem %d KiB   selftests %s\n"
 			"held:%s",
-			frame, mode,
-			cam[0], cam[1], cam[2], yaw >> Q_FIX_SHIFT, pitch >> Q_FIX_SHIFT,
-			drawn, vid_prim_overflowed() ? " (OVERFLOW)" : "",
+			frame, mode, drawn,
+			vid_prim_overflowed() ? " OVERFLOW" : "",
+			cam.pos[0], cam.pos[1], cam.pos[2],
+			cam.yaw >> Q_FIX_SHIFT, cam.pitch >> Q_FIX_SHIFT,
 			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
 			held);
 		vid_text(0, 8, 8, overlay);
