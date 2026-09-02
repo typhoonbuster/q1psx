@@ -30,6 +30,12 @@ static uint8_t scr_ok[R_MAXVERTS];
 static int32_t vm_row2[3];   /* forward basis, 1.3.12 */
 static int32_t vm_t2;        /* forward translation, world units */
 
+/* --- diagnostics (declared in render.h, shown in the overlay) --- */
+int r_dbg_nodes, r_dbg_leaves, r_dbg_faces;
+int r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot;
+int r_dbg_vz_lo, r_dbg_vz_hi;   /* view_z range this frame */
+int r_dbg_vm[4];               /* vm_row2[3], vm_t2       */
+
 void r_init(void)
 {
 	InitGeom();
@@ -63,13 +69,21 @@ void r_begin_view(const int32_t pos[3], const vec3_t ang)
 		m.t[i] = (int32_t) (-(d >> Q_FIX_SHIFT));
 	}
 
-	gte_SetRotMatrix(&m);
-	gte_SetTransMatrix(&m);
-
+	/* Stash the forward row for view_z BEFORE the GTE macros run: PSn00bSDK's
+	   gte_SetRotMatrix / gte_SetTransMatrix have undeclared $t0/$t1 clobbers,
+	   so a value the compiler keeps live across them (like &m) can be trashed,
+	   giving a garbage read afterwards. */
 	vm_row2[0] = m.m[2][0];
 	vm_row2[1] = m.m[2][1];
 	vm_row2[2] = m.m[2][2];
 	vm_t2      = m.t[2];
+	r_dbg_vm[0] = vm_row2[0];
+	r_dbg_vm[1] = vm_row2[1];
+	r_dbg_vm[2] = vm_row2[2];
+	r_dbg_vm[3] = vm_t2;
+
+	gte_SetRotMatrix(&m);
+	gte_SetTransMatrix(&m);
 }
 
 /* view-space Z (distance along the forward axis) of a world-space vertex */
@@ -176,6 +190,8 @@ static int draw_face(const surf_t *s, int f)
 		if (fv[k].vert >= sv_nv)
 			return 0;
 		vz[k] = view_z(&s->verts[fv[k].vert]);
+		if (vz[k] < r_dbg_vz_lo) r_dbg_vz_lo = vz[k];
+		if (vz[k] > r_dbg_vz_hi) r_dbg_vz_hi = vz[k];
 		if (vz[k] >= NEAR_CLIP)
 			nfront++;
 	}
@@ -424,10 +440,6 @@ static void mark_pvs_leaves(const bsp_t *b, const uint8_t *pvs)
 	}
 }
 
-/* --- diagnostics (shown in the overlay) --- */
-int r_dbg_nodes, r_dbg_leaves, r_dbg_faces;
-int r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot;
-
 static uint8_t face_seen[R_MAXFACEIDX];
 static uint8_t face_key;
 
@@ -489,6 +501,8 @@ int r_world(const surf_t *s, const bsp_t *b,
 	}
 	r_dbg_nodes = r_dbg_leaves = r_dbg_faces = 0;
 	r_dbg_drop_near = r_dbg_drop_back = r_dbg_drop_sky = r_dbg_drop_slot = 0;
+	r_dbg_vz_lo = 999999;
+	r_dbg_vz_hi = -999999;
 
 	vec3_t fw, rt, up;
 	AngleVectors(ang, fw, rt, up);

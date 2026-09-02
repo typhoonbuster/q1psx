@@ -51,3 +51,5 @@ extern int r_dbg_drop_near;   /* faces dropped: all verts behind near  */
 extern int r_dbg_drop_back;   /* faces dropped: back-face              */
 extern int r_dbg_drop_sky;    /* faces dropped: sky                    */
 extern int r_dbg_drop_slot;   /* faces dropped: no texture slot        */
+extern int r_dbg_vz_lo, r_dbg_vz_hi;   /* view_z range over all face verts */
+extern int r_dbg_vm[4];                /* stashed view fwd row + t         */

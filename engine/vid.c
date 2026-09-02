@@ -130,3 +130,4 @@ void vid_flip(void)
 int vid_frame_vbl(void)  { return frame_vbl; }
 int vid_gpu_busy(void)   { return gpu_was_busy; }
 int vid_prim_used(void)  { return (int) prim_used_last; }
+uint32_t vid_vbl_now(void) { return vbl_count; }

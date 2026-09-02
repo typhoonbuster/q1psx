@@ -242,9 +242,11 @@ static void demo_loop(void)
 			while ((view == 0 && !have_world) || (view == 1 && !have_surf));
 		}
 
+		uint32_t tp0 = vid_vbl_now();
 		pmove_cmd_t cmd;
 		read_player_cmd(&player, &cmd, &pad);
 		pmove_step(&player, &cmd, clip_bsp);
+		uint32_t tp1 = vid_vbl_now();
 
 		int32_t eye[3] = { player.pos[0], player.pos[1], player.pos[2] + 22 };
 		vec3_t  ang    = { player.pitch, player.yaw, 0 };
@@ -266,6 +268,8 @@ static void demo_loop(void)
 			mode  = "test room";
 		}
 
+		uint32_t tr1 = vid_vbl_now();
+
 		int vbl = vid_frame_vbl();
 		vbl_avg = (vbl_avg * 7 + (vbl << 4)) >> 3;   /* 4.4 fixed, ~1s smoothing */
 
@@ -273,11 +277,12 @@ static void demo_loop(void)
 			"q1psx  %s\n"
 			"  %d.%d vbl/frame  ~%d fps  %s   %d prim B%s\n\n"
 			"  nodes %d  leaves %d  faces %d  drawn %d\n"
-			"  drop: near %d  back %d  sky %d  slot %d\n\n"
-			"  dpad turn/move  SQ CI strafe  L1R1 look\n"
-			"  CR jump  TR walk  START %s  L2+R2 home  SEL view\n"
-			"  pos %d %d %d  %s\n\n"
-			"mem %d KiB   sel %s",
+			"  drop near %d back %d sky %d slot %d\n"
+			"  vz [%d..%d]  vm %d %d %d t%d\n"
+			"  span vbl: pmove %u  render %u\n"
+			"  pos %d %d %d  yaw %d pit %d  %s\n\n"
+			"  CR jump TR walk START %s L2+R2 home SEL view\n"
+			"mem %d KiB  sel %s",
 			mode,
 			vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
 			vbl ? 60 / vbl : 60,
@@ -285,9 +290,13 @@ static void demo_loop(void)
 			vid_prim_used(), vid_prim_overflowed() ? " OVF" : "",
 			r_dbg_nodes, r_dbg_leaves, r_dbg_faces, drawn,
 			r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot,
-			player.noclip ? "noclip" : "clip  ",
+			r_dbg_vz_lo, r_dbg_vz_hi,
+			r_dbg_vm[0], r_dbg_vm[1], r_dbg_vm[2], r_dbg_vm[3],
+			tp1 - tp0, tr1 - tp1,
 			player.pos[0], player.pos[1], player.pos[2],
+			player.yaw >> Q_FIX_SHIFT, player.pitch >> Q_FIX_SHIFT,
 			player.onground ? "ground" : "air",
+			player.noclip ? "noclip" : "clip",
 			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK");
 		vid_text(0, 8, 8, overlay);
 

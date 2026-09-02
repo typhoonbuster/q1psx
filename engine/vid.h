@@ -46,3 +46,7 @@ int vid_prim_overflowed(void);
 int vid_frame_vbl(void);
 int vid_gpu_busy(void);
 int vid_prim_used(void);
+
+/* Raw vblank counter (increments in the vblank IRQ). Bracket a section with two
+   reads to see roughly how many 16.7 ms vblank periods it spanned. */
+uint32_t vid_vbl_now(void);
