@@ -267,9 +267,13 @@ owned game; the player picks game + fidelity from the menu.
     `PRIM_BYTES` 65536 → 81920; `vid_prim_overflowed()`.
   - `engine/main.c`: 7th boot step loads `START.QSF`; `demo_loop` draws
     `r_surfaces` when textures + surfaces both loaded, `SELECT` toggles back
-    to the wireframe. Headless boot clean; awaiting on-screen check.
+    to the wireframe.
+  - **Confirmed on screen** (2026-09-02): `start.bsp` renders textured
+    and correct. Frame rate is very low — the whole world model is
+    transformed and drawn every frame with no visibility culling. Expected;
+    **5.4** (PVS + frustum) is the fix and no optimisation happens before it.
 
 ### Next step
 
 - **5.3** free camera (largely already in `demo_loop`), then **5.4**
-  PVS/frustum culling to drop the face/line budgets.
+  PVS/frustum culling — the performance step. Drops the face/line budgets.
