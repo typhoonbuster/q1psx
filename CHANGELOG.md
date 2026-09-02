@@ -277,8 +277,8 @@ owned game; the player picks game + fidelity from the menu.
   `engine/main.c`: d-pad L/R yaw + U/D forward-back, Square/Circle strafe,
   Triangle/Cross world up-down, L1/R1 pitch (±89°), R2/L2 fast/slow, START
   snaps back to the spawn pose. No collision or gravity (by design — that is
-  Phase 6). Overlay reworked to show the control map + camera pose. Headless
-  boot clean; awaiting on-screen check.
+  Phase 6). Overlay reworked to show the control map + camera pose.
+  **Confirmed on screen** (2026-09-02).
 
 ### Next step
 
