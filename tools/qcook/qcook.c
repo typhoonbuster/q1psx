@@ -327,6 +327,7 @@ static void write_qtx(const char *path, const uint16_t clut[256],
 #define LUMP_VISIBILITY    4
 #define LUMP_NODES         5
 #define LUMP_FACES         7
+#define LUMP_CLIPNODES     9
 #define LUMP_LEAFS        10
 #define LUMP_MARKSURFACES 11
 #define LUMP_EDGES        12
@@ -631,23 +632,27 @@ static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	if (bsp_len < 4 + HEADER_LUMPS * 8 || rd_u32(bsp) != BSPVERSION)
 		die("not a v%d BSP", BSPVERSION);
 
-	uint32_t pllen, ndlen, lflen, mklen, vislen, mdlen;
+	uint32_t pllen, ndlen, lflen, cnlen, mklen, vislen, mdlen;
 	const uint8_t *pl  = bsp_lump(bsp, bsp_len, LUMP_PLANES,       &pllen);
 	const uint8_t *nd  = bsp_lump(bsp, bsp_len, LUMP_NODES,        &ndlen);
 	const uint8_t *lf  = bsp_lump(bsp, bsp_len, LUMP_LEAFS,        &lflen);
+	const uint8_t *cn  = bsp_lump(bsp, bsp_len, LUMP_CLIPNODES,    &cnlen);
 	const uint8_t *mk  = bsp_lump(bsp, bsp_len, LUMP_MARKSURFACES, &mklen);
 	const uint8_t *vis = bsp_lump(bsp, bsp_len, LUMP_VISIBILITY,   &vislen);
 	const uint8_t *md  = bsp_lump(bsp, bsp_len, LUMP_MODELS,       &mdlen);
 	if (mdlen < 64)
 		die("no worldmodel");
 
-	int nplanes = (int) (pllen / 20);
-	int nnodes  = (int) (ndlen / 24);
-	int nleaves = (int) (lflen / 28);
-	int nmark   = (int) (mklen / 2);
+	int nplanes    = (int) (pllen / 20);
+	int nnodes     = (int) (ndlen / 24);
+	int nleaves    = (int) (lflen / 28);
+	int nclipnodes = (int) (cnlen / 8);
+	int nmark      = (int) (mklen / 2);
 
-	int headnode = rd_i32(md + 36);
-	int visleafs = rd_i32(md + 52);
+	int headnode   = rd_i32(md + 36);
+	int hull1_root = rd_i32(md + 40);
+	int hull2_root = rd_i32(md + 44);
+	int visleafs   = rd_i32(md + 52);
 	if (headnode != 0)
 		die("world headnode is %d, expected 0", headnode);
 
@@ -702,6 +707,25 @@ static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 		d->num_marksurf   = rd_u16(s + 22);
 	}
 
+	/* clip hulls 1 & 2 share the one clipnode array. dclipnode_t = int planenum
+	   + short children[2]; a child < 0 is a Quake CONTENTS_* value verbatim. */
+	qbsp_clipnode *clips = xmalloc((size_t) (nclipnodes ? nclipnodes : 1) * sizeof *clips);
+	for (int i = 0; i < nclipnodes; i++) {
+		const uint8_t *s = cn + (long) i * 8;
+		int planenum = rd_i32(s + 0);
+		if (planenum < 0 || planenum >= nplanes)
+			die("clipnode %d: bad planenum %d", i, planenum);
+		clips[i].plane    = (uint16_t) planenum;
+		clips[i].child[0] = rd_i16(s + 4);
+		clips[i].child[1] = rd_i16(s + 6);
+		for (int c = 0; c < 2; c++)
+			if (clips[i].child[c] >= nclipnodes)
+				die("clipnode %d child %d out of range (%d)", i, c, clips[i].child[c]);
+	}
+	if (hull1_root >= nclipnodes || hull2_root >= nclipnodes)
+		die("hull root out of range (%d / %d, %d clipnodes)",
+		    hull1_root, hull2_root, nclipnodes);
+
 	uint16_t *marks = xmalloc((size_t) (nmark ? nmark : 1) * 2);
 	for (int i = 0; i < nmark; i++)
 		marks[i] = rd_u16(mk + (long) i * 2);
@@ -718,27 +742,33 @@ static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	h.num_leaves    = (uint32_t) nleaves;
 	h.num_visleaves = (uint32_t) visleafs;
 	h.num_marksurf  = (uint32_t) nmark;
+	h.num_clipnodes = (uint32_t) nclipnodes;
 	h.vis_len       = vislen;
 	h.root          = headnode;
+	h.hull1_root    = hull1_root;
+	h.hull2_root    = hull2_root;
 	for (int k = 0; k < 3; k++) {
 		h.mins[k] = (int16_t) clampi((int) lround(rd_f32(md + 0  + k * 4)), -32768, 32767);
 		h.maxs[k] = (int16_t) clampi((int) lround(rd_f32(md + 12 + k * 4)), -32768, 32767);
 	}
 
 	fwrite(&h, sizeof h, 1, fp);
-	fwrite(planes, sizeof *planes, (size_t) nplanes, fp);
-	fwrite(nodes,  sizeof *nodes,  (size_t) nnodes,  fp);
-	fwrite(leaves, sizeof *leaves, (size_t) nleaves, fp);
+	fwrite(planes, sizeof *planes, (size_t) nplanes,    fp);
+	fwrite(nodes,  sizeof *nodes,  (size_t) nnodes,     fp);
+	fwrite(leaves, sizeof *leaves, (size_t) nleaves,    fp);
+	fwrite(clips,  sizeof *clips,  (size_t) nclipnodes, fp);
 	fwrite(marks,  2, (size_t) nmark, fp);
 	fwrite(vis,    1, vislen, fp);
 	fclose(fp);
 
-	printf("qcook: %s — %d planes, %d nodes, %d leaves (%d vis), %d marksurf, %u B vis\n",
-	       out, nplanes, nnodes, nleaves, visleafs, nmark, vislen);
+	printf("qcook: %s — %d planes, %d nodes, %d leaves (%d vis), "
+	       "%d clipnodes, %d marksurf, %u B vis\n",
+	       out, nplanes, nnodes, nleaves, visleafs, nclipnodes, nmark, vislen);
 
 	free(planes);
 	free(nodes);
 	free(leaves);
+	free(clips);
 	free(marks);
 	return 0;
 }

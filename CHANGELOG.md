@@ -315,8 +315,27 @@ owned game; the player picks game + fidelity from the menu.
     * no near-plane clipping — `draw_face` drops a whole face when any vertex
       is behind `NEAR_Z`, so large faces pop out near the camera.
 
+- **6.1** — AABB-vs-BSP collision, fixed-point. Approach A (extend QBS1),
+  approved.
+  - `formats/qbsp.h` → `QBS2`: adds Quake's `dclipnodes` (hulls 1 & 2 share
+    the one array) + the world model's `headnode[1]` / `headnode[2]` roots.
+    `qcook bsp` validates clipnode plane/child indices. `start.bsp` → 5326
+    clipnodes, +37 KiB (≈ 195 KiB total).
+  - `engine/bsp.{c,h}` `bsp_hull_trace`: a fixed-point port of Quake's
+    `SV_RecursiveHullCheck` + `SV_HullPointContents`. Sweeps a point through
+    clip hull 1 or 2, fills `trace_t { fraction (0..ONE), endpos, plane_n/d,
+    startsolid/allsolid/inopen/inwater }`. Positions are integer world units;
+    plane distances and the `t1/t2` crossing values are ×4096 (int64
+    intermediates); `DIST_EPSILON` → 128; the crosspoint fraction is clamped
+    in int64 before narrowing.
+  - `engine/main.c`: the fly camera sweeps hull 1 on every move when clip is
+    on. **START** toggles clip on/off (noclip), **L2+R2** snaps to the spawn
+    pose (was START). Overlay shows `clip:ON/OFF`.
+  - Host trace test (grid classify + axis sweeps on the real `start.qbsp`) +
+    headless boot clean. Awaiting on-screen check.
+
 ### Next step
 
-- **5.x** wrap-up: profile the culled world on device, then wire the fidelity
-  knobs into geometry (BSP decimation) and revisit lightmaps. Then **Phase 6**
-  (player movement + BSP collision).
+- **6.2 / 6.3** — player controller: gravity + jump, `SV_FlyMove`-style slide
+  along walls/floors, step-up. Then the deferred Phase-5 perf pass, and the
+  full `cooked/` tree.

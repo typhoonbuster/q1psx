@@ -165,28 +165,35 @@ static void describe_buttons(char *buf, int cap, uint16_t held)
 
 /* ------------------------------------------------------------ fly camera -- */
 /*
- * Phase 5.3 debug free-fly camera — no collision, no gravity. Pad map:
+ * Debug fly camera. Pad map:
  *   d-pad L/R       yaw
  *   d-pad U/D       move forward / back
  *   Square/Circle   strafe left / right
  *   Triangle/Cross  move up / down (world Z, stays intuitive when pitched)
  *   L1/R1           pitch up / down (clamped +-89 deg)
  *   R2 / L2 (hold)  move fast / slow
- *   START           snap back to the spawn pose
- * (SELECT toggles textured/wireframe — handled in demo_loop.)
+ *   L2 + R2 (hold)  snap back to the spawn pose
+ *   START           toggle collision (Phase 6.1: sweep the player box through
+ *                   the BSP clip hull; off = noclip flight)
+ * (SELECT cycles the view — handled in demo_loop.)
  */
 typedef struct {
 	int32_t pos[3];      /* world units                       */
 	int32_t yaw, pitch;  /* q1psx degrees, 20.12              */
-	int32_t home[3];     /* START restores this               */
+	int32_t home[3];     /* L2+R2 restores this               */
+	int     collide;     /* 1 = trace moves against the world */
 } fly_cam_t;
 
-static void fly_cam_update(fly_cam_t *c, const PadState *pad)
+static void fly_cam_update(fly_cam_t *c, const PadState *pad, const bsp_t *b)
 {
-	if (pad->pressed & PAD_START) {
+	if (pad->pressed & PAD_START)
+		c->collide = !c->collide;
+
+	if ((pad->buttons & PAD_L2) && (pad->buttons & PAD_R2)) {
 		for (int k = 0; k < 3; k++)
 			c->pos[k] = c->home[k];
 		c->yaw = c->pitch = 0;
+		return;
 	}
 
 	if (pad->buttons & PAD_LEFT)  c->yaw   += Q_FIX(4);
@@ -211,9 +218,21 @@ static void fly_cam_update(fly_cam_t *c, const PadState *pad)
 	vec3_t ang = { c->pitch, c->yaw, 0 };
 	vec3_t fwd, right, up;
 	AngleVectors(ang, fwd, right, up);
+
+	int32_t want[3];
 	for (int k = 0; k < 3; k++)
-		c->pos[k] += (fwd[k] * fb + right[k] * lr) >> Q_FIX_SHIFT;
-	c->pos[2] += ud;
+		want[k] = c->pos[k] + ((fwd[k] * fb + right[k] * lr) >> Q_FIX_SHIFT);
+	want[2] += ud;
+
+	if (c->collide && b) {
+		trace_t tr;
+		bsp_hull_trace(b, 1, c->pos, want, &tr);
+		for (int k = 0; k < 3; k++)
+			c->pos[k] = tr.endpos[k];
+	} else {
+		for (int k = 0; k < 3; k++)
+			c->pos[k] = want[k];
+	}
 }
 
 /* an inside-out box in Quake coords (X fwd, Y left, Z up), world units */
@@ -232,7 +251,7 @@ static void demo_loop(void)
 	vid_set_bg(8, 8, 16);
 	r_init();
 
-	fly_cam_t cam = { .pos = { 64, 0, 0 } };
+	fly_cam_t cam = { .pos = { 64, 0, 0 }, .collide = 1 };
 	if (g_geo_ok) {
 		cam.pos[0] = (g_geo.mins[0] + g_geo.maxs[0]) / 2;
 		cam.pos[1] = (g_geo.mins[1] + g_geo.maxs[1]) / 2;
@@ -240,6 +259,8 @@ static void demo_loop(void)
 	}
 	for (int k = 0; k < 3; k++)
 		cam.home[k] = cam.pos[k];
+
+	const bsp_t *clip_bsp = g_bsp_ok ? &g_bsp : NULL;
 
 	/* view: 0 = world (PVS + frustum), 1 = all surfaces, 2 = wireframe.
 	   SELECT cycles; unavailable modes are skipped. */
@@ -259,7 +280,7 @@ static void demo_loop(void)
 				view = (view + 1) % 3;
 			while ((view == 0 && !have_world) || (view == 1 && !have_surf));
 		}
-		fly_cam_update(&cam, &pad);
+		fly_cam_update(&cam, &pad, clip_bsp);
 
 		vec3_t ang = { cam.pitch, cam.yaw, 0 };
 		r_begin_view(cam.pos, ang);
@@ -284,13 +305,14 @@ static void demo_loop(void)
 		snprintf(overlay, sizeof overlay,
 			"q1psx  frame %u   %s   %d prims%s\n\n"
 			"  dpad LR yaw / UD move   SQ CI strafe\n"
-			"  TR CR up-down   L1 R1 pitch\n"
-			"  R2 L2 fast-slow   START reset   SEL view\n"
+			"  TR CR up-down   L1 R1 pitch   R2 L2 spd\n"
+			"  START clip:%s   L2+R2 home   SEL view\n"
 			"  pos %d %d %d   yaw %d  pitch %d\n\n"
 			"mem %d KiB   selftests %s\n"
 			"held:%s",
 			frame, mode, drawn,
 			vid_prim_overflowed() ? " OVERFLOW" : "",
+			cam.collide ? "ON " : "OFF",
 			cam.pos[0], cam.pos[1], cam.pos[2],
 			cam.yaw >> Q_FIX_SHIFT, cam.pitch >> Q_FIX_SHIFT,
 			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",

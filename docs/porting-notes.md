@@ -603,3 +603,43 @@ default for buckets 3–0.
   behind `NEAR_Z` (no polygon clipping yet), so big wall/floor faces vanish as
   the camera nears them. Needs a proper near-plane clip (split the polygon on
   the plane, re-project).
+
+---
+
+## §9 — Collision (Phase 6)
+
+### 9.1 Clip hulls (6.1)
+
+Quake pre-expands the world at BSP-compile time into three collision hulls so
+the runtime only ever traces a **point**: hull 0 (point-size, = the render
+nodes), hull 1 (player box, mins `(-16,-16,-24)` maxs `(16,16,32)`), hull 2
+(big monsters, `(-32,-32,-24)`..`(32,32,64)`). Hull 3 is unused in id1. Hulls
+1 and 2 share one `dclipnodes` array; the world model's `headnode[1]` /
+`headnode[2]` are their roots. `dclipnode` = `{int planenum; short child[2]}` —
+a child `< 0` is a Quake `CONTENTS_*` value verbatim (`-2` = solid).
+
+`qcook bsp` copies the clipnodes (as `qbsp_clipnode {u16 plane; i16 child[2]}`,
+6 B) and the two roots into `QBS2`, reusing the plane table the renderer
+already has. `start.bsp`: 5326 clipnodes (3030 for hull 1, the rest hull 2).
+
+### 9.2 `bsp_hull_trace` — SV_RecursiveHullCheck port
+
+A near-verbatim port of WinQuake `world.c`. Fixed-point choices:
+- **Positions stay integer world units** (a coord x4096 would overflow 20.12's
+  ~±524288 range — the map is ±4096 units).
+- Plane/point distance `t = n·p - dist` is in world-units x4096 (`n` is x4096,
+  `dist` is x4096), accumulated in `int64`. `DIST_EPSILON` (1/32 u) → `128`.
+- The crosspoint `frac = (t1 ± eps) / (t1 - t2)` is computed as
+  `((t1 ± eps) << 12) / (t1 - t2)` and **clamped in int64** to `0..ONE` before
+  narrowing to `q_fixed` (the ratio can blow past int32 when the segment
+  barely straddles the plane).
+- `mid[i] = p1[i] + ((p2[i]-p1[i]) * frac >> 12)` — integer result.
+
+Returns `trace_t { fraction (q_fixed 0..ONE), endpos[3], plane_n[3]/plane_d,
+startsolid, allsolid, inopen, inwater }`. Recursion depth ≈ clip-tree depth
+(~30-40); one trace per player move, so stack cost is bounded.
+
+The debug fly-cam sweeps hull 1 for its whole per-frame delta (a swept test,
+so fast moves can't tunnel). `startsolid`/`allsolid` → the move is allowed raw
+(so you can fly out of solid); otherwise stop at `endpos`. No wall-slide yet —
+that is `SV_FlyMove` in 6.3. **START** toggles clip; **L2+R2** snap to spawn.
