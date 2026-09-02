@@ -32,6 +32,9 @@ typedef struct {
 	const uint16_t       *marksurf;
 	const uint8_t        *vis;
 	int16_t               mins[3], maxs[3];
+	int                   has_spawn;
+	int32_t               spawn[3];    /* info_player_start origin  */
+	int32_t               spawn_yaw;   /* whole degrees             */
 } bsp_t;
 
 /* Result of sweeping a point through a clip hull. */

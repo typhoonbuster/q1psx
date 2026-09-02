@@ -35,7 +35,7 @@
 
 #include <stdint.h>
 
-#define QBSP_MAGIC "QBS2"
+#define QBSP_MAGIC "QBS3"
 
 /* Quake CONTENTS_* — a clipnode child < 0 is one of these, verbatim. */
 #define QBSP_CONTENTS_EMPTY  (-1)
@@ -59,6 +59,9 @@ typedef struct {
 	int32_t  hull2_root;    /* clipnode root for the big-monster hull           */
 	int16_t  mins[3];       /* world model bounds, for a sane camera start      */
 	int16_t  maxs[3];
+	int32_t  spawn[3];      /* info_player_start origin (world units)           */
+	int32_t  spawn_yaw;     /* info_player_start "angle" (whole degrees)        */
+	uint32_t has_spawn;     /* 1 if the entity lump had an info_player_start    */
 } qbsp_header;
 
 /* type: 0/1/2 = axial (X/Y/Z), 3 = non-axial — axial lets the side test skip

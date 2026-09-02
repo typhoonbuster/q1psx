@@ -322,6 +322,7 @@ static void write_qtx(const char *path, const uint16_t clut[256],
 
 /* --------------------------------------------------------------- geometry -- */
 
+#define LUMP_ENTITIES      0
 #define LUMP_PLANES        1
 #define LUMP_VERTEXES      3
 #define LUMP_VISIBILITY    4
@@ -624,6 +625,65 @@ static int cmd_surfaces(int argc, char **argv)
 
 /* --------------------------------------------------------------- bsp / pvs -- */
 
+/* Scan the (plain-text) entity lump for the first info_player_start and read
+   its origin + "angle". Returns 1 if found. Key/value order within a block is
+   arbitrary, so gather them first, then check the classname. */
+static int parse_player_start(const uint8_t *ents, uint32_t len,
+                              float origin[3], float *angle)
+{
+	const char *p   = (const char *) ents;
+	const char *end = p + len;
+
+	while (p < end) {
+		while (p < end && *p != '{') p++;
+		if (p >= end) break;
+		p++;
+
+		char  cls[64] = "";
+		float o[3]    = { 0, 0, 0 };
+		float a       = 0;
+		int   have_o  = 0;
+
+		while (p < end && *p != '}') {
+			char key[64], val[256];
+			int  i;
+
+			while (p < end && *p != '"' && *p != '}') p++;
+			if (p >= end || *p == '}') break;
+			p++;
+			for (i = 0; p < end && *p != '"' && i < 63; i++) key[i] = *p++;
+			key[i] = 0;
+			if (p < end) p++;
+
+			while (p < end && *p != '"' && *p != '}') p++;
+			if (p >= end || *p == '}') break;
+			p++;
+			for (i = 0; p < end && *p != '"' && i < 255; i++) val[i] = *p++;
+			val[i] = 0;
+			if (p < end) p++;
+
+			if (!strcmp(key, "classname")) {
+				snprintf(cls, sizeof cls, "%s", val);
+			} else if (!strcmp(key, "origin")) {
+				if (sscanf(val, "%f %f %f", &o[0], &o[1], &o[2]) == 3)
+					have_o = 1;
+			} else if (!strcmp(key, "angle")) {
+				a = (float) atof(val);
+			}
+		}
+		if (p < end && *p == '}') p++;
+
+		if (have_o && !strcmp(cls, "info_player_start")) {
+			origin[0] = o[0];
+			origin[1] = o[1];
+			origin[2] = o[2];
+			*angle    = a;
+			return 1;
+		}
+	}
+	return 0;
+}
+
 /* The slice of the BSP the runtime culler needs: node tree, leaves, dedup plane
    table, RLE-compressed PVS (kept as-is, decompressed one row at a time on the
    PS1). World model only. See formats/qbsp.h. */
@@ -633,6 +693,8 @@ static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 		die("not a v%d BSP", BSPVERSION);
 
 	uint32_t pllen, ndlen, lflen, cnlen, mklen, vislen, mdlen;
+	uint32_t entlen;
+	const uint8_t *ent = bsp_lump(bsp, bsp_len, LUMP_ENTITIES,     &entlen);
 	const uint8_t *pl  = bsp_lump(bsp, bsp_len, LUMP_PLANES,       &pllen);
 	const uint8_t *nd  = bsp_lump(bsp, bsp_len, LUMP_NODES,        &ndlen);
 	const uint8_t *lf  = bsp_lump(bsp, bsp_len, LUMP_LEAFS,        &lflen);
@@ -642,6 +704,9 @@ static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	const uint8_t *md  = bsp_lump(bsp, bsp_len, LUMP_MODELS,       &mdlen);
 	if (mdlen < 64)
 		die("no worldmodel");
+
+	float   spawn_o[3] = { 0, 0, 0 }, spawn_a = 0;
+	int     has_spawn  = parse_player_start(ent, entlen, spawn_o, &spawn_a);
 
 	int nplanes    = (int) (pllen / 20);
 	int nnodes     = (int) (ndlen / 24);
@@ -751,6 +816,10 @@ static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 		h.mins[k] = (int16_t) clampi((int) lround(rd_f32(md + 0  + k * 4)), -32768, 32767);
 		h.maxs[k] = (int16_t) clampi((int) lround(rd_f32(md + 12 + k * 4)), -32768, 32767);
 	}
+	h.has_spawn  = (uint32_t) has_spawn;
+	h.spawn_yaw  = (int32_t) lround(spawn_a);
+	for (int k = 0; k < 3; k++)
+		h.spawn[k] = (int32_t) lround(spawn_o[k]);
 
 	fwrite(&h, sizeof h, 1, fp);
 	fwrite(planes, sizeof *planes, (size_t) nplanes,    fp);
@@ -764,6 +833,11 @@ static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	printf("qcook: %s — %d planes, %d nodes, %d leaves (%d vis), "
 	       "%d clipnodes, %d marksurf, %u B vis\n",
 	       out, nplanes, nnodes, nleaves, visleafs, nclipnodes, nmark, vislen);
+	if (has_spawn)
+		printf("       info_player_start at %d %d %d, angle %d\n",
+		       h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
+	else
+		printf("       no info_player_start — engine will fall back to bounds centre\n");
 
 	free(planes);
 	free(nodes);

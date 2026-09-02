@@ -136,12 +136,21 @@ int bsp_load(const void *blob, int len, bsp_t *out)
 	memcpy(out->mins, h->mins, sizeof out->mins);
 	memcpy(out->maxs, h->maxs, sizeof out->maxs);
 
+	out->has_spawn = (int) h->has_spawn;
+	out->spawn[0]  = h->spawn[0];
+	out->spawn[1]  = h->spawn[1];
+	out->spawn[2]  = h->spawn[2];
+	out->spawn_yaw = h->spawn_yaw;
+
 	pvs_leaf = -1;
 	pvs_bsp  = NULL;
 
 	printf("bsp_load: %d nodes, %d leaves (%d vis), %d clipnodes, %d marksurf, %u B vis\n",
 	       out->num_nodes, out->num_leaves, out->num_visleaves,
 	       out->num_clipnodes, out->num_marksurf, out->vis_len);
+	if (out->has_spawn)
+		printf("bsp_load: spawn at %d %d %d, yaw %d\n",
+		       out->spawn[0], out->spawn[1], out->spawn[2], out->spawn_yaw);
 	return 1;
 }
 

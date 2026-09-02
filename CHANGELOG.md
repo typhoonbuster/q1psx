@@ -355,6 +355,14 @@ owned game; the player picks game + fidelity from the menu.
     (Quake ≈ 45), accelerates to 320 u/s in ~0.3 s, stops dead at walls.
     Headless boot clean. Awaiting on-screen check.
 
+- **6.1b** — spawn at `info_player_start`. `qcook bsp` scans the BSP entity
+  lump (plain text, `{ "k" "v" ... }`) for the first `info_player_start` and
+  stores its `origin` + `angle` in the header (`QBS2` → `QBS3`). `engine/bsp`
+  loads them; `engine/main.c` spawns the player there (yaw included), falling
+  back to the model-bounds centre when a map has none. `start.bsp` → spawn
+  (544, 288, 32) yaw 90; host sim confirms it is open space and the player
+  settles on the floor at z≈29. L2+R2 now also restores the spawn facing.
+
 ### Next step
 
 - Phase-5 deferred work (perf pass: batch faces by texture; near-plane

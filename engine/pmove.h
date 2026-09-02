@@ -28,6 +28,7 @@ typedef struct {
 	int32_t pos_acc[3];   /* sub-unit displacement carry         */
 	int32_t grav_acc;     /* sub-unit gravity carry              */
 	int32_t home[3];      /* respawn point                       */
+	int32_t home_yaw;     /* respawn facing                      */
 } pmove_t;
 
 /* One frame of intent. fwd/side/up are -1, 0 or +1. */

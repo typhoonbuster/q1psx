@@ -183,11 +183,13 @@ static void read_player_cmd(pmove_t *pm, pmove_cmd_t *cmd, const PadState *pad)
 		pm->noclip = !pm->noclip;
 
 	if ((pad->buttons & PAD_L2) && (pad->buttons & PAD_R2)) {
-		for (int k = 0; k < 3; k++)
-			pm->pos[k] = pm->home[k];
-		pm->vel[0] = pm->vel[1] = pm->vel[2] = 0;
-		pm->pos_acc[0] = pm->pos_acc[1] = pm->pos_acc[2] = 0;
-		pm->yaw = pm->pitch = 0;
+		for (int k = 0; k < 3; k++) {
+			pm->pos[k]     = pm->home[k];
+			pm->vel[k]     = 0;
+			pm->pos_acc[k] = 0;
+		}
+		pm->yaw   = pm->home_yaw;
+		pm->pitch = 0;
 	}
 
 	if (pad->buttons & PAD_LEFT)  pm->yaw   += Q_FIX(4);
@@ -223,13 +225,19 @@ static void demo_loop(void)
 	pmove_t player;
 	memset(&player, 0, sizeof player);
 	player.pos[0] = 64;
-	if (g_geo_ok) {
+	if (g_bsp_ok && g_bsp.has_spawn) {
+		player.pos[0] = g_bsp.spawn[0];
+		player.pos[1] = g_bsp.spawn[1];
+		player.pos[2] = g_bsp.spawn[2] + 1;   /* Quake drops the player to the floor */
+		player.yaw    = Q_FIX(g_bsp.spawn_yaw);
+	} else if (g_geo_ok) {
 		player.pos[0] = (g_geo.mins[0] + g_geo.maxs[0]) / 2;
 		player.pos[1] = (g_geo.mins[1] + g_geo.maxs[1]) / 2;
 		player.pos[2] = (g_geo.mins[2] + g_geo.maxs[2]) / 2;
 	}
 	for (int k = 0; k < 3; k++)
 		player.home[k] = player.pos[k];
+	player.home_yaw = player.yaw;
 
 	const bsp_t *clip_bsp = g_bsp_ok ? &g_bsp : NULL;
 

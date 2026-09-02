@@ -485,6 +485,13 @@ only. `qbsp_header` then, each section 4-byte aligned:
 The full decompressed PVS matrix would be ~300 KiB and precomputed per-leaf
 surface lists > 1 MiB — both rejected on RAM; see the CHANGELOG 5.4 entry.
 
+`QBS2` added the clip hulls (§9.1); `QBS3` added the spawn point — `qcook bsp`
+scans the plain-text entity lump (`{ "key" "value" ... }` blocks, key order
+arbitrary) for the first `info_player_start` and stores its `origin` + `angle`
+in the header. The engine spawns the player there; maps with no such entity
+fall back to the model-bounds centre. (The rest of the entity lump — lights,
+monsters, items, triggers — waits for the QuakeC VM in Phase 7.)
+
 MDL / SPR / lightmap cooking comes later (Phase 8+).
 
 ---
