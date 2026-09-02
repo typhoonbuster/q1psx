@@ -176,6 +176,15 @@ typedef struct {
 
 #define WORLD_TEX_CAP 64   /* atlas cell size; fidelity tunes this later */
 
+/* largest power of two in [8, max] not exceeding x */
+static int snap_p2(int x, int max)
+{
+	int p = 8;
+	while (p * 2 <= x && p * 2 <= max)
+		p <<= 1;
+	return p;
+}
+
 /* Extract every miptex slot, index-aligned (gaps become a 2x2 marker) and
    assign each a slot in the VRAM atlas grid. */
 static int extract_textures(const uint8_t *bsp, uint32_t bsp_len,
@@ -235,26 +244,20 @@ static int extract_textures(const uint8_t *bsp, uint32_t bsp_len,
 		else if (c->name[0] == '*')            c->flags |= QTX_F_LIQUID;
 		else if (!strncmp(c->name, "sky", 3))  c->flags |= QTX_F_SKY;
 
-		/* closest built-in mip not smaller than the cap, then nn-downscale */
+		/*
+		 * World tiles must be a power of two <= the cap so the PS1 texture
+		 * window can tile them cleanly. Snap each axis, then nearest-neighbour
+		 * from the closest built-in (box-filtered) mip. Non-square textures get
+		 * stretched to the nearest p2 on each axis — good enough for now.
+		 */
+		int tw = snap_p2(mw, cap), th = snap_p2(mh, cap);
+
 		int mip = 0;
-		while (mip < 3) {
-			if ((mw >> (mip + 1)) < cap && (mh >> (mip + 1)) < cap)
-				break;
+		while (mip < 3 && (mw >> (mip + 1)) >= tw && (mh >> (mip + 1)) >= th)
 			mip++;
-		}
 		int pw = mw >> mip, ph = mh >> mip;
-		if (pw < 1) pw = 1;
-		if (ph < 1) ph = 1;
 		const uint8_t *pix = mt + rd_u32(mt + 24 + mip * 4);
 
-		int tw = pw, th = ph;
-		if (tw > cap || th > cap) {
-			if (tw >= th) { th = th * cap / tw; tw = cap; }
-			else          { tw = tw * cap / th; th = cap; }
-			tw &= ~1; th &= ~1;
-			if (tw < 2) tw = 2;
-			if (th < 2) th = 2;
-		}
 		c->w = tw;
 		c->h = th;
 		c->pixels = (tw == pw && th == ph)
