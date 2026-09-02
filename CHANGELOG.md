@@ -280,9 +280,33 @@ owned game; the player picks game + fidelity from the menu.
   Phase 6). Overlay reworked to show the control map + camera pose.
   **Confirmed on screen** (2026-09-02).
 
+- **5.4** — PVS + frustum culling (the performance step). Approach A
+  (thin port of Quake's `r_bsp.c`).
+  - `formats/qbsp.h` (`QBS1`) + `qcook bsp`: the world BSP the culler needs —
+    a deduplicated plane table, the node tree, leaves (bounds + marksurface
+    span + contents), all marksurfaces (each a BSP/QSF face index), and
+    Quake's RLE-compressed PVS copied verbatim. Plane normals x4096 int16,
+    distances x4096 int32; every section 4-byte aligned. `start.bsp` → 1920
+    planes / 2909 nodes / 1568 leaves / 34 KiB vis ≈ 158 KiB.
+  - `qcook surfaces`: now emits exactly one `qsrf_face` per world-model BSP
+    face (uncookable ones become empty slots the renderer skips) so a face
+    index is a stable key shared with `marksurf[]`.
+  - `engine/bsp.{c,h}`: `bsp_load` (pointers into the blob), `bsp_point_leaf`
+    (descend the node tree), `bsp_pvs` (decompress one RLE row into a 1 KiB
+    scratch, cached by leaf; keeps the last good set when the camera clips
+    into solid).
+  - `engine/render.c` `r_world`: build 5 world-space frustum planes from the
+    view basis, locate the camera leaf, walk the BSP front-to-back —
+    AABB-reject whole subtrees against the frustum (trivial-accept clears a
+    plane for children), and in each PVS-visible leaf draw every face once
+    (dedup via a rolling per-frame key). `draw_face` extracted from
+    `r_surfaces` and shared.
+  - `engine/main.c`: 8th boot step loads `START.QBS`; `SELECT` now cycles
+    world (PVS+frustum) / all-surfaces / wireframe.
+  - Headless boot clean through all 8 steps. Awaiting on-screen check.
+
 ### Next step
 
-- **5.4** PVS/frustum culling — the performance step. BSP leaf walk + PVS
-  (`LUMP_VISIBILITY` / `LUMP_LEAFS` / `LUMP_NODES`, cooked to a per-leaf
-  surface list) + frustum reject. Drops the face/line budgets. Needs a
-  cook-format decision first.
+- **5.x** wrap-up: profile the culled world on device, then wire the fidelity
+  knobs into geometry (BSP decimation) and revisit lightmaps. Then **Phase 6**
+  (player movement + BSP collision).

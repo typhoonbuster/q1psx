@@ -11,7 +11,7 @@ ifndef QUAKE_PAK0
 QUAKE_PAK0 := $(shell sed -n 's/^[[:space:]]*QUAKE_PAK0[[:space:]]*=[[:space:]]*//p' ../../local.env 2>/dev/null)
 endif
 
-$(BIN): qcook.c ../../formats/fidelity.h ../../formats/qtx.h ../../formats/qgeo.h ../../formats/qsrf.h
+$(BIN): qcook.c ../../formats/fidelity.h ../../formats/qtx.h ../../formats/qgeo.h ../../formats/qsrf.h ../../formats/qbsp.h
 	$(CC) $(CFLAGS) -o $@ qcook.c -lm
 
 .PHONY: run info clean

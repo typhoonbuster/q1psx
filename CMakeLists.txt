@@ -54,7 +54,12 @@ endif()
 if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qsrf")
 	message(STATUS "q1psx: bundling cooked/id1/common/start.qsrf as START.QSF")
 	string(APPEND COOKED_ENTRIES
-		"<file name=\"START.QSF\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qsrf\" />")
+		"<file name=\"START.QSF\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qsrf\" />\n\t\t\t")
+endif()
+if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qbsp")
+	message(STATUS "q1psx: bundling cooked/id1/common/start.qbsp as START.QBS")
+	string(APPEND COOKED_ENTRIES
+		"<file name=\"START.QBS\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qbsp\" />")
 endif()
 if(COOKED_ENTRIES STREQUAL "")
 	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")

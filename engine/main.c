@@ -20,6 +20,7 @@
 #include "render.h"
 #include "geo.h"
 #include "surf.h"
+#include "bsp.h"
 #include "tex.h"
 #include "pad.h"
 #include "cd.h"
@@ -47,6 +48,8 @@ static char       g_hello_line[40];
 static int      g_qtx_ok;
 static surf_t   g_surf;
 static int      g_surf_ok;
+static bsp_t    g_bsp;
+static int      g_bsp_ok;
 
 static uint32_t cd_scratch[512];   /* one sector, word-aligned */
 
@@ -131,6 +134,13 @@ static void boot_load_surfaces(void)
 	int   size;
 	void *blob = load_disc_file("\\START.QSF;1", "surf", &size);
 	g_surf_ok = blob && surf_load(blob, size, &g_surf);
+}
+
+static void boot_load_bsp(void)
+{
+	int   size;
+	void *blob = load_disc_file("\\START.QBS;1", "bsp", &size);
+	g_bsp_ok = blob && bsp_load(blob, size, &g_bsp);
 }
 
 /* ------------------------------------------------------------- demo loop -- */
@@ -231,25 +241,36 @@ static void demo_loop(void)
 	for (int k = 0; k < 3; k++)
 		cam.home[k] = cam.pos[k];
 
+	/* view: 0 = world (PVS + frustum), 1 = all surfaces, 2 = wireframe.
+	   SELECT cycles; unavailable modes are skipped. */
+	int have_world = g_surf_ok && g_qtx_ok && g_bsp_ok;
+	int have_surf  = g_surf_ok && g_qtx_ok;
+	int view = have_world ? 0 : have_surf ? 1 : 2;
+
 	uint32_t frame = 0;
 	int      drawn = 0;
-	int      wire  = 0;             /* toggle: textured surfaces vs wireframe */
 	PadState pad;
 	char     held[96], overlay[320];
 
 	for (;;) {
 		pad_read(&pad);
-		if (pad.pressed & PAD_SELECT)
-			wire = !wire;
+		if (pad.pressed & PAD_SELECT) {
+			do
+				view = (view + 1) % 3;
+			while ((view == 0 && !have_world) || (view == 1 && !have_surf));
+		}
 		fly_cam_update(&cam, &pad);
 
 		vec3_t ang = { cam.pitch, cam.yaw, 0 };
 		r_begin_view(cam.pos, ang);
 
 		const char *mode;
-		if (g_surf_ok && g_qtx_ok && !wire) {
+		if (view == 0) {
+			drawn = r_world(&g_surf, &g_bsp, cam.pos, ang);
+			mode  = "world PVS+frustum";
+		} else if (view == 1) {
 			drawn = r_surfaces(&g_surf);
-			mode  = "textured";
+			mode  = "all surfaces";
 		} else if (g_geo_ok) {
 			drawn = r_wireframe(g_geo.verts, g_geo.num_verts,
 			                    g_geo.edges, g_geo.num_edges, 90, 200, 120);
@@ -264,7 +285,7 @@ static void demo_loop(void)
 			"q1psx  frame %u   %s   %d prims%s\n\n"
 			"  dpad LR yaw / UD move   SQ CI strafe\n"
 			"  TR CR up-down   L1 R1 pitch\n"
-			"  R2 L2 fast-slow   START reset   SEL wire\n"
+			"  R2 L2 fast-slow   START reset   SEL view\n"
 			"  pos %d %d %d   yaw %d  pitch %d\n\n"
 			"mem %d KiB   selftests %s\n"
 			"held:%s",
@@ -294,7 +315,7 @@ int main(void)
 		Sys_Error("no RAM for a %d-byte hunk", HUNK_SIZE);
 	Memory_Init(hunk, HUNK_SIZE);
 
-	load_begin(7);
+	load_begin(8);
 	load_step("running self-tests");   boot_selftests();
 	load_step("reading disc");         boot_read_hello();
 	load_step("opening pak0.pak");     boot_open_pak();
@@ -302,6 +323,7 @@ int main(void)
 	load_step("loading textures");     boot_load_textures();
 	load_step("loading geometry");     boot_load_geometry();
 	load_step("loading surfaces");     boot_load_surfaces();
+	load_step("loading BSP tree");     boot_load_bsp();
 	load_done();
 
 	demo_loop();

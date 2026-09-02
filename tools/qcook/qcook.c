@@ -21,6 +21,7 @@
 #include "qtx.h"
 #include "qgeo.h"
 #include "qsrf.h"
+#include "qbsp.h"
 
 /* ------------------------------------------------------------------- util -- */
 
@@ -321,11 +322,16 @@ static void write_qtx(const char *path, const uint16_t clut[256],
 
 /* --------------------------------------------------------------- geometry -- */
 
-#define LUMP_VERTEXES  3
-#define LUMP_FACES     7
-#define LUMP_EDGES    12
-#define LUMP_SURFEDGES 13
-#define LUMP_MODELS   14
+#define LUMP_PLANES        1
+#define LUMP_VERTEXES      3
+#define LUMP_VISIBILITY    4
+#define LUMP_NODES         5
+#define LUMP_FACES         7
+#define LUMP_LEAFS        10
+#define LUMP_MARKSURFACES 11
+#define LUMP_EDGES        12
+#define LUMP_SURFEDGES    13
+#define LUMP_MODELS       14
 
 static const uint8_t *bsp_lump(const uint8_t *bsp, uint32_t bsp_len, int idx, uint32_t *len)
 {
@@ -497,6 +503,11 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 
 	int firstface = rd_i32(mlump + 56);
 	int numfaces  = rd_i32(mlump + 60);
+	if (firstface != 0)
+		die("world model does not start at face 0 (firstface=%d)", firstface);
+	if (firstface + numfaces > nfaces)
+		die("world model face range %d..%d exceeds %d faces",
+		    firstface, firstface + numfaces, nfaces);
 
 	/* worst-case sizes */
 	int max_faces = numfaces;
@@ -505,7 +516,15 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	qsrf_facevert *fv    = xmalloc((size_t) max_fv * sizeof(qsrf_facevert));
 	int nout_faces = 0, nout_fv = 0;
 
-	for (int f = firstface; f < firstface + numfaces && f < nfaces; f++) {
+	/* Emit exactly one qsrf_face per world-model BSP face, in order, so a face
+	   index is a stable key: QSF face i == BSP face i, and the QBS1 marksurf[]
+	   values index straight in. Faces we can't cook (bad texinfo, degenerate)
+	   become empty slots (num_fv 0) that the renderer skips. */
+	for (int f = firstface; f < firstface + numfaces; f++) {
+		qsrf_face *of = &faces[nout_faces++];
+		memset(of, 0, sizeof *of);
+		of->first_fv = (uint16_t) nout_fv;
+
 		const uint8_t *face = flump + (long) f * 20;
 		int fe = rd_i32(face + 4);
 		int ne = rd_i16(face + 8);
@@ -549,15 +568,9 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 		smin = floor(smin);
 		tmin = floor(tmin);
 
-		qsrf_face *of = &faces[nout_faces++];
-		of->tex      = (uint16_t) (miptex < 0 ? 0 : miptex);
-		of->first_fv = (uint16_t) nout_fv;
-		of->num_fv   = (uint8_t) nv;
-		of->flags    = 0;
-		of->pad[0] = of->pad[1] = 0;
-		if (tflags & 1) {   /* TEX_SPECIAL */
-			/* name-based classification is more reliable; leave to the engine */
-		}
+		of->tex    = (uint16_t) (miptex < 0 ? 0 : miptex);
+		of->num_fv = (uint8_t) nv;
+		(void) tflags;   /* TEX_SPECIAL — engine classifies by name instead */
 
 		for (int i = 0; i < nv; i++) {
 			qsrf_facevert *ofv = &fv[nout_fv++];
@@ -606,6 +619,145 @@ static int cmd_surfaces(int argc, char **argv)
 	if (!bsp)
 		die("%s not found in %s", map, pak_path);
 	return cook_surfaces(bsp, bsp_len, out);
+}
+
+/* --------------------------------------------------------------- bsp / pvs -- */
+
+/* The slice of the BSP the runtime culler needs: node tree, leaves, dedup plane
+   table, RLE-compressed PVS (kept as-is, decompressed one row at a time on the
+   PS1). World model only. See formats/qbsp.h. */
+static int cook_bsp(const uint8_t *bsp, uint32_t bsp_len, const char *out)
+{
+	if (bsp_len < 4 + HEADER_LUMPS * 8 || rd_u32(bsp) != BSPVERSION)
+		die("not a v%d BSP", BSPVERSION);
+
+	uint32_t pllen, ndlen, lflen, mklen, vislen, mdlen;
+	const uint8_t *pl  = bsp_lump(bsp, bsp_len, LUMP_PLANES,       &pllen);
+	const uint8_t *nd  = bsp_lump(bsp, bsp_len, LUMP_NODES,        &ndlen);
+	const uint8_t *lf  = bsp_lump(bsp, bsp_len, LUMP_LEAFS,        &lflen);
+	const uint8_t *mk  = bsp_lump(bsp, bsp_len, LUMP_MARKSURFACES, &mklen);
+	const uint8_t *vis = bsp_lump(bsp, bsp_len, LUMP_VISIBILITY,   &vislen);
+	const uint8_t *md  = bsp_lump(bsp, bsp_len, LUMP_MODELS,       &mdlen);
+	if (mdlen < 64)
+		die("no worldmodel");
+
+	int nplanes = (int) (pllen / 20);
+	int nnodes  = (int) (ndlen / 24);
+	int nleaves = (int) (lflen / 28);
+	int nmark   = (int) (mklen / 2);
+
+	int headnode = rd_i32(md + 36);
+	int visleafs = rd_i32(md + 52);
+	if (headnode != 0)
+		die("world headnode is %d, expected 0", headnode);
+
+	qbsp_plane *planes = xmalloc((size_t) nplanes * sizeof *planes);
+	for (int i = 0; i < nplanes; i++) {
+		const uint8_t *s = pl + (long) i * 20;
+		qbsp_plane *d = &planes[i];
+		memset(d, 0, sizeof *d);
+		for (int k = 0; k < 3; k++) {
+			long v = lround((double) rd_f32(s + k * 4) * 4096.0);
+			d->n[k] = (int16_t) clampi((int) v, -32768, 32767);
+		}
+		d->dist = (int32_t) lround((double) rd_f32(s + 12) * 4096.0);
+		int t = rd_i32(s + 16);
+		d->type = (uint8_t) (t >= 0 && t <= 2 ? t : 3);
+	}
+
+	qbsp_node *nodes = xmalloc((size_t) nnodes * sizeof *nodes);
+	for (int i = 0; i < nnodes; i++) {
+		const uint8_t *s = nd + (long) i * 24;
+		qbsp_node *d = &nodes[i];
+		memset(d, 0, sizeof *d);
+		int planenum = rd_i32(s + 0);
+		if (planenum < 0 || planenum >= nplanes)
+			die("node %d: bad planenum %d", i, planenum);
+		d->plane    = (uint16_t) planenum;
+		d->child[0] = rd_i16(s + 4);
+		d->child[1] = rd_i16(s + 6);
+		for (int c = 0; c < 2; c++) {
+			int ch = d->child[c];
+			if (ch >= nnodes || -ch - 1 >= nleaves)
+				die("node %d child %d out of range (%d)", i, c, ch);
+		}
+		for (int k = 0; k < 3; k++) {
+			d->mins[k] = rd_i16(s + 8  + k * 2);
+			d->maxs[k] = rd_i16(s + 14 + k * 2);
+		}
+	}
+
+	qbsp_leaf *leaves = xmalloc((size_t) nleaves * sizeof *leaves);
+	for (int i = 0; i < nleaves; i++) {
+		const uint8_t *s = lf + (long) i * 28;
+		qbsp_leaf *d = &leaves[i];
+		memset(d, 0, sizeof *d);
+		d->contents = rd_i32(s + 0);
+		d->visofs   = rd_i32(s + 4);
+		for (int k = 0; k < 3; k++) {
+			d->mins[k] = rd_i16(s + 8  + k * 2);
+			d->maxs[k] = rd_i16(s + 14 + k * 2);
+		}
+		d->first_marksurf = rd_u16(s + 20);
+		d->num_marksurf   = rd_u16(s + 22);
+	}
+
+	uint16_t *marks = xmalloc((size_t) (nmark ? nmark : 1) * 2);
+	for (int i = 0; i < nmark; i++)
+		marks[i] = rd_u16(mk + (long) i * 2);
+
+	FILE *fp = fopen(out, "wb");
+	if (!fp)
+		die("cannot write %s", out);
+
+	qbsp_header h;
+	memset(&h, 0, sizeof h);
+	memcpy(h.magic, QBSP_MAGIC, 4);
+	h.num_planes    = (uint32_t) nplanes;
+	h.num_nodes     = (uint32_t) nnodes;
+	h.num_leaves    = (uint32_t) nleaves;
+	h.num_visleaves = (uint32_t) visleafs;
+	h.num_marksurf  = (uint32_t) nmark;
+	h.vis_len       = vislen;
+	h.root          = headnode;
+	for (int k = 0; k < 3; k++) {
+		h.mins[k] = (int16_t) clampi((int) lround(rd_f32(md + 0  + k * 4)), -32768, 32767);
+		h.maxs[k] = (int16_t) clampi((int) lround(rd_f32(md + 12 + k * 4)), -32768, 32767);
+	}
+
+	fwrite(&h, sizeof h, 1, fp);
+	fwrite(planes, sizeof *planes, (size_t) nplanes, fp);
+	fwrite(nodes,  sizeof *nodes,  (size_t) nnodes,  fp);
+	fwrite(leaves, sizeof *leaves, (size_t) nleaves, fp);
+	fwrite(marks,  2, (size_t) nmark, fp);
+	fwrite(vis,    1, vislen, fp);
+	fclose(fp);
+
+	printf("qcook: %s — %d planes, %d nodes, %d leaves (%d vis), %d marksurf, %u B vis\n",
+	       out, nplanes, nnodes, nleaves, visleafs, nmark, vislen);
+
+	free(planes);
+	free(nodes);
+	free(leaves);
+	free(marks);
+	return 0;
+}
+
+static int cmd_bsp(int argc, char **argv)
+{
+	const char *pak_path = arg_after(argc, argv, "--pak");
+	const char *map      = arg_after(argc, argv, "--map");
+	const char *out      = arg_after(argc, argv, "--out");
+	if (!pak_path || !map || !out)
+		die("usage: qcook bsp --pak <pak> --map <name> --out <file.qbsp>");
+
+	pak_t pak;
+	pak_load(&pak, pak_path);
+	uint32_t bsp_len;
+	const uint8_t *bsp = pak_lump(&pak, map, &bsp_len);
+	if (!bsp)
+		die("%s not found in %s", map, pak_path);
+	return cook_bsp(bsp, bsp_len, out);
 }
 
 /* ------------------------------------------------------------------- info -- */
@@ -697,6 +849,8 @@ int main(int argc, char **argv)
 		return cmd_geometry(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "surfaces"))
 		return cmd_surfaces(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "bsp"))
+		return cmd_bsp(argc, argv);
 	if (argc == 3 && !strcmp(argv[1], "info"))
 		return cmd_info(argv[2]);
 
@@ -705,6 +859,7 @@ int main(int argc, char **argv)
 	        "  qcook textures --pak <pak> --map <name> --out <file.qtx> [--fidelity low|medium|high|ultra]\n"
 	        "  qcook geometry --pak <pak> --map <name> --out <file.qgeo>\n"
 	        "  qcook surfaces --pak <pak> --map <name> --out <file.qsrf>\n"
+	        "  qcook bsp      --pak <pak> --map <name> --out <file.qbsp>\n"
 	        "  qcook info <file.qtx>\n");
 	return 2;
 }

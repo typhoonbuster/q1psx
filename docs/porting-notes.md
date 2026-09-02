@@ -455,11 +455,35 @@ swapping.
 
 `qcook surfaces` output: `qsrf_header` then `int16 verts[][4]` (SVECTOR, shared
 vertex pool) then `qsrf_face[]` (texture index, first-facevert, count, flags)
-then `qsrf_facevert[]` (vertex index + `u8` texel UV). One entry per world-model
-(model 0) face: vertices gathered in winding order from the surfedges, per-vertex
-`s = pos·vecs[0] + vecs[0][3]` / `t` likewise, then shifted so the face-local
-min is 0 and clamped to 0..255 (Quake's max face texture extent is 256; the last
-texel is lost — noted, minor).
+then `qsrf_facevert[]` (vertex index + `u8` texel UV). **Exactly one entry per
+world-model (model 0) BSP face, in order** — a face that can't be cooked (bad
+texinfo, degenerate winding) becomes an empty slot (`num_fv` 0) the renderer
+skips. That 1:1 rule makes a face index a stable key that `QBS1`'s
+`marksurf[]` shares. Vertices are gathered in winding order from the surfedges;
+per-vertex `s = pos·vecs[0] + vecs[0][3]` / `t` likewise, then shifted so the
+face-local min is 0 and clamped to 0..255 (Quake's max face texture extent is
+256; the last texel is lost — noted, minor).
+
+### 7.4 QBS1 BSP-visibility container (`formats/qbsp.h`)
+
+`qcook bsp` output: the slice of the BSP the runtime culler needs, world model
+only. `qbsp_header` then, each section 4-byte aligned:
+- `qbsp_plane[]` — deduplicated. Unit normal x4096 (int16), distance x4096
+  (int32), plus Quake's `type` (0/1/2 axial → the point/plane test skips the
+  dot product and is exact; 3 non-axial → carries the ~1/4096 normal rounding).
+- `qbsp_node[]` — `int16 child[2]` (≥ 0 node index, < 0 → leaf `-(child)-1`),
+  plane index, `int16 mins/maxs[3]` for frustum AABB tests. Padded to 20 B.
+- `qbsp_leaf[]` — `visofs` (byte offset into `vis[]`, −1 = none), bounds,
+  marksurface span, `contents`. Leaf 0 is the shared solid leaf.
+- `uint16 marksurf[]` — every marksurface, each value a BSP face index ==
+  QSF1 face index (the world model starts at face 0).
+- `uint8 vis[]` — Quake's RLE-compressed PVS copied verbatim; a zero byte
+  means "the next byte says how many zero bytes follow". Decompressed one row
+  (`(visleafs + 7) >> 3` bytes) at a time on the PS1.
+
+`start.bsp` → 1920 planes / 2909 nodes / 1568 leaves / 34 KiB vis ≈ 158 KiB.
+The full decompressed PVS matrix would be ~300 KiB and precomputed per-leaf
+surface lists > 1 MiB — both rejected on RAM; see the CHANGELOG 5.4 entry.
 
 MDL / SPR / lightmap cooking comes later (Phase 8+).
 
@@ -524,3 +548,38 @@ pitch (clamped ±89°); R2/L2 held = fast (160 u/frame) / slow (8); START =
 restore the spawn pose (`home`, set once to the geometry-bounds centre — no
 entity parsing yet). Speeds are per-frame, not time-scaled — retune once the
 frame rate is real (post 5.4). No collision or gravity: that is Phase 6.
+
+### 8.5 World culling — `r_world` (5.4)
+
+Approach A: a thin port of Quake's `r_bsp.c`. Data is `engine/bsp.{c,h}` over a
+`QBS1` blob (§7.4). Per frame:
+
+1. **Camera leaf** — `bsp_point_leaf`: descend the node tree, at each node take
+   `child[bsp_plane_side(plane, pos)]` (0 = positive side). Stops at a negative
+   child = leaf.
+2. **PVS** — `bsp_pvs(leaf)`: decompress that leaf's RLE row into a 1 KiB
+   scratch (`MAX_MAP_LEAFS/8`), cached — only redone when the leaf changes.
+   Bit *i* set ⇒ leaf *i+1* is potentially visible. Camera in solid (leaf 0) or
+   a no-vis leaf ⇒ keep the last good set (a fly-cam clips walls constantly;
+   Quake would show everything).
+3. **Frustum** — 5 world-space planes rebuilt from the view basis each call.
+   View-space inward normals (view X = right, Y = down, Z = fwd):
+   right `(-1,0,1)`, left `(1,0,1)`, bottom `(0,-4,3)`, top `(0,4,3)`, near
+   `(0,0,1)`; to world, `n = a·right − b·up + c·fwd` (so bottom → `4·up+3·fwd`,
+   top → `−4·up+3·fwd`). The `4/3` is the 240-tall / 160-focal ratio; left/right
+   are the 90° horizontal FOV. Not normalised — only signs of
+   `n·(x − campos)` matter.
+4. **Walk** — recurse the node tree, front child first (tail-looped down the
+   back side). Each node/leaf: AABB-test its `int16` bounds against the still-
+   active frustum planes; wholly outside one ⇒ prune the subtree, wholly inside
+   one ⇒ clear that plane's bit for children (trivial accept). In each
+   PVS-visible leaf, draw every marksurface once — dedup with a rolling
+   `uint8` per-frame key over a `face_seen[]` table. Front-to-back emission +
+   `addPrim` prepend = painter's order on the OT with no Z-buffer, which is
+   exactly what a BSP gives you.
+
+`draw_face` (project cached / back-face cull / fan + `DR_TWIN`) is shared with
+`r_surfaces`. Budgets: `R_MAXWORLD` 800 faces as a backstop below the prim
+buffer's ~975-`POLY_FT3` capacity. Recursion depth ≈ tree depth (~12 for
+`start.bsp`); a pathological BSP could go deep — watch the stack if a big map
+faults. `SELECT` cycles world / all-surfaces / wireframe for A/B debugging.

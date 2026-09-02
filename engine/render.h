@@ -13,6 +13,7 @@
 
 #include "mathlib.h"
 #include "surf.h"
+#include "bsp.h"
 
 void r_init(void);
 
@@ -29,7 +30,15 @@ int r_wireframe(const SVECTOR *verts, int nverts,
                 const uint16_t *edges, int nedges,
                 int r, int g, int b);
 
-/* Draw cooked textured surfaces from the current view. Backface-culled,
-   fan-triangulated, one DR_TWIN + POLY_FT3s per face. Face-budgeted until
-   PVS culling (5.4). Returns faces drawn. Needs qtx_open() first. */
+/* Draw every cooked textured surface from the current view — no visibility
+   culling, face-budgeted. The SELECT fallback view. Needs qtx_open() first.
+   Returns faces drawn. */
 int r_surfaces(const surf_t *s);
+
+/* Draw the world model culled to the camera's PVS + view frustum: locate the
+   camera leaf, decompress its PVS, walk the BSP front-to-back rejecting whole
+   subtrees against the frustum, draw each visible face once. `pos` is the
+   camera in integer world units, `ang` PITCH/YAW/ROLL in q1psx degrees.
+   Needs qtx_open() + bsp_load(). Returns faces drawn. */
+int r_world(const surf_t *s, const bsp_t *b,
+            const int32_t pos[3], const vec3_t ang);
