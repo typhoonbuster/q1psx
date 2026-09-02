@@ -179,8 +179,10 @@ static int draw_face(const surf_t *s, int f)
 		if (vz[k] >= NEAR_CLIP)
 			nfront++;
 	}
-	if (nfront == 0)
+	if (nfront == 0) {
+		r_dbg_drop_near++;
 		return 0;
+	}
 
 	cn_np = 0;
 	if (nfront == n) {
@@ -236,18 +238,24 @@ static int draw_face(const surf_t *s, int f)
 
 	int cross = (cx[1] - cx[0]) * (cy[2] - cy[0])
 	          - (cy[1] - cy[0]) * (cx[2] - cx[0]);
-	if (cross >= 0)
+	if (cross >= 0) {
+		r_dbg_drop_back++;
 		return 0;
+	}
 
 	tex_slot_t slot;
-	if (!qtx_slot(face->tex, &slot))
+	if (!qtx_slot(face->tex, &slot)) {
+		r_dbg_drop_slot++;
 		return 0;
+	}
 
 	/* Sky: don't texture it (a 64px tile stretched over a skybox face is both
 	   slow — texture-cache thrash — and ugly). The dark background shows
 	   through as flat sky; a proper sky comes later. */
-	if (slot.flags & QTX_F_SKY)
+	if (slot.flags & QTX_F_SKY) {
+		r_dbg_drop_sky++;
 		return 0;
+	}
 
 	/* fan-strip: each pair of fan triangles (0,k,k+1) + (0,k+1,k+2) is one
 	   convex quad (0,k,k+1,k+2), fed to POLY_FT4 as (k,0,k+1,k+2) so the GPU's
@@ -307,10 +315,13 @@ int r_surfaces(const surf_t *s)
 
 /* ------------------------------------------------------- world (PVS + frustum) */
 
-/* world-space inward frustum normals (~x4096 scale), rebuilt each r_world call.
-   0 right, 1 left, 2 bottom, 3 top, 4 near. */
+#define R_MAXNODEIDX 4096   /* > any cooked map's node/leaf count */
+#define CLIP_ALL     0x1f
+#define BOX_CLAMP    24000  /* clamp box-corner offsets so box_visible fits int32 */
+
+/* world-space inward frustum normals (side planes ~x28672, near ~x4096),
+   rebuilt each r_world call. 0 right, 1 left, 2 bottom, 3 top, 4 near. */
 static int32_t fr_n[5][3];
-#define CLIP_ALL 0x1f
 
 static void frustum_setup(const vec3_t rt, const vec3_t up, const vec3_t fw)
 {
@@ -323,6 +334,11 @@ static void frustum_setup(const vec3_t rt, const vec3_t up, const vec3_t fw)
 	}
 }
 
+static int32_t clampb(int32_t v)
+{
+	return v > BOX_CLAMP ? BOX_CLAMP : v < -BOX_CLAMP ? -BOX_CLAMP : v;
+}
+
 /* 1 = box may be visible (*clip updated: a cleared bit = trivially inside that
    plane, children can skip it). 0 = box is wholly outside some plane. */
 static int box_visible(const int16_t mn[3], const int16_t mx[3],
@@ -333,14 +349,14 @@ static int box_visible(const int16_t mn[3], const int16_t mx[3],
 		if (!(c & (1 << i)))
 			continue;
 		const int32_t *n = fr_n[i];
-		int64_t vmax = 0, vmin = 0;
+		int32_t vmax = 0, vmin = 0;
 		for (int k = 0; k < 3; k++) {
-			int32_t hi = (n[k] >= 0 ? mx[k] : mn[k]) - pos[k];
-			int32_t lo = (n[k] >= 0 ? mn[k] : mx[k]) - pos[k];
-			vmax += (int64_t) n[k] * hi;
-			vmin += (int64_t) n[k] * lo;
+			int32_t hi = clampb((n[k] >= 0 ? mx[k] : mn[k]) - pos[k]);
+			int32_t lo = clampb((n[k] >= 0 ? mn[k] : mx[k]) - pos[k]);
+			vmax += n[k] * hi;
+			vmin += n[k] * lo;
 		}
-		int64_t bias = (i == 4) ? ((int64_t) NEAR_Z << Q_FIX_SHIFT) : 0;
+		int32_t bias = (i == 4) ? (NEAR_Z << Q_FIX_SHIFT) : 0;
 		if (vmax < bias)
 			return 0;
 		if (vmin >= bias)
@@ -350,6 +366,68 @@ static int box_visible(const int16_t mn[3], const int16_t mx[3],
 	return 1;
 }
 
+/* --- BSP node marking (Quake R_MarkLeaves): mark every node on a path from a
+   PVS-visible leaf up to the root, so world_node can prune whole invisible
+   subtrees instead of frustum-testing the entire tree. */
+static int16_t       np_parent[R_MAXNODEIDX];   /* node -> parent node, -1 = root */
+static int16_t       lp_parent[R_MAXNODEIDX];   /* leaf -> parent node            */
+static uint16_t      nmark[R_MAXNODEIDX];
+static uint16_t      nmark_key;
+static const bsp_t  *parent_bsp;                /* which bsp np/lp were built for */
+static int           marking_on;
+
+static void set_parent(const bsp_t *b, int idx, int parent)
+{
+	if (idx < 0) {
+		int leaf = -idx - 1;
+		if (leaf < R_MAXNODEIDX)
+			lp_parent[leaf] = (int16_t) parent;
+		return;
+	}
+	if (idx >= R_MAXNODEIDX)
+		return;
+	np_parent[idx] = (int16_t) parent;
+	const qbsp_node *nd = &b->nodes[idx];
+	set_parent(b, nd->child[0], idx);
+	set_parent(b, nd->child[1], idx);
+}
+
+static void build_parents(const bsp_t *b)
+{
+	if (parent_bsp == b)
+		return;
+	parent_bsp = b;
+	marking_on = (b->num_nodes <= R_MAXNODEIDX && b->num_leaves <= R_MAXNODEIDX);
+	if (!marking_on)
+		return;
+	set_parent(b, b->root, -1);
+	memset(nmark, 0, sizeof nmark);
+	nmark_key = 0;
+}
+
+static void mark_pvs_leaves(const bsp_t *b, const uint8_t *pvs)
+{
+	if (!marking_on)
+		return;
+	if (++nmark_key == 0) {
+		memset(nmark, 0, sizeof nmark);
+		nmark_key = 1;
+	}
+	for (int i = 0; i < b->num_visleaves; i++) {
+		if (!(pvs[i >> 3] & (1 << (i & 7))))
+			continue;
+		int n = lp_parent[i + 1];
+		while (n >= 0 && nmark[n] != nmark_key) {
+			nmark[n] = nmark_key;
+			n = np_parent[n];
+		}
+	}
+}
+
+/* --- diagnostics (shown in the overlay) --- */
+int r_dbg_nodes, r_dbg_leaves, r_dbg_faces;
+int r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot;
+
 static uint8_t face_seen[R_MAXFACEIDX];
 static uint8_t face_key;
 
@@ -358,6 +436,9 @@ static void world_node(const surf_t *s, const bsp_t *b, int nodeidx,
                        int clip, int *drawn)
 {
 	while (nodeidx >= 0) {
+		if (marking_on && nmark[nodeidx] != nmark_key)
+			return;
+		r_dbg_nodes++;
 		const qbsp_node *nd = &b->nodes[nodeidx];
 		int c = clip;
 		if (!box_visible(nd->mins, nd->maxs, pos, &c))
@@ -378,6 +459,7 @@ static void world_node(const surf_t *s, const bsp_t *b, int nodeidx,
 	int c = clip;
 	if (!box_visible(lf->mins, lf->maxs, pos, &c))
 		return;
+	r_dbg_leaves++;
 
 	int first = lf->first_marksurf;
 	int nm    = lf->num_marksurf;
@@ -388,6 +470,7 @@ static void world_node(const surf_t *s, const bsp_t *b, int nodeidx,
 		if (face_seen[f] == face_key)
 			continue;
 		face_seen[f] = face_key;
+		r_dbg_faces++;
 		*drawn += draw_face(s, f);
 	}
 }
@@ -398,11 +481,14 @@ int r_world(const surf_t *s, const bsp_t *b,
 	sv_nv = s->num_verts < R_MAXVERTS ? s->num_verts : R_MAXVERTS;
 	memset(sv_state, 0, sv_nv);
 	reset_texwindow();
+	build_parents(b);
 
 	if (++face_key == 0) {
 		memset(face_seen, 0, sizeof face_seen);
 		face_key = 1;
 	}
+	r_dbg_nodes = r_dbg_leaves = r_dbg_faces = 0;
+	r_dbg_drop_near = r_dbg_drop_back = r_dbg_drop_sky = r_dbg_drop_slot = 0;
 
 	vec3_t fw, rt, up;
 	AngleVectors(ang, fw, rt, up);
@@ -410,6 +496,7 @@ int r_world(const surf_t *s, const bsp_t *b,
 
 	int leaf = bsp_point_leaf(b, pos);
 	const uint8_t *pvs = bsp_pvs(b, leaf);
+	mark_pvs_leaves(b, pvs);
 
 	int drawn = 0;
 	world_node(s, b, b->root, pos, pvs, CLIP_ALL, &drawn);

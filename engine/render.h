@@ -42,3 +42,12 @@ int r_surfaces(const surf_t *s);
    Needs qtx_open() + bsp_load(). Returns faces drawn. */
 int r_world(const surf_t *s, const bsp_t *b,
             const int32_t pos[3], const vec3_t ang);
+
+/* Per-frame r_world diagnostics (valid after the call). */
+extern int r_dbg_nodes;       /* BSP nodes visited                     */
+extern int r_dbg_leaves;      /* leaves that passed PVS + frustum      */
+extern int r_dbg_faces;       /* unique faces handed to draw_face      */
+extern int r_dbg_drop_near;   /* faces dropped: all verts behind near  */
+extern int r_dbg_drop_back;   /* faces dropped: back-face              */
+extern int r_dbg_drop_sky;    /* faces dropped: sky                    */
+extern int r_dbg_drop_slot;   /* faces dropped: no texture slot        */

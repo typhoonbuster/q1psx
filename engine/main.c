@@ -146,24 +146,6 @@ static void boot_load_bsp(void)
 
 /* ------------------------------------------------------------- demo loop -- */
 
-static void describe_buttons(char *buf, int cap, uint16_t held)
-{
-	static const struct { uint16_t mask; const char *name; } BTN[] = {
-		{ PAD_UP, "UP" }, { PAD_DOWN, "DOWN" }, { PAD_LEFT, "LEFT" }, { PAD_RIGHT, "RIGHT" },
-		{ PAD_TRIANGLE, "TRI" }, { PAD_CIRCLE, "CIR" }, { PAD_CROSS, "CRO" }, { PAD_SQUARE, "SQR" },
-		{ PAD_L1, "L1" }, { PAD_R1, "R1" }, { PAD_L2, "L2" }, { PAD_R2, "R2" },
-		{ PAD_SELECT, "SEL" }, { PAD_START, "STA" },
-	};
-	buf[0] = 0;
-	for (unsigned i = 0; i < sizeof(BTN) / sizeof(BTN[0]); i++)
-		if (held & BTN[i].mask) {
-			int l = (int) strlen(buf);
-			snprintf(buf + l, cap - l, " %s", BTN[i].name);
-		}
-	if (!buf[0])
-		snprintf(buf, cap, " (none)");
-}
-
 /* ---------------------------------------------------------- player input -- */
 /*
  * Debug player camera (Phase 6). Pad map:
@@ -250,7 +232,7 @@ static void demo_loop(void)
 	int      drawn   = 0;
 	int      vbl_avg = 1 << 4;   /* 4.4 fixed, smoothed vblanks/frame */
 	PadState pad;
-	char     held[96], overlay[352];
+	char     overlay[384];
 
 	for (;;) {
 		pad_read(&pad);
@@ -287,28 +269,26 @@ static void demo_loop(void)
 		int vbl = vid_frame_vbl();
 		vbl_avg = (vbl_avg * 7 + (vbl << 4)) >> 3;   /* 4.4 fixed, ~1s smoothing */
 
-		describe_buttons(held, sizeof held, pad.buttons);
 		snprintf(overlay, sizeof overlay,
-			"q1psx  %s   %d faces  %d prim B%s\n"
-			"  %d.%d vbl/frame  ~%d fps  %s\n\n"
-			"  dpad LR turn / UD move   SQ CI strafe\n"
-			"  L1 R1 look   CR jump   TR walk\n"
-			"  START %s   L2+R2 home   SEL view\n"
-			"  pos %d %d %d  vel %d  %s\n\n"
-			"mem %d KiB   sel %s\n"
-			"held:%s",
-			mode, drawn, vid_prim_used(),
-			vid_prim_overflowed() ? " OVF" : "",
+			"q1psx  %s\n"
+			"  %d.%d vbl/frame  ~%d fps  %s   %d prim B%s\n\n"
+			"  nodes %d  leaves %d  faces %d  drawn %d\n"
+			"  drop: near %d  back %d  sky %d  slot %d\n\n"
+			"  dpad turn/move  SQ CI strafe  L1R1 look\n"
+			"  CR jump  TR walk  START %s  L2+R2 home  SEL view\n"
+			"  pos %d %d %d  %s\n\n"
+			"mem %d KiB   sel %s",
+			mode,
 			vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
 			vbl ? 60 / vbl : 60,
 			vid_gpu_busy() ? "GPU-bound" : "cpu/ok",
+			vid_prim_used(), vid_prim_overflowed() ? " OVF" : "",
+			r_dbg_nodes, r_dbg_leaves, r_dbg_faces, drawn,
+			r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot,
 			player.noclip ? "noclip" : "clip  ",
 			player.pos[0], player.pos[1], player.pos[2],
-			(int) q_sqrt_big(((int64_t) player.vel[0] * player.vel[0]
-			               + (int64_t) player.vel[1] * player.vel[1]) << Q_FIX_SHIFT) >> Q_FIX_SHIFT,
-			player.onground ? "onground" : "air",
-			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK",
-			held);
+			player.onground ? "ground" : "air",
+			Hunk_TotalSize() / 1024, g_selftest_fail ? "FAIL" : "OK");
 		vid_text(0, 8, 8, overlay);
 
 		vid_flip();
