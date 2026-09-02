@@ -469,19 +469,21 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	if (bsp_len < 4 + HEADER_LUMPS * 8 || rd_u32(bsp) != BSPVERSION)
 		die("not a v%d BSP", BSPVERSION);
 
-	uint32_t vlen, elen, selen, mlen, flen, tilen;
+	uint32_t vlen, elen, selen, mlen, flen, tilen, pllen;
 	const uint8_t *vlump  = bsp_lump(bsp, bsp_len, LUMP_VERTEXES,  &vlen);
 	const uint8_t *elump  = bsp_lump(bsp, bsp_len, LUMP_EDGES,     &elen);
 	const uint8_t *selump = bsp_lump(bsp, bsp_len, LUMP_SURFEDGES, &selen);
 	const uint8_t *mlump  = bsp_lump(bsp, bsp_len, LUMP_MODELS,    &mlen);
 	const uint8_t *flump  = bsp_lump(bsp, bsp_len, LUMP_FACES,     &flen);
 	const uint8_t *tilump = bsp_lump(bsp, bsp_len, LUMP_TEXINFO,   &tilen);
+	const uint8_t *pllump = bsp_lump(bsp, bsp_len, LUMP_PLANES,    &pllen);
 
 	int nverts    = (int) (vlen / 12);
 	int nedges    = (int) (elen / 4);
 	int nsurfedge = (int) (selen / 4);
 	int nfaces    = (int) (flen / 20);
 	int ntexinfo  = (int) (tilen / 40);
+	int nplanes   = (int) (pllen / 20);
 	if (mlen < 64)
 		die("no worldmodel");
 
@@ -528,11 +530,24 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 		of->first_fv = (uint16_t) nout_fv;
 
 		const uint8_t *face = flump + (long) f * 20;
+		int pnum = rd_i16(face + 0);
+		int pside = rd_i16(face + 2);
 		int fe = rd_i32(face + 4);
 		int ne = rd_i16(face + 8);
 		int ti = rd_i16(face + 10);
-		if (ne < 3 || ti < 0 || ti >= ntexinfo)
+		if (ne < 3 || ti < 0 || ti >= ntexinfo || pnum < 0 || pnum >= nplanes)
 			continue;
+
+		/* face plane, oriented outward (flip when side != 0) */
+		{
+			const uint8_t *pp = pllump + (long) pnum * 20;
+			double sgn = pside ? -1.0 : 1.0;
+			for (int k = 0; k < 3; k++) {
+				long nv = lround(sgn * (double) rd_f32(pp + k * 4) * 4096.0);
+				of->n[k] = (int16_t) clampi((int) nv, -32768, 32767);
+			}
+			of->dist = (int32_t) lround(sgn * (double) rd_f32(pp + 12) * 4096.0);
+		}
 
 		const uint8_t *tx = tilump + (long) ti * 40;
 		float s0[4], s1[4];

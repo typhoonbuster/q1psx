@@ -29,6 +29,7 @@ static uint8_t scr_ok[R_MAXVERTS];
 /* view matrix stashed by r_begin_view, for the near-plane clip's view-space Z */
 static int32_t vm_row2[3];   /* forward basis, 1.3.12 */
 static int32_t vm_t2;        /* forward translation, world units */
+static int32_t cam_pos[3];   /* eye, for 3D back-face culling    */
 
 /* --- diagnostics (declared in render.h, shown in the overlay) --- */
 int r_dbg_nodes, r_dbg_leaves, r_dbg_faces;
@@ -77,6 +78,9 @@ void r_begin_view(const int32_t pos[3], const vec3_t ang)
 	vm_row2[1] = m.m[2][1];
 	vm_row2[2] = m.m[2][2];
 	vm_t2      = m.t[2];
+	cam_pos[0] = pos[0];
+	cam_pos[1] = pos[1];
+	cam_pos[2] = pos[2];
 	r_dbg_vm[0] = vm_row2[0];
 	r_dbg_vm[1] = vm_row2[1];
 	r_dbg_vm[2] = vm_row2[2];
@@ -86,13 +90,14 @@ void r_begin_view(const int32_t pos[3], const vec3_t ang)
 	gte_SetTransMatrix(&m);
 }
 
-/* view-space Z (distance along the forward axis) of a world-space vertex */
+/* view-space Z (distance along the forward axis) of a world-space vertex.
+   int32 only: row ~x4096, coords <= ~4096 -> <= 5e7 per term, fits. */
 static int32_t view_z(const SVECTOR *v)
 {
-	int64_t d = (int64_t) vm_row2[0] * v->vx
-	          + (int64_t) vm_row2[1] * v->vy
-	          + (int64_t) vm_row2[2] * v->vz;
-	return (int32_t) (d >> Q_FIX_SHIFT) + vm_t2;
+	int32_t d = vm_row2[0] * (int32_t) v->vx
+	          + vm_row2[1] * (int32_t) v->vy
+	          + vm_row2[2] * (int32_t) v->vz;
+	return (d >> Q_FIX_SHIFT) + vm_t2;
 }
 
 int r_wireframe(const SVECTOR *verts, int nverts,
@@ -184,6 +189,16 @@ static int draw_face(const surf_t *s, int f)
 	if (n < 3 || n > R_FAN_MAX)
 		return 0;
 
+	/* 3D back-face cull: the camera sees the front iff it is on the positive
+	   side of the cooked (outward-oriented) face plane. Exact, and cheaper
+	   than projecting — no screen-winding degeneracy. */
+	if ((int32_t) face->n[0] * cam_pos[0]
+	  + (int32_t) face->n[1] * cam_pos[1]
+	  + (int32_t) face->n[2] * cam_pos[2] - face->dist <= 0) {
+		r_dbg_drop_back++;
+		return 0;
+	}
+
 	int32_t vz[R_FAN_MAX];
 	int     nfront = 0;
 	for (int k = 0; k < n; k++) {
@@ -251,13 +266,6 @@ static int draw_face(const surf_t *s, int f)
 
 	if (cn_np < 3)
 		return 0;
-
-	int cross = (cx[1] - cx[0]) * (cy[2] - cy[0])
-	          - (cy[1] - cy[0]) * (cx[2] - cx[0]);
-	if (cross >= 0) {
-		r_dbg_drop_back++;
-		return 0;
-	}
 
 	tex_slot_t slot;
 	if (!qtx_slot(face->tex, &slot)) {

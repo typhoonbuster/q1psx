@@ -23,7 +23,7 @@
 
 #include <stdint.h>
 
-#define QSRF_MAGIC "QSF1"
+#define QSRF_MAGIC "QSF2"
 
 typedef struct {
 	char     magic[4];
@@ -34,12 +34,14 @@ typedef struct {
 } qsrf_header;
 
 typedef struct {
+	int32_t  dist;       /* plane dist x4096, oriented so the camera sees the
+	                        front iff  n[0]*px + n[1]*py + n[2]*pz - dist > 0  */
+	int16_t  n[3];       /* outward face normal x4096                          */
 	uint16_t tex;        /* miptex / QTX entry index      */
 	uint16_t first_fv;   /* index into the facevert array */
 	uint8_t  num_fv;     /* polygon vertex count (>= 3)   */
 	uint8_t  flags;      /* QSRF_F_*                      */
-	uint8_t  pad[2];
-} qsrf_face;
+} qsrf_face;             /* 16 B */
 
 typedef struct {
 	uint16_t vert;       /* index into the vertex pool */

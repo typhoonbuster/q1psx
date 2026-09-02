@@ -8,17 +8,18 @@
 /* ---- point / plane ----------------------------------------------------- */
 
 /* Signed distance of `p` (integer world units) from a cooked plane, in world
-   units x4096. Axial planes are exact; non-axial carry the ~1/4096 rounding of
-   the cooked normal. */
-static int64_t plane_dist(const qbsp_plane *pl, const int32_t p[3])
+   units x4096. int32: normal ~x4096, |p| <= ~4096 -> <= 5e7 per term + the
+   x4096 dist, all inside int32 for any realistic position. Axial planes are
+   exact; non-axial carry the ~1/4096 rounding of the cooked normal. */
+static int32_t plane_dist(const qbsp_plane *pl, const int32_t p[3])
 {
 	switch (pl->type) {
-	case 0:  return (int64_t) pl->n[0] * p[0] - pl->dist;
-	case 1:  return (int64_t) pl->n[1] * p[1] - pl->dist;
-	case 2:  return (int64_t) pl->n[2] * p[2] - pl->dist;
-	default: return (int64_t) pl->n[0] * p[0]
-	              + (int64_t) pl->n[1] * p[1]
-	              + (int64_t) pl->n[2] * p[2]
+	case 0:  return pl->n[0] * p[0] - pl->dist;
+	case 1:  return pl->n[1] * p[1] - pl->dist;
+	case 2:  return pl->n[2] * p[2] - pl->dist;
+	default: return pl->n[0] * p[0]
+	              + pl->n[1] * p[1]
+	              + pl->n[2] * p[2]
 	              - pl->dist;
 	}
 }
