@@ -49,7 +49,12 @@ endif()
 if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qgeo")
 	message(STATUS "q1psx: bundling cooked/id1/common/start.qgeo as START.QGE")
 	string(APPEND COOKED_ENTRIES
-		"<file name=\"START.QGE\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qgeo\" />")
+		"<file name=\"START.QGE\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qgeo\" />\n\t\t\t")
+endif()
+if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qsrf")
+	message(STATUS "q1psx: bundling cooked/id1/common/start.qsrf as START.QSF")
+	string(APPEND COOKED_ENTRIES
+		"<file name=\"START.QSF\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qsrf\" />")
 endif()
 if(COOKED_ENTRIES STREQUAL "")
 	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")

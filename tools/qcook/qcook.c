@@ -20,6 +20,7 @@
 #include "fidelity.h"
 #include "qtx.h"
 #include "qgeo.h"
+#include "qsrf.h"
 
 /* ------------------------------------------------------------------- util -- */
 
@@ -166,12 +167,17 @@ static uint8_t *downscale(const uint8_t *src, int sw, int sh, int dw, int dh)
 
 typedef struct {
 	char     name[16];
-	int      w, h;          /* cooked size            */
+	int      w, h;          /* cooked size (<= 64)    */
 	int      src_w, src_h;  /* original size          */
 	uint8_t  flags;
+	int      vram_x, vram_y;/* atlas slot, word coords */
 	uint8_t *pixels;        /* w*h, owned             */
 } cooked_tex_t;
 
+#define WORLD_TEX_CAP 64   /* atlas cell size; fidelity tunes this later */
+
+/* Extract every miptex slot, index-aligned (gaps become a 2x2 marker) and
+   assign each a slot in the VRAM atlas grid. */
 static int extract_textures(const uint8_t *bsp, uint32_t bsp_len,
                             const fidelity_spec_t *fs,
                             cooked_tex_t **out, int *out_n)
@@ -181,53 +187,66 @@ static int extract_textures(const uint8_t *bsp, uint32_t bsp_len,
 	if (rd_u32(bsp) != BSPVERSION)
 		die("bsp version %u, expected %d", rd_u32(bsp), BSPVERSION);
 
+	int cap = fs->max_texture < WORLD_TEX_CAP ? fs->max_texture : WORLD_TEX_CAP;
+
 	const uint8_t *lump = bsp + 4 + LUMP_TEXTURES * 8;
-	uint32_t tex_ofs = rd_u32(lump);
-	uint32_t tex_len = rd_u32(lump + 4);
+	uint32_t tex_ofs = rd_u32(lump), tex_len = rd_u32(lump + 4);
 	if (tex_ofs + tex_len > bsp_len || tex_len < 4)
 		die("bad texture lump");
 
 	const uint8_t *tl = bsp + tex_ofs;
 	int nummiptex = (int) rd_u32(tl);
 
+	if (nummiptex > QTX_ATLAS_COLS * QTX_ATLAS_ROWS)
+		die("%d textures — atlas holds %d", nummiptex, QTX_ATLAS_COLS * QTX_ATLAS_ROWS);
+
 	cooked_tex_t *list = xmalloc(sizeof(*list) * (size_t) nummiptex);
-	int n = 0;
 
 	for (int i = 0; i < nummiptex; i++) {
+		cooked_tex_t *c = &list[i];
+		memset(c, 0, sizeof(*c));
+		c->vram_x = QTX_ATLAS_X + (i % QTX_ATLAS_COLS) * QTX_ATLAS_CELL_W;
+		c->vram_y = QTX_ATLAS_Y + (i / QTX_ATLAS_COLS) * QTX_ATLAS_CELL_H;
+
 		int32_t mtofs = (int32_t) rd_u32(tl + 4 + i * 4);
-		if (mtofs < 0 || (uint32_t) mtofs + 40 > tex_len)
-			continue; /* missing / referenced-from-wad */
+		const uint8_t *mt = (mtofs >= 0 && (uint32_t) mtofs + 40 <= tex_len)
+		                  ? tl + mtofs : NULL;
+		int mw = mt ? (int) rd_u32(mt + 16) : 0;
+		int mh = mt ? (int) rd_u32(mt + 20) : 0;
+		uint32_t moff0 = mt ? rd_u32(mt + 24) : 0;
 
-		const uint8_t *mt = tl + mtofs;
-		int mw = (int) rd_u32(mt + 16);
-		int mh = (int) rd_u32(mt + 20);
-		uint32_t moff[4] = { rd_u32(mt + 24), rd_u32(mt + 28),
-		                     rd_u32(mt + 32), rd_u32(mt + 36) };
-		/* Quake sizes are multiples of 16 (so the >>mip below is exact) but not
-		   necessarily powers of two — e.g. "quake" is 288x64. Keep them; the
-		   renderer subdivides surfaces per texture tile anyway. */
-		if (mw <= 0 || mh <= 0 || mw > 1024 || mh > 1024 || (mw & 15) || (mh & 15))
+		if (!mt || mw <= 0 || mh <= 0 || (mw & 15) || (mh & 15) ||
+		    moff0 == 0 || (uint32_t) mtofs + moff0 + (uint32_t) mw * mh > tex_len) {
+			/* placeholder: 2x2 bright magenta (Quake palette ~251) */
+			c->w = c->h = c->src_w = c->src_h = 2;
+			c->flags  = QTX_F_PLACEHOLDER;
+			c->pixels = xmalloc(4);
+			memset(c->pixels, 251, 4);
+			if (mt) { memcpy(c->name, mt, 16); c->name[15] = 0; }
+			else    snprintf(c->name, 16, "miptex%d", i);
 			continue;
+		}
 
-		/* Pick the built-in (box-filtered) mip closest to the cap without
-		   undershooting it, then nearest-neighbour down to the exact size. */
-		int cap = fs->max_texture;
+		memcpy(c->name, mt, 16);
+		c->name[15] = 0;
+		c->src_w = mw;
+		c->src_h = mh;
+		if (c->name[0] == '{')                 c->flags |= QTX_F_MASKED;
+		else if (c->name[0] == '*')            c->flags |= QTX_F_LIQUID;
+		else if (!strncmp(c->name, "sky", 3))  c->flags |= QTX_F_SKY;
+
+		/* closest built-in mip not smaller than the cap, then nn-downscale */
 		int mip = 0;
 		while (mip < 3) {
-			int nw = mw >> (mip + 1), nh = mh >> (mip + 1);
-			if (nw < cap && nh < cap)
+			if ((mw >> (mip + 1)) < cap && (mh >> (mip + 1)) < cap)
 				break;
 			mip++;
 		}
 		int pw = mw >> mip, ph = mh >> mip;
 		if (pw < 1) pw = 1;
 		if (ph < 1) ph = 1;
-		if (moff[mip] == 0 || (uint32_t) mtofs + moff[mip] + (uint32_t) pw * ph > tex_len)
-			continue;
+		const uint8_t *pix = mt + rd_u32(mt + 24 + mip * 4);
 
-		const uint8_t *pix = mt + moff[mip];
-
-		/* fit the cap, preserving aspect; keep dims even for the GPU */
 		int tw = pw, th = ph;
 		if (tw > cap || th > cap) {
 			if (tw >= th) { th = th * cap / tw; tw = cap; }
@@ -236,27 +255,16 @@ static int extract_textures(const uint8_t *bsp, uint32_t bsp_len,
 			if (tw < 2) tw = 2;
 			if (th < 2) th = 2;
 		}
-
-		cooked_tex_t *c = &list[n++];
-		memset(c, 0, sizeof(*c));
-		memcpy(c->name, mt, 16);
-		c->name[15] = 0;
-		c->src_w = mw;
-		c->src_h = mh;
 		c->w = tw;
 		c->h = th;
-		if (c->name[0] == '{') c->flags |= QTX_F_MASKED;
-		else if (c->name[0] == '*') c->flags |= QTX_F_LIQUID;
-		else if (!strncmp(c->name, "sky", 3)) c->flags |= QTX_F_SKY;
-
 		c->pixels = (tw == pw && th == ph)
 		          ? memcpy(xmalloc((size_t) tw * th), pix, (size_t) tw * th)
 		          : downscale(pix, pw, ph, tw, th);
 	}
 
 	*out = list;
-	*out_n = n;
-	return n;
+	*out_n = nummiptex;
+	return nummiptex;
 }
 
 /* ------------------------------------------------------------------ write -- */
@@ -287,6 +295,8 @@ static void write_qtx(const char *path, const uint16_t clut[256],
 		e.height     = (uint16_t) tex[i].h;
 		e.src_width  = (uint16_t) tex[i].src_w;
 		e.src_height = (uint16_t) tex[i].src_h;
+		e.vram_x     = (uint16_t) tex[i].vram_x;
+		e.vram_y     = (uint16_t) tex[i].vram_y;
 		e.flags      = tex[i].flags;
 		e.data_ofs   = cur;
 		e.data_len   = (uint32_t) (tex[i].w * tex[i].h);
@@ -437,6 +447,164 @@ static int cmd_geometry(int argc, char **argv)
 	return cook_geometry(bsp, bsp_len, out);
 }
 
+/* --------------------------------------------------------------- surfaces -- */
+
+#define LUMP_TEXINFO 6
+
+static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
+{
+	if (bsp_len < 4 + HEADER_LUMPS * 8 || rd_u32(bsp) != BSPVERSION)
+		die("not a v%d BSP", BSPVERSION);
+
+	uint32_t vlen, elen, selen, mlen, flen, tilen;
+	const uint8_t *vlump  = bsp_lump(bsp, bsp_len, LUMP_VERTEXES,  &vlen);
+	const uint8_t *elump  = bsp_lump(bsp, bsp_len, LUMP_EDGES,     &elen);
+	const uint8_t *selump = bsp_lump(bsp, bsp_len, LUMP_SURFEDGES, &selen);
+	const uint8_t *mlump  = bsp_lump(bsp, bsp_len, LUMP_MODELS,    &mlen);
+	const uint8_t *flump  = bsp_lump(bsp, bsp_len, LUMP_FACES,     &flen);
+	const uint8_t *tilump = bsp_lump(bsp, bsp_len, LUMP_TEXINFO,   &tilen);
+
+	int nverts    = (int) (vlen / 12);
+	int nedges    = (int) (elen / 4);
+	int nsurfedge = (int) (selen / 4);
+	int nfaces    = (int) (flen / 20);
+	int ntexinfo  = (int) (tilen / 40);
+	if (mlen < 64)
+		die("no worldmodel");
+
+	/* vert pool + bounds (same as geometry) */
+	int16_t *verts = xmalloc((size_t) nverts * 8);
+	int16_t mins[3] = { 32767, 32767, 32767 }, maxs[3] = { -32768, -32768, -32768 };
+	float  *vf = xmalloc((size_t) nverts * 3 * sizeof(float));
+	for (int i = 0; i < nverts; i++) {
+		for (int k = 0; k < 3; k++) {
+			float f = rd_f32(vlump + i * 12 + k * 4);
+			vf[i * 3 + k] = f;
+			long v = lround(f);
+			if (v < -32768) v = -32768;
+			if (v >  32767) v =  32767;
+			verts[i * 4 + k] = (int16_t) v;
+			if (v < mins[k]) mins[k] = (int16_t) v;
+			if (v > maxs[k]) maxs[k] = (int16_t) v;
+		}
+		verts[i * 4 + 3] = 0;
+	}
+
+	int firstface = rd_i32(mlump + 56);
+	int numfaces  = rd_i32(mlump + 60);
+
+	/* worst-case sizes */
+	int max_faces = numfaces;
+	int max_fv    = nsurfedge;   /* one facevert per surfedge, generous */
+	qsrf_face     *faces = xmalloc((size_t) max_faces * sizeof(qsrf_face));
+	qsrf_facevert *fv    = xmalloc((size_t) max_fv * sizeof(qsrf_facevert));
+	int nout_faces = 0, nout_fv = 0;
+
+	for (int f = firstface; f < firstface + numfaces && f < nfaces; f++) {
+		const uint8_t *face = flump + (long) f * 20;
+		int fe = rd_i32(face + 4);
+		int ne = rd_i16(face + 8);
+		int ti = rd_i16(face + 10);
+		if (ne < 3 || ti < 0 || ti >= ntexinfo)
+			continue;
+
+		const uint8_t *tx = tilump + (long) ti * 40;
+		float s0[4], s1[4];
+		for (int k = 0; k < 4; k++) s0[k] = rd_f32(tx + k * 4);
+		for (int k = 0; k < 4; k++) s1[k] = rd_f32(tx + 16 + k * 4);
+		int miptex = rd_i32(tx + 32);
+		int tflags = rd_i32(tx + 36);
+
+		/* gather the polygon's vertex indices in winding order */
+		int vidx[64];
+		int nv = 0;
+		for (int s = fe; s < fe + ne && s < nsurfedge && nv < 64; s++) {
+			int se  = rd_i32(selump + (long) s * 4);
+			int eix = se < 0 ? -se : se;
+			if (eix < 0 || eix >= nedges)
+				continue;
+			int vi = se >= 0 ? rd_u16(elump + eix * 4 + 0)
+			                 : rd_u16(elump + eix * 4 + 2);
+			if (vi >= 0 && vi < nverts)
+				vidx[nv++] = vi;
+		}
+		if (nv < 3)
+			continue;
+
+		/* s/t per vertex, then shift so the face-local minimum is 0 */
+		double st[64][2], smin = 1e30, tmin = 1e30;
+		for (int i = 0; i < nv; i++) {
+			const float *p = &vf[vidx[i] * 3];
+			double sc = p[0] * s0[0] + p[1] * s0[1] + p[2] * s0[2] + s0[3];
+			double tc = p[0] * s1[0] + p[1] * s1[1] + p[2] * s1[2] + s1[3];
+			st[i][0] = sc; st[i][1] = tc;
+			if (sc < smin) smin = sc;
+			if (tc < tmin) tmin = tc;
+		}
+		smin = floor(smin);
+		tmin = floor(tmin);
+
+		qsrf_face *of = &faces[nout_faces++];
+		of->tex      = (uint16_t) (miptex < 0 ? 0 : miptex);
+		of->first_fv = (uint16_t) nout_fv;
+		of->num_fv   = (uint8_t) nv;
+		of->flags    = 0;
+		of->pad[0] = of->pad[1] = 0;
+		if (tflags & 1) {   /* TEX_SPECIAL */
+			/* name-based classification is more reliable; leave to the engine */
+		}
+
+		for (int i = 0; i < nv; i++) {
+			qsrf_facevert *ofv = &fv[nout_fv++];
+			ofv->vert = (uint16_t) vidx[i];
+			ofv->u = (uint8_t) clampi((int) lround(st[i][0] - smin), 0, 255);
+			ofv->v = (uint8_t) clampi((int) lround(st[i][1] - tmin), 0, 255);
+		}
+	}
+
+	FILE *fp = fopen(out, "wb");
+	if (!fp)
+		die("cannot write %s", out);
+	qsrf_header h;
+	memset(&h, 0, sizeof h);
+	memcpy(h.magic, QSRF_MAGIC, 4);
+	h.num_verts     = (uint32_t) nverts;
+	h.num_faces     = (uint32_t) nout_faces;
+	h.num_faceverts = (uint32_t) nout_fv;
+	memcpy(h.mins, mins, sizeof mins);
+	memcpy(h.maxs, maxs, sizeof maxs);
+	fwrite(&h, sizeof h, 1, fp);
+	fwrite(verts, 8, (size_t) nverts, fp);
+	fwrite(faces, sizeof(qsrf_face), (size_t) nout_faces, fp);
+	fwrite(fv, sizeof(qsrf_facevert), (size_t) nout_fv, fp);
+	fclose(fp);
+
+	printf("qcook: %s — %d verts, %d faces, %d faceverts\n",
+	       out, nverts, nout_faces, nout_fv);
+
+	free(verts); free(vf); free(faces); free(fv);
+	return 0;
+}
+
+static int cmd_surfaces(int argc, char **argv)
+{
+	const char *pak_path = arg_after(argc, argv, "--pak");
+	const char *map      = arg_after(argc, argv, "--map");
+	const char *out      = arg_after(argc, argv, "--out");
+	if (!pak_path || !map || !out)
+		die("usage: qcook surfaces --pak <pak> --map <name> --out <file.qsrf>");
+
+	pak_t pak;
+	pak_load(&pak, pak_path);
+	uint32_t bsp_len;
+	const uint8_t *bsp = pak_lump(&pak, map, &bsp_len);
+	if (!bsp)
+		die("%s not found in %s", map, pak_path);
+	return cook_surfaces(bsp, bsp_len, out);
+}
+
 /* ------------------------------------------------------------------- info -- */
 
 static int cmd_info(const char *path)
@@ -461,9 +629,9 @@ static int cmd_info(const char *path)
 		char nm[QTX_NAMELEN + 1];
 		memcpy(nm, e[i].name, QTX_NAMELEN);
 		nm[QTX_NAMELEN] = 0;
-		printf("  %-16s %3ux%-3u (src %3ux%-3u) flags %u  %u B @ %u\n",
-		       nm, e[i].width, e[i].height, e[i].src_width, e[i].src_height,
-		       e[i].flags, e[i].data_len, e[i].data_ofs);
+		printf("  %2u %-16s %3ux%-3u (src %3ux%-3u) f%u  vram(%u,%u)  %uB\n",
+		       i, nm, e[i].width, e[i].height, e[i].src_width, e[i].src_height,
+		       e[i].flags, e[i].vram_x, e[i].vram_y, e[i].data_len);
 		total += e[i].data_len;
 	}
 	printf("  %u bytes of pixel data\n", total);
@@ -524,6 +692,8 @@ int main(int argc, char **argv)
 		return cmd_textures(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "geometry"))
 		return cmd_geometry(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "surfaces"))
+		return cmd_surfaces(argc, argv);
 	if (argc == 3 && !strcmp(argv[1], "info"))
 		return cmd_info(argv[2]);
 
@@ -531,6 +701,7 @@ int main(int argc, char **argv)
 	        "usage:\n"
 	        "  qcook textures --pak <pak> --map <name> --out <file.qtx> [--fidelity low|medium|high|ultra]\n"
 	        "  qcook geometry --pak <pak> --map <name> --out <file.qgeo>\n"
+	        "  qcook surfaces --pak <pak> --map <name> --out <file.qsrf>\n"
 	        "  qcook info <file.qtx>\n");
 	return 2;
 }

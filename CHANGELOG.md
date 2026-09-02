@@ -233,8 +233,22 @@ owned game; the player picks game + fidelity from the menu.
   - `engine/vid.c`: `vid_alloc` / `vid_text` now guard against overflowing the
     per-frame primitive buffer (was corrupting RAM → dynarec crash).
 
+- **5.2 (cook side)** — surface + atlas cooking:
+  - `formats/qtx.h` → `QTX2`: entries are now 1:1 with miptex (gaps get a 2x2
+    marker) and each carries a VRAM atlas slot. `qcook textures` packs the
+    map's textures into a 20x7 grid of 64-texel cells right of the
+    framebuffers (world cap 64px; fidelity tuning of that is Phase 11).
+  - `formats/qsrf.h` (`QSF1`) + `qcook surfaces`: per world-model face — a
+    convex polygon of shared vertices, per-vertex texel UVs (shifted so the
+    face-local min is 0), texture index. `start.bsp`: 7757 verts / 4934 faces
+    / 24430 faceverts. Cross-checked vs a Python parse (69 distinct textures,
+    winding + UV ranges sane).
+  - `scripts/cook.sh` + `CMakeLists.txt` + `iso.xml`: cook + bundle
+    `START.QSF`.
+
 ### Next step
 
-- On-screen check of the `start.bsp` wireframe, then **5.2** texture the faces
-  (needs surface cooking: per-face verts + UVs + texinfo), **5.3** free camera,
-  **5.4** PVS / frustum culling.
+- **5.2 (engine)** — `r_surfaces`: per face, GTE-transform + backface cull
+  (`nclip`), triangulate as a fan, `DR_TWIN` + `POLY_FT3` with the texture's
+  tpage/window (`Mask = (256-size)/8`, offset from the atlas slot). Face budget
+  until **5.4** culling. Then **5.3** free camera.
