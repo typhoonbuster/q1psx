@@ -303,7 +303,17 @@ owned game; the player picks game + fidelity from the menu.
     `r_surfaces` and shared.
   - `engine/main.c`: 8th boot step loads `START.QBS`; `SELECT` now cycles
     world (PVS+frustum) / all-surfaces / wireframe.
-  - Headless boot clean through all 8 steps. Awaiting on-screen check.
+  - Fix: a per-face `DR_TWIN` left the GPU texture window set; the debug font
+    (lower OT bucket, drawn after) inherited it and every glyph came out
+    garbled. `r_world` / `r_surfaces` now emit a full-page window primitive
+    that, linked first, runs last in the bucket and restores the default.
+  - **Confirmed on screen** (2026-09-02): the world culls correctly.
+    Two issues left open for later:
+    * frame rate still low — PVS+frustum cut the face count but PS1 fill-rate
+      and a texture-window change per face are the new wall (batch by texture
+      / lower res — an optimisation pass, Phase 11 or sooner);
+    * no near-plane clipping — `draw_face` drops a whole face when any vertex
+      is behind `NEAR_Z`, so large faces pop out near the camera.
 
 ### Next step
 

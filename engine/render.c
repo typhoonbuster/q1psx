@@ -168,11 +168,24 @@ static int draw_face(const surf_t *s, int f)
 	return 1;
 }
 
+/* Every per-face DR_TWIN leaves the GPU texture window set; whatever runs after
+   the surfaces on the OT (the debug font, in a lower bucket) would inherit it
+   and tile its texture wrongly. Emit a full-page window that, added before the
+   faces, is the *last* thing executed in the bucket — restoring the default. */
+static void reset_texwindow(void)
+{
+	RECT     full = { 0, 0, 0, 0 };
+	DR_TWIN *tw   = vid_alloc_raw(sizeof(DR_TWIN));
+	setTexWindow(tw, &full);
+	vid_link(4, tw);
+}
+
 /* Draw every cooked face (no visibility culling) — the SELECT fallback view. */
 int r_surfaces(const surf_t *s)
 {
 	sv_nv = s->num_verts < R_MAXVERTS ? s->num_verts : R_MAXVERTS;
 	memset(sv_state, 0, sv_nv);
+	reset_texwindow();
 
 	int drawn = 0;
 	for (int f = 0; f < s->num_faces && drawn < R_MAXFACES; f++)
@@ -272,6 +285,7 @@ int r_world(const surf_t *s, const bsp_t *b,
 {
 	sv_nv = s->num_verts < R_MAXVERTS ? s->num_verts : R_MAXVERTS;
 	memset(sv_state, 0, sv_nv);
+	reset_texwindow();
 
 	if (++face_key == 0) {
 		memset(face_seen, 0, sizeof face_seen);

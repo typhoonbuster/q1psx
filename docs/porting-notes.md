@@ -583,3 +583,23 @@ Approach A: a thin port of Quake's `r_bsp.c`. Data is `engine/bsp.{c,h}` over a
 buffer's ~975-`POLY_FT3` capacity. Recursion depth ≈ tree depth (~12 for
 `start.bsp`); a pathological BSP could go deep — watch the stack if a big map
 faults. `SELECT` cycles world / all-surfaces / wireframe for A/B debugging.
+
+**Texture-window reset.** Every `DR_TWIN` leaves the GPU's texture-window
+register set. Anything drawn afterwards inherits it — including the debug font,
+which is in a lower OT bucket and so runs *after* the world. That tiled the
+font texture at 64×64 and turned every glyph into a different glyph (a real
+symptom seen on device, 5.4). Fix: `r_world` / `r_surfaces` emit a full-page
+window (`RECT{0,0,0,0}`) into bucket 4 *before* any face; since `addPrim`
+prepends, it is the last primitive executed in the bucket and restores the
+default for buckets 3–0.
+
+**Known gaps after 5.4** (deferred):
+- *Frame rate.* PVS + frustum cut `start.bsp` from 4934 faces to a few
+  hundred, but that is still hundreds of affine textured tris **and** a
+  `DR_TWIN` per face — the window change stalls the GPU. Next wins: sort the
+  visible faces by texture and emit one window per texture run; consider a
+  lower internal resolution. Real profiling is Phase 11.
+- *Near-plane clipping.* `draw_face` skips a face entirely if any vertex is
+  behind `NEAR_Z` (no polygon clipping yet), so big wall/floor faces vanish as
+  the camera nears them. Needs a proper near-plane clip (split the polygon on
+  the plane, re-project).
