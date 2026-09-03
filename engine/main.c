@@ -172,8 +172,8 @@ static void boot_load_bsp(void)
  */
 static void read_player_cmd(pmove_t *pm, pmove_cmd_t *cmd, const PadState *pad)
 {
-	if (pad->pressed & PAD_START)
-		pm->noclip = !pm->noclip;
+	if ((pad->pressed & PAD_START) && !(pad->buttons & PAD_SELECT))
+		pm->noclip = !pm->noclip;   /* SELECT+START is the FOV cycle */
 
 	if ((pad->buttons & PAD_L2) && (pad->buttons & PAD_R2)) {
 		for (int k = 0; k < 3; k++) {
@@ -245,6 +245,7 @@ static void demo_loop(void)
 	int      dbg     = 2;        /* overlay: 0 off, 1 fps only, 2 full */
 	int      both_l1r1_prev = 0;
 	int      farclip_i = 0;
+	int      fov_i = 1;         /* index into HVAL, 1 == 160 (~90 deg) */
 	PadState pad;
 	char     overlay[384];
 
@@ -261,14 +262,26 @@ static void demo_loop(void)
 			dbg = (dbg + 1) % 3;
 		both_l1r1_prev = both_l1r1;
 
-		/* perf A/B knobs: L2 = subdivision on/off, R2 = far-clip distance.
+		/* perf A/B knobs:
+		     L2            = subdivision on/off
+		     R2            = distance preset (far-clip + tiny-face skip)
+		     SELECT+START  = FOV / projection distance
 		   (L2+R2 together is "snap home", handled in read_player_cmd.) */
 		if (!((pad.buttons & PAD_L2) && (pad.buttons & PAD_R2))) {
-			static const int FARCLIP[] = { 0, 1800, 900, 450 };
+			static const int FARCLIP[4] = { 0, 1800, 900, 450 };
+			static const int MINFACE[4] = { 0,    2,   4,   6 };
 			if (pad.pressed & PAD_L2)
 				r_subdiv = !r_subdiv;
-			if (pad.pressed & PAD_R2)
-				r_farclip = FARCLIP[(farclip_i = (farclip_i + 1) & 3)];
+			if (pad.pressed & PAD_R2) {
+				farclip_i = (farclip_i + 1) & 3;
+				r_farclip = FARCLIP[farclip_i];
+				r_minface = MINFACE[farclip_i];
+			}
+		}
+		if ((pad.pressed & PAD_START) && (pad.buttons & PAD_SELECT)) {
+			static const int HVAL[4] = { 120, 160, 200, 256 };
+			fov_i = (fov_i + 1) & 3;
+			r_set_screen_h(HVAL[fov_i]);
 		}
 
 		uint32_t tp0 = vid_vbl_now();
@@ -315,13 +328,12 @@ static void demo_loop(void)
 				"q1psx  %s\n"
 				"  %d.%d vbl/frame  ~%d fps  %s   %d prim B%s\n\n"
 				"  nodes %d  leaves %d  faces %d  drawn %d\n"
-				"  drop near %d back %d sky %d slot %d\n"
-				"  vz [%d..%d]  vm %d %d %d t%d\n"
+				"  drop near %d back %d sky %d tiny %d\n"
 				"  us: walk %d  draw %d   vbl pm %u rn %u\n"
-				"  subdiv %d  farclip %d\n"
-				"  pos %d %d %d  yaw %d pit %d  %s\n\n"
-				"  L2 subdiv  R2 farclip  L1+R1 overlay\n"
-				"  SEL view  START noclip  L2+R2 home\n"
+				"  subdiv %d  farclip %d  minface %d  fov-h %d\n"
+				"  pos %d %d %d  yaw %d pit %d  %s %s\n\n"
+				"  L2 subdiv  R2 dist  SEL view  SEL+START fov\n"
+				"  L1+R1 overlay  START noclip  L2+R2 home\n"
 				"mem %d KiB  sel %s",
 				mode,
 				vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
@@ -329,12 +341,10 @@ static void demo_loop(void)
 				vid_gpu_busy() ? "GPU-bound" : "cpu/ok",
 				vid_prim_used(), vid_prim_overflowed() ? " OVF" : "",
 				r_dbg_nodes, r_dbg_leaves, r_dbg_faces, drawn,
-				r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot,
-				r_dbg_vz_lo, r_dbg_vz_hi,
-				r_dbg_vm[0], r_dbg_vm[1], r_dbg_vm[2], r_dbg_vm[3],
+				r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_tiny,
 				r_dbg_us_walk, r_dbg_us_draw,
 				tp1 - tp0, tr1 - tp1,
-				r_subdiv, r_farclip,
+				r_subdiv, r_farclip, r_minface, r_screen_h,
 				player.pos[0], player.pos[1], player.pos[2],
 				player.yaw >> Q_FIX_SHIFT, player.pitch >> Q_FIX_SHIFT,
 				player.onground ? "ground" : "air",

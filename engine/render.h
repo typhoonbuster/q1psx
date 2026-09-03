@@ -50,7 +50,7 @@ extern int r_dbg_faces;       /* unique faces handed to draw_face      */
 extern int r_dbg_drop_near;   /* faces dropped: all verts behind near  */
 extern int r_dbg_drop_back;   /* faces dropped: back-face              */
 extern int r_dbg_drop_sky;    /* faces dropped: sky                    */
-extern int r_dbg_drop_slot;   /* faces dropped: no texture slot        */
+extern int r_dbg_drop_slot, r_dbg_drop_tiny;
 extern int r_dbg_vz_lo, r_dbg_vz_hi;   /* view_z range over all face verts */
 extern int r_dbg_vm[4];                /* stashed view fwd row + t         */
 extern int r_dbg_us_walk, r_dbg_us_draw;   /* ~microseconds: BSP walk, draw_face */
@@ -58,3 +58,6 @@ extern int r_dbg_us_walk, r_dbg_us_draw;   /* ~microseconds: BSP walk, draw_face
 /* quality knobs (set from main.c, for A/B testing the perf trade-offs) */
 extern int r_subdiv;    /* 1 = adaptive triangle subdivision on (anti-warp)  */
 extern int r_farclip;   /* 0 = off, else skip leaves whose box is > N units  */
+extern int r_minface;   /* 0 = off, else skip faces smaller than N px        */
+extern int r_screen_h;  /* GTE projection distance (FOV): 160 ~= 90 deg      */
+void r_set_screen_h(int h);

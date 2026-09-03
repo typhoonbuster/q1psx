@@ -34,20 +34,28 @@ static int32_t cam_pos[3];   /* eye, for 3D back-face culling    */
 
 /* --- diagnostics (declared in render.h, shown in the overlay) --- */
 int r_dbg_nodes, r_dbg_leaves, r_dbg_faces;
-int r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot;
+int r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_slot, r_dbg_drop_tiny;
 int r_dbg_vz_lo, r_dbg_vz_hi;   /* view_z range this frame */
 int r_dbg_vm[4];               /* vm_row2[3], vm_t2       */
 int r_dbg_us_walk, r_dbg_us_draw;  /* approx microseconds: traversal, draw_face */
 static uint32_t draw_us_acc;
 
-int r_subdiv  = 1;
-int r_farclip = 0;
+int r_subdiv   = 1;
+int r_farclip  = 0;
+int r_minface  = 0;    /* skip faces whose screen bbox is under this (px)   */
+int r_screen_h = VID_W / 2;   /* GTE projection distance; 160 = ~90 deg FOV */
+
+void r_set_screen_h(int h)
+{
+	r_screen_h = h;
+	gte_SetGeomScreen(h);
+}
 
 void r_init(void)
 {
 	InitGeom();
 	gte_SetGeomOffset(VID_W / 2, VID_H / 2);
-	gte_SetGeomScreen(VID_W / 2);   /* ~90 deg FOV */
+	r_set_screen_h(r_screen_h);
 	gte_SetBackColor(63, 63, 63);
 }
 
@@ -337,6 +345,10 @@ static int draw_face(const surf_t *s, int f)
 			if (x < minx) minx = x;  if (x > maxx) maxx = x;
 			if (y < miny) miny = y;  if (y > maxy) maxy = y;
 			if (z < zlo)  zlo  = z;  if (z > zhi)  zhi  = z;
+		}
+		if (r_minface && maxx - minx < r_minface && maxy - miny < r_minface) {
+			r_dbg_drop_tiny++;
+			return 0;
 		}
 		if (!r_subdiv
 		 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
@@ -647,7 +659,7 @@ int r_world(const surf_t *s, const bsp_t *b,
 		face_key = 1;
 	}
 	r_dbg_nodes = r_dbg_leaves = r_dbg_faces = 0;
-	r_dbg_drop_near = r_dbg_drop_back = r_dbg_drop_sky = r_dbg_drop_slot = 0;
+	r_dbg_drop_near = r_dbg_drop_back = r_dbg_drop_sky = r_dbg_drop_slot = r_dbg_drop_tiny = 0;
 	r_dbg_vz_lo = 999999;
 	r_dbg_vz_hi = -999999;
 
