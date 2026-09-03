@@ -54,3 +54,7 @@ extern int r_dbg_drop_slot;   /* faces dropped: no texture slot        */
 extern int r_dbg_vz_lo, r_dbg_vz_hi;   /* view_z range over all face verts */
 extern int r_dbg_vm[4];                /* stashed view fwd row + t         */
 extern int r_dbg_us_walk, r_dbg_us_draw;   /* ~microseconds: BSP walk, draw_face */
+
+/* quality knobs (set from main.c, for A/B testing the perf trade-offs) */
+extern int r_subdiv;    /* 1 = adaptive triangle subdivision on (anti-warp)  */
+extern int r_farclip;   /* 0 = off, else skip leaves whose box is > N units  */

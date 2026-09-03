@@ -40,6 +40,9 @@ int r_dbg_vm[4];               /* vm_row2[3], vm_t2       */
 int r_dbg_us_walk, r_dbg_us_draw;  /* approx microseconds: traversal, draw_face */
 static uint32_t draw_us_acc;
 
+int r_subdiv  = 1;
+int r_farclip = 0;
+
 void r_init(void)
 {
 	InitGeom();
@@ -170,8 +173,9 @@ static void project(const SVECTOR *verts, int i)
  * longest edge (3D midpoint, so it *is* a perspective correction) until every
  * piece is small on screen. Only large near triangles pay for this. */
 
-#define SUBDIV_PX   40   /* split a triangle whose screen bbox exceeds this  */
-#define SUBDIV_MAX  3    /* recursion cap                                    */
+#define SUBDIV_PX   32   /* split a triangle whose screen bbox exceeds this  */
+#define SUBDIV_MAX  4    /* recursion cap                                    */
+#define SUBDIV_ZR   2    /* ... and whose far/near depth ratio exceeds 1+1/N */
 
 typedef struct {
 	SVECTOR w;            /* world position                    */
@@ -243,9 +247,10 @@ static void emit_tri(wvert *a, wvert *b, wvert *c, int depth)
 	if (b->sz < zlo) zlo = b->sz;  if (b->sz > zhi) zhi = b->sz;
 	if (c->sz < zlo) zlo = c->sz;  if (c->sz > zhi) zhi = c->sz;
 
-	if (depth >= SUBDIV_MAX
+	if (!r_subdiv
+	 || depth >= SUBDIV_MAX
 	 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
-	 || zhi - zlo < (zlo >> 1)) {
+	 || zhi - zlo < (zlo >> SUBDIV_ZR)) {
 		emit_ft3(a, b, c);
 		return;
 	}
@@ -333,8 +338,9 @@ static int draw_face(const surf_t *s, int f)
 			if (y < miny) miny = y;  if (y > maxy) maxy = y;
 			if (z < zlo)  zlo  = z;  if (z > zhi)  zhi  = z;
 		}
-		if ((maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
-		 || zhi - zlo < (zlo >> 1)) {
+		if (!r_subdiv
+		 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
+		 || zhi - zlo < (zlo >> SUBDIV_ZR)) {
 			uint16_t tp = slot->tpage, cl = slot->clut;
 			for (int k = 1; k + 1 < n; k += 2) {
 				int a = fv[0].vert;
@@ -599,6 +605,17 @@ static void world_node(const surf_t *s, const bsp_t *b, int nodeidx,
 	int c = clip;
 	if (!box_visible(lf->mins, lf->maxs, pos, &c))
 		return;
+
+	if (r_farclip) {
+		int32_t dx = pos[0] < lf->mins[0] ? lf->mins[0] - pos[0]
+		           : pos[0] > lf->maxs[0] ? pos[0] - lf->maxs[0] : 0;
+		int32_t dy = pos[1] < lf->mins[1] ? lf->mins[1] - pos[1]
+		           : pos[1] > lf->maxs[1] ? pos[1] - lf->maxs[1] : 0;
+		int32_t dz = pos[2] < lf->mins[2] ? lf->mins[2] - pos[2]
+		           : pos[2] > lf->maxs[2] ? pos[2] - lf->maxs[2] : 0;
+		if (dx * dx + dy * dy + dz * dz > r_farclip * r_farclip)
+			return;
+	}
 	r_dbg_leaves++;
 
 	int first = lf->first_marksurf;

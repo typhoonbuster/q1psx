@@ -244,6 +244,7 @@ static void demo_loop(void)
 	int      vbl_avg = 1 << 4;   /* 4.4 fixed, smoothed vblanks/frame */
 	int      dbg     = 2;        /* overlay: 0 off, 1 fps only, 2 full */
 	int      both_l1r1_prev = 0;
+	int      farclip_i = 0;
 	PadState pad;
 	char     overlay[384];
 
@@ -259,6 +260,16 @@ static void demo_loop(void)
 		if (both_l1r1 && !both_l1r1_prev)
 			dbg = (dbg + 1) % 3;
 		both_l1r1_prev = both_l1r1;
+
+		/* perf A/B knobs: L2 = subdivision on/off, R2 = far-clip distance.
+		   (L2+R2 together is "snap home", handled in read_player_cmd.) */
+		if (!((pad.buttons & PAD_L2) && (pad.buttons & PAD_R2))) {
+			static const int FARCLIP[] = { 0, 1800, 900, 450 };
+			if (pad.pressed & PAD_L2)
+				r_subdiv = !r_subdiv;
+			if (pad.pressed & PAD_R2)
+				r_farclip = FARCLIP[(farclip_i = (farclip_i + 1) & 3)];
+		}
 
 		uint32_t tp0 = vid_vbl_now();
 		pmove_cmd_t cmd;
@@ -293,11 +304,11 @@ static void demo_loop(void)
 
 		if (dbg == 1) {
 			snprintf(overlay, sizeof overlay,
-				"~%d fps  %d.%d vbl  %s   %s",
+				"~%d fps  %d.%d vbl  %s   sub %d far %d",
 				vbl ? 60 / vbl : 60,
 				vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
 				vid_gpu_busy() ? "GPU" : "cpu",
-				mode);
+				r_subdiv, r_farclip);
 			vid_text(0, 8, 8, overlay);
 		} else if (dbg == 2) {
 			snprintf(overlay, sizeof overlay,
@@ -307,9 +318,10 @@ static void demo_loop(void)
 				"  drop near %d back %d sky %d slot %d\n"
 				"  vz [%d..%d]  vm %d %d %d t%d\n"
 				"  us: walk %d  draw %d   vbl pm %u rn %u\n"
+				"  subdiv %d  farclip %d\n"
 				"  pos %d %d %d  yaw %d pit %d  %s\n\n"
-				"  CR jump  TR walk  START %s  L2+R2 home\n"
-				"  SEL view   L1+R1 this overlay\n"
+				"  L2 subdiv  R2 farclip  L1+R1 overlay\n"
+				"  SEL view  START noclip  L2+R2 home\n"
 				"mem %d KiB  sel %s",
 				mode,
 				vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
@@ -322,6 +334,7 @@ static void demo_loop(void)
 				r_dbg_vm[0], r_dbg_vm[1], r_dbg_vm[2], r_dbg_vm[3],
 				r_dbg_us_walk, r_dbg_us_draw,
 				tp1 - tp0, tr1 - tp1,
+				r_subdiv, r_farclip,
 				player.pos[0], player.pos[1], player.pos[2],
 				player.yaw >> Q_FIX_SHIFT, player.pitch >> Q_FIX_SHIFT,
 				player.onground ? "ground" : "air",
