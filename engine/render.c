@@ -163,29 +163,104 @@ static void project(const SVECTOR *verts, int i)
 	if (sz > r_dbg_vz_hi) r_dbg_vz_hi = sz;
 }
 
-/* screen-space polygon after near-plane clipping */
-static int16_t cx[CLIPBUF], cy[CLIPBUF];
-static uint8_t cu[CLIPBUF], cv[CLIPBUF];
-static int     cn_np;
+/* ---- runtime adaptive subdivision -------------------------------------- *
+ * The PS1 GPU has no perspective-correct texturing — a big triangle near the
+ * camera warps ("Doom / Duke3D stretch"). Fix: split each triangle on its
+ * longest edge (3D midpoint, so it *is* a perspective correction) until every
+ * piece is small on screen. Only large near triangles pay for this. */
 
-static void emit_screen_vert(const SVECTOR *w, int u, int v)
+#define SUBDIV_PX   40   /* split a triangle whose screen bbox exceeds this  */
+#define SUBDIV_MAX  3    /* recursion cap                                    */
+
+typedef struct {
+	SVECTOR w;            /* world position                    */
+	int16_t sx, sy;       /* screen coords (valid once scr==1) */
+	uint8_t u, v;
+	uint8_t scr;
+} wvert;
+
+static const tex_slot_t *cur_slot;
+
+static void wv_project(wvert *p)
 {
-	if (cn_np >= CLIPBUF)
+	if (p->scr)
 		return;
-	gte_ldv0(w);
+	gte_ldv0(&p->w);
 	gte_rtps();
 	uint32_t xy;
 	gte_stsxy(&xy);
-	cx[cn_np] = (int16_t) (xy & 0xffff);
-	cy[cn_np] = (int16_t) (xy >> 16);
-	cu[cn_np] = (uint8_t) u;
-	cv[cn_np] = (uint8_t) v;
-	cn_np++;
+	p->sx  = (int16_t) (xy & 0xffff);
+	p->sy  = (int16_t) (xy >> 16);
+	p->scr = 1;
 }
 
-/* Near-plane-clip a face to a screen polygon, back-face cull, triangulate as a
-   fan of POLY_FT4 quads (+ an odd POLY_FT3) preceded by its DR_TWIN.
-   Returns 1 if it emitted, else 0. */
+static void wv_mid(const wvert *a, const wvert *b, wvert *m)
+{
+	m->w.vx  = (a->w.vx + b->w.vx) >> 1;
+	m->w.vy  = (a->w.vy + b->w.vy) >> 1;
+	m->w.vz  = (a->w.vz + b->w.vz) >> 1;
+	m->w.pad = 0;
+	m->u     = (uint8_t) (((int) a->u + b->u) >> 1);
+	m->v     = (uint8_t) (((int) a->v + b->v) >> 1);
+	m->scr   = 0;
+}
+
+static void emit_ft3(const wvert *a, const wvert *b, const wvert *c)
+{
+	POLY_FT3 *t = vid_alloc_raw(sizeof(POLY_FT3));
+	setPolyFT3(t);
+	setRGB0(t, 128, 128, 128);
+	setXY3(t, a->sx, a->sy, b->sx, b->sy, c->sx, c->sy);
+	setUV3(t, a->u, a->v, b->u, b->v, c->u, c->v);
+	t->tpage = cur_slot->tpage;
+	t->clut  = cur_slot->clut;
+	vid_link(4, t);
+}
+
+static void emit_tri(wvert *a, wvert *b, wvert *c, int depth)
+{
+	wv_project(a);
+	wv_project(b);
+	wv_project(c);
+
+	int minx = a->sx, maxx = a->sx, miny = a->sy, maxy = a->sy;
+	if (b->sx < minx) minx = b->sx;  if (b->sx > maxx) maxx = b->sx;
+	if (c->sx < minx) minx = c->sx;  if (c->sx > maxx) maxx = c->sx;
+	if (b->sy < miny) miny = b->sy;  if (b->sy > maxy) maxy = b->sy;
+	if (c->sy < miny) miny = c->sy;  if (c->sy > maxy) maxy = c->sy;
+
+	if (depth >= SUBDIV_MAX
+	 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)) {
+		emit_ft3(a, b, c);
+		return;
+	}
+
+	int dab = (b->sx - a->sx) * (b->sx - a->sx) + (b->sy - a->sy) * (b->sy - a->sy);
+	int dbc = (c->sx - b->sx) * (c->sx - b->sx) + (c->sy - b->sy) * (c->sy - b->sy);
+	int dca = (a->sx - c->sx) * (a->sx - c->sx) + (a->sy - c->sy) * (a->sy - c->sy);
+
+	wvert m;
+	if (dab >= dbc && dab >= dca) {
+		wv_mid(a, b, &m);
+		emit_tri(a, &m, c, depth + 1);
+		emit_tri(&m, b, c, depth + 1);
+	} else if (dbc >= dca) {
+		wv_mid(b, c, &m);
+		emit_tri(a, b, &m, depth + 1);
+		emit_tri(a, &m, c, depth + 1);
+	} else {
+		wv_mid(c, a, &m);
+		emit_tri(a, b, &m, depth + 1);
+		emit_tri(&m, b, c, depth + 1);
+	}
+}
+
+/* ---------------------------------------------------------------------- */
+
+static wvert dpoly[CLIPBUF];
+
+/* Back-face cull, near-plane clip, fan-triangulate with adaptive subdivision,
+   one DR_TWIN. Returns 1 if it emitted, else 0. */
 static int draw_face(const surf_t *s, int f)
 {
 	const qsrf_face     *face = &s->faces[f];
@@ -195,8 +270,7 @@ static int draw_face(const surf_t *s, int f)
 		return 0;
 
 	/* 3D back-face cull: the camera sees the front iff it is on the positive
-	   side of the cooked (outward-oriented) face plane. Exact, and cheaper
-	   than projecting — no screen-winding degeneracy. */
+	   side of the cooked (outward-oriented) face plane. */
 	if ((int32_t) face->n[0] * cam_pos[0]
 	  + (int32_t) face->n[1] * cam_pos[1]
 	  + (int32_t) face->n[2] * cam_pos[2] - face->dist <= 0) {
@@ -204,53 +278,109 @@ static int draw_face(const surf_t *s, int f)
 		return 0;
 	}
 
-	/* Project every vertex once (cached). The GTE's own SZ tells us which side
-	   of the near plane each vertex is on — no need for a separate C-side
-	   view_z pass on the common (all-in-front) path. */
-	int nfront = 0, nbehind = 0;
+	/* project every vertex once (cached), count how many are behind the near
+	   plane (the GTE's SZ says which side) */
+	int nbehind = 0;
 	for (int k = 0; k < n; k++) {
 		int vi = fv[k].vert;
 		if (vi >= sv_nv)
 			return 0;
 		if (!sv_state[vi])
 			project(s->verts, vi);
-		if (sv_state[vi] == 1) nfront++;
-		else                   nbehind++;
+		if (sv_state[vi] == 2)
+			nbehind++;
 	}
-	if (nfront == 0) {
+	if (nbehind == n) {
 		r_dbg_drop_near++;
 		return 0;
 	}
 
-	cn_np = 0;
+	const tex_slot_t *slot = qtx_slot_ptr(face->tex);
+	if (!slot) {
+		r_dbg_drop_slot++;
+		return 0;
+	}
+	if (slot->flags & QTX_F_SKY) {
+		r_dbg_drop_sky++;
+		return 0;
+	}
+	cur_slot = slot;
+
+	/* --- fast path: whole face in front, and small enough on screen that the
+	   affine warp is imperceptible — emit the fan as POLY_FT4 quads, no
+	   per-vertex world copy, no subdivision. Most faces take this path. */
+	if (nbehind == 0) {
+		int minx = 32767, maxx = -32768, miny = 32767, maxy = -32768;
+		for (int k = 0; k < n; k++) {
+			int vi = fv[k].vert, x = sv_x[vi], y = sv_y[vi];
+			if (x < minx) minx = x;  if (x > maxx) maxx = x;
+			if (y < miny) miny = y;  if (y > maxy) maxy = y;
+		}
+		if (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX) {
+			uint16_t tp = slot->tpage, cl = slot->clut;
+			for (int k = 1; k + 1 < n; k += 2) {
+				int a = fv[0].vert;
+				if (k + 2 < n) {
+					int b = fv[k].vert, c = fv[k + 1].vert, d = fv[k + 2].vert;
+					POLY_FT4 *t = vid_alloc_raw(sizeof(POLY_FT4));
+					setPolyFT4(t);
+					setRGB0(t, 128, 128, 128);
+					setXY4(t, sv_x[b], sv_y[b], sv_x[a], sv_y[a],
+					          sv_x[c], sv_y[c], sv_x[d], sv_y[d]);
+					setUV4(t, fv[k].u, fv[k].v, fv[0].u, fv[0].v,
+					          fv[k + 1].u, fv[k + 1].v, fv[k + 2].u, fv[k + 2].v);
+					t->tpage = tp;
+					t->clut  = cl;
+					vid_link(4, t);
+				} else {
+					int b = fv[k].vert, c = fv[k + 1].vert;
+					POLY_FT3 *t = vid_alloc_raw(sizeof(POLY_FT3));
+					setPolyFT3(t);
+					setRGB0(t, 128, 128, 128);
+					setXY3(t, sv_x[a], sv_y[a], sv_x[b], sv_y[b], sv_x[c], sv_y[c]);
+					setUV3(t, fv[0].u, fv[0].v, fv[k].u, fv[k].v,
+					          fv[k + 1].u, fv[k + 1].v);
+					t->tpage = tp;
+					t->clut  = cl;
+					vid_link(4, t);
+				}
+			}
+			DR_TWIN *tw = vid_alloc_raw(sizeof(DR_TWIN));
+			setTexWindow(tw, &slot->twin);
+			vid_link(4, tw);
+			return 1;
+		}
+	}
+
+	/* --- slow path: build a working polygon (world + UV), near-clip if any
+	   vertex is behind, then fan-triangulate with subdivision. */
+	int np = 0;
 	if (nbehind == 0) {
 		for (int k = 0; k < n; k++) {
 			int vi = fv[k].vert;
-			cx[k] = sv_x[vi];
-			cy[k] = sv_y[vi];
-			cu[k] = fv[k].u;
-			cv[k] = fv[k].v;
+			dpoly[np].w   = s->verts[vi];
+			dpoly[np].sx  = sv_x[vi];
+			dpoly[np].sy  = sv_y[vi];
+			dpoly[np].scr = 1;
+			dpoly[np].u   = fv[k].u;
+			dpoly[np].v   = fv[k].v;
+			np++;
 		}
-		cn_np = n;
 	} else {
-		/* mixed: Sutherland-Hodgman clip against view_z == NEAR_CLIP */
 		int32_t vz[R_FAN_MAX];
 		for (int k = 0; k < n; k++)
 			vz[k] = view_z(&s->verts[fv[k].vert]);
-		for (int k = 0; k < n; k++) {
+		for (int k = 0; k < n && np < CLIPBUF - 1; k++) {
 			int a = k, b = (k + 1) % n;
 			int af = vz[a] >= NEAR_CLIP, bf = vz[b] >= NEAR_CLIP;
-			const SVECTOR *va = &s->verts[fv[a].vert];
-			const SVECTOR *vb = &s->verts[fv[b].vert];
+			const SVECTOR *wa = &s->verts[fv[a].vert];
+			const SVECTOR *wb = &s->verts[fv[b].vert];
 			if (af) {
-				int vi = fv[a].vert;
-				if (!sv_state[vi])
-					project(s->verts, vi);
-				if (cn_np < CLIPBUF) {
-					cx[cn_np] = sv_x[vi]; cy[cn_np] = sv_y[vi];
-					cu[cn_np] = fv[a].u;  cv[cn_np] = fv[a].v;
-					cn_np++;
-				}
+				dpoly[np].w   = *wa;
+				dpoly[np].u   = fv[a].u;
+				dpoly[np].v   = fv[a].v;
+				dpoly[np].scr = 0;
+				np++;
 			}
 			if (af != bf) {
 				int32_t denom = vz[b] - vz[a];
@@ -259,61 +389,23 @@ static int draw_face(const surf_t *s, int f)
 				int32_t t = (int32_t) (((int64_t) (NEAR_CLIP - vz[a]) << Q_FIX_SHIFT) / denom);
 				if (t < 0) t = 0;
 				if (t > Q_FIX_ONE) t = Q_FIX_ONE;
-				SVECTOR ip = {
-					(int16_t) (va->vx + (((vb->vx - va->vx) * t) >> Q_FIX_SHIFT)),
-					(int16_t) (va->vy + (((vb->vy - va->vy) * t) >> Q_FIX_SHIFT)),
-					(int16_t) (va->vz + (((vb->vz - va->vz) * t) >> Q_FIX_SHIFT)),
-					0,
-				};
-				int iu = fv[a].u + (((fv[b].u - fv[a].u) * t) >> Q_FIX_SHIFT);
-				int iv = fv[a].v + (((fv[b].v - fv[a].v) * t) >> Q_FIX_SHIFT);
-				emit_screen_vert(&ip, iu, iv);
+				dpoly[np].w.vx  = (int16_t) (wa->vx + (((wb->vx - wa->vx) * t) >> Q_FIX_SHIFT));
+				dpoly[np].w.vy  = (int16_t) (wa->vy + (((wb->vy - wa->vy) * t) >> Q_FIX_SHIFT));
+				dpoly[np].w.vz  = (int16_t) (wa->vz + (((wb->vz - wa->vz) * t) >> Q_FIX_SHIFT));
+				dpoly[np].w.pad = 0;
+				dpoly[np].u     = (uint8_t) (fv[a].u + (((fv[b].u - fv[a].u) * t) >> Q_FIX_SHIFT));
+				dpoly[np].v     = (uint8_t) (fv[a].v + (((fv[b].v - fv[a].v) * t) >> Q_FIX_SHIFT));
+				dpoly[np].scr   = 0;
+				np++;
 			}
 		}
 	}
 
-	if (cn_np < 3)
+	if (np < 3)
 		return 0;
 
-	const tex_slot_t *slot = qtx_slot_ptr(face->tex);
-	if (!slot) {
-		r_dbg_drop_slot++;
-		return 0;
-	}
-
-	/* Sky: don't texture it (a 64px tile stretched over a skybox face is both
-	   slow — texture-cache thrash — and ugly). The dark background shows
-	   through as flat sky; a proper sky comes later. */
-	if (slot->flags & QTX_F_SKY) {
-		r_dbg_drop_sky++;
-		return 0;
-	}
-
-	/* fan-strip: each pair of fan triangles (0,k,k+1) + (0,k+1,k+2) is one
-	   convex quad (0,k,k+1,k+2), fed to POLY_FT4 as (k,0,k+1,k+2) so the GPU's
-	   (0,1,2)+(1,2,3) split covers it. Leftover odd triangle -> POLY_FT3. */
-	uint16_t tpage = slot->tpage, clut = slot->clut;
-	for (int k = 1; k + 1 < cn_np; k += 2) {
-		if (k + 2 < cn_np) {
-			POLY_FT4 *t = vid_alloc_raw(sizeof(POLY_FT4));
-			setPolyFT4(t);
-			setRGB0(t, 128, 128, 128);
-			setXY4(t, cx[k], cy[k], cx[0], cy[0], cx[k + 1], cy[k + 1], cx[k + 2], cy[k + 2]);
-			setUV4(t, cu[k], cv[k], cu[0], cv[0], cu[k + 1], cv[k + 1], cu[k + 2], cv[k + 2]);
-			t->tpage = tpage;
-			t->clut  = clut;
-			vid_link(4, t);
-		} else {
-			POLY_FT3 *t = vid_alloc_raw(sizeof(POLY_FT3));
-			setPolyFT3(t);
-			setRGB0(t, 128, 128, 128);
-			setXY3(t, cx[0], cy[0], cx[k], cy[k], cx[k + 1], cy[k + 1]);
-			setUV3(t, cu[0], cv[0], cu[k], cv[k], cu[k + 1], cv[k + 1]);
-			t->tpage = tpage;
-			t->clut  = clut;
-			vid_link(4, t);
-		}
-	}
+	for (int k = 1; k + 1 < np; k++)
+		emit_tri(&dpoly[0], &dpoly[k], &dpoly[k + 1], 0);
 
 	DR_TWIN *tw = vid_alloc_raw(sizeof(DR_TWIN));
 	setTexWindow(tw, &slot->twin);
