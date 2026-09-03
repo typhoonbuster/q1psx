@@ -408,3 +408,22 @@ correction, fix = subdivide faces at cook time; (3) the floor face at the
 camera gets near-plane-clipped into a stretched triangle / hole —
 subdivision + a cleaner near-clip. Then the full `cooked/` tree and
 **Phase 7** (QuakeC VM).
+
+- **Cooked-texture fidelity levels + runtime reload.** The disc now carries
+  all four levels as `START<N>.QTX` / `START<N>.QSF` (`N` = `fidelity_t`
+  order). `formats/fidelity.h` reworked: `atlas_cell` (world-tile / atlas
+  cell size, 16/32/64 px, capped at 64 by VRAM) and `min_face_area` (cook
+  drops world faces below this 3-D area — `low` −36 %, `medium` −5 % of
+  `start.bsp`'s faces) are the two knobs consumed today; `max_model` /
+  `lightmap_shift` / `geom_decimate` are declared but not yet used, so
+  `ultra` == `high` for now.
+  - `qcook surfaces` takes `--fidelity`; dropped faces stay empty QSF slots
+    so the fidelity-independent `START.QBS` `marksurf[]` indices stay valid.
+    `qcook textures` grid stride now follows `atlas_cell`. `scripts/cook.sh`
+    cooks QTX + QSF per level; `CMakeLists.txt` bundles all eight.
+  - `engine/main.c`: `reload_fidelity()` frees the surface blob (held as the
+    top-most high-hunk allocation) and re-loads QTX + QSF for the new level
+    (a ~1 s blocking CD read). **L2** cycles the level; this replaces the
+    earlier runtime L2/R2 subdivision / far-clip A/B knobs. Overlay shows the
+    active level. Headless boot clean (`START2.*` = high). On-screen check +
+    the frame rate at a lower fidelity pending.

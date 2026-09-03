@@ -175,8 +175,6 @@ typedef struct {
 	uint8_t *pixels;        /* w*h, owned             */
 } cooked_tex_t;
 
-#define WORLD_TEX_CAP 64   /* atlas cell size; fidelity tunes this later */
-
 /* largest power of two in [8, max] not exceeding x */
 static int snap_p2(int x, int max)
 {
@@ -197,7 +195,8 @@ static int extract_textures(const uint8_t *bsp, uint32_t bsp_len,
 	if (rd_u32(bsp) != BSPVERSION)
 		die("bsp version %u, expected %d", rd_u32(bsp), BSPVERSION);
 
-	int cap = fs->max_texture < WORLD_TEX_CAP ? fs->max_texture : WORLD_TEX_CAP;
+	int cap  = fs->atlas_cell;          /* texels per atlas cell / max tile */
+	int cell_w_words = cap / 2;         /* 8bpp: 2 texels per VRAM word     */
 
 	const uint8_t *lump = bsp + 4 + LUMP_TEXTURES * 8;
 	uint32_t tex_ofs = rd_u32(lump), tex_len = rd_u32(lump + 4);
@@ -215,8 +214,8 @@ static int extract_textures(const uint8_t *bsp, uint32_t bsp_len,
 	for (int i = 0; i < nummiptex; i++) {
 		cooked_tex_t *c = &list[i];
 		memset(c, 0, sizeof(*c));
-		c->vram_x = QTX_ATLAS_X + (i % QTX_ATLAS_COLS) * QTX_ATLAS_CELL_W;
-		c->vram_y = QTX_ATLAS_Y + (i / QTX_ATLAS_COLS) * QTX_ATLAS_CELL_H;
+		c->vram_x = QTX_ATLAS_X + (i % QTX_ATLAS_COLS) * cell_w_words;
+		c->vram_y = QTX_ATLAS_Y + (i / QTX_ATLAS_COLS) * cap;
 
 		int32_t mtofs = (int32_t) rd_u32(tl + 4 + i * 4);
 		const uint8_t *mt = (mtofs >= 0 && (uint32_t) mtofs + 40 <= tex_len)
@@ -464,7 +463,8 @@ static int cmd_geometry(int argc, char **argv)
 
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
+static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len,
+                         const fidelity_spec_t *fs, const char *out)
 {
 	if (bsp_len < 4 + HEADER_LUMPS * 8 || rd_u32(bsp) != BSPVERSION)
 		die("not a v%d BSP", BSPVERSION);
@@ -519,6 +519,7 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	qsrf_face     *faces = xmalloc((size_t) max_faces * sizeof(qsrf_face));
 	qsrf_facevert *fv    = xmalloc((size_t) max_fv * sizeof(qsrf_facevert));
 	int nout_faces = 0, nout_fv = 0;
+	int n_area_drop = 0, n_live = 0;
 
 	/* Emit exactly one qsrf_face per world-model BSP face, in order, so a face
 	   index is a stable key: QSF face i == BSP face i, and the QBS1 marksurf[]
@@ -572,6 +573,28 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 		if (nv < 3)
 			continue;
 
+		/* fidelity: drop faces below a 3D-area floor (triangle-fan sum of
+		   cross-product magnitudes / 2). Leaves an empty QSF slot so the
+		   common QBS marksurf[] indices stay valid. */
+		if (fs->min_face_area > 0) {
+			double area = 0.0;
+			const float *p0 = &vf[vidx[0] * 3];
+			for (int i = 1; i + 1 < nv; i++) {
+				const float *pa = &vf[vidx[i] * 3];
+				const float *pb = &vf[vidx[i + 1] * 3];
+				double ax = pa[0] - p0[0], ay = pa[1] - p0[1], az = pa[2] - p0[2];
+				double bx = pb[0] - p0[0], by = pb[1] - p0[1], bz = pb[2] - p0[2];
+				double cx = ay * bz - az * by;
+				double cy = az * bx - ax * bz;
+				double cz = ax * by - ay * bx;
+				area += 0.5 * sqrt(cx * cx + cy * cy + cz * cz);
+			}
+			if (area < (double) fs->min_face_area) {
+				n_area_drop++;
+				continue;
+			}
+		}
+
 		/* s/t per vertex, then shift so the face-local minimum is 0 */
 		double st[64][2], smin = 1e30, tmin = 1e30;
 		for (int i = 0; i < nv; i++) {
@@ -587,6 +610,7 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 
 		of->tex    = (uint16_t) (miptex < 0 ? 0 : miptex);
 		of->num_fv = (uint8_t) nv;
+		n_live++;
 		(void) tflags;   /* TEX_SPECIAL — engine classifies by name instead */
 
 		for (int i = 0; i < nv; i++) {
@@ -614,11 +638,24 @@ static int cook_surfaces(const uint8_t *bsp, uint32_t bsp_len, const char *out)
 	fwrite(fv, sizeof(qsrf_facevert), (size_t) nout_fv, fp);
 	fclose(fp);
 
-	printf("qcook: %s — %d verts, %d faces, %d faceverts\n",
-	       out, nverts, nout_faces, nout_fv);
+	printf("qcook: %s @ fidelity '%s' — %d verts, %d face slots "
+	       "(%d live, %d dropped <%du^2), %d faceverts\n",
+	       out, fs->name, nverts, nout_faces, n_live, n_area_drop,
+	       fs->min_face_area, nout_fv);
 
 	free(verts); free(vf); free(faces); free(fv);
 	return 0;
+}
+
+static const fidelity_spec_t *fidelity_by_name(const char *name)
+{
+	if (!name)
+		return &FIDELITY[FIDELITY_HIGH];
+	for (int i = 0; i < FIDELITY_COUNT; i++)
+		if (!strcmp(name, FIDELITY[i].name))
+			return &FIDELITY[i];
+	die("unknown fidelity '%s'", name);
+	return NULL;
 }
 
 static int cmd_surfaces(int argc, char **argv)
@@ -626,8 +663,11 @@ static int cmd_surfaces(int argc, char **argv)
 	const char *pak_path = arg_after(argc, argv, "--pak");
 	const char *map      = arg_after(argc, argv, "--map");
 	const char *out      = arg_after(argc, argv, "--out");
+	const char *fid_name = arg_after(argc, argv, "--fidelity");
 	if (!pak_path || !map || !out)
-		die("usage: qcook surfaces --pak <pak> --map <name> --out <file.qsrf>");
+		die("usage: qcook surfaces --pak <pak> --map <name> --out <file.qsrf> [--fidelity high]");
+
+	const fidelity_spec_t *fs = fidelity_by_name(fid_name);
 
 	pak_t pak;
 	pak_load(&pak, pak_path);
@@ -635,7 +675,7 @@ static int cmd_surfaces(int argc, char **argv)
 	const uint8_t *bsp = pak_lump(&pak, map, &bsp_len);
 	if (!bsp)
 		die("%s not found in %s", map, pak_path);
-	return cook_surfaces(bsp, bsp_len, out);
+	return cook_surfaces(bsp, bsp_len, fs, out);
 }
 
 /* --------------------------------------------------------------- bsp / pvs -- */
@@ -924,15 +964,7 @@ static int cmd_textures(int argc, char **argv)
 	if (!pak_path || !map || !out)
 		die("usage: qcook textures --pak <pak> --map <name> --out <file.qtx> [--fidelity high]");
 
-	const fidelity_spec_t *fs = &FIDELITY[FIDELITY_HIGH];
-	if (fid_name) {
-		fs = NULL;
-		for (int i = 0; i < FIDELITY_COUNT; i++)
-			if (!strcmp(fid_name, FIDELITY[i].name))
-				fs = &FIDELITY[i];
-		if (!fs)
-			die("unknown fidelity '%s'", fid_name);
-	}
+	const fidelity_spec_t *fs = fidelity_by_name(fid_name);
 
 	pak_t pak;
 	pak_load(&pak, pak_path);
@@ -953,8 +985,8 @@ static int cmd_textures(int argc, char **argv)
 	int n;
 	extract_textures(bsp, bsp_len, fs, &tex, &n);
 
-	printf("qcook: %s @ fidelity '%s' (max_texture %d) -> %d textures\n",
-	       map, fs->name, fs->max_texture, n);
+	printf("qcook: %s @ fidelity '%s' (atlas cell %d px) -> %d textures\n",
+	       map, fs->name, fs->atlas_cell, n);
 
 	write_qtx(out, clut, tex, n);
 	return 0;
@@ -977,7 +1009,7 @@ int main(int argc, char **argv)
 	        "usage:\n"
 	        "  qcook textures --pak <pak> --map <name> --out <file.qtx> [--fidelity low|medium|high|ultra]\n"
 	        "  qcook geometry --pak <pak> --map <name> --out <file.qgeo>\n"
-	        "  qcook surfaces --pak <pak> --map <name> --out <file.qsrf>\n"
+	        "  qcook surfaces --pak <pak> --map <name> --out <file.qsrf> [--fidelity low|medium|high|ultra]\n"
 	        "  qcook bsp      --pak <pak> --map <name> --out <file.qbsp>\n"
 	        "  qcook info <file.qtx>\n");
 	return 2;

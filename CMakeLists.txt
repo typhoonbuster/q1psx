@@ -44,23 +44,30 @@ else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
 endif()
 
-# Cooked assets (scripts/cook.sh -> cooked/). Phase 4.3: one QTX on the disc as
-# START.QTX; the full cooked/ tree gets a proper dir layout later.
+# Cooked assets (scripts/cook.sh -> cooked/). The disc carries all four fidelity
+# levels: START<N>.QTX / START<N>.QSF for N = 0..3 (low/medium/high/ultra, the
+# fidelity_t enum order). The BSP tree and wireframe geometry do not vary by
+# fidelity and ship once as START.QBS / START.QGE.
 set(COOKED_ENTRIES "")
-if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/high/start.qtx")
-	message(STATUS "q1psx: bundling cooked/id1/high/start.qtx as START.QTX")
-	string(APPEND COOKED_ENTRIES
-		"<file name=\"START.QTX\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/high/start.qtx\" />\n\t\t\t")
-endif()
+set(_fids low medium high ultra)
+set(_n 0)
+foreach(_fid ${_fids})
+	if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qtx")
+		message(STATUS "q1psx: bundling cooked/id1/${_fid}/start.qtx as START${_n}.QTX")
+		string(APPEND COOKED_ENTRIES
+			"<file name=\"START${_n}.QTX\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qtx\" />\n\t\t\t")
+	endif()
+	if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qsrf")
+		message(STATUS "q1psx: bundling cooked/id1/${_fid}/start.qsrf as START${_n}.QSF")
+		string(APPEND COOKED_ENTRIES
+			"<file name=\"START${_n}.QSF\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qsrf\" />\n\t\t\t")
+	endif()
+	math(EXPR _n "${_n} + 1")
+endforeach()
 if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qgeo")
 	message(STATUS "q1psx: bundling cooked/id1/common/start.qgeo as START.QGE")
 	string(APPEND COOKED_ENTRIES
 		"<file name=\"START.QGE\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qgeo\" />\n\t\t\t")
-endif()
-if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qsrf")
-	message(STATUS "q1psx: bundling cooked/id1/common/start.qsrf as START.QSF")
-	string(APPEND COOKED_ENTRIES
-		"<file name=\"START.QSF\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qsrf\" />\n\t\t\t")
 endif()
 if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qbsp")
 	message(STATUS "q1psx: bundling cooked/id1/common/start.qbsp as START.QBS")

@@ -16,6 +16,7 @@
 #include <psxpad.h>
 
 #include "vid.h"
+#include "fidelity.h"
 #include "loading.h"
 #include "render.h"
 #include "geo.h"
@@ -120,16 +121,56 @@ static void *load_disc_file(const char *iso_name, const char *tag, int *out_size
 	return load_disc_file_to(iso_name, tag, out_size, 0);
 }
 
-static void boot_load_textures(void)
+/*
+ * Fidelity: the disc carries all four levels as START<N>.QTX / START<N>.QSF
+ * (N = fidelity_t order). "high" is the boot default; the demo loop's L2 button
+ * cycles it and reloads the scene. Textures + the surface set both change; the
+ * BSP tree (START.QBS) is fidelity-independent — a dropped face is still an
+ * empty QSF slot, so its marksurf index stays valid.
+ */
+static fidelity_t g_fidelity = FIDELITY_HIGH;
+static int        g_qsf_mark;   /* high-hunk mark — the QSF blob sits on top */
+
+static void fidelity_load_textures(fidelity_t fid)
 {
 	/* The QTX blob is only needed until qtx_open() has DMA'd every texture to
 	   VRAM — load it into the high hunk and hand that space straight back. */
+	char name[24];
+	snprintf(name, sizeof name, "\\START%d.QTX;1", (int) fid);
 	int   mark = Hunk_HighMark();
 	int   size;
-	void *blob = load_disc_file_to("\\START.QTX;1", "qtx", &size, 1);
+	void *blob = load_disc_file_to(name, "qtx", &size, 1);
 	g_qtx_ok = blob && qtx_open(blob, size) > 0;
 	Hunk_FreeToHighMark(mark);
 }
+
+static void fidelity_load_surfaces(fidelity_t fid)
+{
+	/* Kept resident, but as the top-most high-hunk block: a fidelity switch
+	   frees back to g_qsf_mark and loads the next set in the same place. */
+	char name[24];
+	snprintf(name, sizeof name, "\\START%d.QSF;1", (int) fid);
+	g_qsf_mark = Hunk_HighMark();
+	int   size;
+	void *blob = load_disc_file_to(name, "surf", &size, 1);
+	g_surf_ok = blob && surf_load(blob, size, &g_surf);
+}
+
+/* Swap the scene to another fidelity level at runtime. Blocks on the CD reads
+   (~1 s freeze) — acceptable for a debug control. */
+static void reload_fidelity(fidelity_t fid)
+{
+	if (g_surf_ok) {
+		Hunk_FreeToHighMark(g_qsf_mark);
+		g_surf_ok = 0;
+	}
+	g_fidelity = fid;
+	fidelity_load_textures(fid);
+	fidelity_load_surfaces(fid);
+}
+
+static void boot_load_textures(void) { fidelity_load_textures(g_fidelity); }
+static void boot_load_surfaces(void) { fidelity_load_surfaces(g_fidelity); }
 
 static geo_t g_geo;
 static int   g_geo_ok;
@@ -139,13 +180,6 @@ static void boot_load_geometry(void)
 	int   size;
 	void *blob = load_disc_file("\\START.QGE;1", "geo", &size);
 	g_geo_ok = blob && geo_load(blob, size, &g_geo);
-}
-
-static void boot_load_surfaces(void)
-{
-	int   size;
-	void *blob = load_disc_file("\\START.QSF;1", "surf", &size);
-	g_surf_ok = blob && surf_load(blob, size, &g_surf);
 }
 
 static void boot_load_bsp(void)
@@ -244,7 +278,6 @@ static void demo_loop(void)
 	int      vbl_avg = 1 << 4;   /* 4.4 fixed, smoothed vblanks/frame */
 	int      dbg     = 1;        /* overlay: 0 off, 1 compact, 2 full */
 	int      both_l1r1_prev = 0;
-	int      farclip_i = 0;
 	int      fov_i = 1;         /* index into HVAL, 1 == 160 (~90 deg) */
 	PadState pad;
 	char     overlay[384];
@@ -262,21 +295,22 @@ static void demo_loop(void)
 			dbg = (dbg + 1) % 3;
 		both_l1r1_prev = both_l1r1;
 
-		/* perf A/B knobs:
-		     L2            = subdivision on/off
-		     R2            = distance preset (far-clip + tiny-face skip)
-		     SELECT+START  = FOV / projection distance
+		/* L2 cycles the cooked fidelity level (low/medium/high/ultra) and
+		   reloads the scene's textures + surfaces. SELECT+START cycles FOV.
 		   (L2+R2 together is "snap home", handled in read_player_cmd.) */
-		if (!((pad.buttons & PAD_L2) && (pad.buttons & PAD_R2))) {
-			static const int FARCLIP[4] = { 0, 1800, 900, 450 };
-			static const int MINFACE[4] = { 0,    2,   4,   6 };
-			if (pad.pressed & PAD_L2)
-				r_subdiv = !r_subdiv;
-			if (pad.pressed & PAD_R2) {
-				farclip_i = (farclip_i + 1) & 3;
-				r_farclip = FARCLIP[farclip_i];
-				r_minface = MINFACE[farclip_i];
-			}
+		if (!((pad.buttons & PAD_L2) && (pad.buttons & PAD_R2)) &&
+		    (pad.pressed & PAD_L2)) {
+			fidelity_t nf = (fidelity_t) ((g_fidelity + 1) % FIDELITY_COUNT);
+			snprintf(overlay, sizeof overlay,
+			         "loading fidelity: %s ...", FIDELITY[nf].name);
+			vid_text(0, 8, 8, overlay);
+			vid_flip();
+			reload_fidelity(nf);
+			have_world = g_surf_ok && g_qtx_ok && g_bsp_ok;
+			have_surf  = g_surf_ok && g_qtx_ok;
+			if ((view == 0 && !have_world) || (view == 1 && !have_surf))
+				view = 2;
+			continue;
 		}
 		if ((pad.pressed & PAD_START) && (pad.buttons & PAD_SELECT)) {
 			static const int HVAL[4] = { 120, 160, 200, 256 };
@@ -319,13 +353,13 @@ static void demo_loop(void)
 			snprintf(overlay, sizeof overlay,
 				"~%d fps (%d.%d vbl)  %s\n"
 				"walk %d us   draw %d us\n"
-				"faces %d drawn %d  sub%d far%d min%d",
+				"faces %d drawn %d  fidelity %s",
 				vbl ? 60 / vbl : 60,
 				vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
 				vid_gpu_busy() ? "GPU-bound" : "cpu-bound",
 				r_dbg_us_walk, r_dbg_us_draw,
 				r_dbg_faces, drawn,
-				r_subdiv, r_farclip, r_minface);
+				FIDELITY[g_fidelity].name);
 			vid_text(0, 8, 8, overlay);
 		} else if (dbg == 2) {
 			snprintf(overlay, sizeof overlay,
@@ -334,9 +368,9 @@ static void demo_loop(void)
 				"  nodes %d  leaves %d  faces %d  drawn %d\n"
 				"  drop near %d back %d sky %d tiny %d\n"
 				"  us: walk %d  draw %d   vbl pm %u rn %u\n"
-				"  subdiv %d  farclip %d  minface %d  fov-h %d\n"
+				"  fidelity %s  subdiv %d  fov-h %d\n"
 				"  pos %d %d %d  yaw %d pit %d  %s %s\n\n"
-				"  L2 subdiv  R2 dist  SEL view  SEL+START fov\n"
+				"  L2 fidelity  SEL view  SEL+START fov\n"
 				"  L1+R1 overlay  START noclip  L2+R2 home\n"
 				"mem %d KiB  sel %s",
 				mode,
@@ -348,7 +382,7 @@ static void demo_loop(void)
 				r_dbg_drop_near, r_dbg_drop_back, r_dbg_drop_sky, r_dbg_drop_tiny,
 				r_dbg_us_walk, r_dbg_us_draw,
 				tp1 - tp0, tr1 - tp1,
-				r_subdiv, r_farclip, r_minface, r_screen_h,
+				FIDELITY[g_fidelity].name, r_subdiv, r_screen_h,
 				player.pos[0], player.pos[1], player.pos[2],
 				player.yaw >> Q_FIX_SHIFT, player.pitch >> Q_FIX_SHIFT,
 				player.onground ? "ground" : "air",

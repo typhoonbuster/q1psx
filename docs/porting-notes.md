@@ -417,12 +417,30 @@ The cook tool `tools/qcook/` is **C** (host build). **One CD image** carries
 size is not the constraint — runtime RAM/VRAM is, which is exactly what the
 fidelity knob trades. Levels: `tools/qcook/fidelity.h`.
 
-| level | max texture | lightmap | geometry | intent |
+| level | atlas cell | face-area cull | lightmap / geometry (planned) | intent |
 |---|---|---|---|---|
-| low | 64 | none | heavy merge | ep1-4 + packs all fit |
-| medium | 64 | ¼-res | light decimation | ep1-4 fit, lit |
-| high (default) | 128 | ½-res | full BSP | ep1 target |
-| ultra | ≤256 (native) | full-res | full BSP | ep1 showcase |
+| low | 16 px | drop < 1024 u² | none / heavy merge | ep1-4 + packs all fit |
+| medium | 32 px | drop < 256 u² | ¼-res / light decimation | ep1-4 fit, lit |
+| high (default) | 64 px | keep all | ½-res / full BSP | ep1 target |
+| ultra | 64 px | keep all | full-res / full BSP | ep1 showcase |
+
+**What actually varies today** (2026-09-03): `atlas_cell` (world-tile size, also
+the VRAM atlas cell stride — capped at 64 px because a 20×7 grid of 64 px cells
+is all the VRAM left of the debug font once the framebuffers are placed) and
+`min_face_area` (world faces below this 3-D area are dropped at cook time —
+`low` loses ~36 % of `start.bsp`'s faces, `medium` ~5 %). `max_model`,
+`lightmap_shift`, `geom_decimate` are declared but unconsumed, so **`ultra` ==
+`high`** until models / lightmaps land. On `start.bsp` the QTX blob is 24 KB /
+84 KB / 294 KB (low/medium/high), the QSF 16 KB → 24 KB.
+
+The disc carries every level as `START<N>.QTX` / `START<N>.QSF` (`N` =
+`fidelity_t` order: 0 low … 3 ultra); `START.QBS` / `START.QGE` are
+fidelity-independent (a dropped face stays an empty QSF slot, so the common
+`marksurf[]` indices remain valid). `engine/main.c` boots at `high`; the demo
+loop's **L2** button cycles the level and calls `reload_fidelity()`, which frees
+the surface blob (kept as the top-most high-hunk allocation) and re-loads QTX +
+QSF for the new level — a ~1 s blocking CD read, fine for a debug control. This
+replaces the earlier runtime L2/R2 subdivision / far-clip knobs.
 
 World textures tile, and the PS1 texture window only wraps **power-of-two**
 sizes inside a 256×256 page — but Quake textures are only guaranteed multiples

@@ -30,15 +30,18 @@ cook_game() {
 	for fid in "${FIDELITIES[@]}"; do
 		local out="cooked/$game/$fid"
 		mkdir -p "$out"
+		# textures (atlas cell size) and surfaces (face-area cull) both vary
+		# by fidelity; the BSP tree does not (marksurf[] indexes QSF slots,
+		# and dropped faces stay as empty slots).
 		"$QCOOK" textures --pak "$pak" --map maps/start.bsp \
 		         --fidelity "$fid" --out "$out/start.qtx"
+		"$QCOOK" surfaces --pak "$pak" --map maps/start.bsp \
+		         --fidelity "$fid" --out "$out/start.qsrf"
 	done
-	# geometry / surfaces / BSP don't vary by fidelity yet (decimation is later)
+	# geometry (wireframe debug) and the BSP tree are fidelity-independent
 	mkdir -p "cooked/$game/common"
 	"$QCOOK" geometry --pak "$pak" --map maps/start.bsp \
 	         --out "cooked/$game/common/start.qgeo"
-	"$QCOOK" surfaces --pak "$pak" --map maps/start.bsp \
-	         --out "cooked/$game/common/start.qsrf"
 	"$QCOOK" bsp --pak "$pak" --map maps/start.bsp \
 	         --out "cooked/$game/common/start.qbsp"
 }
