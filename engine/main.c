@@ -98,7 +98,8 @@ static void boot_load_progs(void)
 		PR_LoadProgs(&g_pak0);
 }
 
-static void *load_disc_file(const char *iso_name, const char *tag, int *out_size)
+static void *load_disc_file_to(const char *iso_name, const char *tag,
+                               int *out_size, int high)
 {
 	cd_file_t f;
 	if (!cd_find(iso_name, &f)) {
@@ -106,18 +107,28 @@ static void *load_disc_file(const char *iso_name, const char *tag, int *out_size
 		return NULL;
 	}
 	int   padded = (f.size + 2047) & ~2047;
-	void *blob   = Hunk_AllocName(padded, tag);
+	void *blob   = high ? Hunk_HighAllocName(padded, tag)
+	                    : Hunk_AllocName(padded, tag);
 	if (cd_read_at(&f, 0, blob, f.size) < 0)
 		return NULL;
 	*out_size = f.size;
 	return blob;
 }
 
+static void *load_disc_file(const char *iso_name, const char *tag, int *out_size)
+{
+	return load_disc_file_to(iso_name, tag, out_size, 0);
+}
+
 static void boot_load_textures(void)
 {
+	/* The QTX blob is only needed until qtx_open() has DMA'd every texture to
+	   VRAM — load it into the high hunk and hand that space straight back. */
+	int   mark = Hunk_HighMark();
 	int   size;
-	void *blob = load_disc_file("\\START.QTX;1", "qtx", &size);
+	void *blob = load_disc_file_to("\\START.QTX;1", "qtx", &size, 1);
 	g_qtx_ok = blob && qtx_open(blob, size) > 0;
+	Hunk_FreeToHighMark(mark);
 }
 
 static geo_t g_geo;

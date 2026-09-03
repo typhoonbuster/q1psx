@@ -159,6 +159,8 @@ static void project(const SVECTOR *verts, int i)
 	sv_x[i]     = (int16_t) (xy & 0xffff);
 	sv_y[i]     = (int16_t) (xy >> 16);
 	sv_state[i] = (sz > NEAR_Z) ? 1 : 2;
+	if (sz < r_dbg_vz_lo) r_dbg_vz_lo = sz;
+	if (sz > r_dbg_vz_hi) r_dbg_vz_hi = sz;
 }
 
 /* screen-space polygon after near-plane clipping */
@@ -202,16 +204,18 @@ static int draw_face(const surf_t *s, int f)
 		return 0;
 	}
 
-	int32_t vz[R_FAN_MAX];
-	int     nfront = 0;
+	/* Project every vertex once (cached). The GTE's own SZ tells us which side
+	   of the near plane each vertex is on — no need for a separate C-side
+	   view_z pass on the common (all-in-front) path. */
+	int nfront = 0, nbehind = 0;
 	for (int k = 0; k < n; k++) {
-		if (fv[k].vert >= sv_nv)
+		int vi = fv[k].vert;
+		if (vi >= sv_nv)
 			return 0;
-		vz[k] = view_z(&s->verts[fv[k].vert]);
-		if (vz[k] < r_dbg_vz_lo) r_dbg_vz_lo = vz[k];
-		if (vz[k] > r_dbg_vz_hi) r_dbg_vz_hi = vz[k];
-		if (vz[k] >= NEAR_CLIP)
-			nfront++;
+		if (!sv_state[vi])
+			project(s->verts, vi);
+		if (sv_state[vi] == 1) nfront++;
+		else                   nbehind++;
 	}
 	if (nfront == 0) {
 		r_dbg_drop_near++;
@@ -219,11 +223,9 @@ static int draw_face(const surf_t *s, int f)
 	}
 
 	cn_np = 0;
-	if (nfront == n) {
+	if (nbehind == 0) {
 		for (int k = 0; k < n; k++) {
 			int vi = fv[k].vert;
-			if (!sv_state[vi])
-				project(s->verts, vi);
 			cx[k] = sv_x[vi];
 			cy[k] = sv_y[vi];
 			cu[k] = fv[k].u;
@@ -231,7 +233,10 @@ static int draw_face(const surf_t *s, int f)
 		}
 		cn_np = n;
 	} else {
-		/* Sutherland-Hodgman against the plane view_z == NEAR_CLIP */
+		/* mixed: Sutherland-Hodgman clip against view_z == NEAR_CLIP */
+		int32_t vz[R_FAN_MAX];
+		for (int k = 0; k < n; k++)
+			vz[k] = view_z(&s->verts[fv[k].vert]);
 		for (int k = 0; k < n; k++) {
 			int a = k, b = (k + 1) % n;
 			int af = vz[a] >= NEAR_CLIP, bf = vz[b] >= NEAR_CLIP;
@@ -270,8 +275,8 @@ static int draw_face(const surf_t *s, int f)
 	if (cn_np < 3)
 		return 0;
 
-	tex_slot_t slot;
-	if (!qtx_slot(face->tex, &slot)) {
+	const tex_slot_t *slot = qtx_slot_ptr(face->tex);
+	if (!slot) {
 		r_dbg_drop_slot++;
 		return 0;
 	}
@@ -279,7 +284,7 @@ static int draw_face(const surf_t *s, int f)
 	/* Sky: don't texture it (a 64px tile stretched over a skybox face is both
 	   slow — texture-cache thrash — and ugly). The dark background shows
 	   through as flat sky; a proper sky comes later. */
-	if (slot.flags & QTX_F_SKY) {
+	if (slot->flags & QTX_F_SKY) {
 		r_dbg_drop_sky++;
 		return 0;
 	}
@@ -287,6 +292,7 @@ static int draw_face(const surf_t *s, int f)
 	/* fan-strip: each pair of fan triangles (0,k,k+1) + (0,k+1,k+2) is one
 	   convex quad (0,k,k+1,k+2), fed to POLY_FT4 as (k,0,k+1,k+2) so the GPU's
 	   (0,1,2)+(1,2,3) split covers it. Leftover odd triangle -> POLY_FT3. */
+	uint16_t tpage = slot->tpage, clut = slot->clut;
 	for (int k = 1; k + 1 < cn_np; k += 2) {
 		if (k + 2 < cn_np) {
 			POLY_FT4 *t = vid_alloc_raw(sizeof(POLY_FT4));
@@ -294,8 +300,8 @@ static int draw_face(const surf_t *s, int f)
 			setRGB0(t, 128, 128, 128);
 			setXY4(t, cx[k], cy[k], cx[0], cy[0], cx[k + 1], cy[k + 1], cx[k + 2], cy[k + 2]);
 			setUV4(t, cu[k], cv[k], cu[0], cv[0], cu[k + 1], cv[k + 1], cu[k + 2], cv[k + 2]);
-			t->tpage = slot.tpage;
-			t->clut  = slot.clut;
+			t->tpage = tpage;
+			t->clut  = clut;
 			vid_link(4, t);
 		} else {
 			POLY_FT3 *t = vid_alloc_raw(sizeof(POLY_FT3));
@@ -303,14 +309,14 @@ static int draw_face(const surf_t *s, int f)
 			setRGB0(t, 128, 128, 128);
 			setXY3(t, cx[0], cy[0], cx[k], cy[k], cx[k + 1], cy[k + 1]);
 			setUV3(t, cu[0], cv[0], cu[k], cv[k], cu[k + 1], cv[k + 1]);
-			t->tpage = slot.tpage;
-			t->clut  = slot.clut;
+			t->tpage = tpage;
+			t->clut  = clut;
 			vid_link(4, t);
 		}
 	}
 
 	DR_TWIN *tw = vid_alloc_raw(sizeof(DR_TWIN));
-	setTexWindow(tw, &slot.twin);
+	setTexWindow(tw, &slot->twin);
 	vid_link(4, tw);
 	return 1;
 }

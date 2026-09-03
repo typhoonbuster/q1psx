@@ -59,6 +59,11 @@ int qtx_open(const void *blob, int len)
 
 	printf("qtx_open: %u textures -> atlas, CLUT -> VRAM (%d,%d)\n",
 	       qtx->num_tex, QTX_CLUT_X, QTX_CLUT_Y);
+
+	/* the caller is free to release the blob now — everything the renderer
+	   needs is in `slots[]` and VRAM */
+	qtx     = 0;
+	entries = 0;
 	return n_slots;
 }
 
@@ -73,4 +78,11 @@ int qtx_slot(int idx, tex_slot_t *out)
 		return 0;
 	*out = slots[idx];
 	return 1;
+}
+
+const tex_slot_t *qtx_slot_ptr(int idx)
+{
+	if (idx < 0 || idx >= n_slots)
+		return 0;
+	return &slots[idx];
 }

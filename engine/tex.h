@@ -21,4 +21,5 @@ typedef struct {
 int qtx_open(const void *blob, int len);
 
 int  qtx_count(void);
-int  qtx_slot(int idx, tex_slot_t *out);   /* 1 on success */
+int  qtx_slot(int idx, tex_slot_t *out);          /* 1 on success              */
+const tex_slot_t *qtx_slot_ptr(int idx);          /* internal slot, or NULL     */
