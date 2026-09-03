@@ -242,7 +242,7 @@ static void demo_loop(void)
 
 	int      drawn   = 0;
 	int      vbl_avg = 1 << 4;   /* 4.4 fixed, smoothed vblanks/frame */
-	int      dbg     = 2;        /* overlay: 0 off, 1 fps only, 2 full */
+	int      dbg     = 1;        /* overlay: 0 off, 1 compact, 2 full */
 	int      both_l1r1_prev = 0;
 	int      farclip_i = 0;
 	int      fov_i = 1;         /* index into HVAL, 1 == 160 (~90 deg) */
@@ -317,11 +317,15 @@ static void demo_loop(void)
 
 		if (dbg == 1) {
 			snprintf(overlay, sizeof overlay,
-				"~%d fps  %d.%d vbl  %s   sub %d far %d",
+				"~%d fps (%d.%d vbl)  %s\n"
+				"walk %d us   draw %d us\n"
+				"faces %d drawn %d  sub%d far%d min%d",
 				vbl ? 60 / vbl : 60,
 				vbl_avg >> 4, ((vbl_avg & 15) * 10) >> 4,
-				vid_gpu_busy() ? "GPU" : "cpu",
-				r_subdiv, r_farclip);
+				vid_gpu_busy() ? "GPU-bound" : "cpu-bound",
+				r_dbg_us_walk, r_dbg_us_draw,
+				r_dbg_faces, drawn,
+				r_subdiv, r_farclip, r_minface);
 			vid_text(0, 8, 8, overlay);
 		} else if (dbg == 2) {
 			snprintf(overlay, sizeof overlay,
