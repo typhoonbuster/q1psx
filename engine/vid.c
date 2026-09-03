@@ -5,7 +5,7 @@
 
 #include "vid.h"
 
-#define PRIM_BYTES 81920   /* per-frame primitive scratch */
+#define PRIM_BYTES 90112   /* per-frame primitive scratch (88 KiB) */
 
 typedef struct {
 	DISPENV  disp;

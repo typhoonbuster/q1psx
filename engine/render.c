@@ -13,14 +13,14 @@
 #include "bsp.h"
 #include "render.h"
 
-#define R_MAXVERTS 12288
+#define R_MAXVERTS 8192   /* >= any episode-1 map's cooked vertex count */
 #define R_MAXLINES 2500   /* per-frame line budget (no culling yet)          */
 #define R_MAXFACES 600    /* per-frame face budget for the un-culled path    */
 #define R_MAXWORLD 900    /* per-frame face budget for the PVS-culled path   */
 #define R_MAXFACEIDX 8192 /* > any map's world-face count (MAX_MAP_FACES-ish) */
 #define R_FAN_MAX  22     /* largest cooked face polygon */
-#define NEAR_Z     16     /* skip vertices closer than this along view Z */
-#define NEAR_CLIP  20     /* view-space plane the world polygons are clipped to */
+#define NEAR_Z     4      /* skip vertices closer than this along view Z */
+#define NEAR_CLIP  4      /* view-space plane the world polygons are clipped to */
 #define CLIPBUF    (R_FAN_MAX + 6)
 
 static int16_t scr_x[R_MAXVERTS];
@@ -247,32 +247,37 @@ static void emit_tri(wvert *a, wvert *b, wvert *c, int depth)
 	if (c->sx < minx) minx = c->sx;  if (c->sx > maxx) maxx = c->sx;
 	if (b->sy < miny) miny = b->sy;  if (b->sy > maxy) maxy = b->sy;
 	if (c->sy < miny) miny = c->sy;  if (c->sy > maxy) maxy = c->sy;
+	int big = (maxx - minx >= SUBDIV_PX) || (maxy - miny >= SUBDIV_PX);
 
-	/* Only subdivide when the piece is BOTH large on screen AND spans a wide
-	   depth range — a big head-on wall (all verts ~same depth) shows no affine
-	   warp, so leave it whole. */
-	int zlo = a->sz, zhi = a->sz;
-	if (b->sz < zlo) zlo = b->sz;  if (b->sz > zhi) zhi = b->sz;
-	if (c->sz < zlo) zlo = c->sz;  if (c->sz > zhi) zhi = c->sz;
+	/* per-edge depth deltas — the perspective error lives where depth changes
+	   fastest, so split the edge with the biggest one (not the longest edge) */
+	int dzab = a->sz - b->sz;  if (dzab < 0) dzab = -dzab;
+	int dzbc = b->sz - c->sz;  if (dzbc < 0) dzbc = -dzbc;
+	int dzca = c->sz - a->sz;  if (dzca < 0) dzca = -dzca;
+	int dzmax = dzab > dzbc ? (dzab > dzca ? dzab : dzca)
+	                        : (dzbc > dzca ? dzbc : dzca);
+	int zlo = a->sz;
+	if (b->sz < zlo) zlo = b->sz;
+	if (c->sz < zlo) zlo = c->sz;
 
+	/* stop when: subdivision off / too deep / already tiny on screen / the
+	   worst edge's depth span is a small fraction of the near depth (affine is
+	   then close enough). */
 	if (!r_subdiv
 	 || depth >= SUBDIV_MAX
-	 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
-	 || zhi - zlo < (zlo >> SUBDIV_ZR)) {
+	 || (maxx - minx < 10 && maxy - miny < 10)
+	 || (!big && dzmax <= (zlo >> SUBDIV_ZR))
+	 || dzmax <= (zlo >> (SUBDIV_ZR + 2))) {
 		emit_ft3(a, b, c);
 		return;
 	}
 
-	int dab = (b->sx - a->sx) * (b->sx - a->sx) + (b->sy - a->sy) * (b->sy - a->sy);
-	int dbc = (c->sx - b->sx) * (c->sx - b->sx) + (c->sy - b->sy) * (c->sy - b->sy);
-	int dca = (a->sx - c->sx) * (a->sx - c->sx) + (a->sy - c->sy) * (a->sy - c->sy);
-
 	wvert m;
-	if (dab >= dbc && dab >= dca) {
+	if (dzab >= dzbc && dzab >= dzca) {
 		wv_mid(a, b, &m);
 		emit_tri(a, &m, c, depth + 1);
 		emit_tri(&m, b, c, depth + 1);
-	} else if (dbc >= dca) {
+	} else if (dzbc >= dzca) {
 		wv_mid(b, c, &m);
 		emit_tri(a, b, &m, depth + 1);
 		emit_tri(a, &m, c, depth + 1);
@@ -351,8 +356,9 @@ static int draw_face(const surf_t *s, int f)
 			return 0;
 		}
 		if (!r_subdiv
-		 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
-		 || zhi - zlo < (zlo >> SUBDIV_ZR)) {
+		 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX
+		     && zhi - zlo < (zlo >> SUBDIV_ZR))
+		 || zhi - zlo < (zlo >> (SUBDIV_ZR + 2))) {
 			uint16_t tp = slot->tpage, cl = slot->clut;
 			for (int k = 1; k + 1 < n; k += 2) {
 				int a = fv[0].vert;
