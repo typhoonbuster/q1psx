@@ -144,7 +144,7 @@ int r_wireframe(const SVECTOR *verts, int nverts,
 /* ---------------------------------------------------- textured surfaces --- */
 
 /* lazily-filled per-vertex projection cache, indexed by the surf vertex pool */
-static int16_t sv_x[R_MAXVERTS], sv_y[R_MAXVERTS];
+static int16_t sv_x[R_MAXVERTS], sv_y[R_MAXVERTS], sv_z[R_MAXVERTS];
 static uint8_t sv_state[R_MAXVERTS];   /* 0 = not done, 1 = ok, 2 = near/behind */
 static int     sv_nv;                  /* valid vertex count for this frame   */
 
@@ -158,6 +158,7 @@ static void project(const SVECTOR *verts, int i)
 	gte_stsxy(&xy);
 	sv_x[i]     = (int16_t) (xy & 0xffff);
 	sv_y[i]     = (int16_t) (xy >> 16);
+	sv_z[i]     = (int16_t) (sz > 32767 ? 32767 : sz);
 	sv_state[i] = (sz > NEAR_Z) ? 1 : 2;
 	if (sz < r_dbg_vz_lo) r_dbg_vz_lo = sz;
 	if (sz > r_dbg_vz_hi) r_dbg_vz_hi = sz;
@@ -174,7 +175,7 @@ static void project(const SVECTOR *verts, int i)
 
 typedef struct {
 	SVECTOR w;            /* world position                    */
-	int16_t sx, sy;       /* screen coords (valid once scr==1) */
+	int16_t sx, sy, sz;   /* screen coords + depth (once scr)  */
 	uint8_t u, v;
 	uint8_t scr;
 } wvert;
@@ -187,10 +188,13 @@ static void wv_project(wvert *p)
 		return;
 	gte_ldv0(&p->w);
 	gte_rtps();
+	int32_t z;
 	uint32_t xy;
+	gte_stsz(&z);
 	gte_stsxy(&xy);
 	p->sx  = (int16_t) (xy & 0xffff);
 	p->sy  = (int16_t) (xy >> 16);
+	p->sz  = (int16_t) (z > 32767 ? 32767 : z);
 	p->scr = 1;
 }
 
@@ -219,6 +223,9 @@ static void emit_ft3(const wvert *a, const wvert *b, const wvert *c)
 
 static void emit_tri(wvert *a, wvert *b, wvert *c, int depth)
 {
+	if (vid_prim_overflowed())
+		return;
+
 	wv_project(a);
 	wv_project(b);
 	wv_project(c);
@@ -229,8 +236,16 @@ static void emit_tri(wvert *a, wvert *b, wvert *c, int depth)
 	if (b->sy < miny) miny = b->sy;  if (b->sy > maxy) maxy = b->sy;
 	if (c->sy < miny) miny = c->sy;  if (c->sy > maxy) maxy = c->sy;
 
+	/* Only subdivide when the piece is BOTH large on screen AND spans a wide
+	   depth range — a big head-on wall (all verts ~same depth) shows no affine
+	   warp, so leave it whole. */
+	int zlo = a->sz, zhi = a->sz;
+	if (b->sz < zlo) zlo = b->sz;  if (b->sz > zhi) zhi = b->sz;
+	if (c->sz < zlo) zlo = c->sz;  if (c->sz > zhi) zhi = c->sz;
+
 	if (depth >= SUBDIV_MAX
-	 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)) {
+	 || (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
+	 || zhi - zlo < (zlo >> 1)) {
 		emit_ft3(a, b, c);
 		return;
 	}
@@ -306,17 +321,20 @@ static int draw_face(const surf_t *s, int f)
 	}
 	cur_slot = slot;
 
-	/* --- fast path: whole face in front, and small enough on screen that the
-	   affine warp is imperceptible — emit the fan as POLY_FT4 quads, no
-	   per-vertex world copy, no subdivision. Most faces take this path. */
+	/* --- fast path: whole face in front, and either small on screen or nearly
+	   iso-depth (so the affine warp is imperceptible) — emit the fan as
+	   POLY_FT4 quads straight from the cache, no subdivision. Most faces. */
 	if (nbehind == 0) {
 		int minx = 32767, maxx = -32768, miny = 32767, maxy = -32768;
+		int zlo = 32767, zhi = 0;
 		for (int k = 0; k < n; k++) {
-			int vi = fv[k].vert, x = sv_x[vi], y = sv_y[vi];
+			int vi = fv[k].vert, x = sv_x[vi], y = sv_y[vi], z = sv_z[vi];
 			if (x < minx) minx = x;  if (x > maxx) maxx = x;
 			if (y < miny) miny = y;  if (y > maxy) maxy = y;
+			if (z < zlo)  zlo  = z;  if (z > zhi)  zhi  = z;
 		}
-		if (maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX) {
+		if ((maxx - minx < SUBDIV_PX && maxy - miny < SUBDIV_PX)
+		 || zhi - zlo < (zlo >> 1)) {
 			uint16_t tp = slot->tpage, cl = slot->clut;
 			for (int k = 1; k + 1 < n; k += 2) {
 				int a = fv[0].vert;
@@ -361,6 +379,7 @@ static int draw_face(const surf_t *s, int f)
 			dpoly[np].w   = s->verts[vi];
 			dpoly[np].sx  = sv_x[vi];
 			dpoly[np].sy  = sv_y[vi];
+			dpoly[np].sz  = sv_z[vi];
 			dpoly[np].scr = 1;
 			dpoly[np].u   = fv[k].u;
 			dpoly[np].v   = fv[k].v;
