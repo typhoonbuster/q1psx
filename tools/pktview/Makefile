@@ -1,10 +1,15 @@
 CC     ?= cc
-CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Werror
+CFLAGS ?= -O2 -std=c11 -Wall -Wextra -Werror -D_DEFAULT_SOURCE
+
+all: pktview wldref
 
 pktview: pktview.c ../../formats/qtex.h
 	$(CC) $(CFLAGS) -o $@ pktview.c
 
-clean:
-	rm -f pktview
+wldref: wldref.c ../../formats/qtex.h ../../formats/qworld.h
+	$(CC) $(CFLAGS) -o $@ wldref.c -lm
 
-.PHONY: clean
+clean:
+	rm -f pktview wldref
+
+.PHONY: all clean

@@ -259,6 +259,7 @@ walk_done:
 	sw      $t4, RS_STAT_SKIPPED($s0)
 	sw      $t5, RS_TICKS_BLOCK($s0)
 
+	lw      $ra, 44($sp)                 # first: jr must not sit in its delay slot
 	lw      $s0,  8($sp)
 	lw      $s1, 12($sp)
 	lw      $s2, 16($sp)
@@ -268,7 +269,6 @@ walk_done:
 	lw      $s6, 32($sp)
 	lw      $s7, 36($sp)
 	lw      $fp, 40($sp)
-	lw      $ra, 44($sp)
 	jr      $ra
 	addiu   $sp, $sp, 48
 
@@ -495,7 +495,47 @@ dr_draw:
 	lbu     $t2, R_NVERTS($a0)
 	bnez    $t0, dr_done                 # packet arena full
 	lhu     $v0, R_CLUT($a0)
+
+	# bounding-sphere frustum test (view space x6; r in vertex units, view
+	# radius 1.5 r): left/right planes have |n| = sqrt2 -> 2.125 r, top/bottom
+	# |n| = 5 -> 8 r. All conservative.
+	# VZ0 is loaded from a sign-extended halfword, not with lwc2: the word
+	# at +16 carries the radius in its upper half, and PCSX-Redux does not
+	# drop those bits the way the 16-bit hardware register does.
+	lwc2    C2_VXY0, R_SC+0($a0)
+	lh      $t9, R_SC+4($a0)
+	lhu     $t3, R_SR($a0)
+	mtc2    $t9, C2_VZ0
 	lhu     $v1, R_TPAGE($a0)
+	nop
+	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
+	mfc2    $t0, C2_IR1                  # x
+	mfc2    $t1, C2_IR2                  # y
+	mfc2    $t4, C2_IR3                  # z
+	sll     $t5, $t3, 1
+	srl     $t6, $t3, 3
+	addu    $t5, $t5, $t6                # 2.125 r
+	subu    $t6, $t4, $t0                # right: z - x
+	addu    $t6, $t6, $t5
+	bltz    $t6, dr_rec_next
+	addu    $t6, $t4, $t0                # left: z + x
+	addu    $t6, $t6, $t5
+	bltz    $t6, dr_rec_next
+	sll     $t5, $t3, 3                  # 8 r
+	sll     $t6, $t4, 1
+	addu    $t6, $t6, $t4                # 3z
+	sll     $t7, $t1, 2                  # 4y
+	subu    $t9, $t6, $t7                # bottom: 3z - 4y
+	addu    $t9, $t9, $t5
+	bltz    $t9, dr_rec_next
+	addu    $t9, $t6, $t7                # top: 3z + 4y
+	addu    $t9, $t9, $t5
+	bltz    $t9, dr_rec_next
+	sll     $t5, $t3, 1                  # delay: 2r
+	lw      $t7, SP_SZFAST($t8)
+	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
+	slt     $a2, $t5, $t7                # a2: the record may come too near
+
 	sll     $v0, $v0, 16                 # clut  << 16, ORed into uv0
 	sll     $v1, $v1, 16                 # tpage << 16, ORed into uv1
 	lw      $t0, SP_RECORDS($t8)
@@ -527,9 +567,9 @@ dr_xf:
 	bgtz    $t5, dr_xf
 	addiu   $t4, $t4, 12
 
-	lw      $t7, SP_SZFAST($t8)          # a2 = any real vertex too near?
+	beqz    $a2, dr_polys                # sphere says: nothing near
 	move    $t4, $t8
-	move    $t5, $t2
+	move    $t5, $t2                     # exact check: any real vertex near?
 	move    $a2, $zero
 dr_nz:
 	lw      $t0, SP_SZ($t4)
@@ -538,6 +578,8 @@ dr_nz:
 	or      $a2, $a2, $t0
 	bgtz    $t5, dr_nz
 	addiu   $t4, $t4, 4
+
+dr_polys:
 
 	sll     $t0, $t2, 3
 	addu    $a3, $a0, $t0

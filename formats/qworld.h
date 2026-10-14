@@ -109,7 +109,10 @@ typedef struct {
 	uint16_t size;         /* +6  whole record, bytes                         */
 	uint16_t clut;         /* +8  GPU CLUT word                               */
 	uint16_t tpage;        /* +10 GPU tpage word (8bpp)                       */
-} qw_record;               /* 12 bytes */
+	int16_t  sc[3];        /* +12 bounding sphere centre, vertex units:
+	                              +12 / +16 load straight into VXY0 / VZ0       */
+	uint16_t sr;           /* +18 bounding sphere radius, vertex units         */
+} qw_record;               /* 20 bytes */
 
 typedef struct {
 	int16_t x, y, z, pad;  /* vertex units                                   */

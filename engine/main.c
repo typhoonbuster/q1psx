@@ -87,7 +87,8 @@ static void draw_overlay(void)
 	         "walk %u  mark %u  faces %u\n"
 	         "nodes %u recs %u verts %u\n"
 	         "polys %u  near %u  %u B%s\n"
-	         "pos %d %d %d",
+	         "pos %d %d %d\n"
+	         "pad %s type %d btn %04x",
 	         world_ok ? fidelity_name[2] : "no world",
 	         vid_stats.vbl ? 60 / vid_stats.vbl : 60,
 	         prof_stage[PROF_FRAME], vid_stats.sync_cycles,
@@ -95,7 +96,8 @@ static void draw_overlay(void)
 	         prof_count[PROF_N_NODES], prof_count[PROF_N_BLOCKS], prof_count[PROF_N_VERTS],
 	         prof_count[PROF_N_POLYS], prof_count[PROF_N_SLOW],
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
-	         cam.pos[0], cam.pos[1], cam.pos[2]);
+	         cam.pos[0], cam.pos[1], cam.pos[2],
+	         pad.connected ? "ok" : "--", pad.type, pad.held);
 	vid_text(8, 8, line);
 	prof_add(PROF_OVERLAY, t0, prof_now());
 }

@@ -16,6 +16,7 @@ typedef struct {
 	uint16_t held;
 	uint16_t pressed;
 	int      connected;
+	int      type;        /* PADTYPE type nibble (4 digital, 7 DualShock...) */
 } pad_t;
 
 extern pad_t pad;

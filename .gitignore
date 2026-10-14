@@ -47,6 +47,8 @@ rogue/
 # --- Host tool build output ---
 /tools/qcook/qcook
 /tools/pktview/pktview
+/tools/pktview/wldref
+/tools/hazcheck/hazcheck
 
 # --- Editor / OS ---
 *.swp

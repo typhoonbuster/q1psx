@@ -11,6 +11,9 @@
 # run timed out cleanly), 1 = exception / crash marker found, 2 = timed out
 # waiting for the stop pattern.
 #
+# EMU_ARGS adds emulator flags, e.g. EMU_ARGS=-interpreter (PCSX-Redux's
+# dynarec has miscomputed code here that the interpreter runs correctly).
+#
 # Note: -no-ui has no GPU backend — this checks that code runs and measures
 # CPU cost; it cannot show what is drawn.
 
@@ -29,7 +32,7 @@ mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 # stdout to a file is block-buffered by the emulator; force line buffering so
 # the stop pattern is seen while it runs.
-stdbuf -oL -eL "$EMU" -no-ui -stdout -loadiso "$IMG" -run > "$LOG" 2>&1 &
+stdbuf -oL -eL "$EMU" -no-ui -stdout ${EMU_ARGS:-} -loadiso "$IMG" -run > "$LOG" 2>&1 &
 PID=$!
 
 status=0

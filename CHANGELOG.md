@@ -544,3 +544,25 @@ followed by R0-R4.
     | the 9 others | 104-423 k | 1 | — |
 
     Images correct. Polygons nearer than 43 u are skipped until R3.3.
+- **R3 hardening** — verification tools and fixes found with them. Details:
+  `docs/porting-notes.md` §12.1.
+  - Per-record bounding-sphere frustum cull: spawn 643 k → 553 k cycles.
+  - **Sine table** rebuilt without signed int64 terms. PCSX-Redux's dynarec
+    computed the old loop as sin(x) = x (correct under its interpreter),
+    which skewed and zoomed every view matrix.
+  - **`lw $ra` / `jr $ra` load-delay hazard** in the `r_render` epilogue.
+    Hardware and the interpreter returned into the middle of the walk; the
+    dynarec hid it.
+  - The record sphere's VZ0 is loaded from a sign-extended halfword.
+  - With the correct matrix, **every bench viewpoint runs in 1 vblank under
+    the dynarec** (spawn 487-532 k cycles depending on the run, 2157 polys).
+    The interpreter's
+    stricter timing model puts the spawn at 578 k (2 vbl).
+  - Images match the z-buffer reference, apart from the near polygons
+    (R3.3).
+  - `tools/pktview/wldref`: ground-truth z-buffer render, C reference of the
+    walk (painter's mode), overlay of the asm's polygon edges.
+  - `tools/hazcheck`: post-link pipeline-hazard check that fails the build.
+  - `scripts/headless.sh` takes `EMU_ARGS` (e.g. `-interpreter`).
+  - **Controls:** the pad reader no longer filters on the pad type (it
+    dropped PCSX-Redux's input), and the overlay shows the pad state.

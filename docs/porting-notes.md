@@ -860,3 +860,36 @@ First measurements (PCSX-Redux CPU timing, `start.bsp`, fidelity high):
 
 That is ~190 cycles per polygon (transform + emit) and ~320 cycles per
 visible node in the walk. The spawn view is the one over budget.
+
+### 12.1 Verifying an asm renderer you can't see — lessons from R3
+
+- **Ground truth on the host.** `tools/pktview/wldref` renders a `.wld`
+  directly, from the bench viewpoints:
+  - default mode: all records, z-buffer, perspective-correct;
+  - `WLDREF_PAINTER=1`: the renderer's algorithm in C (PVS marks, face
+    stamps, near child → node block → far child, painter's order with no
+    depth test). It matched the z-buffer image, which proves the algorithm
+    is a valid painter's order;
+  - a 5th argument (the bench log) overlays the asm's emitted polygon edges
+    in green.
+- **PCSX-Redux's dynarec is not the hardware.** Three findings:
+  1. It computed an int64 Taylor-series loop wrongly in one translation unit
+     (`render.c`): the sine table came out as sin(x) = x, which skewed every
+     view matrix by π/2. GCC's output was checked by hand; the same image is
+     correct under `-interpreter`. The table is now built with unsigned
+     64-bit products and 32-bit divisions only.
+  2. It forgives load-delay-slot mistakes (it hands over the new value). A
+     `lw $ra` directly before `jr $ra` made `r_render` return into its own
+     walk on the interpreter — and on real hardware — and crash with an
+     unaligned load. Under the dynarec it "worked", and only showed as
+     missing walls.
+  3. Loading a GTE `VZ` register with `lwc2` from a word whose upper half is
+     non-zero (the record header kept the sphere radius there) is avoided:
+     VZ0 is now loaded from a sign-extended halfword (`lh` + `mtc2`).
+- **Rules adopted.**
+  - `tools/hazcheck` scans the linked ELF (`objdump -d -z`) after every build
+    and fails it on any load-delay, GTE (register write < 2 instructions
+    before a command) or HI/LO hazard.
+  - Correctness runs use `EMU_ARGS=-interpreter scripts/bench.sh` (slow but
+    exact). The dynarec bench stays the one for timings, because it is what
+    the PCSX-Redux GUI runs.

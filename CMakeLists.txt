@@ -24,6 +24,17 @@ target_include_directories(q1psx PRIVATE engine formats)
 # overflows".
 target_compile_options(q1psx PRIVATE -fno-strict-aliasing -fwrapv)
 
+# Pipeline-hazard check of every linked executable (tools/hazcheck). The asm
+# renderer is written with .set noreorder, so nothing else guards its load
+# delay slots / GTE / HI-LO timing — and PCSX-Redux's dynarec hides such
+# mistakes that real hardware (and the emulator's interpreter) would not.
+find_program(Q1PSX_OBJDUMP NAMES mipsel-none-elf-objdump REQUIRED)
+add_custom_command(TARGET q1psx POST_BUILD
+	COMMAND make -s -C ${PROJECT_SOURCE_DIR}/tools/hazcheck
+	COMMAND sh -c "${Q1PSX_OBJDUMP} -d -z --no-show-raw-insn $<TARGET_FILE:q1psx> | ${PROJECT_SOURCE_DIR}/tools/hazcheck/hazcheck"
+	COMMENT "Checking pipeline hazards (tools/hazcheck)"
+	VERBATIM)
+
 # Headless benchmark variant (CMake preset "bench", driven by scripts/bench.sh):
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
 # no debug overlay. See docs/architecture.md §9.

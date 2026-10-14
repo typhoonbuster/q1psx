@@ -21,9 +21,13 @@ void pad_read(void)
 	const PADTYPE *p = (const PADTYPE *) pad_buf[0];
 	uint16_t now = 0;
 
-	/* stat 0 = data valid; types 4 (digital), 5/7 (analog) carry buttons */
+	/* stat 0 = data valid. Every pad type carries the button word at the same
+	   place (digital, analog, DualShock in either mode), so do not filter on
+	   the type: an earlier filter (4/5/7 only) silently dropped all input
+	   from PCSX-Redux's pad. */
 	pad.connected = p->stat == 0;
-	if (pad.connected && (p->type == 4 || p->type == 5 || p->type == 7))
+	pad.type      = p->type;
+	if (pad.connected)
 		now = (uint16_t) ~p->btn;
 
 	pad.pressed = now & (uint16_t) ~pad.held;

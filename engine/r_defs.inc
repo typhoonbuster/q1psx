@@ -49,7 +49,7 @@
 .set L_VIS,      28
 .set L_SIZE,     36
 
-# ---- qw_record (12 B) + polygons (12 B) -------------------------------------
+# ---- qw_record (20 B) + polygons (12 B) -------------------------------------
 .set R_FACE_ID,   0
 .set R_NVERTS,    2
 .set R_NQUADS,    3
@@ -57,7 +57,9 @@
 .set R_SIZE,      6
 .set R_CLUT,      8
 .set R_TPAGE,    10
-.set R_VERTS,    12
+.set R_SC,       12     # bounding sphere centre (lwc2-ready) + radius at +18
+.set R_SR,       18
+.set R_VERTS,    20
 .set POLY_SIZE,  12
 
 # ---- scratchpad map (base 0x1F800000) ---------------------------------------

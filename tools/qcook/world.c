@@ -152,6 +152,26 @@ static void rec_flush(out_t *o, rec_t *r, int face_id, const tex_slot *s)
 	                          r->nq * sizeof(qw_quad) + r->nt * sizeof(qw_tri));
 	h.clut      = s->clut;
 	h.tpage     = s->tpage;
+
+	/* bounding sphere: bbox centre, radius = farthest vertex (rounded up) */
+	long lo[3] = { 32767, 32767, 32767 }, hi[3] = { -32768, -32768, -32768 };
+	for (int i = 0; i < r->nv; i++) {
+		long p[3] = { r->v[i].x, r->v[i].y, r->v[i].z };
+		for (int k = 0; k < 3; k++) {
+			if (p[k] < lo[k]) lo[k] = p[k];
+			if (p[k] > hi[k]) hi[k] = p[k];
+		}
+	}
+	for (int k = 0; k < 3; k++)
+		h.sc[k] = (int16_t) ((lo[k] + hi[k]) / 2);
+	double rad = 0;
+	for (int i = 0; i < r->nv; i++) {
+		double dx = r->v[i].x - h.sc[0], dy = r->v[i].y - h.sc[1], dz = r->v[i].z - h.sc[2];
+		double d = sqrt(dx * dx + dy * dy + dz * dz);
+		if (d > rad) rad = d;
+	}
+	if (rad > 65000) die("record radius %.0f too large", rad);
+	h.sr = (uint16_t) ceil(rad + 1);
 	buf_put(&o->stream, &h, sizeof h);
 	for (int i = 0; i < r->nv; i++) {
 		qw_vert v = { r->v[i].x, r->v[i].y, r->v[i].z, 0 };

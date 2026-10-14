@@ -26,7 +26,8 @@ _Static_assert(offsetof(r_state_t, leaves_end)   == 140, "r_state layout");
 _Static_assert(offsetof(qw_node, faces)          == 44,  "qw_node layout");
 _Static_assert(sizeof(qw_node)                   == 56,  "qw_node layout");
 _Static_assert(sizeof(qw_leaf)                   == 36,  "qw_leaf layout");
-_Static_assert(sizeof(qw_record)                 == 12,  "qw_record layout");
+_Static_assert(sizeof(qw_record)                 == 20,  "qw_record layout");
+_Static_assert(offsetof(qw_record, sc)           == 12,  "qw_record layout");
 
 static int bound;
 
@@ -36,16 +37,22 @@ static int16_t sintab[1025];   /* quarter wave, sin(a * 90deg / 1024) x 4096 */
 
 static void build_sintab(void)
 {
-	/* Taylor series in Q30 fixed point: exact to the last bit of x4096 */
+	/* Taylor series in Q30 fixed point, exact to the last bit of x4096.
+	   Only unsigned 64-bit products and 32-bit divisions. The first version
+	   (signed int64 terms + __divdi3 per term) came out as sin(x) = x under
+	   PCSX-Redux's dynarec — correct under its interpreter and on the host,
+	   GCC's output checked — which skewed every view matrix. See
+	   docs/porting-notes.md §12. */
 	for (int a = 0; a <= 1024; a++) {
-		int64_t x  = (int64_t) a * 1686629713LL / 1024;     /* (pi/2) * 2^30 */
-		int64_t x2 = (x * x) >> 30;
-		int64_t term = x, sum = x;
-		for (int k = 1; k <= 6; k++) {
-			term = -((term * x2) >> 30) / ((2 * k) * (2 * k + 1));
-			sum += term;
+		uint32_t x    = (uint32_t) (((uint64_t) a * 1686629713u) >> 10);  /* a * (pi/2) / 1024, Q30 */
+		uint32_t x2   = (uint32_t) (((uint64_t) x * x) >> 30);
+		uint32_t term = x;
+		int32_t  sum  = (int32_t) x;
+		for (uint32_t k = 1; k <= 6; k++) {
+			term = (uint32_t) (((uint64_t) term * x2) >> 30) / ((2 * k) * (2 * k + 1));
+			sum += (k & 1) ? -(int32_t) term : (int32_t) term;
 		}
-		sintab[a] = (int16_t) ((sum * 4096 + (1LL << 29)) >> 30);
+		sintab[a] = (int16_t) ((sum + (1 << 17)) >> 18);      /* Q30 -> x4096 */
 	}
 }
 
