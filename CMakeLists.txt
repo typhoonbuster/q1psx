@@ -24,6 +24,14 @@ target_include_directories(q1psx PRIVATE engine)
 # overflows".
 target_compile_options(q1psx PRIVATE -fno-strict-aliasing -fwrapv)
 
+# Headless benchmark variant (CMake preset "bench", driven by scripts/bench.sh):
+# boots straight into the bench scenarios, prints "bench ..." lines to stdout,
+# no debug overlay. See docs/architecture.md §9.
+option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
+if(Q1PSX_BENCH)
+	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1)
+endif()
+
 # --- optional Quake game data on the disc ------------------------------------
 # pak0.pak is never committed. If the developer pointed local.env at their copy,
 # bundle it into the CD image so the engine can read it. iso.xml consumes

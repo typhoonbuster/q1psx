@@ -467,3 +467,16 @@ followed by R0-R4.
   - Headless: an empty frame costs 40 k cycles of work — all of it the debug
     overlay (`snprintf` + `FntSort`) — then ~523 k cycles of vblank wait; one
     vblank per frame, stable over consecutive seconds.
+- **R1.2** Benchmark harness.
+  - `engine/prof`: per-frame stage accumulators (`frame`, `sim`, `r_setup`,
+    `r_walk`, `r_block`, `r_slow`, `overlay`) and counters (`nodes`,
+    `blocks`, `verts`, `polys`, `slow`).
+  - `engine/bench.{c,h}`: per-scenario averages / maxima, one parseable
+    `bench ...` line per scenario.
+  - CMake option `Q1PSX_BENCH` + preset `bench` (`build-bench/`): boots
+    straight into the scenarios, no overlay, prints `bench done`.
+  - `scripts/headless.sh`: PCSX-Redux `-no-ui` runner that stops on a regex,
+    a crash marker or a timeout (under `stdbuf -oL` — the emulator
+    block-buffers redirected stdout). `scripts/bench.sh`: build + run + print
+    the bench lines. Two runs: `bench empty n=64 vbl=100 frame=21/24`,
+    identical.

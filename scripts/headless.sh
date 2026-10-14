@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+#
+# Boot a q1psx CD image in PCSX-Redux with no UI and capture its console.
+#
+# Usage:  scripts/headless.sh [image.bin] [max-seconds] [stop-regex]
+#
+# Runs until `stop-regex` appears in the console output, a CPU exception is
+# reported, or `max-seconds` elapse (default 20), then kills the emulator.
+# The full log is written to $LOG (default: build/headless.log) and its tail
+# is printed. Exit status: 0 = stop pattern seen (or no pattern given and the
+# run timed out cleanly), 1 = exception / crash marker found, 2 = timed out
+# waiting for the stop pattern.
+#
+# Note: -no-ui has no GPU backend — this checks that code runs and measures
+# CPU cost; it cannot show what is drawn.
+
+set -u
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+IMG=${1:-"$ROOT/build/q1psx.bin"}
+SECS=${2:-20}
+STOP=${3:-}
+EMU=${EMU:-$(sed -n 's/^[[:space:]]*EMU[[:space:]]*=[[:space:]]*//p' "$ROOT/local.env" 2>/dev/null | tail -n 1 || true)}
+: "${EMU:?set EMU (the PCSX-Redux AppImage) in local.env or the environment}"
+LOG=${LOG:-"$ROOT/build/headless.log"}
+CRASH='break 0x|Unrecoverable|Exception|PANIC|Sys_Error|panic|Program counter'
+
+mkdir -p "$(dirname "$LOG")"
+: > "$LOG"
+# stdout to a file is block-buffered by the emulator; force line buffering so
+# the stop pattern is seen while it runs.
+stdbuf -oL -eL "$EMU" -no-ui -stdout -loadiso "$IMG" -run > "$LOG" 2>&1 &
+PID=$!
+
+status=0
+[ -n "$STOP" ] && status=2
+for _ in $(seq 1 "$SECS"); do
+	sleep 1
+	if [ -n "$STOP" ] && grep -qE "$STOP" "$LOG"; then status=0; break; fi
+	if grep -qE "$CRASH" "$LOG"; then status=1; break; fi
+	kill -0 "$PID" 2>/dev/null || break
+done
+
+kill "$PID" 2>/dev/null
+wait "$PID" 2>/dev/null
+grep -qE "$CRASH" "$LOG" && status=1
+
+tail -n 30 "$LOG"
+case $status in
+	1) echo "headless: CRASH marker found (full log: $LOG)" ;;
+	2) echo "headless: timed out after ${SECS}s waiting for /$STOP/" ;;
+esac
+exit $status

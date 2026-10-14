@@ -23,10 +23,13 @@ but has no GPU backend, so its web API (`/api/v1/gpu/vram/raw`) returns empty
 VRAM; the GUI + `-webserver` combination crashes on this machine. Until that is
 solved, two checks are used:
 
-1. **Automated:** boot the image headless (`pcsx-redux -no-ui -run -loadiso …`)
-   and confirm a clean kernel log — `psxgpu: setup done` reached, no CPU
-   exception. Proves the program loads and runs `main()`.
-2. **Manual:** run `scripts/run-emu.sh` and look at the output (needed for
+1. **Automated:** `scripts/headless.sh [image] [secs] [stop-regex]` boots the
+   image headless and checks for a clean kernel log — `psxgpu: setup done`
+   reached, no CPU exception. Proves the program loads and runs `main()`.
+2. **Bench (R1.2+):** `scripts/bench.sh` builds the bench variant and
+   prints one `bench ...` line per scenario: CPU cycles per stage plus
+   counters. It is the reference for every perf decision.
+3. **Manual:** run `scripts/run-emu.sh` and look at the output (needed for
    anything about motion, tearing, flicker, or "does it look right").
 
 ## Per-step validation matrix

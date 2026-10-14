@@ -14,6 +14,15 @@
 				"PSN00BSDK_TARGET": "mipsel-none-elf"
 			},
 			"warnings": { "dev": false }
+		},
+		{
+			"name":          "bench",
+			"inherits":      "default",
+			"displayName":   "Headless benchmark build (scripts/bench.sh)",
+			"binaryDir":     "${sourceDir}/build-bench",
+			"cacheVariables": {
+				"Q1PSX_BENCH": "ON"
+			}
 		}
 	]
 }

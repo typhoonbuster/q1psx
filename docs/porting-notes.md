@@ -713,3 +713,29 @@ Constants are Quake defaults: maxspeed 320, accel 10, friction 4, stopspeed
 `start.qbsp`: jump apex ≈ 44 u, accel to 320 in ~0.3 s, dead stop at walls.
 Known rough edges: no edge-friction dropoff boost, no water, no `pos_acc`
 consistency when a move is clipped mid-frame (bounded, cosmetic).
+
+---
+
+## §10 — Measurement harness (R1, 2026-10-14)
+
+- **Timers.** Root counter 2 (sysclock/8 + a wrap IRQ, `engine/prof.c`) is
+  ours. Root counter 1 is **not**: PSn00bSDK's `VSync()` reads it as an hblank
+  counter (`VSync(1)` returns hblanks since the last vsync). Phases 2-6
+  reprogrammed it, which silently broke that; it is left alone now.
+- **Asm stage timing.** Asm reads the raw 16-bit counter at `0x1F801120` and
+  adds `(t1 - t0) & 0xffff` ticks × 8. That is exact for any stage under
+  ~520 k cycles, i.e. anything inside one frame.
+- **The debug overlay is not free.** `snprintf` + `FntSort` for 5 lines of
+  text cost ~40 k cycles (7 % of a frame). It has its own profiler stage
+  (`overlay`) and is off in the bench build.
+- **Headless runs.** `scripts/headless.sh` boots an image in PCSX-Redux
+  `-no-ui -stdout` and stops on a regex, a crash marker or a timeout.
+  PCSX-Redux block-buffers stdout when it is redirected to a file, so the
+  script runs it under `stdbuf -oL`. Without that, nothing reaches the log
+  until the process exits.
+- **Bench.** `scripts/bench.sh` builds preset `bench` (`build-bench/`,
+  `-DQ1PSX_BENCH`) and prints one line per scenario:
+  `bench <name> n=<frames> vbl=<x100> <stage>=<avg>/<max> ... <counter>=<avg>`.
+  Two consecutive runs give identical numbers. What the emulator reports is
+  PCSX-Redux's CPU timing model. That is also what one sees in the
+  PCSX-Redux GUI, but it is not cycle-exact hardware.
