@@ -480,3 +480,8 @@ followed by R0-R4.
     block-buffers redirected stdout). `scripts/bench.sh`: build + run + print
     the bench lines. Two runs: `bench empty n=64 vbl=100 frame=21/24`,
     identical.
+- **R1.3** `engine/pad.{c,h}`: BIOS pad driver on port 1, `held` / `pressed`
+  (edge) bits. The debug overlay uses the SDK font (`FntSort`), which writes
+  into our packet arena; there is no need for a font of our own. L1+R1 toggles
+  the overlay, which now also shows the pad state. Headless: pad driver up,
+  bench unchanged.
