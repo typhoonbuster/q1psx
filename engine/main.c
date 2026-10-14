@@ -1,38 +1,47 @@
 /*
- * q1psx — R0 placeholder.
+ * q1psx — boot + main loop.
  *
- * The engine is built with performance as constraint #1, see
- * docs/architecture.md. This file only keeps the build, the CD image and
- * the headless boot check green until R1.1 (boot + double buffer + packet
- * arenas) replaces it.
+ * R1.1: video core + cycle profiler. The frame is empty apart from the debug
+ * overlay; the loop measures what an empty frame costs and prints it to the
+ * console (stdout) once a second.
  */
 
+#include <stdint.h>
 #include <stdio.h>
 #include <psxgpu.h>
 
-#define SCREEN_W 320
-#define SCREEN_H 240
+#include "prof.h"
+#include "vid.h"
 
 int main(void)
 {
-	DISPENV disp[2];
-	DRAWENV draw[2];
+	vid_init();
+	prof_init();
+	vid_set_bg(24, 24, 32);
 
-	ResetGraph(0);
-	for (int i = 0; i < 2; i++) {
-		SetDefDispEnv(&disp[i], 0, i ? 0 : SCREEN_H, SCREEN_W, SCREEN_H);
-		SetDefDrawEnv(&draw[i], 0, i ? SCREEN_H : 0, SCREEN_W, SCREEN_H);
-		setRGB0(&draw[i], 24, 24, 32);
-		draw[i].isbg = 1;
-	}
+	printf("q1psx: R1.1 video core\n");
 
-	printf("q1psx: R0 skeleton\n");
-	SetDispMask(1);
+	uint32_t frame = 0;
+	uint32_t work  = 0;   /* CPU cycles of the last frame's own work */
+	char     line[96];
 
-	for (int buf = 0;; buf ^= 1) {
-		DrawSync(0);
-		VSync(0);
-		PutDispEnv(&disp[buf]);
-		PutDrawEnv(&draw[buf]);
+	for (;;) {
+		uint32_t t0 = prof_now();
+
+		snprintf(line, sizeof line,
+		         "q1psx  R1.1\n\n"
+		         "work %6u cyc\nsync %6u cyc\nvbl  %6u cyc\n%u vbl/frame  %u B",
+		         work, vid_stats.sync_cycles, vid_stats.vsync_cycles,
+		         vid_stats.vbl, vid_stats.pkt_bytes);
+		vid_text(16, 16, line);
+
+		uint32_t t1 = prof_now();
+		work = prof_cycles(t0, t1);
+		vid_flip();
+
+		if ((++frame & 127) == 0)
+			printf("frame %u: work %u cyc  gpu-wait %u  vbl-wait %u  %u vbl  %u B\n",
+			       frame, work, vid_stats.sync_cycles, vid_stats.vsync_cycles,
+			       vid_stats.vbl, vid_stats.pkt_bytes);
 	}
 }

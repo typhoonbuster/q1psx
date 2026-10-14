@@ -451,3 +451,19 @@ followed by R0-R4.
   skeleton + benchmark harness, R2 data + `qcook`, R3 asm renderer, R4
   collision + movement), then Phase 7+ unchanged. `docs/porting-notes.md`,
   `TESTING.md`, `README.md` updated.
+
+### R1 — Perf skeleton
+
+- **R1.1** Video core + cycle profiler.
+  - `engine/vid.{c,h}`: 320 × 240 NTSC, framebuffers at (0,0)/(0,240), each
+    with an 8-bucket ordering table and a 96 KB packet arena. The CPU builds
+    frame N+1 while the GPU DMA draws frame N; `vid_flip` waits for the GPU
+    and the vblank, shows the finished frame and kicks the next DMA.
+    `vid_frame` (`ot`, `pkt`, `end`, `dropped`) is the packet interface the
+    asm renderer will write through; `vid_stats` reports vblanks/frame, GPU
+    and vblank wait cycles, arena bytes used and dropped packets.
+  - `engine/prof.{c,h}`: root counter 2 at sysclock/8 (8-cycle ticks), a
+    wrap IRQ extends it to 32 bits; `prof_now()` / `prof_cycles()`.
+  - Headless: an empty frame costs 40 k cycles of work — all of it the debug
+    overlay (`snprintf` + `FntSort`) — then ~523 k cycles of vblank wait; one
+    vblank per frame, stable over consecutive seconds.
