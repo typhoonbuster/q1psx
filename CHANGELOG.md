@@ -515,3 +515,32 @@ followed by R0-R4.
   - `engine/world.{c,h}`: uploads the pages, loads the world and rewrites its
     links into pointers; `world_point_leaf()`. Level arena raised to 1152 KB.
     Headless: START2 loads (836 KB of arena), spawn in leaf 1084 (empty).
+
+### R3 — Asm renderer
+
+- **R3.1 / R3.2** The world renderer in hand-written MIPS assembly. Full
+  detail in `docs/porting-notes.md` §12.
+  - `engine/r_world.s`:
+    - GTE view setup;
+    - camera-leaf lookup and PVS marking (RLE decoded in place);
+    - iterative front-to-back BSP walk on a scratchpad stack, with visframe
+      and view-frustum culling (MVMVA centre + |R| radius, clip-flag
+      inheritance) and marksurface stamping;
+    - per-node face blocks on the camera's side: RTPT 3 vertices at a time
+      into the scratchpad, then `POLY_FT4` / `POLY_FT3` prepended to the
+      world OT bucket.
+  - `engine/render.c`: view matrices (world ×4 × 1.5 → view ×6, so the
+    GTE's perspective divide stays exact down to 13 units), frame/visframe
+    stamps with wrap handling, profiler hooks.
+  - Free-fly camera in `main.c` until R4.
+  - `tools/pktview`: host rasteriser for the bench's display-list dumps →
+    PNG.
+  - CMake re-cooks when the cooker or the formats change.
+  - Bench (`start.bsp`, high):
+
+    | view | cycles | vbl | polys |
+    |---|---|---|---|
+    | spawn | 643 k | 2 | 2631 |
+    | the 9 others | 104-423 k | 1 | — |
+
+    Images correct. Polygons nearer than 43 u are skipped until R3.3.

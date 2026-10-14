@@ -54,7 +54,28 @@ endif()
 
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h + qworld.h). Every
 # fidelity level ships on the disc: START<N>.TEX / START<N>.WLD with N = 0..3
-# for low/medium/high/ultra.
+# for low/medium/high/ultra. The cook re-runs whenever the cooker or a format
+# header changes, so the disc never carries stale data.
+if(_pak0_path AND EXISTS "${_pak0_path}")
+	file(GLOB _qcook_deps CONFIGURE_DEPENDS
+		${PROJECT_SOURCE_DIR}/tools/qcook/*.c
+		${PROJECT_SOURCE_DIR}/tools/qcook/*.h
+		${PROJECT_SOURCE_DIR}/tools/qcook/Makefile
+		${PROJECT_SOURCE_DIR}/formats/*.h
+		${PROJECT_SOURCE_DIR}/scripts/cook.sh)
+	set(_cooked_stamp ${CMAKE_BINARY_DIR}/cooked.stamp)
+	add_custom_command(
+		OUTPUT  ${_cooked_stamp}
+		COMMAND ${PROJECT_SOURCE_DIR}/scripts/cook.sh
+		COMMAND ${CMAKE_COMMAND} -E touch ${_cooked_stamp}
+		DEPENDS ${_qcook_deps}
+		WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+		COMMENT "Cooking Quake data (scripts/cook.sh)"
+		VERBATIM)
+	add_custom_target(cook DEPENDS ${_cooked_stamp})
+	add_dependencies(q1psx cook)
+endif()
+
 set(COOKED_ENTRIES "")
 set(_n 0)
 foreach(_fid low medium high ultra)
@@ -79,5 +100,5 @@ psn00bsdk_add_cd_image(
 	iso        # target
 	q1psx      # -> q1psx.bin + q1psx.cue
 	${PROJECT_SOURCE_DIR}/iso/iso.xml
-	DEPENDS q1psx
+	DEPENDS q1psx ${_cooked_stamp}
 )

@@ -25,3 +25,10 @@ LOG="$ROOT/build-bench/bench.log" \
 	|| { status=$?; tail -n 30 "$ROOT/build-bench/bench.log"; exit $status; }
 
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)'
+
+# Render the dumped display lists to PNG (build-bench/views/view<N>.png) so the
+# output can be checked without a screen.
+make -s -C "$ROOT/tools/pktview"
+mkdir -p "$ROOT/build-bench/views"
+"$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
+	"$ROOT/cooked/id1/start_high.tex" "$ROOT/build-bench/views/view" | sed 's/^/  /'

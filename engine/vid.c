@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <psxgpu.h>
 
@@ -110,4 +111,25 @@ void vid_flip(void)
 
 	back ^= 1;
 	begin_buffer(back);
+}
+
+/* Print this frame's display list (draw order) to stdout for tools/pktview:
+   one "P <hex words...>" line per packet, then "E". Bench builds only. */
+void vid_dump(void)
+{
+	const uint32_t *ot = vid_frame.ot;
+	uint32_t at = (uint32_t) &ot[VID_OT_LEN - 1];
+
+	while ((at & 0xffffff) != 0xffffff) {
+		const uint32_t *p = (const uint32_t *) (0x80000000u | (at & 0xffffff));
+		uint32_t n = p[0] >> 24;
+		if (n) {
+			printf("P");
+			for (uint32_t i = 1; i <= n; i++)
+				printf(" %08x", (unsigned) p[i]);
+			printf("\n");
+		}
+		at = p[0];
+	}
+	printf("E\n");
 }

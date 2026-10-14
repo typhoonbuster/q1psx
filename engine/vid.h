@@ -52,5 +52,6 @@ void *vid_alloc(int bytes);                    /* NULL when the arena is full */
 void  vid_link(int bucket, void *packet);
 void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */
 void  vid_flip(void);
+void  vid_dump(void);                          /* display list -> stdout */
 
 #endif

@@ -810,3 +810,53 @@ a world and verifies every invariant (it also runs automatically after
 
   `world_point_leaf()` follows Quake's tie rule (d > 0 → front). Headless:
   START2 loads, 836 KB of arena, and the spawn point is in leaf 1084 (empty).
+
+## §12 — Asm renderer (R3, 2026-10-14)
+
+`engine/r_world.s` (+ `r_defs.inc`) is the whole per-frame world renderer in
+hand-written MIPS (`.set noreorder`, every hazard handled by hand).
+`engine/render.c` only builds the view matrices and folds statistics into the
+profiler.
+
+- **View scale.** World vertices are ×4 (int16) and the GTE rotation is ×1.5
+  (6144 in 1.3.12), so view space is world × 6. The GTE's perspective divide
+  saturates at `SZ ≤ H/2` = 80, i.e. 13.3 world units instead of 80 at ×1.
+  That is the root cause of the phases 2-6 renderer's wall bug (the view stuck
+  to a wall without getting closer), fixed at the source. Range stays ±5461 units before IR saturation.
+- **Walk.**
+  - Iterative, front to back. A scratchpad stack holds one packed word per
+    level: node pointer (24 bits) + clip flags + side + draw flag.
+  - Node and leaf culling uses the visframe (PVS) test, then the frustum:
+    the bbox goes to view space as centre (MVMVA rotation + TR) and radius
+    (MVMVA with |rotation| loaded as the GTE light matrix), and is tested
+    against `z∓x ≥ 0`, `3z∓4y ≥ 0` with clip-flag inheritance.
+  - Visible leaves stamp their marksurfaces; after the near child, the node
+    draws its face block on the camera's side when `|d| > 0.01` unit.
+- **PVS marking.** On a camera-leaf change, the RLE row is decoded in place
+  (no buffer) and each visible leaf and its unstamped ancestors are stamped.
+- **Records.**
+  - Vertices go through RTPT 3 at a time; `swc2` stores SXY / SZ straight
+    into the scratchpad cache.
+  - A record with a vertex nearer than `sz_fast` (256 → z < 43 u) takes the
+    careful loop.
+  - Quads and tris are written as raw-texture `POLY_FT4` / `POLY_FT3`. The
+    words are pre-packed except `| clut` / `| tpage`. Each packet is
+    prepended to the world OT bucket, with the link kept in `$fp`.
+- **Checking without a screen.** The bench dumps one frame per viewpoint as a
+  display list. `tools/pktview` rebuilds VRAM from the `.tex` file and
+  rasterises the polygons like the GPU: affine UVs, painter's order, it
+  refuses primitives > 1023 × 511 px. The output is
+  `build-bench/views/view<N>.png`.
+- **CMake re-cooks** whenever `tools/qcook` or `formats/` change, and the CD
+  image depends on the cook stamp. A stale world file (missing
+  `num_visleafs`) once made the renderer draw nothing.
+
+First measurements (PCSX-Redux CPU timing, `start.bsp`, fidelity high):
+
+| view | frame cycles | vbl | nodes | records | verts | polys |
+|---|---|---|---|---|---|---|
+| spawn | 643 k | 2 | 461 | 568 | 5410 | 2631 |
+| others | 104 k – 423 k | 1 | 87 – 312 | 76 – 390 | 808 – 3495 | 414 – 1680 |
+
+That is ~190 cycles per polygon (transform + emit) and ~320 cycles per
+visible node in the walk. The spawn view is the one over budget.
