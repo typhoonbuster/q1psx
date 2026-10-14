@@ -16,7 +16,7 @@ project(
 file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS engine/*.c engine/*.s)
 
 psn00bsdk_add_executable(q1psx GPREL ${ENGINE_SOURCES})
-target_include_directories(q1psx PRIVATE engine)
+target_include_directories(q1psx PRIVATE engine formats)
 
 # The engine maps cooked structs straight onto byte blobs — the same idiom
 # Quake itself relies on. Turn off the two -O2 assumptions that idiom
@@ -52,10 +52,27 @@ else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
 endif()
 
-# Cooked assets: the cook tool and its formats land in roadmap step R2
-# (see docs/architecture.md). Until then the disc carries no cooked data;
-# iso.xml still expands @COOKED_ENTRIES@, so keep the variable defined.
+# Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h + qworld.h). Every
+# fidelity level ships on the disc: START<N>.TEX / START<N>.WLD with N = 0..3
+# for low/medium/high/ultra.
 set(COOKED_ENTRIES "")
+set(_n 0)
+foreach(_fid low medium high ultra)
+	foreach(_ext tex wld)
+		set(_src "${PROJECT_SOURCE_DIR}/cooked/id1/start_${_fid}.${_ext}")
+		string(TOUPPER "${_ext}" _EXT)
+		if(EXISTS "${_src}")
+			string(APPEND COOKED_ENTRIES
+				"<file name=\"START${_n}.${_EXT}\" type=\"data\" source=\"${_src}\" />\n\t\t\t")
+		endif()
+	endforeach()
+	math(EXPR _n "${_n} + 1")
+endforeach()
+if(COOKED_ENTRIES STREQUAL "")
+	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")
+else()
+	message(STATUS "q1psx: bundling cooked start.bsp (4 fidelity levels)")
+endif()
 
 # --- CD image ---------------------------------------------------------------
 psn00bsdk_add_cd_image(

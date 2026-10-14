@@ -739,3 +739,74 @@ consistency when a move is clipped mid-frame (bounded, cosmetic).
   Two consecutive runs give identical numbers. What the emulator reports is
   PCSX-Redux's CPU timing model. That is also what one sees in the
   PCSX-Redux GUI, but it is not cycle-exact hardware.
+
+## §11 — Cooked data (R2, 2026-10-14)
+
+`tools/qcook` (C, host): `qcook map --pak --map --fidelity --tex --world`
+writes two files per map and fidelity level, and `qcook check <wld>` re-reads
+a world and verifies every invariant (it also runs automatically after
+`map`). `scripts/cook.sh` cooks the four levels; the disc carries them as
+`START<N>.TEX` / `START<N>.WLD`, N = 0..3 (low..ultra).
+
+- **Textures (`formats/qtex.h`, QTX3).** One tile per used miptex, holding one
+  texture repetition at the level's resolution:
+
+  | level | resolution | tile cap |
+  |---|---|---|
+  | low | native >> 2 | 32 |
+  | medium | native >> 1 | 64 |
+  | high | native | 128 |
+  | ultra | native | 256 |
+
+  - Downscaling uses Quake's own box-filtered mips when the size matches.
+  - Tiles are shelf-packed into whole 8bpp pages (x = 320 + 128·i, y = 0 /
+    256), one VRAM rect per page, CLUT at (0,480).
+  - Pure black maps to `0x8000`, because `0x0000` is transparent on the PS1.
+  - `start.bsp`: 68 tiles, from 1 page / 21 KB (low) to 6 pages / 357 KB
+    (ultra). **Native textures fit in VRAM**, which phase 3's 64 px grid never
+    allowed.
+- **World (`formats/qworld.h`, QWV2).**
+  - Nodes carry the two face blocks of their plane (front / back), a bbox as
+    centre + half extents in vertex units (world × 4), and the plane
+    (normal × 4096, distance × 4096 × 4).
+  - Leaves carry marks, PVS offset, parent and bbox.
+  - Faces are cut on their texture-repeat grid (Sutherland-Hodgman against
+    `s = k·W`, `t = m·H`), triangulated into PS1-ordered quads (+ one
+    triangle when odd) and grouped into face records of ≤ 63 deduplicated
+    vertices.
+  - Each record stores tpage + CLUT once; quads and tris are 12 B (4 premultiplied
+    vertex indices + 4 page-relative UVs).
+  - Vertices are not padded to a multiple of 3: the renderer's
+    3-at-a-time loads may read up to 2 vertices past a record, and the stream
+    ends with a 16-byte tail for that.
+- **`start.bsp` numbers.** 14 019 pieces → 14 147 quads + 3 042 tris and
+  38 883 vertices in 4 868 records. BSP depth 51, so the renderer stack holds
+  64.
+
+  | section | size |
+  |---|---|
+  | faces | 576 KB |
+  | nodes | 163 KB |
+  | leaves | 56 KB |
+  | vis | 34 KB |
+  | marks | 14 KB |
+  | **world file** | **844 KB** |
+
+  An earlier layout with 20-byte polygons and padded vertices was 990 KB.
+  The level arena is now 1152 KB. Textures load first, go to VRAM and are
+  freed, so the peak is the world file alone.
+- **Memory follow-ups.** Vertices are 54 % of the face stream. Two levers:
+  - share vertices across the faces of one node side (adjacent coplanar
+    faces share edges), keeping per-face visibility inside the record;
+  - store vertices as 6 bytes.
+- **Bench viewpoints.** Cooked into the world: the spawn point at 4 yaws, plus
+  the 3 leaves whose PVS reaches the most marksurfaces (2 yaws each) — the
+  heaviest views of the map.
+- **Engine (`engine/world.{c,h}`).** `world_load(fid)` uploads the texture
+  pages, then loads the world and rewrites its links into pointers:
+  - node children become pointers, with bit 0 set for a leaf;
+  - parents, face blocks, marks and PVS rows become pointers;
+  - a `face_visframe[]` array is allocated.
+
+  `world_point_leaf()` follows Quake's tie rule (d > 0 → front). Headless:
+  START2 loads, 836 KB of arena, and the spawn point is in leaf 1084 (empty).

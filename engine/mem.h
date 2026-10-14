@@ -18,7 +18,7 @@
 
 #include <stdint.h>
 
-#define MEM_LEVEL_BYTES (1024 * 1024)
+#define MEM_LEVEL_BYTES (1152 * 1024)
 
 void     mem_level_reset(void);
 void    *mem_level_alloc(uint32_t bytes);      /* 16-byte aligned; NULL if full */

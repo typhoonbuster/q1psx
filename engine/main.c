@@ -16,6 +16,7 @@
 #include "pad.h"
 #include "prof.h"
 #include "vid.h"
+#include "world.h"
 
 /* --------------------------------------------------------------- frame -- */
 
@@ -109,14 +110,11 @@ int main(void)
 
 	printf("q1psx\n");
 
-	/* CD sanity check: HELLO.TXT is 142 bytes, byte sum 0x2E47 */
-	{
-		uint32_t mark = mem_level_mark(), size = 0, sum = 0;
-		const uint8_t *p = cd_load("\\HELLO.TXT;1", &size);
-		for (uint32_t i = 0; p && i < size; i++)
-			sum += p[i];
-		printf("cd: HELLO.TXT %u bytes, sum 0x%04X\n", size, sum);
-		mem_level_release(mark);
+	if (world_load(2)) {
+		const qw_leaf *l = world_point_leaf(world.spawn);
+		printf("world: spawn %d %d %d in leaf %d (contents %d)\n",
+		       world.spawn[0], world.spawn[1], world.spawn[2],
+		       (int) (l - world.leaves), l->contents);
 	}
 
 #ifdef Q1PSX_BENCH

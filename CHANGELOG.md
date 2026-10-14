@@ -494,3 +494,24 @@ followed by R0-R4.
   the arena (double speed, `CdReadRetry` ×3). Boot sanity check: `HELLO.TXT`
   reads back 142 B, sum 0x2E47, the same as in phase 2. BSS is now 1.25 MB (2 × 96 KB
   packet arenas + the level arena).
+- **R2.2 / R2.3** `qcook` + the engine loader. Full detail in
+  `docs/porting-notes.md` §11.
+  - `tools/qcook/` rewritten (`qcook.c` pak + BSP29 parsing, `tex.c`,
+    `world.c`).
+  - `qcook map` writes a QTX3 texture set: tiles of one texture repetition per
+    fidelity level, shelf-packed into whole 8bpp pages.
+  - It also writes a QWV2 world:
+    - faces sit on their BSP node in front/back blocks and are cut on the
+      texture-repeat grid (no texture window);
+    - pieces become PS1-ordered quads/tris in records of ≤ 63 vertices with
+      tpage/CLUT stored once;
+    - the file carries the PVS, a node/leaf bbox per element, and bench
+      viewpoints (spawn + the heaviest PVS leaves).
+  - `qcook check` verifies every invariant.
+  - `scripts/cook.sh` cooks the 4 levels and CMake bundles them as
+    `START<N>.TEX/.WLD`.
+  - `start.bsp`: 17 189 polys / 38 883 verts / 4 868 records, world 844 KB.
+    Textures: 1 page (low) up to 6 pages (ultra, native — they fit VRAM).
+  - `engine/world.{c,h}`: uploads the pages, loads the world and rewrites its
+    links into pointers; `world_point_leaf()`. Level arena raised to 1152 KB.
+    Headless: START2 loads (836 KB of arena), spawn in leaf 1084 (empty).
