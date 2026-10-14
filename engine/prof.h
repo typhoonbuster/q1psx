@@ -36,6 +36,7 @@ enum {
 	PROF_N_VERTS,     /* vertices transformed                */
 	PROF_N_POLYS,     /* polygons emitted                    */
 	PROF_N_SLOW,      /* polygons that took the slow path    */
+	PROF_N_SLOWTRI,   /* triangles the slow path emitted     */
 	PROF_COUNTERS
 };
 

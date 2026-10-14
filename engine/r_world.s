@@ -721,18 +721,53 @@ dr_rec_next:
 	b       dr_rec
 	nop
 
+# Near polygon: hand it to the slow path (engine/r_slow.c) — near clip,
+# subdivision, exact projection. t0 = 4 (quad) or 3 (triangle).
 dr_quad_skip:
-	lw      $t0, SP_SKIPPED($t8)
-	nop
-	addiu   $t0, $t0, 1
-	b       dr_quad_next
-	sw      $t0, SP_SKIPPED($t8)
+	b       dr_slow_call
+	li      $t0, 4
 dr_tri_skip:
-	lw      $t0, SP_SKIPPED($t8)
+	li      $t0, 3
+dr_slow_call:
+	lw      $t1, SP_SKIPPED($t8)         # counts polygons sent to the slow path
+	sw      $at, SP_SAVE+0($t8)
+	sw      $a0, SP_SAVE+4($t8)
+	sw      $a1, SP_SAVE+8($t8)
+	sw      $a2, SP_SAVE+12($t8)
+	sw      $a3, SP_SAVE+16($t8)
+	sw      $v0, SP_SAVE+20($t8)
+	sw      $v1, SP_SAVE+24($t8)
+	sw      $ra, SP_SAVE+28($t8)
+	sw      $t0, SP_SAVE+32($t8)
+	addiu   $t1, $t1, 1
+	sw      $t1, SP_SKIPPED($t8)
+	sw      $s6, RS_PKT($s0)             # the C side emits through r_state
+	sw      $fp, RS_OT_HEAD($s0)
+	move    $a1, $a0                     # record
+	move    $a2, $a3                     # polygon
+	move    $a3, $t0                     # 4 or 3
+	move    $a0, $s0                     # r_state
+	jal     r_slow
+	addiu   $sp, $sp, -16                # o32 argument area
+	addiu   $sp, $sp, 16
+	lui     $t8, 0x1f80
+	lw      $s6, RS_PKT($s0)
+	lw      $fp, RS_OT_HEAD($s0)
+	lw      $at, SP_SAVE+0($t8)
+	lw      $a0, SP_SAVE+4($t8)
+	lw      $a1, SP_SAVE+8($t8)
+	lw      $a2, SP_SAVE+12($t8)
+	lw      $a3, SP_SAVE+16($t8)
+	lw      $v0, SP_SAVE+20($t8)
+	lw      $v1, SP_SAVE+24($t8)
+	lw      $ra, SP_SAVE+28($t8)
+	lw      $t0, SP_SAVE+32($t8)
+	lw      $t7, SP_SZFAST($t8)
+	li      $t1, 4
+	beq     $t0, $t1, dr_quad_next
 	nop
-	addiu   $t0, $t0, 1
 	b       dr_tri_next
-	sw      $t0, SP_SKIPPED($t8)
+	nop
 
 dr_full:
 	li      $t0, 1

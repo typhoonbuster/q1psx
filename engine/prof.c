@@ -18,7 +18,7 @@ const char *const prof_stage_name[PROF_STAGES] = {
 	"frame", "sim", "r_setup", "r_walk", "r_block", "r_slow", "overlay",
 };
 const char *const prof_count_name[PROF_COUNTERS] = {
-	"nodes", "blocks", "verts", "polys", "slow",
+	"nodes", "blocks", "verts", "polys", "slow", "slowtri",
 };
 
 static volatile uint32_t prof_hi;

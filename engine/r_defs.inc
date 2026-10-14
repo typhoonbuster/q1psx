@@ -27,6 +27,8 @@
 .set RS_TICKS_MARK,   132
 .set RS_FORCE_MARK,   136
 .set RS_LEAVES_END,   140
+.set RS_OT_HEAD,      144
+.set RS_STAT_SLOW,    148
 
 # ---- qw_node (56 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3] (+ pad): lwc2-ready
@@ -80,6 +82,7 @@
 .set SP_TBLOCK,   0x334
 .set SP_T0,       0x338
 .set SP_FULL,     0x33c   # non-zero once the packet arena is full
+.set SP_SAVE,     0x340   # 9 words: registers kept across the C slow path
 
 .set TIMER2,      0x1120  # root counter 2 value, offset from 0x1F800000's
                           # upper half (0x1F801120)

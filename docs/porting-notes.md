@@ -893,3 +893,46 @@ visible node in the walk. The spawn view is the one over budget.
   - Correctness runs use `EMU_ARGS=-interpreter scripts/bench.sh` (slow but
     exact). The dynarec bench stays the one for timings, because it is what
     the PCSX-Redux GUI runs.
+
+### 12.2 Slow path (R3.3) — near polygons
+
+`engine/r_slow.c`, called from the asm careful loops for any polygon with a
+vertex nearer than `sz_fast`. It is a C reference for now; the asm port is
+next.
+
+1. **View transform** with the current matrix (view space, world × 6).
+2. **Clip codes + clipping** against the near plane (z = 8 u) **and** the
+   four frustum planes.
+   - All vertices outside one plane → rejected; a plane no vertex crosses →
+     skipped.
+   - Clipping against the frustum, not just the near plane, comes from the
+     GBA Quake prototype (`reference/GBA Engines/`). Nothing
+     off-screen is ever generated and every projected coordinate stays
+     inside the GPU's range. The first version (near plane only) spent most
+     of its time subdividing off-screen pieces.
+   - One division per clipped edge (14-bit factor) and per projected vertex
+     (`(H << 16) / z`, then multiplies).
+3. **Per-edge subdivision.**
+   - An edge is split when it is longer than 96 px on screen or its depth
+     ratio exceeds 4/3.
+   - The decision depends only on the edge, and the midpoint is symmetric.
+     The two triangles sharing an edge, even across records (the cook dedups
+     vertex positions exactly), therefore always cut it the same way.
+   - The first version split each triangle's longest edge and left
+     T-junction cracks.
+   - Max depth 5.
+4. **Emission:** raw-texture `POLY_FT3` packets, prepended to the world
+   bucket through `r_state.pkt` / `ot_head`. The asm syncs those around the
+   call.
+
+Bench viewpoints added by the cook: the floor at 60° pitch, and a wall at
+contact distance. The first wall view had marched into a thin *water*
+volume and sat exactly on its surface plane. Quake's PVS (asm and C
+reference alike) rightly sees nothing beyond an opaque water surface; only
+the brute-force z-buffer reference drew the wall behind it. The generator
+now requires `CONTENTS_SOLID` and keeps the camera in empty space.
+
+Result: all three near views match the perspective-correct reference
+(slight affine wobble on the near wall, no cracks, no holes). Cost in C:
+150-250 k cycles on the near views, up to 9 k cycles per near polygon. The
+asm port (GTE transform and projection, index-based vertex pool) comes next.

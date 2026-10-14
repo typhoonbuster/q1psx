@@ -376,6 +376,18 @@ static void mark_reachable(const bsp_t *b, int node, uint8_t *reach)
 	mark_reachable(b, b->nodes[node].child[1], reach);
 }
 
+/* Quake's rendering-hull point test: contents of the leaf holding p. */
+static int point_contents(const bsp_t *b, int node, const double p[3])
+{
+	while (node >= 0) {
+		const bsp_node  *n  = &b->nodes[node];
+		const bsp_plane *pl = &b->planes[n->planenum];
+		double d = pl->n[0] * p[0] + pl->n[1] * p[1] + pl->n[2] * p[2] - pl->dist;
+		node = n->child[d < 0];
+	}
+	return b->leaves[-1 - node].contents;
+}
+
 static void bbox(const int16_t mins[3], const int16_t maxs[3], int16_t c[3], int16_t h[3])
 {
 	for (int k = 0; k < 3; k++) {
@@ -511,6 +523,41 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 				v->yaw = (int16_t) yaw;
 				v->pitch = 0;
 			}
+		}
+	}
+	if (has_spawn) {
+		/* near-geometry views for the slow path: the floor right under the
+		   eye, and a wall at contact distance (12 units from it, about the
+		   player's radius) */
+		qw_view *v = &views[nviews++];
+		*v = views[0];
+		v->pitch = 60;
+
+		/* the first of the 4 axial directions from the spawn that meets a
+		   SOLID wall within 512 units (liquids are not walls) */
+		for (int k = 0; k < 4; k++) {
+			double yaw = (sa + 90.0 * k) * M_PI / 180.0, p[3] = { so[0], so[1], so[2] + 22 };
+			double dx = cos(yaw), dy = sin(yaw);
+			int hit = 0;
+			for (int step = 0; step < 128 && !hit; step++) {
+				double q[3] = { p[0] + dx * 4, p[1] + dy * 4, p[2] };
+				int c = point_contents(b, root, q);
+				if (c == -2)
+					hit = 1;                         /* CONTENTS_SOLID */
+				else if (c != -1)
+					break;                           /* liquid: try another way */
+				else
+					memcpy(p, q, sizeof p);
+			}
+			if (!hit)
+				continue;
+			v = &views[nviews++];
+			v->pos[0] = (int32_t) lround(p[0] - dx * 12);
+			v->pos[1] = (int32_t) lround(p[1] - dy * 12);
+			v->pos[2] = (int32_t) lround(p[2]);
+			v->yaw    = (int16_t) (lround(sa + 90.0 * k) % 360);
+			v->pitch  = 0;
+			break;
 		}
 	}
 

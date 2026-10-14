@@ -566,3 +566,22 @@ followed by R0-R4.
   - `scripts/headless.sh` takes `EMU_ARGS` (e.g. `-interpreter`).
   - **Controls:** the pad reader no longer filters on the pad type (it
     dropped PCSX-Redux's input), and the overlay shows the pad state.
+- **R3.3 (functional, C reference)** Slow path for near polygons. Full
+  detail in `docs/porting-notes.md` §12.2.
+  - `engine/r_slow.c`, called from the asm careful loops:
+    - view transform;
+    - clip codes, then clipping against the near plane **and the four
+      frustum planes** (idea taken from the GBA Quake
+      prototype);
+    - crack-free per-edge subdivision (split on screen length > 96 px or
+      depth ratio > 4/3);
+    - raw `POLY_FT3` emission into the world bucket.
+  - The cook adds two near bench views: the floor at 60° pitch, and a wall
+    at contact distance. The camera stays in empty space: the first attempt
+    landed inside a water volume.
+  - Images match the reference on every view, including the wall at
+    contact. Cost in C: up to 250 k cycles on near views. The asm port is
+    next.
+  - Profiler: `r_slow` stage and a `slowtri` counter; slow-path timing uses
+    16-bit timer deltas (immune to the wrap-IRQ race that produced bogus
+    500 k-cycle maxima).
