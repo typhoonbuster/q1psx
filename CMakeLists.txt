@@ -16,12 +16,12 @@ project(
 file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS engine/*.c engine/*.s)
 
 psn00bsdk_add_executable(q1psx GPREL ${ENGINE_SOURCES})
-target_include_directories(q1psx PRIVATE engine formats)
+target_include_directories(q1psx PRIVATE engine)
 
-# The engine maps cooked structs straight onto byte blobs (QBS/QSF/QTX/PAK)
-# everywhere — the same idiom Quake itself relies on. Turn off the two -O2
-# assumptions that idiom violates: type-based alias analysis, and "signed
-# arithmetic never overflows".
+# The engine maps cooked structs straight onto byte blobs — the same idiom
+# Quake itself relies on. Turn off the two -O2 assumptions that idiom
+# violates: type-based alias analysis, and "signed arithmetic never
+# overflows".
 target_compile_options(q1psx PRIVATE -fno-strict-aliasing -fwrapv)
 
 # --- optional Quake game data on the disc ------------------------------------
@@ -44,39 +44,10 @@ else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
 endif()
 
-# Cooked assets (scripts/cook.sh -> cooked/). The disc carries all four fidelity
-# levels: START<N>.QTX / START<N>.QSF for N = 0..3 (low/medium/high/ultra, the
-# fidelity_t enum order). The BSP tree and wireframe geometry do not vary by
-# fidelity and ship once as START.QBS / START.QGE.
+# Cooked assets: the cook tool and its formats land in roadmap step R2
+# (see docs/architecture.md). Until then the disc carries no cooked data;
+# iso.xml still expands @COOKED_ENTRIES@, so keep the variable defined.
 set(COOKED_ENTRIES "")
-set(_fids low medium high ultra)
-set(_n 0)
-foreach(_fid ${_fids})
-	if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qtx")
-		message(STATUS "q1psx: bundling cooked/id1/${_fid}/start.qtx as START${_n}.QTX")
-		string(APPEND COOKED_ENTRIES
-			"<file name=\"START${_n}.QTX\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qtx\" />\n\t\t\t")
-	endif()
-	if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qsrf")
-		message(STATUS "q1psx: bundling cooked/id1/${_fid}/start.qsrf as START${_n}.QSF")
-		string(APPEND COOKED_ENTRIES
-			"<file name=\"START${_n}.QSF\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/${_fid}/start.qsrf\" />\n\t\t\t")
-	endif()
-	math(EXPR _n "${_n} + 1")
-endforeach()
-if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qgeo")
-	message(STATUS "q1psx: bundling cooked/id1/common/start.qgeo as START.QGE")
-	string(APPEND COOKED_ENTRIES
-		"<file name=\"START.QGE\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qgeo\" />\n\t\t\t")
-endif()
-if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qbsp")
-	message(STATUS "q1psx: bundling cooked/id1/common/start.qbsp as START.QBS")
-	string(APPEND COOKED_ENTRIES
-		"<file name=\"START.QBS\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/common/start.qbsp\" />")
-endif()
-if(COOKED_ENTRIES STREQUAL "")
-	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")
-endif()
 
 # --- CD image ---------------------------------------------------------------
 psn00bsdk_add_cd_image(

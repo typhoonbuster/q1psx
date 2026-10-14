@@ -43,6 +43,11 @@ solved, two checks are used:
 | 4.3 | One cooked texture displayed (2D sprite) | required | — |
 | 5.x | BSP render wireframe → textured, framerate measured | required | recommended |
 | 6.x | Movement + floor/wall collisions correct | required | required (controller feel) |
+| R0 | Skeleton: build + CD image + headless boot clean | headless | — |
+| R1.x | Empty frame on screen + its cycle cost; bench numbers stable across runs | headless bench + GUI | recommended (timing differs from emulators) |
+| R2.x | Cooked data passes the host validator; loads with no error | host + headless | — |
+| R3.x | Bench cycles per stage on every viewpoint; `start.bsp` 60 fps, no hole / flicker / warp | headless bench + GUI (an on-screen look) | required (final 60 fps verdict) |
+| R4.x | Walls, floors, stairs, jump feel right | GUI | required (controller feel) |
 | 7.x | `progs.dat` executed: player spawn, doors/buttons | required | — |
 | 8.x | Enemy + shotgun + HUD working | required | recommended |
 | 9.x | SPU SFX; CD-DA/XA music | required | required (SPU mixing + CD-DA playback differ in emu) |

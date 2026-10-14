@@ -3,8 +3,10 @@
 	Processed by CMake, consumed by mkpsxiso. Paths are relative to the build
 	directory unless prefixed with ${PROJECT_SOURCE_DIR}.
 
-	Cooked Quake assets (BSP/textures/lightmaps converted offline) will be added
-	here from Phase 4 onward. Raw pak0.pak is never placed on the disc directly.
+	Cooked Quake assets (the COOKED_ENTRIES slot) come back with the cook
+	tool in roadmap step R2. pak0.pak is bundled from local.env (the PAK0_ENTRY
+	slot) for now; whether the final disc carries it raw or only cooked data is
+	decided in R2.
 -->
 <iso_project>
 	<track type="data">

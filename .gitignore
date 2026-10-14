@@ -44,7 +44,6 @@ rogue/
 !/third_party/README.md
 
 # --- Host tool build output ---
-/tools/mathtest/mathtest
 /tools/qcook/qcook
 
 # --- Editor / OS ---

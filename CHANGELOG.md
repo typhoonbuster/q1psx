@@ -427,3 +427,27 @@ subdivision + a cleaner near-clip. Then the full `cooked/` tree and
     earlier runtime L2/R2 subdivision / far-clip A/B knobs. Overlay shows the
     active level. Headless boot clean (`START2.*` = high). On-screen check +
     the frame rate at a lower fidelity pending.
+
+## [unreleased] — 2026-10-14
+
+Phases 2-6 reached ~20 fps on `start.bsp` (no lighting, no models) against a
+constant-60 fps target. From here the engine is built performance first,
+with **the whole renderer hand-written in MIPS assembly**. Architecture:
+`docs/architecture.md` (validated: 320 × 240). Roadmap phases 2-6 are
+followed by R0-R4.
+
+### R0 — Skeleton
+
+- **R0.1** The phases 2-6 code (up to `83c20c7`) removed from master:
+  `engine/`, `formats/`, `tools/qcook/`, `tools/mathtest/`,
+  `tools/gen_sintab.c`, `scripts/cook.sh`. Kept: CMake build, presets, ISO
+  config, `scripts/run-emu.sh`, docs, `third_party/` notes.
+  `CMakeLists.txt` no longer bundles cooked assets (back in R2) or adds the
+  `formats/` include dir. A placeholder `engine/main.c` (solid background,
+  double buffer, `VSync` loop) keeps the build, CD image and headless boot
+  check green — headless boot prints `q1psx: R0 skeleton`, no exception.
+- **R0.2** `docs/architecture.md` validated, with its plan: phases
+  2-6 summed up, then the roadmap (R0 skeleton, R1 perf
+  skeleton + benchmark harness, R2 data + `qcook`, R3 asm renderer, R4
+  collision + movement), then Phase 7+ unchanged. `docs/porting-notes.md`,
+  `TESTING.md`, `README.md` updated.

@@ -6,6 +6,9 @@ PlayStation 1, written from the original
 [`PSn00bSDK`](https://github.com/Lameguy64/PSn00bSDK) only.
 
 > ⚠️ Very early development. See [`CHANGELOG.md`](CHANGELOG.md) for progress.
+>
+> The renderer is hand-written MIPS assembly — design in
+> [`docs/architecture.md`](docs/architecture.md).
 
 ## What you need
 
@@ -59,8 +62,8 @@ Details and fish notes: [`third_party/README.md`](third_party/README.md).
 
 ## Build
 
-> Nothing to build yet: the engine skeleton lands in Phase 2. The procedure
-> below is the one that will be used.
+> The project is at step R0: the image boots to a solid background. The asset cooker
+> (and its `scripts/cook.sh` step) returns in R2.
 
 ```bash
 cmake --preset default .      # configure (toolchain = $PSN00BSDK_LIBS/cmake/sdk.cmake)
@@ -79,8 +82,9 @@ duckstation-qt -batch build/q1psx.cue
 
 | Path | Role |
 |---|---|
+| `docs/architecture.md` | Engine design: budgets, memory map, formats, asm renderer |
 | `docs/porting-notes.md` | Log of porting choices (float→fixed, formats, memory) |
-| `engine/` | PS1 engine code (C, PSn00bSDK) |
+| `engine/` | PS1 engine code (C + hand-written MIPS asm renderer, PSn00bSDK) |
 | `tools/` | PC asset-conversion tools ("cooking") |
 | `iso/` | `mkpsxiso` config, boot files |
 | `scripts/` | `fetch_shareware.sh`, build/test helpers |
