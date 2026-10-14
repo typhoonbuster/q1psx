@@ -485,3 +485,12 @@ followed by R0-R4.
   into our packet arena; there is no need for a font of our own. L1+R1 toggles
   the overlay, which now also shows the pad state. Headless: pad driver up,
   bench unchanged.
+
+### R2 — Data
+
+- **R2.1** Fixed memory map + CD loader. `engine/mem.{c,h}`: a static 1 MB
+  level arena with a bump allocator, reset on map load, plus mark/release for
+  transient data. No runtime heap. `engine/cd.{c,h}`: whole-file loads into
+  the arena (double speed, `CdReadRetry` ×3). Boot sanity check: `HELLO.TXT`
+  reads back 142 B, sum 0x2E47, the same as in phase 2. BSS is now 1.25 MB (2 × 96 KB
+  packet arenas + the level arena).

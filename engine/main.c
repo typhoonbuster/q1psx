@@ -11,6 +11,8 @@
 #include <psxgpu.h>
 
 #include "bench.h"
+#include "cd.h"
+#include "mem.h"
 #include "pad.h"
 #include "prof.h"
 #include "vid.h"
@@ -102,8 +104,20 @@ int main(void)
 	pad_init();
 	prof_init();
 	vid_set_bg(24, 24, 32);
+	cd_init();
+	mem_level_reset();
 
 	printf("q1psx\n");
+
+	/* CD sanity check: HELLO.TXT is 142 bytes, byte sum 0x2E47 */
+	{
+		uint32_t mark = mem_level_mark(), size = 0, sum = 0;
+		const uint8_t *p = cd_load("\\HELLO.TXT;1", &size);
+		for (uint32_t i = 0; p && i < size; i++)
+			sum += p[i];
+		printf("cd: HELLO.TXT %u bytes, sum 0x%04X\n", size, sum);
+		mem_level_release(mark);
+	}
 
 #ifdef Q1PSX_BENCH
 	run_bench();
