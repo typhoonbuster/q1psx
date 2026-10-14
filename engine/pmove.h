@@ -40,9 +40,17 @@ typedef struct {
 	int walk;             /* held: half speed                          */
 } pmove_cmd_t;
 
+/* engine/p_defs.inc mirrors both layouts for the asm port (engine/pmove.s) */
+_Static_assert(__builtin_offsetof(pmove_t, vel) == 12 && __builtin_offsetof(pmove_t, yaw) == 24 &&
+               __builtin_offsetof(pmove_t, onground) == 32 && __builtin_offsetof(pmove_t, pos_acc) == 40 &&
+               __builtin_offsetof(pmove_t, grav_acc) == 52 && sizeof(pmove_t) == 56, "p_defs.inc PM_*");
+_Static_assert(__builtin_offsetof(pmove_cmd_t, up) == 8 && __builtin_offsetof(pmove_cmd_t, walk) == 16 &&
+               sizeof(pmove_cmd_t) == 20, "p_defs.inc CMD_*");
+
 #define PM_EYE_HEIGHT 22  /* view origin above the box origin (Quake), units */
 
-/* Advance the player one 60 Hz tick. */
+/* Advance the player one 60 Hz tick. The PS1 build links the asm port
+   (engine/pmove.s); engine/pmove.c is its C reference. */
 void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd);
 
 #endif

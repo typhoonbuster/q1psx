@@ -15,7 +15,21 @@ project(
 # --- PS1 executable -----------------------------------------------------------
 file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS engine/*.c engine/*.s)
 
+# The physics' C reference is the specification of its asm port, which the
+# game links (engine/clip.s, engine/pmove.s). The bench links the C one too,
+# renamed, and compares the two call by call (see run_bench in
+# engine/main.c); tools/pmsim runs it on the host.
+set(PHYS_C_REFERENCE ${PROJECT_SOURCE_DIR}/engine/clip.c ${PROJECT_SOURCE_DIR}/engine/pmove.c)
+list(REMOVE_ITEM ENGINE_SOURCES ${PHYS_C_REFERENCE})
+
 psn00bsdk_add_executable(q1psx GPREL ${ENGINE_SOURCES})
+
+# CMake does not scan `.include` in assembly sources: make every asm file
+# depend on the .inc definition files, or editing an offset there leaves
+# stale objects behind (it did: pmove.s kept an old scratchpad map).
+file(GLOB ENGINE_ASM_SOURCES CONFIGURE_DEPENDS engine/*.s)
+file(GLOB ENGINE_ASM_INCLUDES CONFIGURE_DEPENDS engine/*.inc)
+set_source_files_properties(${ENGINE_ASM_SOURCES} PROPERTIES OBJECT_DEPENDS "${ENGINE_ASM_INCLUDES}")
 target_include_directories(q1psx PRIVATE engine formats)
 
 # The engine maps cooked structs straight onto byte blobs — the same idiom
@@ -40,8 +54,13 @@ add_custom_command(TARGET q1psx POST_BUILD
 # no debug overlay. See docs/architecture.md §9.
 option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
 set(Q1PSX_BENCH_FID 2 CACHE STRING "Fidelity level the bench loads (0 low .. 3 ultra)")
+set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics checks only")
 if(Q1PSX_BENCH)
-	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID})
+	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID}
+		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS})
+	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
+	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
+		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c")
 endif()
 
 # --- optional Quake game data on the disc ------------------------------------

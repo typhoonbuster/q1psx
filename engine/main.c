@@ -177,15 +177,200 @@ static void run_frame(int interactive, int dump)
 #define Q1PSX_BENCH_FID 2     /* fidelity level the bench loads (0 low .. 3 ultra) */
 #endif
 
+#ifndef Q1PSX_BENCH_VIEWS
+#define Q1PSX_BENCH_VIEWS 1   /* 0: physics checks only (VIEWS=0 scripts/bench.sh) */
+#endif
+
 #define BENCH_WARMUP 8
 #define BENCH_FRAMES 64
+
+/* The physics' C reference, linked under these names (CMakeLists.txt). */
+q_fixed clip_trace_c(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
+int     clip_contents_c(int hull, const int32_t p[3]);
+void    pmove_step_c(pmove_t *pm, const pmove_cmd_t *cmd);
+
+static uint32_t rng_state = 1;
+
+static uint32_t rng(void)
+{
+	rng_state = rng_state * 1103515245u + 12345u;
+	return rng_state >> 8;
+}
+
+/* a random value in [-r, r] */
+static int32_t rng_pm(int32_t r)
+{
+	return (int32_t) (rng() % (uint32_t) (2 * r + 1)) - r;
+}
+
+/* A random point inside the map's bounding box (sub-units); `open` asks for
+   one in the empty space of hull 1. */
+static void rng_point(int32_t p[3], int open)
+{
+	const qw_node *r = world.root;
+	for (int tries = 0; tries < 200; tries++) {
+		for (int k = 0; k < 3; k++)
+			p[k] = (r->c[k] + rng_pm(r->h[k])) * (CLIP_SUB / QW_VSCALE);
+		if (!open || clip_contents_c(1, p) == QW_CONTENTS_EMPTY)
+			return;
+	}
+}
+
+/* clip.s against clip.c: random sweeps (half from open space, player-move
+   sized; the rest anywhere, up to map-crossing lengths; one in 8 on hull 2)
+   and random contents queries. Every trace_t field must match. */
+static void bench_clip_diff(void)
+{
+	enum { N = 4000 };
+	int      bad = 0, hits = 0, solid = 0;
+	uint32_t cyc_asm = 0, cyc_c = 0;
+	for (int i = 0; i < N; i++) {
+		int32_t s[3], e[3];
+		int     hull = (i & 7) == 7 ? 2 : 1;
+		int32_t len  = (i & 1) ? 32 * CLIP_SUB : (i & 2) ? 512 * CLIP_SUB : 4 * CLIP_SUB;
+		rng_point(s, !(i & 4));
+		for (int k = 0; k < 3; k++)
+			e[k] = s[k] + rng_pm(len);
+		trace_t ta, tc;
+		uint32_t t0 = prof_now();
+		clip_trace(hull, s, e, &ta);
+		uint32_t t1 = prof_now();
+		clip_trace_c(hull, s, e, &tc);
+		uint32_t t2 = prof_now();
+		cyc_asm += prof_cycles(t0, t1);
+		cyc_c   += prof_cycles(t1, t2);
+		hits  += tc.fraction < Q_FIX_ONE;
+		solid += tc.startsolid;
+		if (memcmp(&ta, &tc, sizeof ta)) {
+			if (bad++ < 8)
+				printf("clipdiff MISMATCH hull %d %d %d %d -> %d %d %d\n"
+				       "  asm: ss %d as %d op %d wa %d f %d end %d %d %d n %d %d %d d %d\n"
+				       "  c:   ss %d as %d op %d wa %d f %d end %d %d %d n %d %d %d d %d\n",
+				       hull, (int) s[0], (int) s[1], (int) s[2], (int) e[0], (int) e[1], (int) e[2],
+				       ta.startsolid, ta.allsolid, ta.inopen, ta.inwater, (int) ta.fraction,
+				       (int) ta.endpos[0], (int) ta.endpos[1], (int) ta.endpos[2],
+				       ta.plane_n[0], ta.plane_n[1], ta.plane_n[2], (int) ta.plane_d,
+				       tc.startsolid, tc.allsolid, tc.inopen, tc.inwater, (int) tc.fraction,
+				       (int) tc.endpos[0], (int) tc.endpos[1], (int) tc.endpos[2],
+				       tc.plane_n[0], tc.plane_n[1], tc.plane_n[2], (int) tc.plane_d);
+		}
+	}
+	int cbad = 0;
+	for (int i = 0; i < N; i++) {
+		int32_t p[3];
+		rng_point(p, 0);
+		int hull = (i & 3) == 3 ? 2 : 1;
+		if (clip_contents(hull, p) != clip_contents_c(hull, p))
+			cbad++;
+	}
+	printf("clipdiff traces %d (%d hit, %d start in solid) mismatches %d; contents %d mismatches %d; "
+	       "cycles/trace asm %u c %u\n", N, hits, solid, bad, N, cbad,
+	       (unsigned) (cyc_asm / N), (unsigned) (cyc_c / N));
+}
+
+/* pmove.s (on clip.s) against pmove.c (on clip.c): a random walk with
+   random commands, turns, jumps, short noclip flights and a teleport to a
+   random open spot every 300 ticks. Both run each tick from the same state;
+   every pmove_t field must match (on a mismatch the asm side is resynced to
+   the reference so the count stays meaningful). */
+static void bench_pmove_diff(void)
+{
+	enum { TICKS = 6000 };
+	pmove_t     a, c;
+	pmove_cmd_t cmd;
+	int         bad = 0;
+	uint32_t    cyc_asm = 0, cyc_c = 0;
+	memset(&a, 0, sizeof a);
+	memset(&cmd, 0, sizeof cmd);
+	for (int t = 0; t < TICKS; t++) {
+		int phase = t % 300;
+		if (phase == 0) {
+			rng_point(a.pos, 1);
+			a.vel[0] = a.vel[1] = a.vel[2] = 0;
+			a.noclip = 0;
+		}
+		a.noclip = phase >= 250 && phase < 280;
+		if (t % 30 == 0) {
+			cmd.fwd  = (int) (rng() % 3) - 1;
+			cmd.side = (int) (rng() % 3) - 1;
+			cmd.up   = (int) (rng() % 3) - 1;
+			cmd.walk = (rng() & 7) == 0;
+			a.pitch  = rng_pm(1000);
+		}
+		cmd.jump = (rng() & 31) == 0;
+		a.yaw += rng_pm(48);
+		c = a;
+		pmove_t before = a;
+		uint32_t t0 = prof_now();
+		pmove_step(&a, &cmd);
+		uint32_t t1 = prof_now();
+		pmove_step_c(&c, &cmd);
+		uint32_t t2 = prof_now();
+		cyc_asm += prof_cycles(t0, t1);
+		cyc_c   += prof_cycles(t1, t2);
+		if (memcmp(&a, &c, sizeof a)) {
+			if (bad++ < 8)
+				printf("pmdiff MISMATCH tick %d noclip %d cmd %d %d %d %d %d\n"
+				       "  asm: pos %d %d %d vel %d %d %d g %d acc %d %d %d %d\n"
+				       "  c:   pos %d %d %d vel %d %d %d g %d acc %d %d %d %d\n",
+				       t, c.noclip, cmd.fwd, cmd.side, cmd.up, cmd.jump, cmd.walk,
+				       (int) a.pos[0], (int) a.pos[1], (int) a.pos[2], (int) a.vel[0], (int) a.vel[1],
+				       (int) a.vel[2], a.onground, (int) a.pos_acc[0], (int) a.pos_acc[1],
+				       (int) a.pos_acc[2], (int) a.grav_acc,
+				       (int) c.pos[0], (int) c.pos[1], (int) c.pos[2], (int) c.vel[0], (int) c.vel[1],
+				       (int) c.vel[2], c.onground, (int) c.pos_acc[0], (int) c.pos_acc[1],
+				       (int) c.pos_acc[2], (int) c.grav_acc);
+			if (bad == 1) {
+				pmove_t d = before;
+				pmove_step(&d, &cmd);
+				const int32_t *spad = (const int32_t *) 0x1F800000;
+				for (int i = 0; i < 0x1A0 / 4; i += 8)
+					printf("SPAD %03x: %d %d %d %d %d %d %d %d\n", i * 4, (int) spad[i], (int) spad[i + 1],
+					       (int) spad[i + 2], (int) spad[i + 3], (int) spad[i + 4], (int) spad[i + 5],
+					       (int) spad[i + 6], (int) spad[i + 7]);
+			}
+			a = c;
+		}
+	}
+	printf("pmdiff ticks %d mismatches %d; cycles/tick asm %u c %u\n", TICKS, bad,
+	       (unsigned) (cyc_asm / TICKS), (unsigned) (cyc_c / TICKS));
+
+	/* the same without clip hulls (every trace returns at once): the cost of
+	   pmove itself, without its traces */
+	const qw_clipnode *cn = world.clipnodes;
+	world.clipnodes = NULL;
+	cyc_asm = cyc_c = 0;
+	cmd.fwd = 1;
+	cmd.side = 1;
+	cmd.jump = 0;
+	for (int t = 0; t < 1000; t++) {
+		a.noclip = 0;
+		a.pos[2] = 0;
+		c = a;
+		pmove_t before = a;
+		uint32_t t0 = prof_now();
+		pmove_step(&a, &cmd);
+		uint32_t t1 = prof_now();
+		pmove_step_c(&c, &cmd);
+		uint32_t t2 = prof_now();
+		cyc_asm += prof_cycles(t0, t1);
+		cyc_c   += prof_cycles(t1, t2);
+	}
+	world.clipnodes = cn;
+	printf("pmdiff without traces: cycles/tick asm %u c %u\n", (unsigned) (cyc_asm / 1000),
+	       (unsigned) (cyc_c / 1000));
+}
 
 static void run_bench(void)
 {
 	static char names[16][8];
 
 	printf("bench start\n");
-	for (uint32_t v = 0; world_ok && v < world.num_views && v < 16; v++) {
+	if (world_ok) {
+		bench_clip_diff();
+		bench_pmove_diff();
+	}
+	for (uint32_t v = 0; Q1PSX_BENCH_VIEWS && world_ok && v < world.num_views && v < 16; v++) {
 		const qw_view *vw = &world.views[v];
 		cam.pos[0] = vw->pos[0] * CLIP_SUB;
 		cam.pos[1] = vw->pos[1] * CLIP_SUB;

@@ -1,3 +1,12 @@
+/*
+ * q1psx — player movement, C reference.
+ *
+ * The PS1 build links the asm port (engine/pmove.s); this file is the
+ * specification it follows (see engine/clip.c for how the two are kept
+ * identical). 32-bit arithmetic only, plus 32 x 32 -> 64-bit products: every
+ * velocity component is capped at PM_MAXVELOCITY, which bounds all of them.
+ */
+
 #include <stdint.h>
 #include <string.h>
 #ifdef PM_DEBUG
@@ -19,21 +28,41 @@
 #define PM_GRAVITY     800
 #define PM_JUMPSPEED   270
 #define PM_STEPSIZE    18
+#define PM_MAXVELOCITY 2000    /* sv_maxvelocity, per axis */
 
 #define FLOOR_NZ       2867    /* 0.7 * 4096 — a normal steeper than this walks */
 #define STOP_V         2       /* kill sub-2 u/s creep after a clip            */
 #define NOCLIP_SPEED   4       /* units/frame in free flight (x4 unless walking) */
+#define INV_SQRT2      2896    /* 1/sqrt(2) x4096: diagonal wish direction    */
 
-static int32_t isqrt32(uint64_t v)
+/* floor(sqrt(v)), bit by bit: no division, exact */
+static int32_t isqrt32(uint32_t v)
 {
-	return (int32_t) q_isqrt64(v);
+	uint32_t res = 0, bit = 1u << 30;
+	while (bit > v)
+		bit >>= 2;
+	while (bit) {
+		if (v >= res + bit) {
+			v  -= res + bit;
+			res = (res >> 1) + bit;
+		} else {
+			res >>= 1;
+		}
+		bit >>= 2;
+	}
+	return (int32_t) res;
 }
 
 /* --------------------------------------------------------------- vec utils */
 
-static int64_t dot_iq(const int32_t v[3], const int16_t n[3])   /* int . q12 -> q12*unit */
+static int32_t dot_iq(const int32_t v[3], const int16_t n[3])   /* int . q12 -> q12*unit */
 {
-	return (int64_t) v[0] * n[0] + (int64_t) v[1] * n[1] + (int64_t) v[2] * n[2];
+	return v[0] * n[0] + v[1] * n[1] + v[2] * n[2];
+}
+
+static int32_t dot_ii(const int32_t a[3], const int32_t b[3])
+{
+	return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 }
 
 /* Make v . n >= 0 with the smallest change, on n's dominant axis. Integer
@@ -42,7 +71,7 @@ static int64_t dot_iq(const int32_t v[3], const int16_t n[3])   /* int . q12 -> 
    every bump (the player stuck on ramps). */
 static void push_out(int32_t v[3], const int16_t n[3])
 {
-	int64_t d = dot_iq(v, n);
+	int32_t d = dot_iq(v, n);
 	if (d >= 0)
 		return;
 	int m = 0;
@@ -50,16 +79,16 @@ static void push_out(int32_t v[3], const int16_t n[3])
 		if ((n[k] < 0 ? -n[k] : n[k]) > (n[m] < 0 ? -n[m] : n[m]))
 			m = k;
 	int32_t a = n[m] < 0 ? -n[m] : n[m];
-	int32_t s = (int32_t) ((-d + a - 1) / a);
+	int32_t s = (-d + a - 1) / a;
 	v[m] += n[m] < 0 ? -s : s;
 }
 
 /* Slide `v` (units/s) along plane normal `n` (x4096). overbounce fixed at 1. */
 static void clip_velocity(const int32_t v[3], const int16_t n[3], int32_t out[3])
 {
-	int32_t backoff = (int32_t) (dot_iq(v, n) >> Q_FIX_SHIFT);
+	int32_t backoff = dot_iq(v, n) >> Q_FIX_SHIFT;
 	for (int i = 0; i < 3; i++) {
-		int32_t change = (int32_t) (((int64_t) n[i] * backoff) >> Q_FIX_SHIFT);
+		int32_t change = (n[i] * backoff) >> Q_FIX_SHIFT;
 		out[i] = v[i] - change;
 		if (out[i] > -STOP_V && out[i] < STOP_V)
 			out[i] = 0;
@@ -92,7 +121,7 @@ static int slide_move(pmove_t *pm, const int32_t move[3])
 		   passes: fixing one plane of a crease can tip it into the other) */
 		int32_t disp[3], end[3];
 		for (int k = 0; k < 3; k++)
-			disp[k] = (int32_t) (((int64_t) rem[k] * time_left + Q_FIX_ONE / 2) >> Q_FIX_SHIFT);
+			disp[k] = (rem[k] * time_left + Q_FIX_ONE / 2) >> Q_FIX_SHIFT;
 		for (int pass = 0; pass < 2; pass++)
 			for (int i = 0; i < nplanes; i++)
 				push_out(disp, planes[i]);
@@ -131,7 +160,7 @@ static int slide_move(pmove_t *pm, const int32_t move[3])
 			blocked |= 2;
 		}
 
-		time_left -= (q_fixed) (((int64_t) time_left * tr.fraction) >> Q_FIX_SHIFT);
+		time_left -= (time_left * tr.fraction) >> Q_FIX_SHIFT;
 
 		if (nplanes >= 5) {
 			vel[0] = vel[1] = vel[2] = 0;
@@ -167,30 +196,25 @@ static int slide_move(pmove_t *pm, const int32_t move[3])
 			/* slide along the crease of the two planes. Quake scales by the
 			   unnormalised cross product, i.e. by sin^2 of the planes'
 			   angle: falling into a 45-degree wedge halved the speed every
-			   tick. Project onto the crease properly. */
+			   tick. Project onto the crease properly: speed along the unit
+			   crease sp = dir.vel / |dir|, then vel = dir * sp / |dir|. */
 			int32_t dir[3];
-			dir[0] = (int32_t) (((int64_t) planes[0][1] * planes[1][2]
-			                   - (int64_t) planes[0][2] * planes[1][1]) >> Q_FIX_SHIFT);
-			dir[1] = (int32_t) (((int64_t) planes[0][2] * planes[1][0]
-			                   - (int64_t) planes[0][0] * planes[1][2]) >> Q_FIX_SHIFT);
-			dir[2] = (int32_t) (((int64_t) planes[0][0] * planes[1][1]
-			                   - (int64_t) planes[0][1] * planes[1][0]) >> Q_FIX_SHIFT);
-			int64_t len2 = (int64_t) dir[0] * dir[0] + (int64_t) dir[1] * dir[1]
-			             + (int64_t) dir[2] * dir[2];
-			if (!len2) {                  /* parallel planes: wedged */
+			dir[0] = (planes[0][1] * planes[1][2] - planes[0][2] * planes[1][1]) >> Q_FIX_SHIFT;
+			dir[1] = (planes[0][2] * planes[1][0] - planes[0][0] * planes[1][2]) >> Q_FIX_SHIFT;
+			dir[2] = (planes[0][0] * planes[1][1] - planes[0][1] * planes[1][0]) >> Q_FIX_SHIFT;
+			int32_t len = isqrt32((uint32_t) dot_ii(dir, dir));
+			if (!len) {                   /* parallel planes: wedged */
 				vel[0] = vel[1] = vel[2] = 0;
 				break;
 			}
-			int64_t d = (int64_t) dir[0] * vel[0] + (int64_t) dir[1] * vel[1]
-			          + (int64_t) dir[2] * vel[2];
-			vel[0] = (int32_t) (dir[0] * d / len2);
-			vel[1] = (int32_t) (dir[1] * d / len2);
-			vel[2] = (int32_t) (dir[2] * d / len2);
+			int32_t sp = dot_ii(dir, vel) / len;
+			vel[0] = dir[0] * sp / len;
+			vel[1] = dir[1] * sp / len;
+			vel[2] = dir[2] * sp / len;
 		}
 
 		/* stop dead if the result reverses the original push (sloping corners) */
-		if ((int64_t) vel[0] * primal[0] + (int64_t) vel[1] * primal[1]
-		  + (int64_t) vel[2] * primal[2] <= 0) {
+		if (dot_ii(vel, primal) <= 0) {
 			vel[0] = vel[1] = vel[2] = 0;
 			break;
 		}
@@ -245,9 +269,7 @@ static void categorize_position(pmove_t *pm)
 
 static void ground_friction(pmove_t *pm)
 {
-	int32_t speed = isqrt32((uint64_t) ((int64_t) pm->vel[0] * pm->vel[0]
-	                                  + (int64_t) pm->vel[1] * pm->vel[1]
-	                                  + (int64_t) pm->vel[2] * pm->vel[2]));
+	int32_t speed = isqrt32((uint32_t) dot_ii(pm->vel, pm->vel));
 	if (speed < 1)
 		return;
 
@@ -257,8 +279,10 @@ static void ground_friction(pmove_t *pm)
 	if (newspeed < 0)
 		newspeed = 0;
 
+	/* one division: scale = newspeed / speed in 0.16 fixed point */
+	int32_t scale = (int32_t) (((uint32_t) newspeed << 16) / (uint32_t) speed);
 	for (int k = 0; k < 3; k++)
-		pm->vel[k] = (int32_t) ((int64_t) pm->vel[k] * newspeed / speed);
+		pm->vel[k] = (pm->vel[k] * scale + (1 << 15)) >> 16;
 }
 
 /* `cap` limits how fast we may end up going along wishdir this step; `rate` is
@@ -267,9 +291,7 @@ static void ground_friction(pmove_t *pm)
    strafing possible while keeping straight-line air control weak. */
 static void accelerate(pmove_t *pm, const int32_t wishdir[3], int32_t cap, int32_t rate)
 {
-	int64_t d = (int64_t) pm->vel[0] * wishdir[0] + (int64_t) pm->vel[1] * wishdir[1]
-	          + (int64_t) pm->vel[2] * wishdir[2];
-	int32_t cur = (int32_t) (d >> Q_FIX_SHIFT);   /* speed along wishdir */
+	int32_t cur = dot_ii(pm->vel, wishdir) >> Q_FIX_SHIFT;   /* speed along wishdir */
 
 	int32_t add = cap - cur;
 	if (add <= 0)
@@ -280,7 +302,7 @@ static void accelerate(pmove_t *pm, const int32_t wishdir[3], int32_t cap, int32
 		accel = add;
 
 	for (int k = 0; k < 3; k++)
-		pm->vel[k] += (int32_t) (((int64_t) wishdir[k] * accel) >> Q_FIX_SHIFT);
+		pm->vel[k] += (wishdir[k] * accel) >> Q_FIX_SHIFT;
 }
 
 /* ----------------------------------------------------------------- step-up */
@@ -314,22 +336,19 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 
 	categorize_position(pm);
 
-	/* wish direction + speed */
+	/* wish direction (unit, x4096: forward and right are orthogonal, so a
+	   diagonal only needs 1/sqrt(2)) + speed */
 	int32_t wishdir[3] = {
 		fwd[0] * cmd->fwd + right[0] * cmd->side,
 		fwd[1] * cmd->fwd + right[1] * cmd->side,
 		fwd[2] * cmd->fwd + right[2] * cmd->side,
 	};
+	if (cmd->fwd && cmd->side)
+		for (int k = 0; k < 3; k++)
+			wishdir[k] = (wishdir[k] * INV_SQRT2 + Q_FIX_ONE / 2) >> Q_FIX_SHIFT;
 	int32_t wishspeed = 0;
-	if (cmd->fwd || cmd->side) {
-		int32_t len = isqrt32((uint64_t) ((int64_t) wishdir[0] * wishdir[0]
-		                                + (int64_t) wishdir[1] * wishdir[1]
-		                                + (int64_t) wishdir[2] * wishdir[2]));
-		if (len > 0)
-			for (int k = 0; k < 3; k++)
-				wishdir[k] = (int32_t) (((int64_t) wishdir[k] << Q_FIX_SHIFT) / len);
+	if (cmd->fwd || cmd->side)
 		wishspeed = cmd->walk ? PM_MAXSPEED / 2 : PM_MAXSPEED;
-	}
 
 	/* jump */
 	if (cmd->jump && pm->onground) {
@@ -353,6 +372,10 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 		pm->grav_acc %= PM_HZ;
 	} else {
 		pm->grav_acc = 0;
+	}
+	for (int k = 0; k < 3; k++) {
+		if (pm->vel[k] >  PM_MAXVELOCITY) pm->vel[k] =  PM_MAXVELOCITY;
+		if (pm->vel[k] < -PM_MAXVELOCITY) pm->vel[k] = -PM_MAXVELOCITY;
 	}
 
 	/* this frame's displacement, with sub-unit carry so slow walking moves */

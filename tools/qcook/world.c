@@ -398,6 +398,17 @@ static void bbox(const int16_t mins[3], const int16_t maxs[3], int16_t c[3], int
 	}
 }
 
+/* depth of a clip hull (engine/clip.c keeps at most 64 pending splits, one
+   per node on the current path) */
+static int clip_depth(const bsp_t *b, int n)
+{
+	if (n < 0)
+		return 0;
+	int a = clip_depth(b, b->clipnodes[n].child[0]);
+	int c = clip_depth(b, b->clipnodes[n].child[1]);
+	return 1 + (a > c ? a : c);
+}
+
 void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
                  const char *out_path)
 {
@@ -613,24 +624,27 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 				qp.n[k] = clamp16(lround(pl->n[k] * 4096.0));
 			qp.type = (uint8_t) (pl->type < 3 ? pl->type : 3);
 			qp.pad  = 0;
-			qp.dist = (int32_t) lround((double) pl->dist * 4096.0);
+			qp.dist = (int32_t) lround((double) pl->dist * 4096.0 * QW_CLIP_SUB);
 			buf_put(&f, &qp, sizeof qp);
 		}
 		for (int i = 0; i < b->num_clipnodes; i++) {
 			const bsp_clipnode *cn = &b->clipnodes[i];
 			qw_clipnode qc;
-			if (cn->planenum < 0 || cn->planenum >= b->num_planes)
-				die("clipnode %d: bad plane", i);
+			if (cn->planenum < 0 || cn->planenum >= b->num_planes || cn->planenum * 3 > 0xffff)
+				die("clipnode %d: bad plane (or more than 21845 planes)", i);
 			for (int c = 0; c < 2; c++)
 				if (cn->child[c] >= b->num_clipnodes)
 					die("clipnode %d: child out of range", i);
-			qc.plane    = (uint16_t) cn->planenum;
+			qc.plane3   = (uint16_t) (cn->planenum * 3);
 			qc.child[0] = (int16_t) cn->child[0];
 			qc.child[1] = (int16_t) cn->child[1];
 			qc.pad      = 0;
 			buf_put(&f, &qc, sizeof qc);
 		}
 		h.len_clip = (uint32_t) f.len - h.ofs_clip;
+		for (int hull = 1; hull <= 2; hull++)
+			if (clip_depth(b, wm->headnode[hull]) > 64)
+				die("clip hull %d deeper than 64 nodes", hull);
 	}
 	memcpy(f.p, &h, sizeof h);
 

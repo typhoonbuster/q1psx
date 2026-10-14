@@ -33,6 +33,13 @@ typedef struct {
 	int32_t        hull1_root, hull2_root;
 } world_t;
 
+#ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */
+_Static_assert(__builtin_offsetof(world_t, planes)     == 76, "p_defs.inc W_PLANES");
+_Static_assert(__builtin_offsetof(world_t, clipnodes)  == 80, "p_defs.inc W_CLIPNODES");
+_Static_assert(__builtin_offsetof(world_t, hull1_root) == 84, "p_defs.inc W_HULL1");
+_Static_assert(__builtin_offsetof(world_t, hull2_root) == 88, "p_defs.inc W_HULL2");
+#endif
+
 extern world_t world;
 extern const char *const fidelity_name[FIDELITY_LEVELS];
 
