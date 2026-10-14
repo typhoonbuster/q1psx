@@ -595,6 +595,43 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	h.len_faces = (uint32_t) o.stream.len;
 	{ static const uint8_t tail[QW_STREAM_TAIL]; buf_put(&f, tail, sizeof tail); }
 	h.ofs_views = (uint32_t) f.len;  buf_put(&f, views, (size_t) nviews * sizeof *views);
+	buf_align4(&f);
+
+	/* clip hulls 1 and 2 (all BSP planes, all clipnodes) */
+	{
+		h.ofs_clip = (uint32_t) f.len;
+		qw_clip_header ch;
+		ch.num_planes    = (uint32_t) b->num_planes;
+		ch.num_clipnodes = (uint32_t) b->num_clipnodes;
+		ch.hull1_root    = wm->headnode[1];
+		ch.hull2_root    = wm->headnode[2];
+		buf_put(&f, &ch, sizeof ch);
+		for (int i = 0; i < b->num_planes; i++) {
+			const bsp_plane *pl = &b->planes[i];
+			qw_plane qp;
+			for (int k = 0; k < 3; k++)
+				qp.n[k] = clamp16(lround(pl->n[k] * 4096.0));
+			qp.type = (uint8_t) (pl->type < 3 ? pl->type : 3);
+			qp.pad  = 0;
+			qp.dist = (int32_t) lround((double) pl->dist * 4096.0);
+			buf_put(&f, &qp, sizeof qp);
+		}
+		for (int i = 0; i < b->num_clipnodes; i++) {
+			const bsp_clipnode *cn = &b->clipnodes[i];
+			qw_clipnode qc;
+			if (cn->planenum < 0 || cn->planenum >= b->num_planes)
+				die("clipnode %d: bad plane", i);
+			for (int c = 0; c < 2; c++)
+				if (cn->child[c] >= b->num_clipnodes)
+					die("clipnode %d: child out of range", i);
+			qc.plane    = (uint16_t) cn->planenum;
+			qc.child[0] = (int16_t) cn->child[0];
+			qc.child[1] = (int16_t) cn->child[1];
+			qc.pad      = 0;
+			buf_put(&f, &qc, sizeof qc);
+		}
+		h.len_clip = (uint32_t) f.len - h.ofs_clip;
+	}
 	memcpy(f.p, &h, sizeof h);
 
 	FILE *fp = fopen(out_path, "wb");

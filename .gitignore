@@ -49,6 +49,7 @@ rogue/
 /tools/pktview/pktview
 /tools/pktview/wldref
 /tools/hazcheck/hazcheck
+/tools/pmsim/pmsim
 
 # --- Editor / OS ---
 *.swp

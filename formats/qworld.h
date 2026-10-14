@@ -132,6 +132,31 @@ typedef struct {
 	uint16_t uv[3], pad2;
 } qw_tri;                  /* 12 bytes */
 
+/* Clip hulls (Quake hulls 1 and 2, used by the player / monster traces):
+   qw_clip_header at ofs_clip, then the planes, then the clipnodes. */
+typedef struct {
+	uint32_t num_planes;
+	uint32_t num_clipnodes;
+	int32_t  hull1_root;       /* player-sized hull (32x32x56)        */
+	int32_t  hull2_root;       /* large hull (64x64x88)               */
+} qw_clip_header;
+
+typedef struct {
+	int16_t  n[3];             /* normal x4096                        */
+	uint8_t  type;             /* 0/1/2 axial, 3 general              */
+	uint8_t  pad;
+	int32_t  dist;             /* x4096, world units                  */
+} qw_plane;                    /* 12 bytes */
+
+typedef struct {
+	uint16_t plane;
+	int16_t  child[2];         /* >= 0 clipnode, < 0 Quake CONTENTS_* */
+	uint16_t pad;
+} qw_clipnode;                 /* 8 bytes */
+
+#define QW_CONTENTS_EMPTY  (-1)
+#define QW_CONTENTS_SOLID  (-2)
+
 /* The face stream is followed by at least this many bytes of padding so the
    renderer's 3-at-a-time vertex loads never run off the end. */
 #define QW_STREAM_TAIL 16

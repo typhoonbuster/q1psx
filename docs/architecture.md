@@ -278,8 +278,11 @@ same viewpoint. It is not a second renderer, only the walk logic.
   *Validation: `start.bsp` at 60 fps on every bench viewpoint + a visual
   check (no flicker, nothing vanishing or deforming).*
 
-**R4 — Collision + movement** (C): Quake's hull trace + player move,
-rewritten lean, same algorithms. *Validation: as phase 6.*
+**R4 — Collision + movement**: Quake's hull trace + player move, rewritten
+lean, same algorithms. First in C (the reference, with a host simulator),
+then in asm like the renderer (2026-10-15: everything CPU-heavy goes
+to asm). *Validation: as phase 6, plus identical positions between C,
+asm and the host simulator on the scripted path.*
 
 Then Phase 7 (QuakeC) onward as planned, each phase with a cycle budget
 from §3.

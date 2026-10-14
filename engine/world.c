@@ -100,6 +100,14 @@ int world_load(int fid)
 		l->visframe = 0;
 	}
 
+	if (h->ofs_clip && h->len_clip >= sizeof(qw_clip_header)) {
+		const qw_clip_header *ch = (const qw_clip_header *) (f + h->ofs_clip);
+		world.planes     = (const qw_plane *) (ch + 1);
+		world.clipnodes  = (const qw_clipnode *) (world.planes + ch->num_planes);
+		world.hull1_root = ch->hull1_root;
+		world.hull2_root = ch->hull2_root;
+	}
+
 	world.face_visframe = mem_level_alloc(h->num_faces * 2);
 	if (!world.face_visframe)
 		return 0;

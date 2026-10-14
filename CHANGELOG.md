@@ -603,3 +603,35 @@ followed by R0-R4.
 - **Fidelity switch** (as in phases 2-6): **L2** reloads the map at the next level
   (low → medium → high → ultra), keeping the camera where it is. The overlay
   shows the current level.
+- **R4.1 / R4.2 — Collision + player movement** (C reference). Full detail:
+  `docs/porting-notes.md` §13.
+  - The cook exports the clip hulls (all BSP planes + clipnodes, hulls 1
+    and 2) into QWV2. `engine/clip.c`: a fixed-point port of
+    `SV_RecursiveHullCheck`.
+  - `engine/pmove.c`: phase 6's player physics (Quake `SV_FlyMove`,
+    friction / accel / air accel, jump, step-up), at a fixed 60 Hz tick
+    (one tick per vblank, at most 4 per frame).
+  - The pad now drives the player instead of the free-fly camera:
+    - d-pad: turn / walk;
+    - Square / Circle: strafe;
+    - L1 / R1: look;
+    - Cross: jump;
+    - Triangle: walk slowly;
+    - START: noclip;
+    - SELECT: respawn.
+  - Fixes for sticking on ramps, found with the new host simulator:
+    - positions in 1/8 unit;
+    - the trace interpolates plane distances along the whole sweep, so a
+      rounded split point no longer tips a slide into the slope;
+    - impact points are rounded toward the open side;
+    - slides are kept off every plane already hit;
+    - the crease projection is normalised (Quake's halved the speed in a
+      45° wedge);
+    - a grounded player is snapped to the floor (it used to hover up to 2
+      units above it).
+  - `tools/pmsim`: runs `clip.c` + `pmove.c` on the PC.
+    - Same scripted path as the PS1 bench, with identical positions.
+    - Stress mode over 5000 random segments (983 k units): 0 ticks in
+      solid, 0 blocked with the way ahead open.
+  - Cost on the dynarec: **24 k cycles per tick on average, 54 k max** (4-10 %
+    of a 60 fps frame). The asm port is next (2026-10-15).

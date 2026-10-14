@@ -28,6 +28,9 @@ typedef struct {
 	uint32_t       vis_rowbytes;
 	int32_t        spawn[3], spawn_yaw;
 	int            has_spawn;
+	const qw_plane    *planes;      /* clip hulls (NULL if absent) */
+	const qw_clipnode *clipnodes;
+	int32_t        hull1_root, hull2_root;
 } world_t;
 
 extern world_t world;

@@ -120,8 +120,8 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch)
 	}
 	r_state.rot[9] = r_state.absrot[9] = 0;
 
-	for (int k = 0; k < 3; k++)
-		r_state.cam[k] = pos[k] * QW_VSCALE;
+	for (int k = 0; k < 3; k++)                    /* 1/8 units -> vertex units (x4) */
+		r_state.cam[k] = pos[k] * QW_VSCALE / R_POS_SUB;
 	for (int i = 0; i < 3; i++)
 		r_state.tr[i] = -((r[i * 3] * r_state.cam[0] + r[i * 3 + 1] * r_state.cam[1] +
 		                   r[i * 3 + 2] * r_state.cam[2]) >> 12);

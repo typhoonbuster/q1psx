@@ -969,3 +969,133 @@ asm port (GTE transform and projection, index-based vertex pool) comes next.
   Textures stay 5 pages. Spawn polygons go from 2157 (high) to 996 (low).
 - `FID=0..3 scripts/bench.sh` benches any level
   (`-DQ1PSX_BENCH_FID`).
+
+---
+
+## §13 — Collision and player movement (R4, 2026-10-15)
+
+Same algorithms as phase 6 (§9): `SV_RecursiveHullCheck`, `SV_FlyMove`,
+`SV_WalkMove`'s step-up, friction / accel / air accel. They are rewritten
+against the cooked data, and phase 6's integer-rounding problems are fixed. The C
+version is the reference for the asm port (R4.3).
+
+### 13.1 Data
+
+`qcook` appends a clip section to QWV2:
+
+- `qw_clip_header` holds the counts and the hull 1 / hull 2 roots;
+- then every BSP plane (`qw_plane`, 12 B: normal ×4096, axial type, dist
+  ×4096);
+- then every clipnode (`qw_clipnode`, 8 B: plane, two children, where a
+  child < 0 is a Quake `CONTENTS_*`).
+
+`start.bsp` costs about 60 KB. The renderer never touches it.
+`world_load` points `world.planes` / `world.clipnodes` into the loaded file.
+
+### 13.2 Numbers
+
+- **Positions** are `int32` in **1/8 world unit** (`CLIP_SUB`).
+  - Phase 6 used whole units, which rounded every bump on a gentle ramp to
+    zero.
+  - Plane distances `n·p − dist·8` are ×4096 ×8 and fit `int32` for maps
+    within ±8191 units.
+- **`DIST_EPS`** is one sub-unit (4096), against Quake's 1/32 unit. This
+  margin absorbs the rounding of the next moves along a surface.
+- **Velocities** are integer units/s.
+  - The per-tick displacement is computed by accumulating `vel × 8` per
+    axis and dividing by 60, with the remainder carried over.
+  - Each bump's remaining displacement is rounded to the nearest
+    sub-unit.
+
+### 13.3 Rounding — what made the player stick, and the fixes
+
+All of these were found with `tools/pmsim` (§13.5). Each fix keeps Quake's
+behaviour, minus artefacts that only exist with integers.
+
+1. **Split points bend the sweep.** Quake's recursion materialises the
+   split point `mid` and recurses on `p1→mid`, `mid→p2`. Rounded to whole
+   sub-units, `mid` changes the direction of the sub-segments.
+   - Example: a slide of (0, 40, 10) running along a ramp became (0, 6, 1)
+     after one split, which points *into* the ramp. It started within
+     `DIST_EPS` of the ramp, so every bump returned fraction 0, and the
+     player stopped at the top of the ramp.
+   - Fix: no intermediate points. The recursion carries 16-bit fractions
+     of the whole sweep, and each plane distance is interpolated from the
+     two endpoints (`dist_at`).
+   - The split fraction is solved directly: `(±eps − d_start) /
+     (d_end − d_start)`, truncated toward the start.
+2. **The impact point rounds into the wall.** If the impact is rounded
+   toward the start on every axis, some axes can lose most of the
+   `DIST_EPS` margin. That happens when the motion and the normal disagree
+   on an axis, e.g. walking up a ramp.
+   - Fix: `set_endpos` rounds each axis toward the open side of the plane
+     hit (toward the start where the normal has no component).
+   - Quake's backup loop is kept: it steps back by 1/10 of the sub-segment
+     while the point is in solid, with the sweep's start as the last
+     resort.
+3. **Slides tipped into their plane.** `ClipVelocity` in integers, then
+   the rounding of the displacement, can leave a slide a hair into the
+   plane it should run along. From inside the eps shell the next trace
+   stops at fraction 0. The same plane is then hit twice, and the crease
+   of two identical normals is zero, so the player dead-stops.
+   - Fix: `push_out` makes `v·n ≥ 0` with the smallest change on the
+     normal's dominant axis.
+   - It is applied to the clipped velocity, and to every bump's
+     displacement against all planes hit since the last advance (two
+     passes, for creases).
+4. **"Advanced" is decided by position, not fraction.** A very short
+   impact can round back onto the start with a fraction > 0. Quake then
+   forgets its plane list, so two walls of a corner alternate forever. The
+   list is now cleared only when `endpos` differs from the current
+   position.
+5. **The crease slide is normalised.** Quake projects the velocity on the
+   unnormalised `n0 × n1`, which scales it by sin² of the planes' angle.
+   Falling into a 45° wedge halved the vertical speed on every tick: the
+   player hovered down at −15 u/s. The projection now divides by `|dir|²`.
+6. **The player is snapped to the floor.** `categorize_position` (a
+   2-unit down-trace) sets onground and gravity stops. A landing that
+   ended 1-2 units above the floor stayed there. As in QuakeWorld, the
+   origin now moves to the trace end.
+
+### 13.4 Controls (no free-fly camera any more)
+
+| input | action |
+|---|---|
+| d-pad left / right | turn |
+| d-pad up / down | walk |
+| Square / Circle | strafe |
+| L1 / R1 | look up / down |
+| Cross | jump (noclip: down) |
+| Triangle | walk slowly (noclip: up) |
+| START | noclip |
+| SELECT | respawn |
+| L2 | next fidelity level |
+| L1 + R1 | overlay |
+
+One physics tick per vblank: a 2-vblank frame runs 2 ticks (at most 4).
+
+### 13.5 Verification
+
+- **`tools/pmsim`** (host) compiles `clip.c` + `pmove.c` unchanged.
+  - The default script is the PS1 bench's: settle, run, jump, run north
+    into the end wall (down the stairs, up the ramp), then turn around and
+    come back up the stairs.
+  - The PS1 bench prints the same positions:
+
+    | step | result |
+    |---|---|
+    | settle | 544 288 28 |
+    | 310 u/s reached | after 8 ticks |
+    | jump apex | 43 units |
+    | wall | 544 1359 −7 |
+    | back | 544 208 24 |
+
+  - `pmsim <wld> stress N` is a random walk from random open spots. It
+    flags ticks inside solid, and segments that barely moved although a
+    16-unit trace along the wished direction is open. Result over 5000
+    segments / 983 k units: 0 and 0. The remaining blocks are walls and
+    corners.
+- **Cost** (PCSX-Redux dynarec, 780 ticks of the scripted path): **24 k
+  cycles per tick on average, 54 k max**. Most of it is likely libgcc's
+  64-bit divisions and multiplies, which the asm port can replace with
+  32-bit ones on normalised operands.

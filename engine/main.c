@@ -10,59 +10,87 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <psxgpu.h>
 
 #include "bench.h"
 #include "cd.h"
 #include "mem.h"
 #include "pad.h"
+#include "clip.h"
+#include "pmove.h"
+#include "q_fixed.h"
 #include "prof.h"
 #include "render.h"
 #include "vid.h"
 #include "world.h"
 
-/* ---------------------------------------------------------------- camera -- */
+/* ---------------------------------------------------------------- player -- */
 
 typedef struct {
-	int32_t pos[3];      /* world units          */
-	int     yaw, pitch;  /* binary degrees       */
+	int32_t pos[3];      /* 1/8 world units (the eye) */
+	int     yaw, pitch;  /* binary degrees         */
 } camera_t;
 
 static camera_t cam;
+static pmove_t  player;
 static int      world_ok;
 static int      fidelity = 2;   /* 0 low .. 3 ultra; L2 cycles it */
 
-static void camera_spawn(void)
+static void player_spawn(void)
 {
-	cam.pos[0] = world.spawn[0];
-	cam.pos[1] = world.spawn[1];
-	cam.pos[2] = world.spawn[2] + 22;          /* Quake eye height */
-	cam.yaw    = world.spawn_yaw * ANG_TURN / 360;
-	cam.pitch  = 0;
+	memset(&player, 0, sizeof player);
+	player.pos[0] = world.spawn[0] * CLIP_SUB;
+	player.pos[1] = world.spawn[1] * CLIP_SUB;
+	player.pos[2] = (world.spawn[2] + 1) * CLIP_SUB;   /* Quake drops it to the floor */
+	player.yaw    = world.spawn_yaw * ANG_TURN / 360;
 }
 
-/* Debug free-fly (until R4 brings the player): d-pad turn / move, Square /
-   Circle strafe, L1 / R1 look up / down, Triangle / Cross rise / sink,
-   START back to spawn. */
-static void camera_fly(void)
+/* Pad -> one tick of intent (phase 6's mapping):
+     d-pad left/right turn, up/down walk;  Square / Circle strafe;
+     L1 / R1 look up / down;  Cross jump (noclip: down);
+     Triangle hold to walk (noclip: up);  START noclip;  SELECT respawn. */
+static void player_cmd(pmove_cmd_t *cmd)
 {
-	const int speed = 8, turn = 48, look = 32;
+	const int turn = 46, look = 34;            /* ~4 and ~3 degrees per tick */
 
-	if (pad.held & PAD_LEFT)  cam.yaw += turn;
-	if (pad.held & PAD_RIGHT) cam.yaw -= turn;
-	if ((pad.held & PAD_L1) && !(pad.held & PAD_R1)) cam.pitch -= look;
-	if ((pad.held & PAD_R1) && !(pad.held & PAD_L1)) cam.pitch += look;
-	if (cam.pitch >  1000) cam.pitch =  1000;
-	if (cam.pitch < -1000) cam.pitch = -1000;
+	if (pad.pressed & PAD_START)  player.noclip = !player.noclip;
+	if (pad.pressed & PAD_SELECT) player_spawn();
 
-	int32_t fx = r_cos(cam.yaw), fy = r_sin(cam.yaw);    /* forward, x4096 */
-	int fwd  = (pad.held & PAD_UP) ? 1 : (pad.held & PAD_DOWN) ? -1 : 0;
-	int side = (pad.held & PAD_CIRCLE) ? 1 : (pad.held & PAD_SQUARE) ? -1 : 0;
-	cam.pos[0] += (fwd * fx + side * fy) * speed >> 12;
-	cam.pos[1] += (fwd * fy - side * fx) * speed >> 12;
-	if (pad.held & PAD_TRIANGLE) cam.pos[2] += speed;
-	if (pad.held & PAD_CROSS)    cam.pos[2] -= speed;
-	if (pad.pressed & PAD_START) camera_spawn();
+	if (pad.held & PAD_LEFT)  player.yaw += turn;
+	if (pad.held & PAD_RIGHT) player.yaw -= turn;
+	if ((pad.held & PAD_L1) && !(pad.held & PAD_R1)) player.pitch -= look;
+	if ((pad.held & PAD_R1) && !(pad.held & PAD_L1)) player.pitch += look;
+	if (player.pitch >  1012) player.pitch =  1012;    /* +-89 degrees */
+	if (player.pitch < -1012) player.pitch = -1012;
+
+	cmd->fwd  = (pad.held & PAD_UP) ? 1 : (pad.held & PAD_DOWN) ? -1 : 0;
+	cmd->side = (pad.held & PAD_CIRCLE) ? 1 : (pad.held & PAD_SQUARE) ? -1 : 0;
+	cmd->up   = (pad.held & PAD_TRIANGLE) ? 1 : (pad.held & PAD_CROSS) ? -1 : 0;
+	cmd->jump = (pad.pressed & PAD_CROSS) ? 1 : 0;
+	cmd->walk = (pad.held & PAD_TRIANGLE) ? 1 : 0;
+}
+
+/* The simulation is tick-based (Quake): one 60 Hz tick per vblank elapsed,
+   so a frame that took two vblanks advances the player twice. */
+static void player_update(void)
+{
+	uint32_t t0 = prof_now();
+	pmove_cmd_t cmd;
+	player_cmd(&cmd);
+	int ticks = (int) vid_stats.vbl;
+	if (ticks < 1) ticks = 1;
+	if (ticks > 4) ticks = 4;
+	for (int i = 0; i < ticks; i++) {
+		pmove_step(&player, &cmd);
+		cmd.jump = 0;                          /* edge: first tick only */
+	}
+	cam.pos[0] = player.pos[0];
+	cam.pos[1] = player.pos[1];
+	cam.pos[2] = player.pos[2] + PM_EYE_HEIGHT * CLIP_SUB;
+	cam.yaw    = player.yaw;
+	cam.pitch  = player.pitch;
+	prof_add(PROF_SIM, t0, prof_now());
 }
 
 /* ------------------------------------------------------------ fidelity -- */
@@ -112,7 +140,7 @@ static void draw_overlay(void)
 	         prof_count[PROF_N_NODES], prof_count[PROF_N_BLOCKS], prof_count[PROF_N_VERTS],
 	         prof_count[PROF_N_POLYS], prof_count[PROF_N_SLOW],
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
-	         cam.pos[0], cam.pos[1], cam.pos[2],
+	         cam.pos[0] / CLIP_SUB, cam.pos[1] / CLIP_SUB, cam.pos[2] / CLIP_SUB,
 	         pad.connected ? "ok" : "--", pad.type, pad.held);
 	vid_text(8, 8, line);
 	prof_add(PROF_OVERLAY, t0, prof_now());
@@ -128,7 +156,7 @@ static void run_frame(int interactive, int dump)
 		if ((pad.held & (PAD_L1 | PAD_R1)) == (PAD_L1 | PAD_R1) &&
 		    (pad.pressed & (PAD_L1 | PAD_R1)))
 			overlay_on = !overlay_on;
-		camera_fly();
+		player_update();
 		if (pad.pressed & PAD_L2)
 			switch_fidelity();
 	}
@@ -159,9 +187,9 @@ static void run_bench(void)
 	printf("bench start\n");
 	for (uint32_t v = 0; world_ok && v < world.num_views && v < 16; v++) {
 		const qw_view *vw = &world.views[v];
-		cam.pos[0] = vw->pos[0];
-		cam.pos[1] = vw->pos[1];
-		cam.pos[2] = vw->pos[2];
+		cam.pos[0] = vw->pos[0] * CLIP_SUB;
+		cam.pos[1] = vw->pos[1] * CLIP_SUB;
+		cam.pos[2] = vw->pos[2] * CLIP_SUB;
 		cam.yaw    = vw->yaw * ANG_TURN / 360;
 		cam.pitch  = vw->pitch * ANG_TURN / 360;
 		snprintf(names[v], sizeof names[v], "view%u", v);
@@ -177,6 +205,61 @@ static void run_bench(void)
 		bench_print(&acc);
 		printf("D view %u\n", v);
 		run_frame(0, 1);
+	}
+	/* scripted movement (no pad in headless runs): settle, accelerate,
+	   jump, run north into the end wall (stairs down, ramp up), then turn
+	   around and come back up the stairs. Same path as tools/pmsim. */
+	{
+		pmove_cmd_t c;
+		uint32_t    cyc_sum = 0, cyc_max = 0, ticks = 0;
+		memset(&c, 0, sizeof c);
+		player_spawn();
+#define PM_TICK() do { \
+			uint32_t t0_ = prof_now(); \
+			pmove_step(&player, &c); \
+			uint32_t cy_ = prof_cycles(t0_, prof_now()); \
+			cyc_sum += cy_; ticks++; \
+			if (cy_ > cyc_max) cyc_max = cy_; \
+		} while (0)
+		for (int i = 0; i < 30; i++)
+			PM_TICK();
+		printf("pmove settle pos %d %d %d ground %d\n", (int) player.pos[0] / CLIP_SUB,
+		       (int) player.pos[1] / CLIP_SUB, (int) player.pos[2] / CLIP_SUB, player.onground);
+		c.fwd = 1;
+		int t310 = -1;
+		for (int i = 0; i < 60; i++) {
+			PM_TICK();
+			int32_t sp = (int32_t) q_isqrt64((uint64_t) ((int64_t) player.vel[0] * player.vel[0] +
+			                                             (int64_t) player.vel[1] * player.vel[1]));
+			if (t310 < 0 && sp >= 310)
+				t310 = i + 1;
+		}
+		printf("pmove run: 310 u/s after %d ticks, pos %d %d %d\n", t310,
+		       (int) player.pos[0] / CLIP_SUB, (int) player.pos[1] / CLIP_SUB, (int) player.pos[2] / CLIP_SUB);
+		int32_t z0 = player.pos[2], zmax = z0;
+		c.jump = 1;
+		for (int i = 0; i < 90; i++) {
+			PM_TICK();
+			c.jump = 0;
+			if (player.pos[2] > zmax)
+				zmax = player.pos[2];
+		}
+		printf("pmove jump apex %d units, now %d %d %d (ground %d)\n", (int) (zmax - z0) / CLIP_SUB,
+		       (int) player.pos[0] / CLIP_SUB, (int) player.pos[1] / CLIP_SUB,
+		       (int) player.pos[2] / CLIP_SUB, player.onground);
+		for (int i = 0; i < 300; i++)
+			PM_TICK();
+		printf("pmove wall: stopped at %d %d %d vel %d %d\n", (int) player.pos[0] / CLIP_SUB,
+		       (int) player.pos[1] / CLIP_SUB, (int) player.pos[2] / CLIP_SUB,
+		       (int) player.vel[0], (int) player.vel[1]);
+		player.yaw += 2048;
+		for (int i = 0; i < 300; i++)
+			PM_TICK();
+		printf("pmove back: at %d %d %d (ground %d)\n", (int) player.pos[0] / CLIP_SUB,
+		       (int) player.pos[1] / CLIP_SUB, (int) player.pos[2] / CLIP_SUB, player.onground);
+		printf("pmove cost: %u ticks, avg %u max %u cycles/tick\n", (unsigned) ticks,
+		       (unsigned) (cyc_sum / ticks), (unsigned) cyc_max);
+#undef PM_TICK
 	}
 	printf("bench done\n");
 	for (;;)
@@ -205,7 +288,7 @@ int main(void)
 #endif
 	if (world_ok) {
 		r_bind_world();
-		camera_spawn();
+		player_spawn();
 	}
 
 #ifdef Q1PSX_BENCH

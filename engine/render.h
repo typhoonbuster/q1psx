@@ -60,8 +60,9 @@ extern r_state_t r_state;
 
 void r_init(void);
 
-/* Camera for the next r_frame(): position in world units, angles in
-   binary degrees. */
+/* Camera for the next r_frame(): position in 1/R_POS_SUB world units (the
+   player physics' own resolution), angles in binary degrees. */
+#define R_POS_SUB 8
 void r_set_view(const int32_t pos[3], int yaw, int pitch);
 
 /* Render the world into the current frame's packet arena (asm). */
