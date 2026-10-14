@@ -84,9 +84,19 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 		w = (w + 1) & ~1;               /* halfword-aligned in 8bpp */
 		s->rep_w = w;
 		s->rep_h = h;
+
+		/* lay small repetitions side by side so a polygon can span several
+		   (powers of two, at most 128 texels: the tile stays inside a page
+		   and its UVs inside a byte) */
+		s->reps_x = s->reps_y = 1;
+		while (w * s->reps_x < fid->tile_min && w * s->reps_x * 2 <= 128)
+			s->reps_x *= 2;
+		while (h * s->reps_y < fid->tile_min && h * s->reps_y * 2 <= 128)
+			s->reps_y *= 2;
+
 		items[nitems].idx = i;
-		items[nitems].w   = w;
-		items[nitems].h   = h;
+		items[nitems].w   = w * s->reps_x;
+		items[nitems].h   = h * s->reps_y;
 		nitems++;
 	}
 	qsort(items, (size_t) nitems, sizeof *items, by_height);
@@ -123,7 +133,8 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 		uint8_t *img = pages + (size_t) page * PAGE_TEX * PAGE_TEX;
 		for (int y = 0; y < it->h; y++)
 			for (int xx = 0; xx < it->w; xx++)
-				img[(shelf_y + y) * PAGE_TEX + x + xx] = sample(m, xx, y, it->w, it->h);
+				img[(shelf_y + y) * PAGE_TEX + x + xx] =
+					sample(m, xx % s->rep_w, y % s->rep_h, s->rep_w, s->rep_h);
 
 		ts->bytes += (uint32_t) (it->w * it->h);
 		x += it->w;

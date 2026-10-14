@@ -585,3 +585,18 @@ followed by R0-R4.
   - Profiler: `r_slow` stage and a `slowtri` counter; slow-path timing uses
     16-bit timer deltas (immune to the wrap-IRQ race that produced bogus
     500 k-cycle maxima).
+- **R3.3 asm** `engine/r_slow.s`: the slow path ported to hand-written asm,
+  with the C version kept behind `R_SLOW_C`. Details: `docs/porting-notes.md`
+  §12.3.
+  - GTE MVMVA transform, RTPS projection through a 2·I matrix, index-based
+    vertex pool, one-word triangle stack.
+  - 2-2.5× faster than C; interpreter-validated (identical triangle
+    counts).
+  - Careful loops now also route polygons that could exceed the GPU's
+    size limit to the slow path.
+  - Fidelity: `tile_min` repeats small textures inside their VRAM tile at
+    low / medium, so polygons span several repetitions. Map polygons:
+    17 189 (high) → 12 374 (medium) → 9 927 (low). The spawn view runs in
+    **1 vblank at low (433 k cycles) and medium (483 k)**; high needs 2
+    (620 k).
+  - `FID=n scripts/bench.sh` benches any fidelity level.

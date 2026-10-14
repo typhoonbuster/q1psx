@@ -3,7 +3,8 @@
 # Build the benchmark variant (CMake preset "bench" -> build-bench/) and run it
 # headless; print the "bench ..." lines.
 #
-# Usage:  scripts/bench.sh [max-seconds]
+# Usage:  [FID=0..3] scripts/bench.sh [max-seconds]
+#         FID picks the fidelity level the bench loads (default 2, high).
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -16,8 +17,10 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SECS=${1:-60}
+FID=${FID:-2}
+FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
-cmake --preset bench "$ROOT" >/dev/null
+cmake --preset bench -DQ1PSX_BENCH_FID="$FID" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" >/dev/null
 
 LOG="$ROOT/build-bench/bench.log" \
@@ -31,4 +34,4 @@ grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)'
 make -s -C "$ROOT/tools/pktview"
 mkdir -p "$ROOT/build-bench/views"
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
-	"$ROOT/cooked/id1/start_high.tex" "$ROOT/build-bench/views/view" | sed 's/^/  /'
+	"$ROOT/cooked/id1/start_$FIDNAME.tex" "$ROOT/build-bench/views/view" | sed 's/^/  /'

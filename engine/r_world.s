@@ -30,6 +30,22 @@
 	.include "inline_s.inc"
 	.include "r_defs.inc"
 
+# SIZEOK r, fail: r = SXY(corner) - SXY(corner 0); branch to `fail` unless
+# |dy| <= 250 and |dx| <= 500 (packed-word difference: dy may be off by one,
+# fine for a margin). Uses a1.
+.macro SIZEOK r, fail
+	sra     $a1, \r, 16
+	addiu   $a1, $a1, 250
+	sltiu   $a1, $a1, 501
+	beqz    $a1, \fail
+	sll     $a1, \r, 16
+	sra     $a1, $a1, 16
+	addiu   $a1, $a1, 500
+	sltiu   $a1, $a1, 1001
+	beqz    $a1, \fail
+	nop
+.endm
+
 	.section .text.r_render, "ax", @progbits
 	.global r_render
 	.type   r_render, @function
@@ -98,6 +114,8 @@ r_render:
 	sw      $zero, SP_SKIPPED($t8)
 	sw      $zero, SP_TBLOCK($t8)
 	sw      $zero, SP_FULL($t8)
+	sw      $zero, SP_SLOWTRI($t8)
+	sw      $zero, SP_TSLOW($t8)
 	lw      $s4, RS_FRAMECOUNT($s0)
 	lw      $s6, RS_PKT($s0)
 	lw      $s7, RS_PKT_END($s0)
@@ -258,6 +276,12 @@ walk_done:
 	sw      $t3, RS_STAT_POLYS($s0)
 	sw      $t4, RS_STAT_SKIPPED($s0)
 	sw      $t5, RS_TICKS_BLOCK($s0)
+	lw      $t0, SP_SLOWTRI($t8)
+	lw      $t1, RS_STAT_SLOW($s0)
+	lw      $t2, SP_TSLOW($t8)
+	addu    $t1, $t1, $t0                # the C reference adds its own count
+	sw      $t1, RS_STAT_SLOW($s0)
+	sw      $t2, RS_TICKS_SLOW($s0)
 
 	lw      $ra, 44($sp)                 # first: jr must not sit in its delay slot
 	lw      $s0,  8($sp)
@@ -473,9 +497,11 @@ mp_done:
 # Clobbers at, v0, v1, a0-a3, t0-t7, t9.
 draw_records:
 	lhu     $t9, TIMER2($t8)
-	nop
+	sw      $a1, SP_BLKEND($t8)          # a1 is a scratch register below
 	sw      $t9, SP_T0($t8)
 dr_rec:
+	lw      $a1, SP_BLKEND($t8)
+	nop
 	beq     $a0, $a1, dr_done
 	nop
 	lw      $t0, SP_FVBASE($t8)
@@ -534,7 +560,12 @@ dr_draw:
 	sll     $t5, $t3, 1                  # delay: 2r
 	lw      $t7, SP_SZFAST($t8)
 	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
-	slt     $a2, $t5, $t7                # a2: the record may come too near
+	slt     $a2, $t5, $t7                # a2 bit 0: may come too near
+	sll     $t5, $t3, 1
+	addu    $t5, $t5, $t3                # 3r
+	slt     $t5, $t4, $t5                # z < 3r: a polygon may exceed the
+	sll     $t5, $t5, 1                  # GPU's 1023 x 511 px limit
+	or      $a2, $a2, $t5                # a2 bit 1
 
 	sll     $v0, $v0, 16                 # clut  << 16, ORed into uv0
 	sll     $v1, $v1, 16                 # tpage << 16, ORed into uv1
@@ -567,10 +598,12 @@ dr_xf:
 	bgtz    $t5, dr_xf
 	addiu   $t4, $t4, 12
 
-	beqz    $a2, dr_polys                # sphere says: nothing near
+	beqz    $a2, dr_polys                # sphere says: nothing near or big
 	move    $t4, $t8
-	move    $t5, $t2                     # exact check: any real vertex near?
-	move    $a2, $zero
+	andi    $t0, $a2, 2
+	bnez    $t0, dr_polys                # may be big: careful loop regardless
+	move    $t5, $t2
+	move    $a2, $zero                   # exact check: any real vertex near?
 dr_nz:
 	lw      $t0, SP_SZ($t4)
 	addiu   $t5, $t5, -1
@@ -622,6 +655,16 @@ dr_quad:
 	or      $t0, $t0, $t9
 	bnez    $t0, dr_quad_skip
 	nop
+	lw      $t0, SP_SXY($t3)             # size: every corner within 500 x 250 px
+	lw      $t1, SP_SXY($t4)             # of corner 0 -> bbox fits the GPU
+	lw      $t2, SP_SXY($t5)
+	lw      $t9, SP_SXY($t6)
+	subu    $t1, $t1, $t0
+	subu    $t2, $t2, $t0
+	subu    $t9, $t9, $t0
+	SIZEOK  $t1, dr_quad_skip
+	SIZEOK  $t2, dr_quad_skip
+	SIZEOK  $t9, dr_quad_skip
 dr_quad_emit:
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
 	lw      $t2, 8($a3)                  # uv2 | uv3 << 16
@@ -686,6 +729,13 @@ dr_tri:
 	or      $t0, $t0, $t2
 	bnez    $t0, dr_tri_skip
 	nop
+	lw      $t0, SP_SXY($t3)             # size check, as for quads
+	lw      $t1, SP_SXY($t4)
+	lw      $t2, SP_SXY($t5)
+	subu    $t1, $t1, $t0
+	subu    $t2, $t2, $t0
+	SIZEOK  $t1, dr_tri_skip
+	SIZEOK  $t2, dr_tri_skip
 dr_tri_emit:
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
 	lw      $t2, 8($a3)                  # uv2 | pad
@@ -741,6 +791,10 @@ dr_slow_call:
 	sw      $t0, SP_SAVE+32($t8)
 	addiu   $t1, $t1, 1
 	sw      $t1, SP_SKIPPED($t8)
+	lhu     $t1, TIMER2($t8)
+	nop
+	sw      $t1, SP_SAVE+36($t8)         # slow-path start time
+.if R_SLOW_C
 	sw      $s6, RS_PKT($s0)             # the C side emits through r_state
 	sw      $fp, RS_OT_HEAD($s0)
 	move    $a1, $a0                     # record
@@ -753,6 +807,18 @@ dr_slow_call:
 	lui     $t8, 0x1f80
 	lw      $s6, RS_PKT($s0)
 	lw      $fp, RS_OT_HEAD($s0)
+.else
+	move    $a1, $a3                     # polygon
+	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3
+	move    $a2, $t0
+.endif
+	lhu     $t0, TIMER2($t8)
+	lw      $t1, SP_SAVE+36($t8)
+	lw      $t2, SP_TSLOW($t8)
+	subu    $t0, $t0, $t1
+	andi    $t0, $t0, 0xffff
+	addu    $t2, $t2, $t0
+	sw      $t2, SP_TSLOW($t8)
 	lw      $at, SP_SAVE+0($t8)
 	lw      $a0, SP_SAVE+4($t8)
 	lw      $a1, SP_SAVE+8($t8)

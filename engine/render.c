@@ -25,6 +25,7 @@ _Static_assert(offsetof(r_state_t, force_mark)   == 136, "r_state layout");
 _Static_assert(offsetof(r_state_t, leaves_end)   == 140, "r_state layout");
 _Static_assert(offsetof(r_state_t, ot_head)      == 144, "r_state layout");
 _Static_assert(offsetof(r_state_t, stat_slow)    == 148, "r_state layout");
+_Static_assert(offsetof(r_state_t, ticks_slow)   == 152, "r_state layout");
 _Static_assert(offsetof(qw_node, faces)          == 44,  "qw_node layout");
 _Static_assert(sizeof(qw_node)                   == 56,  "qw_node layout");
 _Static_assert(sizeof(qw_leaf)                   == 36,  "qw_leaf layout");
@@ -151,7 +152,6 @@ void r_frame(void)
 	r_state.stat_polys   = r_state.stat_skipped = 0;
 	r_state.ticks_block  = r_state.ticks_mark = 0;
 	r_state.stat_slow    = 0;
-	r_slow_ticks         = 0;
 
 	uint32_t t0 = prof_now();
 	r_render(&r_state);
@@ -161,7 +161,7 @@ void r_frame(void)
 
 	/* the slow path runs inside the face-record timing: take it out */
 	uint32_t total = prof_cycles(t0, t1);
-	uint32_t slow  = r_slow_ticks * PROF_CYCLES_PER_TICK;
+	uint32_t slow  = r_state.ticks_slow * PROF_CYCLES_PER_TICK;
 	uint32_t block = r_state.ticks_block * PROF_CYCLES_PER_TICK;
 	uint32_t mark  = r_state.ticks_mark * PROF_CYCLES_PER_TICK;
 	block = block > slow ? block - slow : 0;

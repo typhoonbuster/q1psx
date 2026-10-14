@@ -936,3 +936,36 @@ Result: all three near views match the perspective-correct reference
 (slight affine wobble on the near wall, no cracks, no holes). Cost in C:
 150-250 k cycles on the near views, up to 9 k cycles per near polygon. The
 asm port (GTE transform and projection, index-based vertex pool) comes next.
+
+### 12.3 Slow path in asm, oversize polygons, tiled VRAM textures
+
+- **`engine/r_slow.s`** is the asm port of `r_slow.c`. The C file stays as
+  the reference: `R_SLOW_C = 1` in `r_defs.inc` switches back to it.
+  - GTE everywhere: MVMVA for the view transform. For projection the GTE is
+    reloaded with rotation = 2·I and TR = 0, so RTPS projects view-space
+    points directly. That replaces the per-vertex CPU division and stays
+    exact down to 6.7 world units. The view matrix is reloaded at the end.
+  - An index-based vertex pool (32 B entries, 8-bit indices); triangles
+    are one word on a scratchpad stack. The C version copied 28-byte structs
+    on every push and pop.
+  - Cost against C: spawn 156 k → 62 k cycles, wall at contact
+    252 k → 127 k. Validated under the interpreter: same triangle counts on
+    all 12 views, no exception. `hazcheck` passes.
+- **Oversize polygons.** A record is also "careful" when its centre is
+  closer than 3 radii (its polygons may exceed 400 px). In careful loops,
+  every corner must be within 500 × 250 px of corner 0, or the polygon goes
+  to the slow path. Its clipping and subdivision keep every triangle inside
+  the GPU's 1023 × 511 limit.
+- **Tiled VRAM textures (`tile_min`).** At low/medium a small repetition is
+  laid 2×2 / 4×4 in its VRAM tile, so one polygon covers several
+  repetitions.
+
+  | level | polys (map) | spawn cycles | spawn vbl |
+  |---|---|---|---|
+  | low | 9 927 | 433 k | 1 |
+  | medium | 12 374 | 483 k | 1 |
+  | high | 17 189 | 620 k | 2 |
+
+  Textures stay 5 pages. Spawn polygons go from 2157 (high) to 996 (low).
+- `FID=0..3 scripts/bench.sh` benches any level
+  (`-DQ1PSX_BENCH_FID`).

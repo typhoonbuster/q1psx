@@ -20,7 +20,6 @@
  */
 
 #include <stdint.h>
-#include <hwregs_c.h>
 
 #include "prof.h"
 #include "qworld.h"
@@ -44,8 +43,6 @@ typedef struct { sv_t v[3]; int depth; } tri_t;
 static tri_t    stack[3 * MAXD + 2];         /* depth-first, <= 3 left per level */
 static uint32_t clut16, tpage16;
 
-uint32_t r_slow_ticks;        /* timer-2 ticks spent here this frame (16-bit
-                                 deltas: immune to the wrap-IRQ race) */
 
 static void project(sv_t *p)
 {
@@ -228,7 +225,6 @@ static void subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
    call. */
 void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 {
-	uint32_t t0 = TIMER_VALUE(2);
 	const qw_record *r     = (const qw_record *) rec;
 	const qw_vert   *verts = (const qw_vert *) (rec + sizeof(qw_record));
 	const uint16_t  *uvs   = (const uint16_t *) (poly + 4);
@@ -271,7 +267,6 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		codes_or  |= c;
 	}
 	if (codes_and) {
-		r_slow_ticks += (TIMER_VALUE(2) - t0) & 0xffff;
 		return;
 	}
 	for (int plane = 0; plane < 5 && n >= 3; plane++)
@@ -289,5 +284,4 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		for (int i = 1; i + 1 < n; i++)
 			subdivide(s, &out[0], &out[i], &out[i + 1]);
 	}
-	r_slow_ticks += (TIMER_VALUE(2) - t0) & 0xffff;
 }

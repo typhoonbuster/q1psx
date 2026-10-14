@@ -53,6 +53,7 @@ typedef struct {
 	uint32_t leaves_end;     /* +140 qw_leaf * one past the last leaf      */
 	uint32_t ot_head;        /* +144 world-bucket link while asm calls C     */
 	uint32_t stat_slow;      /* +148 triangles emitted by the slow path      */
+	uint32_t ticks_slow;     /* +152 timer-2 ticks spent in the slow path    */
 } r_state_t;
 
 extern r_state_t r_state;
@@ -74,7 +75,6 @@ void r_render(r_state_t *s);
 
 /* slow path (engine/r_slow.c), called from the asm */
 void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv);
-extern uint32_t r_slow_ticks;
 
 int16_t r_sin(int a);   /* binary degrees -> x4096 */
 int16_t r_cos(int a);

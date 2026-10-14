@@ -29,6 +29,7 @@
 .set RS_LEAVES_END,   140
 .set RS_OT_HEAD,      144
 .set RS_STAT_SLOW,    148
+.set RS_TICKS_SLOW,   152
 
 # ---- qw_node (56 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3] (+ pad): lwc2-ready
@@ -82,7 +83,30 @@
 .set SP_TBLOCK,   0x334
 .set SP_T0,       0x338
 .set SP_FULL,     0x33c   # non-zero once the packet arena is full
-.set SP_SAVE,     0x340   # 9 words: registers kept across the C slow path
+.set SP_SAVE,     0x340   # 10 words: registers kept across the slow path + its start time
+.set SP_PLA,      0x368   # slow path: polygon index list A (12 bytes)
+.set SP_PLB,      0x374   # slow path: polygon index list B (12 bytes)
+.set SP_TRI,      0x380   # slow path: triangle stack (up to 16 words)
+.set SP_BLKEND,   0x3c0   # draw_records: end of the current face block
+.set SP_POOLN,    0x3d0   # slow path: vertices in the pool
+.set SP_CLUT16,   0x3d4   # slow path: record clut << 16
+.set SP_TPAGE16,  0x3d8   # slow path: record tpage << 16
+.set SP_SPRA,     0x3dc   # slow path: its own return address
+.set SP_SLOWTRI,  0x3e0   # slow path: triangles emitted this frame
+.set SP_CODES,    0x3e4   # slow path: clip codes OR
+.set SP_P0,       0x3e8   # slow path: current triangle's 3 vertex pointers
+.set SP_P1,       0x3ec
+.set SP_P2,       0x3f0
+.set SP_CLIPRA,   0x3f4   # slow path: sp_clip's return address
+.set SP_CLIPM,    0x3f8   # slow path: sp_clip's output count
+.set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
+
+# slow path tuning (view units: world x 6)
+.set SLOW_ZNEAR,  48      # near plane, 8 world units
+.set SLOW_SPAN,   96      # split edges longer than this on screen (px)
+.set SLOW_MAXD,   5       # max split depth
+.set POOL_MAX,    128     # vertex pool entries (32 bytes each)
+.set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
 
 .set TIMER2,      0x1120  # root counter 2 value, offset from 0x1F800000's
                           # upper half (0x1F801120)

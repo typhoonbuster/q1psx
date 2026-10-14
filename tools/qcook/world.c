@@ -287,7 +287,8 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f)
 		if (pl.v[i].t > tmax) tmax = pl.v[i].t;
 	}
 
-	const double W = m->w, H = m->h;
+	/* one cell = the tile: reps_x x reps_y texture repetitions */
+	const double W = (double) m->w * s->reps_x, H = (double) m->h * s->reps_y;
 	long i0 = (long) floor(smin / W), i1 = (long) floor((smax - 1e-4) / W);
 	long j0 = (long) floor(tmin / H), j1 = (long) floor((tmax - 1e-4) / H);
 	if ((i1 - i0 + 1) * (j1 - j0 + 1) > 1)
@@ -307,8 +308,8 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f)
 				continue;
 			double uv[MAXPV][2];
 			for (int k = 0; k < pc.n; k++) {
-				uv[k][0] = (pc.v[k].s - i * W) * s->rep_w / W;
-				uv[k][1] = (pc.v[k].t - j * H) * s->rep_h / H;
+				uv[k][0] = (pc.v[k].s - i * W) * s->rep_w * s->reps_x / W;
+				uv[k][1] = (pc.v[k].t - j * H) * s->rep_h * s->reps_y / H;
 			}
 			rec_add_piece(o, r, &pc, (const double (*)[2]) uv, s, f);
 		}

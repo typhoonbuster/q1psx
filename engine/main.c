@@ -127,6 +127,10 @@ static void run_frame(int interactive, int dump)
 
 #ifdef Q1PSX_BENCH
 
+#ifndef Q1PSX_BENCH_FID
+#define Q1PSX_BENCH_FID 2     /* fidelity level the bench loads (0 low .. 3 ultra) */
+#endif
+
 #define BENCH_WARMUP 8
 #define BENCH_FRAMES 64
 
@@ -176,7 +180,11 @@ int main(void)
 
 	printf("q1psx\n");
 
+#ifdef Q1PSX_BENCH
+	world_ok = world_load(Q1PSX_BENCH_FID);
+#else
 	world_ok = world_load(2);
+#endif
 	if (world_ok) {
 		r_bind_world();
 		camera_spawn();

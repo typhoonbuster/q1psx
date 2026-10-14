@@ -39,8 +39,9 @@ add_custom_command(TARGET q1psx POST_BUILD
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
 # no debug overlay. See docs/architecture.md §9.
 option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
+set(Q1PSX_BENCH_FID 2 CACHE STRING "Fidelity level the bench loads (0 low .. 3 ultra)")
 if(Q1PSX_BENCH)
-	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1)
+	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID})
 endif()
 
 # --- optional Quake game data on the disc ------------------------------------

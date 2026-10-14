@@ -25,7 +25,11 @@ void *xcalloc(size_t n, size_t size);
 typedef struct {
 	const char *name;
 	int  tex_shift;     /* texture resolution = native >> tex_shift          */
-	int  tex_max;       /* max texels per side of one tile after scaling     */
+	int  tex_max;       /* max texels per side of one repetition, scaled     */
+	int  tile_min;      /* repeat a small texture in its VRAM tile (powers of
+	                       two) until the tile is >= this many texels per
+	                       side: one polygon then covers several repetitions,
+	                       fewer polygons for the same VRAM. 0 = never.       */
 } fidelity_t;
 
 const fidelity_t *fidelity_find(const char *name);
@@ -76,6 +80,7 @@ void bsp_parse(bsp_t *b, const uint8_t *raw, uint32_t len);
 typedef struct {
 	int      present;        /* packed (has pixels and is not sky)        */
 	int      rep_w, rep_h;   /* texels of one texture repetition, scaled  */
+	int      reps_x, reps_y; /* repetitions laid side by side in the tile */
 	int      u0, v0;         /* top-left texel inside its texture page    */
 	uint16_t tpage;          /* GPU tpage word (8bpp)                     */
 	uint16_t clut;           /* GPU CLUT word                             */

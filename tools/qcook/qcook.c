@@ -58,11 +58,11 @@ static float    rd_f32(const uint8_t *p) { uint32_t u = rd_u32(p); float f; memc
 /* ------------------------------------------------------------- fidelity -- */
 
 static const fidelity_t FIDELITY[] = {
-	/* name      shift  max tile */
-	{ "low",       2,     32 },
-	{ "medium",    1,     64 },
-	{ "high",      0,    128 },
-	{ "ultra",     0,    256 },
+	/* name      shift  max rep  tile min                                     */
+	{ "low",       2,     32,      64 },   /* 1/4 res, small textures tiled  */
+	{ "medium",    1,     64,      64 },   /* 1/2 res, small textures tiled  */
+	{ "high",      0,    128,       0 },   /* native (<= 128), one rep/tile  */
+	{ "ultra",     0,    256,       0 },   /* native                          */
 };
 
 const fidelity_t *fidelity_find(const char *name)
