@@ -600,3 +600,6 @@ followed by R0-R4.
     **1 vblank at low (433 k cycles) and medium (483 k)**; high needs 2
     (620 k).
   - `FID=n scripts/bench.sh` benches any fidelity level.
+- **Fidelity switch** (as in phases 2-6): **L2** reloads the map at the next level
+  (low → medium → high → ultra), keeping the camera where it is. The overlay
+  shows the current level.

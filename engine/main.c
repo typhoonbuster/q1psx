@@ -30,6 +30,7 @@ typedef struct {
 
 static camera_t cam;
 static int      world_ok;
+static int      fidelity = 2;   /* 0 low .. 3 ultra; L2 cycles it */
 
 static void camera_spawn(void)
 {
@@ -64,6 +65,21 @@ static void camera_fly(void)
 	if (pad.pressed & PAD_START) camera_spawn();
 }
 
+/* ------------------------------------------------------------ fidelity -- */
+
+/* Reload the map at the next fidelity level (textures + world), keeping the
+   camera where it is. The CD reads block for a moment: fine for a debug
+   control. */
+static void switch_fidelity(void)
+{
+	fidelity = (fidelity + 1) % FIDELITY_LEVELS;
+	vid_text(8, 8, "loading...");
+	vid_flip();
+	world_ok = world_load(fidelity);
+	if (world_ok)
+		r_bind_world();
+}
+
 /* --------------------------------------------------------------- frame -- */
 
 static void frame_work(void)
@@ -89,7 +105,7 @@ static void draw_overlay(void)
 	         "polys %u  near %u  %u B%s\n"
 	         "pos %d %d %d\n"
 	         "pad %s type %d btn %04x",
-	         world_ok ? fidelity_name[2] : "no world",
+	         world_ok ? fidelity_name[fidelity] : "no world",
 	         vid_stats.vbl ? 60 / vid_stats.vbl : 60,
 	         prof_stage[PROF_FRAME], vid_stats.sync_cycles,
 	         prof_stage[PROF_R_WALK], prof_stage[PROF_R_SETUP], prof_stage[PROF_R_BLOCK],
@@ -113,6 +129,8 @@ static void run_frame(int interactive, int dump)
 		    (pad.pressed & (PAD_L1 | PAD_R1)))
 			overlay_on = !overlay_on;
 		camera_fly();
+		if (pad.pressed & PAD_L2)
+			switch_fidelity();
 	}
 	frame_work();
 	prof_add(PROF_FRAME, t0, prof_now());
@@ -183,7 +201,7 @@ int main(void)
 #ifdef Q1PSX_BENCH
 	world_ok = world_load(Q1PSX_BENCH_FID);
 #else
-	world_ok = world_load(2);
+	world_ok = world_load(fidelity);
 #endif
 	if (world_ok) {
 		r_bind_world();
