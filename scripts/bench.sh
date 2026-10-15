@@ -3,11 +3,14 @@
 # Build the benchmark variant (CMake preset "bench" -> build-bench/) and run it
 # headless; print the "bench ..." lines.
 #
-# Usage:  [FID=0..3] [VIEWS=0|1] [BENCH_MAPS=0|1] scripts/bench.sh [max-seconds]
+# Usage:  [FID=0..3] [VIEWS=0|1] [BENCH_MAPS=0|1] [PROFILE=0|1] scripts/bench.sh [max-seconds]
 #         FID picks the fidelity level the bench loads (default 2, high).
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
+#         PROFILE=0 builds the renderer without its counters / stage timers,
+#         as the "release" preset does: frame totals only (the stage and
+#         counter columns read 0).
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -23,10 +26,11 @@ SECS=${1:-60}
 FID=${FID:-2}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
+PROFILE=${PROFILE:-1}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
-      -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_PROFILE="$PROFILE" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" >/dev/null
 
 LOG="$ROOT/build-bench/bench.log" \

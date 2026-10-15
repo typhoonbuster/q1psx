@@ -49,6 +49,19 @@ add_custom_command(TARGET q1psx POST_BUILD
 	COMMENT "Checking pipeline hazards (tools/hazcheck)"
 	VERBATIM)
 
+# Renderer counters and stage timers (debug overlay, bench breakdown). Off in
+# the "release" preset: the asm renderer then skips their per-node, per-record
+# and per-polygon upkeep (R_PROFILE in engine/r_defs.inc).
+option(Q1PSX_PROFILE "Renderer counters and stage timers" ON)
+if(Q1PSX_PROFILE)
+	set(_q1psx_profile 1)
+else()
+	set(_q1psx_profile 0)
+endif()
+target_compile_definitions(q1psx PRIVATE Q1PSX_PROFILE=${_q1psx_profile})
+target_compile_options(q1psx PRIVATE
+	$<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_PROFILE=${_q1psx_profile}>)
+
 # Headless benchmark variant (CMake preset "bench", driven by scripts/bench.sh):
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
 # no debug overlay. See docs/architecture.md §9.

@@ -149,20 +149,25 @@ static void draw_overlay(void)
 	uint32_t t0 = prof_now();
 	char line[256];
 
-	snprintf(line, sizeof line,
+	int n = snprintf(line, sizeof line,
 	         "q1psx  %s %s  ~%u fps\n"
-	         "frame %6u cyc  gpu wait %u  arena %u KB\n"
-	         "walk %u  mark %u  faces %u\n"
-	         "nodes %u recs %u verts %u\n"
-	         "polys %u  near %u  %u B%s\n"
-	         "pos %d %d %d\n"
-	         "pad %s type %d btn %04x",
+	         "frame %6u cyc  gpu wait %u  arena %u KB\n",
 	         world_map_name(map_index), world_ok ? fidelity_name[fidelity] : "no world",
 	         vid_stats.vbl ? 60 / vid_stats.vbl : 60,
-	         prof_stage[PROF_FRAME], vid_stats.sync_cycles, mem_level_used() / 1024,
+	         prof_stage[PROF_FRAME], vid_stats.sync_cycles, mem_level_used() / 1024);
+#if Q1PSX_PROFILE   /* the renderer's counters / stage timers (release: none) */
+	n += snprintf(line + n, sizeof line - n,
+	         "walk %u  mark %u  faces %u\n"
+	         "nodes %u recs %u verts %u\n"
+	         "polys %u  near %u  ",
 	         prof_stage[PROF_R_WALK], prof_stage[PROF_R_SETUP], prof_stage[PROF_R_BLOCK],
 	         prof_count[PROF_N_NODES], prof_count[PROF_N_BLOCKS], prof_count[PROF_N_VERTS],
-	         prof_count[PROF_N_POLYS], prof_count[PROF_N_SLOW],
+	         prof_count[PROF_N_POLYS], prof_count[PROF_N_SLOW]);
+#endif
+	snprintf(line + n, sizeof line - n,
+	         "%u B%s\n"
+	         "pos %d %d %d\n"
+	         "pad %s type %d btn %04x",
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
 	         cam.pos[0] / CLIP_SUB, cam.pos[1] / CLIP_SUB, cam.pos[2] / CLIP_SUB,
 	         pad.connected ? "ok" : "--", pad.type, pad.held);

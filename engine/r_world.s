@@ -48,6 +48,70 @@
 	nop
 .endm
 
+# FRUSTUM cull: test the box whose centre / half extents are in V0 / V1
+# (vertex units; loaded by the caller at least two instructions back) against
+# the frustum planes still set in s2. A plane's bit is cleared once the box is
+# fully inside it; branches to `cull` if the box is outside one. View space:
+# x right, y down, z forward, H = 160 on a 320x240 screen -> right z-x >= 0,
+# left z+x >= 0, bottom 3z-4y >= 0, top 3z+4y >= 0. The box goes to view space
+# as centre (rotation + translation) and radius (|rotation| x half extents).
+# Clobbers t0-t7, t9, at, v0, a1.
+.macro FRUSTUM cull
+	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
+	andi    $at, $s2, 1                  # (right plane still set?)
+	mfc2    $t0, C2_IR1                  # x
+	mfc2    $t1, C2_IR2                  # y
+	mfc2    $t2, C2_IR3                  # z
+	sll     $v0, $t1, 2                  # 4y
+	MVMVA   1, 1, 1, 3, 0                # IR = |rot| * half extents
+	sll     $a1, $t2, 1
+	addu    $a1, $a1, $t2                # 3z
+	mfc2    $t3, C2_IR1                  # rx
+	mfc2    $t4, C2_IR2                  # ry
+	mfc2    $t5, C2_IR3                  # rz
+	sll     $t7, $t4, 2                  # 4 ry
+	addu    $t6, $t5, $t3                # rz + rx: radius for left/right
+	sll     $t9, $t5, 1
+	addu    $t9, $t9, $t5
+	addu    $t7, $t7, $t9                # 3 rz + 4 ry: radius for top/bottom
+	beqz    $at, 1f
+	andi    $at, $s2, 2
+	subu    $t3, $t2, $t0                # right: z - x
+	addu    $t4, $t3, $t6
+	bltz    $t4, \cull
+	subu    $t4, $t3, $t6
+	bltz    $t4, 1f
+	nop
+	xori    $s2, $s2, 1
+1:	beqz    $at, 2f
+	andi    $at, $s2, 4
+	addu    $t3, $t2, $t0                # left: z + x
+	addu    $t4, $t3, $t6
+	bltz    $t4, \cull
+	subu    $t4, $t3, $t6
+	bltz    $t4, 2f
+	nop
+	xori    $s2, $s2, 2
+2:	beqz    $at, 3f
+	andi    $at, $s2, 8
+	subu    $t3, $a1, $v0                # bottom: 3z - 4y
+	addu    $t4, $t3, $t7
+	bltz    $t4, \cull
+	subu    $t4, $t3, $t7
+	bltz    $t4, 3f
+	nop
+	xori    $s2, $s2, 4
+3:	beqz    $at, 4f
+	addu    $t3, $a1, $v0                # top: 3z + 4y
+	addu    $t4, $t3, $t7
+	bltz    $t4, \cull
+	subu    $t4, $t3, $t7
+	bltz    $t4, 4f
+	nop
+	xori    $s2, $s2, 8
+4:
+.endm
+
 	.section .bss.r_walk_spill, "aw", @nobits
 	.align  4
 r_walk_spill:                            # walk stack overflow (see walk_spill)
@@ -110,15 +174,17 @@ r_render:
 	sw      $t2, SP_CAM+8($t8)
 	sw      $t3, SP_FVBASE($t8)
 	sw      $t4, SP_SZFAST($t8)
+	sw      $zero, SP_FULL($t8)
+.if R_PROFILE
 	sw      $zero, SP_NODES($t8)
 	sw      $zero, SP_RECORDS($t8)
 	sw      $zero, SP_VERTS($t8)
 	sw      $zero, SP_POLYS($t8)
 	sw      $zero, SP_SKIPPED($t8)
 	sw      $zero, SP_TBLOCK($t8)
-	sw      $zero, SP_FULL($t8)
 	sw      $zero, SP_SLOWTRI($t8)
 	sw      $zero, SP_TSLOW($t8)
+.endif
 	li      $t0, -1
 	sw      $t0, SP_LASTTEX($t8)         # texture cache: nothing yet
 	lw      $s4, RS_FRAMECOUNT($s0)
@@ -131,8 +197,12 @@ r_render:
 	sll     $s7, $s7, 3
 	srl     $s7, $s7, 3
 	lw      $t0, RS_TEXTURES($s0)
+	lw      $t2, RS_PLANES($s0)
+	lw      $t3, RS_VERTPOOL($s0)
 	lui     $t1, 0x0100                  # tag: 1 word
 	sw      $t0, SP_TEXBASE($t8)
+	sw      $t2, SP_PLANES($t8)
+	sw      $t3, SP_VERTPOOL($t8)
 	or      $t1, $t1, $fp
 	lui     $t2, 0xE200
 	sw      $t1, 0($s6)                  # texture window off, first in the
@@ -178,53 +248,72 @@ mark_done:
 
 walk:
 	andi    $t0, $s1, 1
+walk_t0:                                 # (t0 = s1 & 1: a leaf?)
 	bnez    $t0, walk_leaf
-	nop
+	addiu   $a0, $s1, -1                 # (the leaf, for walk_leaf)
 	lhu     $t0, N_VISFRAME($s1)
-	nop
-	bne     $t0, $s5, pop                # not in the PVS
-	nop
-	lw      $t0, SP_NODES($t8)
-	nop
-	addiu   $t0, $t0, 1
-	beqz    $s2, wn_side                 # fully inside the frustum already
-	sw      $t0, SP_NODES($t8)
-	jal     frustum
-	move    $a0, $s1
-	bltz    $v0, pop                     # culled
-	nop
-	move    $s2, $v0
+	lh      $t1, N_C+4($s1)              # the frustum test's box, loaded ahead
+	bne     $t0, $s5, pop                # (harmless when unused). VZ with lh:
+	lwc2    C2_VXY0, N_C+0($s1)          # the halfwords after c[2] and h[2]
+	lh      $t2, N_H+4($s1)              # are visframe / plane3, not part of
+	lwc2    C2_VXY1, N_H+0($s1)          # the vectors
+.if R_PROFILE
+	lw      $t3, SP_NODES($t8)
+.endif
+	mtc2    $t1, C2_VZ0
+	mtc2    $t2, C2_VZ1
+.if R_PROFILE
+	addiu   $t3, $t3, 1
+	sw      $t3, SP_NODES($t8)
+.endif
+	beqz    $s2, wn_side_1               # fully inside the frustum already
+	lhu     $t0, N_PLANE3($s1)           # (wn_side's first)
+	FRUSTUM pop
+
+	# the node's plane: d = n . cam - dist (x4096, vertex units); axial
+	# planes skip the products
 wn_side:
-	jal     plane_dist
-	move    $a0, $s1
-	slt     $t0, $v0, $zero              # side: 1 if the camera is behind
-	sra     $t1, $v0, 31
-	xor     $t2, $v0, $t1
-	subu    $t2, $t2, $t1                # |d|
-	slti    $t2, $t2, BACKFACE_EPS + 1
-	xori    $t2, $t2, 1                  # draw faces only if |d| > eps
-	sll     $t3, $s1, 8
-	srl     $t3, $t3, 8                  # node pointer, low 24 bits
-	sll     $t4, $s2, 24
-	or      $t3, $t3, $t4
-	sll     $t4, $t0, 28
-	or      $t3, $t3, $t4
-	sll     $t4, $t2, 29
-	or      $t3, $t3, $t4
-	sw      $t3, SP_STACK($s3)           # push (node, flags, side, draw)
-	addiu   $s3, $s3, 4
-	andi    $at, $s3, (1 << WALK_SHIFT) - 1
-	beqz    $at, walk_spill              # the scratchpad block is full
+	lhu     $t0, N_PLANE3($s1)           # plane index x 3: word offset in the
+wn_side_1:
+	lw      $t1, SP_PLANES($t8)          # shared table (dist in 1/8 units)
 	sll     $t0, $t0, 2
-walk_pushed:
+	addu    $t5, $t0, $t1
+	lw      $t1, PN_DIST($t5)
+	lbu     $t0, PN_TYPE($t5)
+	sra     $t1, $t1, 1                  # dist -> vertex units, x4096
+	sltiu   $t2, $t0, 3
+	beqz    $t2, wn_general
+	sll     $t0, $t0, 2
+	addu    $t0, $t0, $t8
+	lw      $v0, SP_CAM($t0)             # axial: n . cam = cam[type] x4096
+	sll     $t7, $s1, 8                  # (the push's node pointer, low 24 bits)
+	sll     $v0, $v0, 12
+	subu    $v0, $v0, $t1
+	# Stack word: node address, low 24 bits (a KUSEG pointer: no mask on
+	# pop) | side x 4 << 24 | no-draw << 27 | clip flags << 28.
+wn_push:
+	slt     $t0, $v0, $zero              # side: 1 if the camera is behind
+	addiu   $t2, $v0, BACKFACE_EPS       # no faces if |d| <= eps:
+	sltiu   $t2, $t2, 2 * BACKFACE_EPS + 1   # (unsigned) d + eps <= 2 eps
+	sll     $t2, $t2, 1
+	or      $t2, $t2, $t0
+	sll     $t2, $t2, 26
+	srl     $t3, $t7, 8
+	or      $t3, $t3, $t2
+	sll     $t4, $s2, 28
+	or      $t3, $t3, $t4
+	sll     $t0, $t0, 2
 	addu    $t0, $t0, $s1
 	lw      $s1, N_CHILD($t0)            # near child first
-	b       walk
-	nop
+	sw      $t3, SP_STACK($s3)           # push
+	addiu   $s3, $s3, 4
+	andi    $at, $s3, (1 << WALK_SHIFT) - 1
+	bnez    $at, walk_t0                 # room left in the scratchpad block
+	andi    $t0, $s1, 1
 
 	# Deep BSPs (Quake maps reach 110 levels): the full scratchpad stack is
 	# moved to the next RAM block and starts over; `pop` brings it back when
-	# it runs empty. Only pushes pay a test (2 instructions).
+	# it runs empty. Only pushes pay a test.
 walk_spill:
 	lw      $t1, SP_SPILLS($t8)
 	lui     $t2, %hi(r_walk_spill)
@@ -239,8 +328,29 @@ walk_spill:
 	sw      $t5, 0($t2)
 	bne     $t4, $s3, 1b
 	addiu   $t2, $t2, 4
-	b       walk_pushed
+	b       walk
 	move    $s3, $t8
+
+	# general plane: three products (two instructions between an mflo and
+	# the next mult)
+wn_general:
+	lh      $t2, PN_N+0($t5)
+	lw      $t3, SP_CAM+0($t8)
+	lh      $t4, PN_N+2($t5)
+	mult    $t2, $t3
+	lw      $t6, SP_CAM+4($t8)
+	mflo    $v0
+	lh      $t2, PN_N+4($t5)
+	subu    $v0, $v0, $t1
+	mult    $t4, $t6
+	lw      $t3, SP_CAM+8($t8)
+	mflo    $t4
+	addu    $v0, $v0, $t4
+	sll     $t7, $s1, 8                  # (the push's node pointer)
+	mult    $t2, $t3
+	mflo    $t4
+	b       wn_push
+	addu    $v0, $v0, $t4
 
 walk_refill:                             # scratchpad stack empty: next RAM block
 	lw      $t1, SP_SPILLS($t8)
@@ -263,61 +373,61 @@ walk_refill:                             # scratchpad stack empty: next RAM bloc
 	b       pop
 	nop
 
-walk_leaf:
-	addiu   $a0, $s1, -1
+walk_leaf:                               # a0 = the leaf (s1 - 1)
 	lhu     $t0, L_VISFRAME($a0)
-	nop
+	lh      $t1, L_C+4($a0)
 	bne     $t0, $s5, pop
-	nop
+	lwc2    C2_VXY0, L_C+0($a0)
+	lh      $t2, L_H+4($a0)
+	lwc2    C2_VXY1, L_H+0($a0)
+	mtc2    $t1, C2_VZ0
+	lhu     $a3, L_NMARKS($a0)
+	mtc2    $t2, C2_VZ1
+	lw      $a2, L_MARKS($a0)
 	beqz    $s2, wl_marks
-	nop
-	jal     frustum
-	nop
-	bltz    $v0, pop
-	addiu   $a0, $s1, -1
+	sll     $a3, $a3, 1                  # marks x 2 bytes
+	FRUSTUM pop
 wl_marks:
-	lhu     $t1, L_NMARKS($a0)
-	lw      $t2, L_MARKS($a0)
 	lw      $t3, SP_FVBASE($t8)
-	beqz    $t1, pop
-	nop
+	beqz    $a3, pop
+	addu    $a3, $a3, $a2                # end of the marks
+	lhu     $t0, 0($a2)
 wl_mark:
-	lhu     $t0, 0($t2)
-	addiu   $t2, $t2, 2
+	addiu   $a2, $a2, 2
 	sll     $t0, $t0, 1
 	addu    $t0, $t0, $t3
-	addiu   $t1, $t1, -1
-	bgtz    $t1, wl_mark
 	sh      $s4, 0($t0)                  # face_visframe[mark] = framecount
+	bne     $a2, $a3, wl_mark
+	lhu     $t0, 0($a2)                  # (next; one past the last: harmless)
 
 pop:
 	beq     $s3, $t8, walk_refill
+	addiu   $s3, $s3, -4                 # (the refill resets s3)
+	lw      $t0, SP_STACK($s3)           # (see wn_push)
 	nop
-	addiu   $s3, $s3, -4
-	lw      $t0, SP_STACK($s3)
-	lui     $t1, 0x8000
+	srl     $s2, $t0, 28                 # clip flags
+	srl     $t3, $t0, 24
+	andi    $t4, $t3, 8                  # no faces
+	andi    $t3, $t3, 4                  # side * 4
 	sll     $t2, $t0, 8
-	srl     $t2, $t2, 8
-	or      $t2, $t2, $t1                # node pointer
-	srl     $s2, $t0, 24
-	andi    $s2, $s2, 0xf                # clip flags
-	srl     $t3, $t0, 28
-	andi    $t4, $t3, 2                  # draw flag
-	andi    $t3, $t3, 1                  # side
-	xori    $t5, $t3, 1
-	sll     $t5, $t5, 2
-	addu    $t5, $t5, $t2
-	lw      $s1, N_CHILD($t5)            # far child: walked after the faces
-	beqz    $t4, walk
-	sll     $t3, $t3, 2                  # side * 4
-	addu    $t5, $t3, $t2
+	srl     $t2, $t2, 8                  # node (KUSEG)
+	subu    $t5, $t2, $t3
+	lw      $s1, N_CHILD+4($t5)          # far child child[1 - side]: walked
+	bnez    $t4, walk                    # after the faces
+	addu    $t5, $t2, $t3
 	lw      $a0, N_FACES($t5)            # block on the camera's side
 	sll     $t6, $t3, 3                  # side * 32 (= N_SIZE - 4): the block
 	addu    $t6, $t6, $t2                # ends at faces[1] (front) or at the
 	lw      $a1, N_FACES+4($t6)          # next node's faces[0] (back)
+.if R_PROFILE
 	lhu     $t9, TIMER2($t8)
 	beq     $a0, $a1, walk               # empty block
 	lw      $t0, SP_FULL($t8)
+.else
+	lw      $t0, SP_FULL($t8)
+	beq     $a0, $a1, walk               # empty block
+	lw      $v0, SP_CLUT16($t8)
+.endif
 
 # -----------------------------------------------------------------------------
 # draw_records, inline in the walk: a0 = first face record, a1 = block end
@@ -338,14 +448,20 @@ pop:
 # run it closes included) and walk_done's; the slow path keeps s6 <= s7.
 # Clobbers at, v0, a0-a3, t0-t7, t9; back to `walk` when done.
 draw_records:
+.if R_PROFILE
 	sw      $t9, SP_T0($t8)
 	lw      $v0, SP_CLUT16($t8)
+.endif
 	bnez    $t0, walk                    # packet arena full: nothing more
 	move    $t2, $zero
 dr_cull:
 	addu    $a0, $a0, $t2                # culled record (t2 = its size): next
 dr_rec:
+.if R_PROFILE
 	beq     $a0, $a1, dr_done
+.else
+	beq     $a0, $a1, walk
+.endif
 	lhu     $t1, R_FACE_ID($a0)          # (at the block end: a harmless read)
 	lw      $t0, SP_FVBASE($t8)
 	sll     $t1, $t1, 1
@@ -406,7 +522,7 @@ dr_rec:
 
 	lbu     $t2, R_NVERTS($a0)
 	beq     $at, $a3, dr_tex_done        # same texture as the last record
-	lw      $t0, SP_RECORDS($t8)
+	lhu     $t0, R_POLYS($a0)            # (the light bytes' offset, below)
 	bltz    $at, dr_tex_load             # first of the frame: no run to close
 	lw      $t5, SP_TEXBASE($t8)
 	lw      $t6, SP_TWIN($t8)            # close the last texture's run: its
@@ -429,19 +545,20 @@ dr_tex_load:
 	sw      $v0, SP_CLUT16($t8)          # (the slow path's copies)
 	sw      $v1, SP_TPAGE16($t8)
 dr_tex_done:
-	lw      $t1, SP_VERTS($t8)
-	addiu   $t0, $t0, 1
-	addu    $t1, $t1, $t2
-	sw      $t0, SP_RECORDS($t8)
-	sw      $t1, SP_VERTS($t8)
-
-	lhu     $t0, R_POLYS($a0)            # light bytes: polys - ((nv + 3) & ~3)
-	addiu   $t1, $t2, 3
+.if R_PROFILE
+	lw      $t1, SP_RECORDS($t8)
+	lw      $t9, SP_VERTS($t8)
+	addiu   $t1, $t1, 1
+	addu    $t9, $t9, $t2
+	sw      $t1, SP_RECORDS($t8)
+	sw      $t9, SP_VERTS($t8)
+.endif
+	addiu   $t1, $t2, 3                  # light bytes: polys - ((nv + 3) & ~3)
 	andi    $t1, $t1, 0xfc
 	addu    $t0, $t0, $a0
 	subu    $at, $t0, $t1
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
-	lw      $t9, RS_VERTPOOL($s0)        # (padded to threes: no stray reads)
+	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
 	move    $t4, $t8                     # cache cursor
 	move    $t5, $t2                     # vertices left
 dr_xf:
@@ -508,6 +625,7 @@ dr_nz:
 dr_polys:
 	lhu     $t0, R_POLYS($a0)
 	lbu     $at, R_NQUADS($a0)
+.if R_PROFILE
 	lw      $t1, SP_POLYS($t8)
 	addu    $a3, $a0, $t0                # first polygon
 	lbu     $t0, R_NTRIS($a0)
@@ -515,6 +633,11 @@ dr_polys:
 	addu    $t1, $t1, $t0
 	beqz    $at, dr_tris
 	sw      $t1, SP_POLYS($t8)
+.else
+	addu    $a3, $a0, $t0                # first polygon
+	beqz    $at, dr_tris
+	nop
+.endif
 
 dr_quad:
 	lw      $t0, 0($a3)                  # 4 vertex offsets
@@ -670,7 +793,6 @@ dr_quad_skip:
 dr_tri_skip:
 	li      $t0, 3
 dr_slow_call:
-	lw      $t1, SP_SKIPPED($t8)         # counts polygons sent to the slow path
 	sw      $at, SP_SAVE+0($t8)
 	sw      $a0, SP_SAVE+4($t8)
 	sw      $a1, SP_SAVE+8($t8)
@@ -679,11 +801,13 @@ dr_slow_call:
 	sw      $v0, SP_SAVE+20($t8)
 	sw      $v1, SP_SAVE+24($t8)
 	sw      $t0, SP_SAVE+32($t8)
+.if R_PROFILE
+	lw      $t1, SP_SKIPPED($t8)         # polygons sent to the slow path
+	lhu     $t2, TIMER2($t8)
 	addiu   $t1, $t1, 1
 	sw      $t1, SP_SKIPPED($t8)
-	lhu     $t1, TIMER2($t8)
-	nop
-	sw      $t1, SP_SAVE+36($t8)         # slow-path start time
+	sw      $t2, SP_SAVE+36($t8)         # slow-path start time
+.endif
 .if R_SLOW_C
 	sw      $s6, RS_PKT($s0)             # the C side emits through r_state
 	sw      $fp, RS_OT_HEAD($s0)
@@ -702,6 +826,7 @@ dr_slow_call:
 	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3
 	move    $a2, $t0
 .endif
+.if R_PROFILE
 	lhu     $t0, TIMER2($t8)
 	lw      $t1, SP_SAVE+36($t8)
 	lw      $t2, SP_TSLOW($t8)
@@ -709,6 +834,7 @@ dr_slow_call:
 	andi    $t0, $t0, 0xffff
 	addu    $t2, $t2, $t0
 	sw      $t2, SP_TSLOW($t8)
+.endif
 	lw      $at, SP_SAVE+0($t8)
 	lw      $a0, SP_SAVE+4($t8)
 	lw      $a1, SP_SAVE+8($t8)
@@ -726,6 +852,7 @@ dr_slow_call:
 
 dr_full:
 	li      $t0, 1
+.if R_PROFILE
 	sw      $t0, SP_FULL($t8)
 	lw      $t0, SP_SKIPPED($t8)
 	nop
@@ -740,6 +867,10 @@ dr_done:
 	addu    $t1, $t1, $t0
 	b       walk
 	sw      $t1, SP_TBLOCK($t8)
+.else
+	b       walk
+	sw      $t0, SP_FULL($t8)
+.endif
 
 walk_done:
 	lw      $t0, SP_LASTTEX($t8)
@@ -758,6 +889,7 @@ walk_done:
 	lw      $t0, RS_OT_WORLD($s0)
 	nop
 	sw      $fp, 0($t0)
+.if R_PROFILE
 	lw      $t0, SP_NODES($t8)
 	lw      $t1, SP_RECORDS($t8)
 	lw      $t2, SP_VERTS($t8)
@@ -776,6 +908,7 @@ walk_done:
 	addu    $t1, $t1, $t0                # the C reference adds its own count
 	sw      $t1, RS_STAT_SLOW($s0)
 	sw      $t2, RS_TICKS_SLOW($s0)
+.endif
 
 	lw      $ra, 44($sp)                 # first: jr must not sit in its delay slot
 	lw      $s0,  8($sp)
@@ -795,7 +928,7 @@ walk_done:
 # Axial planes skip the products. Clobbers t0-t4, v0.
 plane_dist:
 	lhu     $t0, N_PLANE3($a0)           # the node's plane, in the shared
-	lw      $t1, RS_PLANES($s0)          # table (dist in 1/8 units)
+	lw      $t1, SP_PLANES($t8)          # table (dist in 1/8 units)
 	sll     $t0, $t0, 2
 	addu    $t5, $t0, $t1
 	lbu     $t0, PN_TYPE($t5)
@@ -833,87 +966,6 @@ pd_general:
 	addu    $v0, $v0, $t4
 	jr      $ra
 	subu    $v0, $v0, $t1
-
-# -----------------------------------------------------------------------------
-# frustum: cull the bbox of node/leaf a0 (centre + half extents at +0/+8,
-# vertex units) against the planes still set in s2. Returns v0 = remaining
-# clip flags (a plane is dropped once the box is fully inside it), or -1 if
-# the box is outside. View space: x right, y down, z forward, H = 160 on a
-# 320x240 screen -> right z-x>=0, left z+x>=0, bottom 3z-4y>=0, top 3z+4y>=0.
-# The box is taken to view space as centre (rotation + translation) and
-# radius (|rotation| x half extents). Clobbers t0-t7, t9, v0.
-frustum:
-	lwc2    C2_VXY0, N_C+0($a0)
-	lh      $t0, N_C+4($a0)              # VZ with lh: the halfword after c[2]
-	lwc2    C2_VXY1, N_H+0($a0)          # and h[2] is visframe / type (or
-	lh      $t1, N_H+4($a0)              # num_marks), not part of the vector
-	mtc2    $t0, C2_VZ0
-	mtc2    $t1, C2_VZ1
-	move    $v0, $s2
-	nop
-	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
-	mfc2    $t0, C2_IR1                  # x
-	mfc2    $t1, C2_IR2                  # y
-	mfc2    $t2, C2_IR3                  # z
-	nop
-	MVMVA   1, 1, 1, 3, 0                # IR = |rot| * half extents
-	mfc2    $t3, C2_IR1                  # rx
-	mfc2    $t4, C2_IR2                  # ry
-	mfc2    $t5, C2_IR3                  # rz
-	sll     $t7, $t4, 2                  # 4 ry
-	addu    $t6, $t5, $t3                # rz + rx: radius for left/right
-	sll     $t9, $t5, 1
-	addu    $t9, $t9, $t5
-	addu    $t7, $t7, $t9                # 3 rz + 4 ry: radius for top/bottom
-
-	andi    $t3, $v0, 1                  # right: z - x
-	beqz    $t3, f_left
-	subu    $t3, $t2, $t0
-	addu    $t4, $t3, $t6
-	bltz    $t4, f_cull
-	subu    $t4, $t3, $t6
-	bltz    $t4, f_left
-	nop
-	xori    $v0, $v0, 1
-f_left:
-	andi    $t3, $v0, 2                  # left: z + x
-	beqz    $t3, f_bottom
-	addu    $t3, $t2, $t0
-	addu    $t4, $t3, $t6
-	bltz    $t4, f_cull
-	subu    $t4, $t3, $t6
-	bltz    $t4, f_bottom
-	nop
-	xori    $v0, $v0, 2
-f_bottom:
-	sll     $t9, $t2, 1
-	addu    $t9, $t9, $t2                # 3z
-	sll     $t5, $t1, 2                  # 4y
-	andi    $t3, $v0, 4                  # bottom: 3z - 4y
-	beqz    $t3, f_top
-	subu    $t3, $t9, $t5
-	addu    $t4, $t3, $t7
-	bltz    $t4, f_cull
-	subu    $t4, $t3, $t7
-	bltz    $t4, f_top
-	nop
-	xori    $v0, $v0, 4
-f_top:
-	andi    $t3, $v0, 8                  # top: 3z + 4y
-	beqz    $t3, f_ret
-	addu    $t3, $t9, $t5
-	addu    $t4, $t3, $t7
-	bltz    $t4, f_cull
-	subu    $t4, $t3, $t7
-	bltz    $t4, f_ret
-	nop
-	xori    $v0, $v0, 8
-f_ret:
-	jr      $ra
-	nop
-f_cull:
-	jr      $ra
-	li      $v0, -1
 
 # -----------------------------------------------------------------------------
 # mark_pvs: a0 = new camera leaf. visframe++, then walk the leaf's

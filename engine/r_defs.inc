@@ -83,7 +83,7 @@
 .set SP_FVBASE,   0x30c
 .set SP_SZFAST,   0x310
 .set SP_LASTTEX,  0x314   # draw_records: the last record's texture index
-.set SP_FREE318,  0x318   # (free)
+.set SP_PLANES,   0x318   # r_state.planes (the walk's plane table)
 .set SP_NEXTREC,  0x31c
 .set SP_NODES,    0x320   # counters
 .set SP_RECORDS,  0x324
@@ -97,7 +97,7 @@
 .set SP_PLA,      0x368   # slow path: polygon index list A (12 bytes)
 .set SP_PLB,      0x374   # slow path: polygon index list B (12 bytes)
 .set SP_TRI,      0x380   # slow path: triangle stack (up to 16 words)
-.set SP_FREE3C0,  0x3c0   # (free)
+.set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table
 .set SP_TWIN,     0x3cc   # draw_records: the record's texture-window command
@@ -120,6 +120,9 @@
 .set SLOW_MAXD,   5       # max split depth
 .set POOL_MAX,    128     # vertex pool entries (32 bytes each)
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
+.ifndef R_PROFILE           # renderer counters + stage timers (CMake option
+.set R_PROFILE,   1         # Q1PSX_PROFILE passes --defsym R_PROFILE=0|1)
+.endif
 .set WALK_SHIFT,  8       # walk stack block = 1 << 8 bytes (64 entries): the
                           # scratchpad part, and the unit spilled to RAM
 .set WALK_RAM,    768     # RAM behind it: depth <= 64 + 192 = 256 (QW_MAX_DEPTH)

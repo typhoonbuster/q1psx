@@ -16,6 +16,15 @@
 			"warnings": { "dev": false }
 		},
 		{
+			"name":          "release",
+			"inherits":      "default",
+			"displayName":   "Release build (no renderer counters / stage timers)",
+			"binaryDir":     "${sourceDir}/build-release",
+			"cacheVariables": {
+				"Q1PSX_PROFILE": "OFF"
+			}
+		},
+		{
 			"name":          "bench",
 			"inherits":      "default",
 			"displayName":   "Headless benchmark build (scripts/bench.sh)",

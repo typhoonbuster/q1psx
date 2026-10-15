@@ -20,7 +20,8 @@
 # advances s6 (packet pointer) and fp (world-bucket link) in place.
 #
 # Vertex pool entry (32 B): +0 x, +4 y, +8 z (view space, world x 6),
-# +12 u, +16 v (texels x 256), +20 SXY. Indices are 8-bit; triangles on the
+# +12 u, +16 v (texels x 256), +20 SXY, +24 light then grey colour word,
+# +28 uv word (the last three set by the projection, once per vertex). Indices are 8-bit; triangles on the
 # scratchpad stack are one word: i0 | i1 << 8 | i2 << 16 | depth << 24.
 
 	.set noreorder
@@ -36,7 +37,9 @@
 .set PV_U,    12
 .set PV_V,    16
 .set PV_SXY,  20
-.set PV_C,    24       # light, 0..255 (interpolated like u / v)
+.set PV_GC,   24       # light 0..255 (interpolated like u / v); once
+                        # projected, the grey colour word 0x00cccccc
+.set PV_UVW,  28       # once projected: the packet's uv word (rounded texels)
 
 	.section .bss.r_slow_pool, "aw", @nobits
 	.align  4
@@ -83,7 +86,7 @@ sp_xf:
 	lbu     $t1, 0($t1)                  # light
 	addu    $t2, $t2, $a0
 	lhu     $t2, R_VERTS($t2)            # pool index
-	lw      $t9, RS_VERTPOOL($s0)
+	lw      $t9, SP_VERTPOOL($t8)
 	sll     $t2, $t2, 3
 	addu    $t2, $t2, $t9
 	lwc2    C2_VXY0, 0($t2)
@@ -103,7 +106,7 @@ sp_xf:
 	sw      $t7, PV_Z($t4)
 	sw      $t0, PV_U($t4)
 	sw      $t3, PV_V($t4)
-	sw      $t1, PV_C($t4)
+	sw      $t1, PV_GC($t4)
 
 	addiu   $t0, $t7, -SLOW_ZNEAR        # bit 0: near
 	slt     $t9, $t0, $zero
@@ -201,120 +204,144 @@ sp_fan:
 	lbu     $t2, 1($t0)                  # l[i + 1]
 	sll     $t1, $t1, 8
 	sll     $t2, $t2, 16
-	or      $t1, $t1, $t4
-	or      $t1, $t1, $t2
-	sw      $t1, 0($a3)                  # depth 0
-	addiu   $a3, $a3, 4
+	or      $t6, $t1, $t4
+	b       sp_tri                       # (the stack is empty: no push / pop)
+	or      $t6, $t6, $t2                # depth 0
 
 sp_sub:
 	addiu   $t0, $t8, SP_TRI
 	beq     $a3, $t0, sp_fan_next        # stack empty
-	nop
+	lw      $t6, -4($a3)                 # (below the stack when empty: harmless)
 	addiu   $a3, $a3, -4
-	lw      $t6, 0($a3)                  # triangle word
-	nop
-	andi    $t0, $t6, 0xff
-	srl     $t1, $t6, 8
-	andi    $t1, $t1, 0xff
-	srl     $t2, $t6, 16
-	andi    $t2, $t2, 0xff
-	sll     $t0, $t0, 5
-	sll     $t1, $t1, 5
-	sll     $t2, $t2, 5
+sp_tri:                                  # t6 = i0 | i1 << 8 | i2 << 16 | depth << 24
+	sll     $t0, $t6, 5                  # index x 32 = pool offset
+	andi    $t0, $t0, 0x1fe0
+	srl     $t1, $t6, 3
+	andi    $t1, $t1, 0x1fe0
+	srl     $t2, $t6, 11
+	andi    $t2, $t2, 0x1fe0
 	addu    $t0, $t0, $v1
 	addu    $t1, $t1, $v1
 	addu    $t2, $t2, $v1
-	sw      $t0, SP_P0($t8)         # p0 / p1 / p2 pointers
+	lw      $t3, PV_SXY($t0)
+	lw      $t4, PV_SXY($t1)
+	lw      $t5, PV_SXY($t2)
+	sw      $t0, SP_P0($t8)              # p0 / p1 / p2 pointers
 	sw      $t1, SP_P1($t8)
 	sw      $t2, SP_P2($t8)
 
 	# off screen? all x < 0, all x >= 320, all y < 0, all y >= 240
-	lw      $t3, PV_SXY($t0)
-	lw      $t4, PV_SXY($t1)
-	lw      $t5, PV_SXY($t2)
-	sll     $t0, $t3, 16
-	sll     $t1, $t4, 16
-	sll     $t2, $t5, 16
-	and     $t9, $t0, $t1
-	and     $t9, $t9, $t2
-	bltz    $t9, sp_sub                  # all x < 0 (sign of x << 16)
-	sra     $t0, $t0, 16
-	sra     $t1, $t1, 16
-	sra     $t2, $t2, 16
-	addiu   $t0, $t0, -320
-	addiu   $t1, $t1, -320
-	addiu   $t2, $t2, -320
-	or      $t9, $t0, $t1
-	or      $t9, $t9, $t2
-	bgez    $t9, sp_sub                  # all x >= 320
-	and     $t9, $t3, $t4
-	and     $t9, $t9, $t5
-	bltz    $t9, sp_sub                  # all y < 0
-	sra     $t3, $t3, 16
+	sll     $t7, $t3, 16
+	sll     $t9, $t4, 16
+	sll     $v0, $t5, 16
+	and     $a1, $t7, $t9
+	and     $a1, $a1, $v0
+	bltz    $a1, sp_sub                  # all x < 0 (sign of x << 16)
+	sra     $t7, $t7, 16                 # x0 (x1 / x2: t9 / v0)
+	sra     $t9, $t9, 16
+	sra     $v0, $v0, 16
+	addiu   $a1, $t7, -320
+	addiu   $t0, $t9, -320
+	or      $a1, $a1, $t0
+	addiu   $t0, $v0, -320
+	or      $a1, $a1, $t0
+	bgez    $a1, sp_sub                  # all x >= 320
+	and     $a1, $t3, $t4
+	and     $a1, $a1, $t5
+	bltz    $a1, sp_sub                  # all y < 0
+	sra     $t3, $t3, 16                 # y0 (y1 / y2: t4 / t5)
 	sra     $t4, $t4, 16
 	sra     $t5, $t5, 16
-	addiu   $t3, $t3, -240
-	addiu   $t4, $t4, -240
-	addiu   $t5, $t5, -240
-	or      $t9, $t3, $t4
-	or      $t9, $t9, $t5
-	bgez    $t9, sp_sub                  # all y >= 240
-	nop
-
-	# split decisions (none at max depth or with the pool nearly full)
-	move    $t7, $zero
+	addiu   $a1, $t3, -240
+	addiu   $t0, $t4, -240
+	or      $a1, $a1, $t0
+	addiu   $t0, $t5, -240
+	or      $a1, $a1, $t0
+	bgez    $a1, sp_sub                  # all y >= 240
 	srl     $t0, $t6, 24
+
+	# split decisions (none at max depth or with the pool nearly full). An
+	# edge splits when |dx| + |dy| > SLOW_SPAN px, i.e. |dp| or |dq| > SPAN
+	# with p = x + y, q = x - y; or when its depth ratio exceeds 4/3 (z > 0
+	# past the near clip: 4 z_lo < 3 z_hi <=> 4 zb < 3 za or 4 za < 3 zb).
+	# Symmetric in the edge's ends: shared edges never crack.
 	sltiu   $t0, $t0, SLOW_MAXD
-	beqz    $t0, sp_decided
-	lw      $t0, SP_POOLN($t8)
-	nop
-	sltiu   $t0, $t0, POOL_MAX - 3
-	beqz    $t0, sp_decided
-	nop
-	lw      $t4, SP_P0($t8)
-	lw      $t5, SP_P1($t8)
-	jal     sp_split
-	nop
-	or      $t7, $t7, $v0                # bit 0: p0-p1
-	lw      $t4, SP_P1($t8)
-	lw      $t5, SP_P2($t8)
-	jal     sp_split
-	nop
-	sll     $v0, $v0, 1
-	or      $t7, $t7, $v0                # bit 1: p1-p2
-	lw      $t4, SP_P2($t8)
-	lw      $t5, SP_P0($t8)
-	jal     sp_split
-	nop
-	sll     $v0, $v0, 2
-	or      $t7, $t7, $v0                # bit 2: p2-p0
-sp_decided:
+	beqz    $t0, sp_emit
+	lw      $t1, SP_POOLN($t8)
+	addu    $t0, $t7, $t3                # p0
+	subu    $t7, $t7, $t3                # q0
+	sltiu   $t1, $t1, POOL_MAX - 3
+	beqz    $t1, sp_emit
+	addu    $t1, $t9, $t4                # p1
+	subu    $t9, $t9, $t4                # q1
+	addu    $t2, $v0, $t5                # p2
+	subu    $v0, $v0, $t5                # q2
+
+.macro SHORT pa, pb, qa, qb, out         # out = 1: |dp| <= SPAN and |dq| <= SPAN
+	subu    \out, \pa, \pb
+	addiu   \out, \out, SLOW_SPAN
+	sltiu   \out, \out, 2 * SLOW_SPAN + 1
+	subu    $a1, \qa, \qb
+	addiu   $a1, $a1, SLOW_SPAN
+	sltiu   $a1, $a1, 2 * SLOW_SPAN + 1
+	and     \out, \out, $a1
+.endm
+	SHORT   $t0, $t1, $t7, $t9, $t3      # p0-p1
+	SHORT   $t1, $t2, $t9, $v0, $t4      # p1-p2
+	SHORT   $t2, $t0, $v0, $t7, $t5      # p2-p0
+
+	lw      $t0, SP_P0($t8)
+	lw      $t1, SP_P1($t8)
+	lw      $t2, SP_P2($t8)
+	lw      $t7, PV_Z($t0)
+	lw      $t9, PV_Z($t1)
+	lw      $v0, PV_Z($t2)
+	sll     $t0, $t7, 2                  # 4 z0
+	sll     $t1, $t9, 2                  # 4 z1
+	sll     $t2, $v0, 2                  # 4 z2
+	sll     $a1, $t7, 1
+	addu    $t7, $t7, $a1                # 3 z0
+	sll     $a1, $t9, 1
+	addu    $t9, $t9, $a1                # 3 z1
+	sll     $a1, $v0, 1
+	addu    $v0, $v0, $a1                # 3 z2
+
+.macro SPLIT r, z4a, z3a, z4b, z3b       # r: short -> split (long or deep)
+	xori    \r, \r, 1
+	slt     $a1, \z4b, \z3a
+	or      \r, \r, $a1
+	slt     $a1, \z4a, \z3b
+	or      \r, \r, $a1
+.endm
+	SPLIT   $t3, $t0, $t7, $t1, $t9      # p0-p1
+	SPLIT   $t4, $t1, $t9, $t2, $v0      # p1-p2
+	SPLIT   $t5, $t2, $v0, $t0, $t7      # p2-p0
+	sll     $t4, $t4, 1
+	sll     $t5, $t5, 2
+	or      $t7, $t3, $t4                # t7 bit 0: p0-p1, 1: p1-p2, 2: p2-p0
+	or      $t7, $t7, $t5
 	beqz    $t7, sp_emit
-	nop
+	move    $a1, $zero
 
 	# midpoints of the split edges -> a1 = m01 | m12 << 8 | m20 << 16
-	move    $a1, $zero
 	andi    $t0, $t7, 1
 	beqz    $t0, 2f
 	lw      $t4, SP_P0($t8)
-	lw      $t5, SP_P1($t8)
 	jal     sp_mid
-	nop
+	lw      $t5, SP_P1($t8)
 	or      $a1, $a1, $v0
 2:	andi    $t0, $t7, 2
 	beqz    $t0, 3f
 	lw      $t4, SP_P1($t8)
-	lw      $t5, SP_P2($t8)
 	jal     sp_mid
-	nop
+	lw      $t5, SP_P2($t8)
 	sll     $v0, $v0, 8
 	or      $a1, $a1, $v0
 3:	andi    $t0, $t7, 4
 	beqz    $t0, 4f
 	lw      $t4, SP_P2($t8)
-	lw      $t5, SP_P0($t8)
 	jal     sp_mid
-	nop
+	lw      $t5, SP_P0($t8)
 	sll     $v0, $v0, 16
 	or      $a1, $a1, $v0
 4:
@@ -398,25 +425,7 @@ sp_c7:                                   # all three: 4 triangles
 	nop
 
 	# ---- emit one POLY_GT3 ----------------------------------------------------
-.macro UVWORD rp, dst
-	lw      \dst, PV_U(\rp)
-	lw      $v0, PV_V(\rp)
-	addiu   \dst, \dst, 128
-	addiu   $v0, $v0, 128
-	sra     \dst, \dst, 8
-	sra     $v0, $v0, 8
-	sll     $v0, $v0, 8
-	or      \dst, \dst, $v0
-.endm
-
-# GREY r: light 0..255 -> GPU colour 0x00cccccc. Clobbers v0.
-.macro GREY r
-	sll     $v0, \r, 8
-	or      \r, \r, $v0
-	sll     $v0, \r, 8
-	or      \r, \r, $v0
-.endm
-
+	# colour and uv words are ready in the pool (sp_proj)
 sp_emit:
 	addiu   $t0, $s6, 40
 	sltu    $t0, $s7, $t0
@@ -424,50 +433,45 @@ sp_emit:
 	lw      $t3, SP_P0($t8)
 	lw      $t4, SP_P1($t8)
 	lw      $t5, SP_P2($t8)
-	lui     $t0, 0x0900
-	or      $t0, $t0, $fp                # tag: 9 words, link to the old head
-	sw      $t0, 0($s6)
-	lw      $t1, PV_C($t3)
-	lui     $t0, CODE_GT3 >> 16
-	GREY    $t1
-	or      $t1, $t1, $t0                # code | c0
-	sw      $t1, 4($s6)
+	lw      $t0, PV_GC($t3)
 	lw      $t1, PV_SXY($t3)
-	nop
+	lw      $t2, PV_UVW($t3)
+	lui     $t7, CODE_GT3 >> 16
+	lw      $t9, SP_CLUT16($t8)
+	or      $t0, $t0, $t7                # code | c0
+	sw      $t0, 4($s6)
 	sw      $t1, 8($s6)
-	UVWORD  $t3, $t1
-	lw      $t0, SP_CLUT16($t8)
-	nop
-	or      $t1, $t1, $t0
-	sw      $t1, 12($s6)
-	lw      $t1, PV_C($t4)
-	nop
-	GREY    $t1
-	sw      $t1, 16($s6)
+	or      $t2, $t2, $t9                # uv0 | clut
+	sw      $t2, 12($s6)
+	lw      $t0, PV_GC($t4)
 	lw      $t1, PV_SXY($t4)
-	nop
+	lw      $t2, PV_UVW($t4)
+	lw      $t9, SP_TPAGE16($t8)
+	sw      $t0, 16($s6)
 	sw      $t1, 20($s6)
-	UVWORD  $t4, $t1
-	lw      $t0, SP_TPAGE16($t8)
-	nop
-	or      $t1, $t1, $t0
-	sw      $t1, 24($s6)
-	lw      $t1, PV_C($t5)
-	nop
-	GREY    $t1
-	sw      $t1, 28($s6)
+	or      $t2, $t2, $t9                # uv1 | tpage
+	sw      $t2, 24($s6)
+	lw      $t0, PV_GC($t5)
 	lw      $t1, PV_SXY($t5)
-	nop
+	lw      $t2, PV_UVW($t5)
+	lui     $t9, 0x0900
+	sw      $t0, 28($s6)
 	sw      $t1, 32($s6)
-	UVWORD  $t5, $t1
-	sw      $t1, 36($s6)
+	sw      $t2, 36($s6)
+	or      $t9, $t9, $fp                # tag: 9 words, link to the old head
+	sw      $t9, 0($s6)
 	move    $fp, $s6                     # new bucket head (KUSEG address)
+.if R_PROFILE
 	addiu   $s6, $s6, 40
 	lw      $t0, SP_SLOWTRI($t8)
 	nop
 	addiu   $t0, $t0, 1
 	b       sp_sub
 	sw      $t0, SP_SLOWTRI($t8)
+.else
+	b       sp_sub
+	addiu   $s6, $s6, 40
+.endif
 
 sp_full:
 	li      $t0, 1
@@ -638,7 +642,7 @@ sp_lerp:
 	LERPC   PV_Z
 	LERPC   PV_U
 	LERPC   PV_V
-	LERPC   PV_C
+	LERPC   PV_GC
 	jr      $ra
 	nop
 sl_full:
@@ -647,33 +651,71 @@ sl_full:
 
 # -----------------------------------------------------------------------------
 # sp_mid: append the midpoint of pool vertices t4, t5 (symmetric, so both
-# triangles sharing the edge build the same point) and project it;
-# v0 = index (callers have checked the pool has room). Clobbers t0-t3, v0.
-.macro MIDC off
-	lw      $t1, \off($t4)
-	lw      $t2, \off($t5)
-	nop
-	addu    $t1, $t1, $t2
-	sra     $t1, $t1, 1
-	sw      $t1, \off($t0)
-.endm
-
+# triangles sharing the edge build the same point), project it and ready its
+# packet words; v0 = index (callers have checked the pool has room).
+# Clobbers t0-t5, t9, v0.
 sp_mid:
 	lw      $v0, SP_POOLN($t8)
-	nop
+	lw      $t1, PV_X($t4)
+	lw      $t2, PV_X($t5)
 	sll     $t0, $v0, 5
-	addu    $t0, $t0, $v1
-	addiu   $t1, $v0, 1
-	sw      $t1, SP_POOLN($t8)
-	MIDC    PV_X
-	MIDC    PV_Y
-	MIDC    PV_Z
-	MIDC    PV_U
-	MIDC    PV_V
-	MIDC    PV_C
-	# fall through: project pool vertex t0
+	addu    $t0, $t0, $v1                # the new vertex
+	addu    $t1, $t1, $t2
+	lw      $t2, PV_Y($t4)
+	lw      $t3, PV_Y($t5)
+	sra     $t1, $t1, 1                  # x
+	sw      $t1, PV_X($t0)
+	addu    $t2, $t2, $t3
+	sra     $t2, $t2, 1                  # y
+	sw      $t2, PV_Y($t0)
+	andi    $t1, $t1, 0xffff
+	sll     $t3, $t2, 16
+	or      $t1, $t1, $t3
+	mtc2    $t1, C2_VXY0
+	lw      $t1, PV_Z($t4)
+	lw      $t2, PV_Z($t5)
+	addiu   $t3, $v0, 1
+	addu    $t1, $t1, $t2
+	sra     $t1, $t1, 1                  # z
+	mtc2    $t1, C2_VZ0
+	sw      $t1, PV_Z($t0)
+	sw      $t3, SP_POOLN($t8)
+	RTPS                                 # (rotation 2 I: view space in)
+	lw      $t1, PV_U($t4)               # while the GTE works: u, v, light
+	lw      $t2, PV_U($t5)
+	lw      $t3, PV_V($t4)
+	lw      $t9, PV_V($t5)
+	addu    $t1, $t1, $t2
+	sra     $t1, $t1, 1                  # u x 256
+	addu    $t3, $t3, $t9
+	sra     $t3, $t3, 1                  # v x 256
+	sw      $t1, PV_U($t0)
+	sw      $t3, PV_V($t0)
+	lw      $t4, PV_GC($t4)              # (the ends are projected: their
+	lw      $t5, PV_GC($t5)              # light is the low byte of GC)
+	addiu   $t1, $t1, 128
+	addiu   $t3, $t3, 128
+	sra     $t1, $t1, 8
+	sra     $t3, $t3, 8
+	sll     $t3, $t3, 8
+	or      $t1, $t1, $t3
+	sw      $t1, PV_UVW($t0)             # uv word, rounded texels
+	andi    $t4, $t4, 0xff
+	andi    $t5, $t5, 0xff
+	addu    $t4, $t4, $t5
+	sra     $t4, $t4, 1                  # light
+	sll     $t5, $t4, 8
+	or      $t4, $t4, $t5
+	sll     $t5, $t4, 8
+	or      $t4, $t4, $t5
+	sw      $t4, PV_GC($t0)              # grey 0x00cccccc
+	swc2    C2_SXY2, PV_SXY($t0)
+	jr      $ra
+	nop
 
-# sp_proj: project pool vertex t0 (GTE in projection mode). Clobbers t1-t3.
+# sp_proj: project pool vertex t0 (GTE in projection mode) and ready its
+# packet words: its light (0..255) becomes the grey colour word in place,
+# u / v the rounded uv word. Once per vertex. Clobbers t1-t3.
 sp_proj:
 	lw      $t1, PV_X($t0)
 	lw      $t2, PV_Y($t0)
@@ -683,55 +725,24 @@ sp_proj:
 	or      $t1, $t1, $t2
 	mtc2    $t1, C2_VXY0
 	mtc2    $t3, C2_VZ0
-	nop
-	nop
+	lw      $t1, PV_U($t0)
+	lw      $t2, PV_V($t0)
 	RTPS
+	addiu   $t1, $t1, 128
+	addiu   $t2, $t2, 128
+	sra     $t1, $t1, 8
+	sra     $t2, $t2, 8
+	sll     $t2, $t2, 8
+	or      $t1, $t1, $t2
+	lw      $t2, PV_GC($t0)
+	sw      $t1, PV_UVW($t0)
+	sll     $t3, $t2, 8
+	or      $t2, $t2, $t3
+	sll     $t3, $t2, 8
+	or      $t2, $t2, $t3
+	sw      $t2, PV_GC($t0)
 	swc2    C2_SXY2, PV_SXY($t0)
 	jr      $ra
 	nop
-
-# -----------------------------------------------------------------------------
-# sp_split: v0 = 1 if edge t4-t5 must be split: longer than SLOW_SPAN px on
-# screen (|dx| + |dy|), or depth ratio > 4/3. Symmetric in t4, t5.
-# Clobbers t0-t3, v0.
-sp_split:
-	lw      $t0, PV_SXY($t4)
-	lw      $t1, PV_SXY($t5)
-	nop
-	sll     $t2, $t0, 16
-	sra     $t2, $t2, 16
-	sll     $t3, $t1, 16
-	sra     $t3, $t3, 16
-	subu    $t2, $t2, $t3                # dx
-	sra     $t3, $t2, 31
-	xor     $t2, $t2, $t3
-	subu    $t2, $t2, $t3                # |dx|
-	sra     $t0, $t0, 16
-	sra     $t1, $t1, 16
-	subu    $t0, $t0, $t1                # dy
-	sra     $t1, $t0, 31
-	xor     $t0, $t0, $t1
-	subu    $t0, $t0, $t1                # |dy|
-	addu    $t2, $t2, $t0
-	slti    $t2, $t2, SLOW_SPAN + 1
-	beqz    $t2, ss_yes
-	nop
-	lw      $t0, PV_Z($t4)
-	lw      $t1, PV_Z($t5)
-	nop
-	slt     $t2, $t0, $t1
-	bnez    $t2, 1f                      # t0 = lower, t1 = higher
-	nop
-	move    $t2, $t0
-	move    $t0, $t1
-	move    $t1, $t2
-1:	sll     $t2, $t1, 1
-	addu    $t2, $t2, $t1                # 3 zhi
-	sll     $t3, $t0, 2                  # 4 zlo
-	jr      $ra
-	slt     $v0, $t3, $t2
-ss_yes:
-	jr      $ra
-	li      $v0, 1
 
 	.size slow_poly, . - slow_poly

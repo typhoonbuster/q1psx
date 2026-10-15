@@ -165,6 +165,7 @@ void r_frame(void)
 	r_state.ot_world     = (uint32_t) &vid_frame.ot[OT_WORLD];
 	r_state.pkt          = (uint32_t) vid_frame.pkt;
 	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 8);   /* see r_world.s */
+#if Q1PSX_PROFILE
 	r_state.stat_nodes   = r_state.stat_records = r_state.stat_verts = 0;
 	r_state.stat_polys   = r_state.stat_skipped = 0;
 	r_state.ticks_block  = r_state.ticks_mark = 0;
@@ -173,9 +174,13 @@ void r_frame(void)
 	uint32_t t0 = prof_now();
 	r_render(&r_state);
 	uint32_t t1 = prof_now();
+#else
+	r_render(&r_state);   /* release: no counters, no stage timers */
+#endif
 
 	vid_frame.pkt = (uint8_t *) r_state.pkt;
 
+#if Q1PSX_PROFILE
 	/* the slow path runs inside the face-record timing: take it out */
 	uint32_t total = prof_cycles(t0, t1);
 	uint32_t slow  = r_state.ticks_slow * PROF_CYCLES_PER_TICK;
@@ -192,4 +197,5 @@ void r_frame(void)
 	prof_count[PROF_N_POLYS]  += r_state.stat_polys;
 	prof_count[PROF_N_SLOW]   += r_state.stat_skipped;
 	prof_count[PROF_N_SLOWTRI] += r_state.stat_slow;
+#endif
 }
