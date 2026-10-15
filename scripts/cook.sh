@@ -6,8 +6,10 @@
 # Env / local.env:
 #   QUAKE_PAK0   required — Quake (id1) pak0.pak (episode 1, shareware)
 #   QUAKE_PAK1   optional — the retail pak1.pak (episodes 2-4)
-#   COOK_MAPS    maps to cook: a list ("start e1m1"), "ep1" (default) or
-#                "all" (needs QUAKE_PAK1)
+#   COOK_MAPS    maps to cook: a list ("start e1m1"), "ep1" or "all" (needs
+#                QUAKE_PAK1). Unset: the maps already in cooked/id1 (so the
+#                re-cook a build triggers keeps the disc's map set: CMake
+#                globbed it at configure time), or ep1 if there are none.
 #
 # Output, per map and fidelity (low medium high ultra = disc N 0..3):
 #   cooked/id1/<map>_<fidelity>.tex   QTX3 texture pages  -> disc <MAP>_<N>.TEX
@@ -25,7 +27,11 @@ cd "$ROOT"
 EP1="start e1m1 e1m2 e1m3 e1m4 e1m5 e1m6 e1m7 e1m8"
 RETAIL="e2m1 e2m2 e2m3 e2m4 e2m5 e2m6 e2m7 e3m1 e3m2 e3m3 e3m4 e3m5 e3m6 e3m7
         e4m1 e4m2 e4m3 e4m4 e4m5 e4m6 e4m7 e4m8 end"
-case "${COOK_MAPS:-ep1}" in
+if [ -z "${COOK_MAPS:-}" ]; then
+	COOK_MAPS=$(ls cooked/id1/*_low.wld 2>/dev/null | sed 's|.*/||; s|_low\.wld$||' | tr '\n' ' ')
+	COOK_MAPS=${COOK_MAPS:-ep1}
+fi
+case "$COOK_MAPS" in
 	ep1) MAPS=$EP1 ;;
 	all) : "${QUAKE_PAK1:?COOK_MAPS=all needs QUAKE_PAK1 in local.env}"
 	     MAPS="$EP1 $RETAIL" ;;

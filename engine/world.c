@@ -129,15 +129,14 @@ int world_load(int map, int fid)
 			            ? (uint32_t) &world.leaves[ch & 0x7fffffffu] | 1u
 			            : (uint32_t) &world.nodes[ch];
 		}
-		n->parent   = n->parent == QW_NONE ? 0 : (uint32_t) &world.nodes[n->parent];
-		n->visframe = 0;
-		for (int k = 0; k < 3; k++)
+		n->visframe = 0;                 /* parents stay word offsets */
+		for (int k = 0; k < 2; k++)
 			n->faces[k] = REL(world.faces, n->faces[k]);
 	}
+	world.nodes[h->num_nodes].faces[0] = REL(world.faces, world.nodes[h->num_nodes].faces[0]);
 	for (uint32_t i = 0; i < h->num_leaves; i++) {
 		qw_leaf *l = &world.leaves[i];
 		l->marks    = (uint32_t) &world.marks[l->marks];
-		l->parent   = l->parent == QW_NONE ? 0 : (uint32_t) &world.nodes[l->parent];
 		l->vis      = l->vis == QW_NONE ? 0 : REL(vis, l->vis);
 		l->visframe = 0;
 	}

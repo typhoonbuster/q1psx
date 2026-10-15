@@ -492,7 +492,9 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	/* face stream, node by node: front block then back block */
 	out_t o;
 	memset(&o, 0, sizeof o);
-	qw_node *nodes = xcalloc((size_t) b->num_nodes, sizeof *nodes);
+	if ((long) b->num_nodes * QW_NODE_WORDS >= QW_NOPARENT)
+		die("%d nodes: parent offsets do not fit 16 bits", b->num_nodes);
+	qw_node *nodes = xcalloc((size_t) b->num_nodes + 1, sizeof *nodes);   /* + sentinel */
 	for (int i = 0; i < b->num_nodes; i++) {
 		const bsp_node *bn = &b->nodes[i];
 		const bsp_plane *pl = &b->planes[bn->planenum];
@@ -507,7 +509,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 			int ch = bn->child[c];
 			n->child[c] = ch >= 0 ? (uint32_t) ch : (0x80000000u | (uint32_t) (-1 - ch));
 		}
-		n->parent = node_parent[i];
+		n->parent = node_parent[i] == QW_NONE ? QW_NOPARENT
+		          : (uint16_t) (node_parent[i] * QW_NODE_WORDS);
 
 		for (int side = 0; side < 2; side++) {
 			n->faces[side] = (uint32_t) o.stream.len;
@@ -517,8 +520,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 				if (b->faces[f].side == side)
 					emit_face(&o, b, ts, f);
 		}
-		n->faces[2] = (uint32_t) o.stream.len;
 	}
+	nodes[b->num_nodes].faces[0] = (uint32_t) o.stream.len;   /* sentinel: end of the stream */
 
 	/* leaves */
 	qw_leaf *leaves = xcalloc((size_t) b->num_leaves, sizeof *leaves);
@@ -528,10 +531,11 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		bbox(bl->mins, bl->maxs, l->c, l->h);
 		l->num_marks = (uint16_t) bl->nummarks;
 		l->marks     = (uint32_t) bl->firstmark;
-		l->parent    = leaf_parent[i];
+		l->parent    = leaf_parent[i] == QW_NONE ? QW_NOPARENT
+		             : (uint16_t) (leaf_parent[i] * QW_NODE_WORDS);
 		l->vis       = bl->visofs >= 0 && (uint32_t) bl->visofs < b->vis_len
 		             ? (uint32_t) bl->visofs : QW_NONE;
-		l->contents  = bl->contents;
+		l->contents  = (int16_t) bl->contents;
 	}
 
 	/* bench views: spawn x4 yaws, then the 3 leaves that see the most faces */
@@ -652,7 +656,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	buf_t f;
 	memset(&f, 0, sizeof f);
 	buf_put(&f, &h, sizeof h);
-	h.ofs_nodes = (uint32_t) f.len;  buf_put(&f, nodes, (size_t) b->num_nodes * sizeof *nodes);
+	h.ofs_nodes = (uint32_t) f.len;  buf_put(&f, nodes, (size_t) (b->num_nodes + 1) * sizeof *nodes);
 	h.ofs_leaves = (uint32_t) f.len; buf_put(&f, leaves, (size_t) b->num_leaves * sizeof *leaves);
 	h.ofs_marks = (uint32_t) f.len;  buf_put(&f, b->marks, (size_t) b->num_marks * 2); buf_align4(&f);
 	h.ofs_vis = (uint32_t) f.len;    buf_put(&f, b->vis, b->vis_len); buf_align4(&f);
@@ -774,7 +778,7 @@ int world_check(const char *path)
 
 #define SECTION(ofs, n) do { if ((ofs) & 3) FAIL("unaligned section at %u", (ofs)); \
 	if ((uint64_t) (ofs) + (n) > (uint64_t) len) FAIL("section at %u (+%u) past EOF", (ofs), (uint32_t) (n)); } while (0)
-	SECTION(h.ofs_nodes, h.num_nodes * sizeof(qw_node));
+	SECTION(h.ofs_nodes, (h.num_nodes + 1) * sizeof(qw_node));
 	SECTION(h.ofs_leaves, h.num_leaves * sizeof(qw_leaf));
 	SECTION(h.ofs_marks, h.num_marks * 2);
 	SECTION(h.ofs_vis, h.len_vis);
@@ -799,18 +803,16 @@ int world_check(const char *path)
 			if (ch & 0x80000000u) { if ((ch & 0x7fffffffu) >= h.num_leaves) FAIL("node %u: leaf child out of range", i); }
 			else if (ch >= h.num_nodes) FAIL("node %u: child out of range", i);
 		}
-		if (n->parent != QW_NONE && n->parent >= h.num_nodes)
+		if (n->parent != QW_NOPARENT && (n->parent % QW_NODE_WORDS || n->parent / QW_NODE_WORDS >= h.num_nodes))
 			FAIL("node %u: parent out of range", i);
 		if (n->type > 3)
 			FAIL("node %u: bad plane type", i);
-		if (!(n->faces[0] <= n->faces[1] && n->faces[1] <= n->faces[2] && n->faces[2] <= h.len_faces))
+		if (!(n->faces[0] <= n->faces[1] && n->faces[1] <= n[1].faces[0] && n[1].faces[0] <= h.len_faces))
 			FAIL("node %u: face block offsets out of order", i);
-		if (i + 1 < h.num_nodes && nodes[i + 1].faces[0] != n->faces[2])
-			FAIL("node %u: face blocks not contiguous", i);
 
 		/* every record of both blocks must decode exactly to the block end */
 		for (int side = 0; side < 2; side++) {
-			uint32_t at = n->faces[side], end = n->faces[side + 1];
+			uint32_t at = n->faces[side], end = qw_face_end(n, side);
 			while (at < end) {
 				qw_record r;
 				if (at + sizeof r > end) FAIL("node %u: truncated record", i);
@@ -849,7 +851,8 @@ int world_check(const char *path)
 		const qw_leaf *l = &leaves[i];
 		if (l->marks + l->num_marks > h.num_marks) FAIL("leaf %u: marks out of range", i);
 		if (l->vis != QW_NONE && l->vis >= h.len_vis) FAIL("leaf %u: vis out of range", i);
-		if (l->parent != QW_NONE && l->parent >= h.num_nodes) FAIL("leaf %u: parent out of range", i);
+		if (l->parent != QW_NOPARENT && (l->parent % QW_NODE_WORDS || l->parent / QW_NODE_WORDS >= h.num_nodes))
+			FAIL("leaf %u: parent out of range", i);
 	}
 	const uint16_t *marks = (const uint16_t *) (d + h.ofs_marks);
 	for (uint32_t i = 0; i < h.num_marks; i++)

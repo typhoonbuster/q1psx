@@ -747,3 +747,15 @@ followed by R0-R4.
     1 vblank). Images identical to R5.2.
   - `cook.sh` starts from an empty `cooked/id1`, so a stale map of an
     older format can no longer reach the disc.
+- **R5.3b — compact nodes and leaves.** Details: `docs/porting-notes.md`
+  §14.5.
+  - **Format QWV5:**
+    - nodes 56 → 44 B, leaves 36 → 28 B;
+    - visframe and type in the bbox padding (VZ loaded with lh + mtc2);
+    - 16-bit parent word offsets;
+    - two face pointers per node plus a sentinel node.
+  - **World, high:** start 636 → 589 KB, e1m4 729 → 677 KB, e3m5 823 →
+    768 KB. All 32 maps average 565 KB; 3 remain above 700 KB.
+  - **Cost:** about +3 % on the walk; images identical.
+  - **Build:** a build-triggered re-cook keeps the cooked map set (it
+    broke the ISO step).

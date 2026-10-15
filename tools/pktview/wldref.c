@@ -292,7 +292,7 @@ static void p_walk_node(uint32_t ni, const uint8_t *d, const qw_header *h)
 		uint32_t c = pass ? far : near;
 		if (pass == 1 && fabs(dd) > 164) {
 			const uint8_t *fs = d + h->ofs_faces;
-			uint32_t at = n->faces[side], end = n->faces[side + 1];
+			uint32_t at = n->faces[side], end = qw_face_end(n, side);
 			while (at < end) {
 				qw_record r;
 				memcpy(&r, fs + at, sizeof r);
@@ -349,9 +349,9 @@ static void render_painter(const uint8_t *d, const qw_header *h, const qw_view *
 			for (int bit = 0; bit < 8; bit++, leaf++)
 				if ((byte >> bit) & 1 && leaf < (int) h->num_leaves) {
 					P_leafvis[leaf] = 1;
-					for (uint32_t p = P_leaves[leaf].parent; p != QW_NONE; p = P_nodes[p].parent) {
-						if (P_nodevis[p]) break;
-						P_nodevis[p] = 1;
+					for (uint32_t p = P_leaves[leaf].parent; p != QW_NOPARENT; p = P_nodes[p / QW_NODE_WORDS].parent) {
+						if (P_nodevis[p / QW_NODE_WORDS]) break;
+						P_nodevis[p / QW_NODE_WORDS] = 1;
 					}
 				}
 	}

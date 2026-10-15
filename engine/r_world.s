@@ -307,10 +307,14 @@ pop:
 	addu    $t5, $t5, $t2
 	lw      $s1, N_CHILD($t5)            # far child: walked after the faces
 	beqz    $t4, walk
-	sll     $t3, $t3, 2
-	addu    $t3, $t3, $t2
-	lw      $a0, N_FACES($t3)            # block on the camera's side
-	lw      $a1, N_FACES+4($t3)
+	sll     $t3, $t3, 2                  # side * 4
+	addu    $t5, $t3, $t2
+	lw      $a0, N_FACES($t5)            # block on the camera's side
+	sll     $t6, $t3, 3
+	sll     $t3, $t3, 1
+	addu    $t6, $t6, $t3                # side * 40: the block ends at faces[1]
+	addu    $t6, $t6, $t2                # (front) or at the next node's
+	lw      $a1, N_FACES+4($t6)          # faces[0] (back)
 	nop
 	beq     $a0, $a1, walk
 	nop
@@ -404,9 +408,11 @@ pd_general:
 # radius (|rotation| x half extents). Clobbers t0-t7, t9, v0.
 frustum:
 	lwc2    C2_VXY0, N_C+0($a0)
-	lwc2    C2_VZ0,  N_C+4($a0)
-	lwc2    C2_VXY1, N_H+0($a0)
-	lwc2    C2_VZ1,  N_H+4($a0)
+	lh      $t0, N_C+4($a0)              # VZ with lh: the halfword after c[2]
+	lwc2    C2_VXY1, N_H+0($a0)          # and h[2] is visframe / type (or
+	lh      $t1, N_H+4($a0)              # num_marks), not part of the vector
+	mtc2    $t0, C2_VZ0
+	mtc2    $t1, C2_VZ1
 	move    $v0, $s2
 	nop
 	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
@@ -480,6 +486,8 @@ f_cull:
 # not-yet-stamped ancestors. Clobbers t0-t3, t9, a1-a3, v1, s5.
 mark_pvs:
 	lhu     $t9, TIMER2($t8)
+	lw      $t7, RS_NODES($s0)           # parents are word offsets from here
+	li      $t6, 0xffff                  # no parent
 	sw      $a0, RS_VIEW_LEAF($s0)
 	sw      $zero, RS_FORCE_MARK($s0)
 	sw      $t9, SP_T0($t8)
@@ -505,7 +513,7 @@ mp_byte:
 	subu    $a2, $a2, $t1
 	sll     $t2, $t1, 8
 	sll     $t1, $t1, 5
-	addu    $t1, $t1, $t2                # bytes * 8 leaves * 36 B
+	subu    $t1, $t2, $t1                # bytes * 8 leaves * 28 B
 	b       mp_byte
 	addu    $a3, $a3, $t1
 mp_bits:
@@ -519,17 +527,18 @@ mp_bit:
 	beqz    $t1, mp_next
 	nop
 	sh      $s5, L_VISFRAME($a3)
-	lw      $t2, L_PARENT($a3)
+	lhu     $t2, L_PARENT($a3)
 	nop
 mp_up:
-	beqz    $t2, mp_next
-	nop
+	beq     $t2, $t6, mp_next            # past the root
+	sll     $t2, $t2, 2
+	addu    $t2, $t2, $t7                # word offset -> node
 	lhu     $t1, N_VISFRAME($t2)
 	nop
 	beq     $t1, $s5, mp_next            # ancestors already stamped
 	nop
 	sh      $s5, N_VISFRAME($t2)
-	lw      $t2, N_PARENT($t2)
+	lhu     $t2, N_PARENT($t2)
 	b       mp_up
 	nop
 mp_next:

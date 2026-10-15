@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWV4" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWV5" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -36,7 +36,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV4"
+#define QWORLD_MAGIC "QWV5"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   63      /* per face record (multiple of 3)        */
@@ -54,8 +54,8 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV4"                                  */
-	uint32_t num_nodes;
+	char     magic[4];             /* "QWV5"                                  */
+	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
 	uint32_t num_faces;            /* Quake world-model faces (visframe ids)  */
@@ -85,31 +85,47 @@ typedef struct {
 	                          wrap (the axes that are not powers of two)      */
 } qw_tex;                  /* 8 bytes */
 
-typedef struct {
-	int16_t  c[3], pad0;   /* +0  bbox centre, vertex units (lwc2-ready)       */
-	int16_t  h[3], pad1;   /* +8  bbox half extents, vertex units              */
-	int16_t  n[3];         /* +16 plane normal x4096                           */
-	uint8_t  type;         /* +22 0/1/2 = axial X/Y/Z, 3 = general             */
-	uint8_t  pad2;         /* +23                                              */
-	int32_t  dist;         /* +24 plane distance x4096, vertex units           */
-	uint32_t child[2];     /* +28 disk: index, bit31 = leaf; RAM: ptr, bit0 = leaf */
-	uint16_t visframe;     /* +36 runtime                                      */
-	uint16_t pad3;         /* +38                                              */
-	uint32_t parent;       /* +40 disk: node index or QW_NONE; RAM: ptr / 0    */
-	uint32_t faces[3];     /* +44 front start, back start, back end:
-	                              disk: offsets in the face stream; RAM: ptrs   */
-} qw_node;                 /* 56 bytes */
+/* Nodes and leaves share their bbox layout (the renderer's frustum test
+   takes either): c at +0, h at +8, each followed by a 16-bit field, so VZ is
+   loaded with lh + mtc2, never lwc2. Parents are word offsets into the node
+   array (node index x 11), QW_NOPARENT for the root. */
+#define QW_NOPARENT 0xffffu
+#define QW_NODE_WORDS 11       /* sizeof(qw_node) / 4                      */
 
 typedef struct {
-	int16_t  c[3], pad0;   /* +0  bbox centre, vertex units                    */
-	int16_t  h[3], pad1;   /* +8  bbox half extents, vertex units              */
-	uint16_t visframe;     /* +16 runtime                                      */
-	uint16_t num_marks;    /* +18                                              */
-	uint32_t marks;        /* +20 disk: index into marks[]; RAM: ptr           */
-	uint32_t parent;       /* +24 disk: node index; RAM: ptr                   */
-	uint32_t vis;          /* +28 disk: offset into vis or QW_NONE; RAM: ptr/0 */
-	int32_t  contents;     /* +32 Quake CONTENTS_*                             */
-} qw_leaf;                 /* 36 bytes */
+	int16_t  c[3];         /* +0  bbox centre, vertex units                    */
+	uint16_t visframe;     /* +6  runtime                                      */
+	int16_t  h[3];         /* +8  bbox half extents, vertex units              */
+	uint8_t  type;         /* +14 0/1/2 = axial X/Y/Z, 3 = general             */
+	uint8_t  pad;          /* +15                                              */
+	int16_t  n[3];         /* +16 plane normal x4096                           */
+	uint16_t parent;       /* +22 word offset of the parent, or QW_NOPARENT    */
+	int32_t  dist;         /* +24 plane distance x4096, vertex units           */
+	uint32_t child[2];     /* +28 disk: index, bit31 = leaf; RAM: ptr, bit0 = leaf */
+	uint32_t faces[2];     /* +36 front start, back start: disk offsets in the
+	                              face stream, RAM pointers. The back block
+	                              ends where the next node's front block
+	                              starts: nodes[num_nodes] is a sentinel whose
+	                              faces[0] is the end of the stream.           */
+} qw_node;                 /* 44 bytes */
+
+typedef struct {
+	int16_t  c[3];         /* +0  bbox centre, vertex units                    */
+	uint16_t visframe;     /* +6  runtime                                      */
+	int16_t  h[3];         /* +8  bbox half extents, vertex units              */
+	uint16_t num_marks;    /* +14                                              */
+	uint32_t marks;        /* +16 disk: index into marks[]; RAM: ptr           */
+	uint32_t vis;          /* +20 disk: offset into vis or QW_NONE; RAM: ptr/0 */
+	uint16_t parent;       /* +24 word offset of the parent node               */
+	int16_t  contents;     /* +26 Quake CONTENTS_*                             */
+} qw_leaf;                 /* 28 bytes */
+
+/* where a node's face block on `side` ends (nodes is an array with its
+   sentinel) */
+static inline uint32_t qw_face_end(const qw_node *n, int side)
+{
+	return side ? n[1].faces[0] : n->faces[1];
+}
 
 /* Face record: header, then its vertex indices into the map's pool (uint16,
    padded with copies of the first to a multiple of 3 entries, then to 4

@@ -32,27 +32,30 @@
 .set RS_TICKS_SLOW,   152
 .set RS_TEXTURES,     156
 .set RS_VERTPOOL,     160
+.set RS_NODES,        164
 
-# ---- qw_node (56 B) ----------------------------------------------------------
-.set N_C,         0     # int16 c[3] (+ pad): lwc2-ready
-.set N_H,         8
+# ---- qw_node (44 B) ----------------------------------------------------------
+.set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4
+.set N_VISFRAME,  6
+.set N_H,         8     # int16 h[3]
+.set N_TYPE,     14
 .set N_N,        16     # int16 n[3]
-.set N_TYPE,     22
+.set N_PARENT,   22     # uint16 word offset into the node array, 0xffff: none
 .set N_DIST,     24
 .set N_CHILD,    28     # child[2] pointers, bit 0 = leaf
-.set N_VISFRAME, 36
-.set N_PARENT,   40
-.set N_FACES,    44     # faces[3]: front start, back start, back end
+.set N_FACES,    36     # faces[2]: front start, back start (back end = the
+                        # next node's front start; a sentinel ends the array)
+.set N_SIZE,     44
 
-# ---- qw_leaf (36 B) ----------------------------------------------------------
+# ---- qw_leaf (28 B) ----------------------------------------------------------
 .set L_C,         0
+.set L_VISFRAME,  6
 .set L_H,         8
-.set L_VISFRAME, 16
-.set L_NMARKS,   18
-.set L_MARKS,    20
-.set L_PARENT,   24
-.set L_VIS,      28
-.set L_SIZE,     36
+.set L_NMARKS,   14
+.set L_MARKS,    16
+.set L_VIS,      20
+.set L_PARENT,   24     # uint16 word offset, like N_PARENT
+.set L_SIZE,     28
 
 # ---- qw_record (20 B) + polygons (12 B) -------------------------------------
 .set R_FACE_ID,   0

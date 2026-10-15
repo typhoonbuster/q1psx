@@ -1412,3 +1412,47 @@ on average (e1m4: 27 509 vertices, 8 145 distinct).
   which is what this step saves; not done.
 - `scripts/cook.sh` now empties `cooked/id1` first: a map cooked earlier
   in an older format had stayed on the disc and failed to load.
+
+### 14.5 R5.3b — compact nodes and leaves
+
+**Format QWV5.**
+- Nodes go from 56 to **44 bytes**, leaves from 36 to **28 bytes**.
+- Both keep the bbox at +0 / +8 (the frustum test takes either). The
+  halfwords after c[2] and h[2] now hold `visframe` and `type` (leaves:
+  `num_marks`), so VZ0 / VZ1 are loaded with `lh` + `mtc2`.
+- Parents are 16-bit word offsets into the node array (index × 11,
+  `QW_NOPARENT` = 0xFFFF); `mark_pvs` adds the array base, kept in
+  `r_state.nodes`. The cook rejects maps with more than 5957 nodes (Quake's
+  largest has about 3600).
+- A node keeps two face pointers: the back block ends where the next
+  node's front block starts. A sentinel node closes the array, and the
+  walk computes the end at `node + 40 + side × 40`; C code uses
+  `qw_face_end()`.
+
+**Results.**
+- World, high:
+
+  | map | before | after |
+  |---|---|---|
+  | start | 636 KB | 589 KB |
+  | e1m4 | 729 KB | 677 KB |
+  | e3m5 | 823 KB | 768 KB |
+
+- **All 32 maps:** average 565 KB; three above the 700 KB target (e3m5
+  768, e4m7 738, e3m6 726), e2m4 exactly at 700.
+- The walk costs about 3 % more (lh + mtc2, the block-end arithmetic):
+  start's spawn view 450 k → 454 k cycles, still 1 vblank.
+- Images identical to R5.2.
+
+**Build note.** A re-cook that a build triggers now keeps the maps already
+in `cooked/id1`: CMake globbed the disc's file list at configure time, so a
+build that changed the set failed at the ISO step. `COOK_MAPS` still
+selects a set explicitly.
+
+**What is left without loss is small:**
+- record headers (20 B; `size` can be derived): about 10 KB per map;
+- clipnodes 8 → 6 B: about 10 KB per map.
+
+That is not enough for e3m5's −68 KB. The step after this is R5.4: measure
+again, then lossy decimation for the few maps still over budget, or a
+budget revised once QuakeC and the models are measured (a call to make).
