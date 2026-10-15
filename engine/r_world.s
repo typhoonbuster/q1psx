@@ -32,22 +32,6 @@
 	.include "inline_s.inc"
 	.include "r_defs.inc"
 
-# SIZEOK r, fail: r = SXY(corner) - SXY(corner 0); branch to `fail` unless
-# |dy| <= 250 and |dx| <= 500 (packed-word difference: dy may be off by one,
-# fine for a margin). Uses t0 (free once the differences are taken).
-.macro SIZEOK r, fail
-	sra     $t0, \r, 16
-	addiu   $t0, $t0, 250
-	sltiu   $t0, $t0, 501
-	beqz    $t0, \fail
-	sll     $t0, \r, 16
-	sra     $t0, $t0, 16
-	addiu   $t0, $t0, 500
-	sltiu   $t0, $t0, 1001
-	beqz    $t0, \fail
-	nop
-.endm
-
 # FRUSTUM cull: test the box whose centre / half extents are in V0 / V1
 # (vertex units; loaded by the caller at least two instructions back) against
 # the frustum planes still set in s2. A plane's bit is cleared once the box is
@@ -110,6 +94,113 @@
 	nop
 	xori    $s2, $s2, 8
 4:
+.endm
+
+# MINMAX4 a, b, c, d, t: a = the least, b = the greatest of the four
+# (signed; all four clobbered, t a temporary). MINMAX3 a, b, c, t likewise.
+# (Not at: the polygon loops count in it.)
+.macro MINMAX4 a, b, c, d, t
+	slt     \t, \b, \a
+	beqz    \t, 1f
+	nop
+	xor     \a, \a, \b
+	xor     \b, \a, \b
+	xor     \a, \a, \b
+1:	slt     \t, \d, \c
+	beqz    \t, 2f
+	nop
+	xor     \c, \c, \d
+	xor     \d, \c, \d
+	xor     \c, \c, \d
+2:	slt     \t, \c, \a
+	beqz    \t, 3f
+	slt     \t, \b, \d
+	move    \a, \c
+3:	beqz    \t, 4f
+	nop
+	move    \b, \d
+4:
+.endm
+
+.macro MINMAX3 a, b, c, t
+	slt     \t, \b, \a
+	beqz    \t, 1f
+	nop
+	xor     \a, \a, \b
+	xor     \b, \a, \b
+	xor     \a, \a, \b
+1:	slt     \t, \c, \a
+	beqz    \t, 2f
+	slt     \t, \b, \c
+	move    \a, \c
+2:	beqz    \t, 3f
+	nop
+	move    \b, \c
+3:
+.endm
+
+# CAREFUL skip: a conservative test, per polygon of a record the sphere
+# flags, before the subdivision's exact one (engine/r_slow.c): every corner
+# at SZ >= 96, W + H <= 500 px for the bbox and (W + H) x (zmax - zmin) <=
+# 2 T2 zmin. Then no edge splits (|dx| + |dy| <= W + H, |dz| <= the range,
+# za + zb >= 2 zmin) and the polygon goes out as is; otherwise to `skip`.
+# (A corner the GTE saturated, |x| or |y| >= 1023, needs no test of its
+# own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
+# (t6: quad) = the corners' cache addresses; clobbers t0-t2, t7, t9, v0, v1
+# (reloaded with clut / tpage).
+.macro CAREFUL quad, skip
+	lw      $t0, SP_SZ($t3)
+	lw      $t1, SP_SZ($t4)
+	lw      $t2, SP_SZ($t5)
+.if \quad
+	lw      $t9, SP_SZ($t6)
+	nop
+	MINMAX4 $t0, $t1, $t2, $t9, $t7      # zmin, zmax
+.else
+	nop
+	MINMAX3 $t0, $t1, $t2, $t7
+.endif
+	sltiu   $t7, $t0, 96                 # (r_slow.c SZ_CLIP)
+	bnez    $t7, \skip
+	lw      $v0, SP_T2($t8)
+	subu    $t7, $t1, $t0                # depth range
+	mult    $v0, $t0                     # T2 zmin
+	lh      $t0, SP_SXY($t3)             # x
+	lh      $t1, SP_SXY($t4)
+	lh      $t2, SP_SXY($t5)
+.if \quad
+	lh      $t9, SP_SXY($t6)
+	mflo    $v1
+	MINMAX4 $t0, $t1, $t2, $t9, $v0
+.else
+	mflo    $v1
+	MINMAX3 $t0, $t1, $t2, $v0
+.endif
+	subu    $v0, $t1, $t0                # W
+	sw      $v0, SP_FREE3E8($t8)
+	lh      $t0, SP_SXY+2($t3)           # y
+	lh      $t1, SP_SXY+2($t4)
+	lh      $t2, SP_SXY+2($t5)
+.if \quad
+	lh      $t9, SP_SXY+2($t6)
+	nop
+	MINMAX4 $t0, $t1, $t2, $t9, $v0
+.else
+	nop
+	MINMAX3 $t0, $t1, $t2, $v0
+.endif
+	lw      $v0, SP_FREE3E8($t8)
+	subu    $t0, $t1, $t0                # H
+	addu    $v0, $v0, $t0                # W + H
+	mult    $v0, $t7                     # (W + H) x depth range
+	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
+	beqz    $t0, \skip
+	sll     $v1, $v1, 1                  # 2 T2 zmin
+	mflo    $v0
+	sltu    $v0, $v1, $v0
+	bnez    $v0, \skip
+	lw      $v0, SP_CLUT16($t8)          # (clut / tpage back)
+	lw      $v1, SP_TPAGE16($t8)
 .endm
 
 	.section .bss.r_walk_spill, "aw", @nobits
@@ -202,6 +293,9 @@ r_render:
 	lui     $t1, 0x0100                  # tag: 1 word
 	sw      $t0, SP_TEXBASE($t8)
 	sw      $t2, SP_PLANES($t8)
+	lw      $t2, RS_WARP_T2($s0)
+	nop
+	sw      $t2, SP_T2($t8)
 	sw      $t3, SP_VERTPOOL($t8)
 	or      $t1, $t1, $fp
 	lui     $t2, 0xE200
@@ -512,14 +606,14 @@ dr_rec:
 	lw      $t7, SP_SZFAST($t8)
 	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
 	slt     $a2, $t5, $t7                # a2 bit 0: may come too near
-	sll     $t5, $t3, 1
-	addu    $t5, $t5, $t3                # 3r
-	slt     $t5, $t4, $t5                # z < 3r: a polygon may exceed the
-	sll     $t5, $t5, 1                  # GPU's 1023 x 511 px limit
+	sll     $t5, $t3, 2
+	addu    $t5, $t5, $t3
+	addu    $t5, $t5, $t3                # 6r
+	slt     $t5, $t4, $t5                # z < 6r: an edge may exceed the
+	sll     $t5, $t5, 1                  # subdivision's 500 px span (|dx| + |dy|)
 	sltu    $t0, $s7, $s6                # room for the whole record?
 	bnez    $t0, dr_full
 	or      $a2, $a2, $t5                # a2 bit 1
-.if R_SLOW_C
 	# a2 bit 2: an affine error above the threshold is possible:
 	# (z - rho) x 16 < k16 x rho, rho = 1.5 r (r_set_fidelity)
 	srl     $t5, $t3, 1
@@ -532,7 +626,6 @@ dr_rec:
 	slt     $t9, $t6, $t9
 	sll     $t9, $t9, 2
 	or      $a2, $a2, $t9
-.endif
 
 	lbu     $t2, R_NVERTS($a0)
 	beq     $at, $a3, dr_tex_done        # same texture as the last record
@@ -691,32 +784,7 @@ dr_quad:
 	addu    $t5, $t5, $t8
 	beqz    $a2, dr_quad_emit
 	addu    $t6, $t6, $t8
-.if R_SLOW_C
-	b       dr_quad_skip                 # the C reference decides per polygon
-	nop
-.endif
-	lw      $t0, SP_SZ($t3)              # careful: any corner too near?
-	lw      $t1, SP_SZ($t4)
-	lw      $t2, SP_SZ($t5)
-	lw      $t9, SP_SZ($t6)
-	sltu    $t0, $t0, $t7
-	sltu    $t1, $t1, $t7
-	sltu    $t2, $t2, $t7
-	sltu    $t9, $t9, $t7
-	or      $t0, $t0, $t1
-	or      $t0, $t0, $t2
-	or      $t0, $t0, $t9
-	bnez    $t0, dr_quad_skip
-	lw      $t0, SP_SXY($t3)             # size: every corner within 500 x 250 px
-	lw      $t1, SP_SXY($t4)             # of corner 0 -> bbox fits the GPU
-	lw      $t2, SP_SXY($t5)
-	lw      $t9, SP_SXY($t6)
-	subu    $t1, $t1, $t0
-	subu    $t2, $t2, $t0
-	subu    $t9, $t9, $t0
-	SIZEOK  $t1, dr_quad_skip
-	SIZEOK  $t2, dr_quad_skip
-	SIZEOK  $t9, dr_quad_skip
+	CAREFUL 1, dr_quad_skip
 dr_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -774,26 +842,7 @@ dr_tri:
 	addu    $t4, $t4, $t8
 	beqz    $a2, dr_tri_emit
 	addu    $t5, $t5, $t8
-.if R_SLOW_C
-	b       dr_tri_skip
-	nop
-.endif
-	lw      $t0, SP_SZ($t3)
-	lw      $t1, SP_SZ($t4)
-	lw      $t2, SP_SZ($t5)
-	sltu    $t0, $t0, $t7
-	sltu    $t1, $t1, $t7
-	sltu    $t2, $t2, $t7
-	or      $t0, $t0, $t1
-	or      $t0, $t0, $t2
-	bnez    $t0, dr_tri_skip
-	lw      $t0, SP_SXY($t3)             # size check, as for quads
-	lw      $t1, SP_SXY($t4)
-	lw      $t2, SP_SXY($t5)
-	subu    $t1, $t1, $t0
-	subu    $t2, $t2, $t0
-	SIZEOK  $t1, dr_tri_skip
-	SIZEOK  $t2, dr_tri_skip
+	CAREFUL 0, dr_tri_skip
 dr_tri_emit:                             # POLY_GT3
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -844,8 +893,6 @@ dr_slow_call:
 	sw      $a1, SP_SAVE+8($t8)
 	sw      $a2, SP_SAVE+12($t8)
 	sw      $a3, SP_SAVE+16($t8)
-	sw      $v0, SP_SAVE+20($t8)
-	sw      $v1, SP_SAVE+24($t8)
 	sw      $t0, SP_SAVE+32($t8)
 .if R_PROFILE
 	lw      $t1, SP_SKIPPED($t8)         # polygons sent to the slow path
@@ -886,8 +933,8 @@ dr_slow_call:
 	lw      $a1, SP_SAVE+8($t8)
 	lw      $a2, SP_SAVE+12($t8)
 	lw      $a3, SP_SAVE+16($t8)
-	lw      $v0, SP_SAVE+20($t8)
-	lw      $v1, SP_SAVE+24($t8)
+	lw      $v0, SP_CLUT16($t8)          # (the careful test used them)
+	lw      $v1, SP_TPAGE16($t8)
 	lw      $t0, SP_SAVE+32($t8)
 	lw      $t7, SP_SZFAST($t8)
 	li      $t1, 4

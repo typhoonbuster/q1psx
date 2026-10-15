@@ -20,7 +20,8 @@
 
 #define R_SCREEN_H     160    /* GTE projection distance: 90 deg horizontal FOV */
 #define R_MATRIX_ONE  6144    /* 1.5 in GTE 1.3.12: view = world x 4 x 1.5 = x6 */
-#define R_SZ_FAST      256    /* polys with a vertex nearer (z < ~43 u) are slow */
+#define R_SZ_FAST      96     /* records with a vertex nearer (z < 16 u) need the
+                                 clip path (r_slow.c SZ_CLIP)               */
 
 #define ANG_TURN 4096         /* binary-degree units per full turn */
 

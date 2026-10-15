@@ -218,12 +218,17 @@ scratchpad for the duration of `r_frame`.
    - One packet-space test per record.
    - One texture-window command per run of same-texture records
      (`docs/porting-notes.md` §16.1).
-5. **Slow path** (the few polygons near the camera):
-   - a vertex behind the near plane → clip in view space;
-   - a polygon very close (small `SZ`) → subdivide 1-2 levels to keep affine
-     warp invisible.
+5. **Slow path** (polygons whose affine error may exceed the fidelity
+   level's threshold, or that come too near; `docs/porting-notes.md` §19):
+   - a per-polygon conservative test (`CAREFUL`) in the record loop keeps
+     the rest on the fast path;
+   - corners from the record's vertex cache; a corner the GTE could not
+     project → clip against the near plane in view space;
+   - subdivision per edge: an edge splits while its affine error exceeds
+     T px or |dx| + |dy| > 500, at its projected 3D midpoint, decided
+     from its two ends alone (crack-free).
 
-   Same asm, separate routine, rarely taken.
+   Same asm, separate routine (`engine/r_slow.s`, spec `engine/r_slow.c`).
 6. Sky and liquids come later (R3.4) as their own passes.
 
 ABI with C: asm entry points follow the MIPS o32 convention. They preserve

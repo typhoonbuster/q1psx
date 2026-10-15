@@ -870,3 +870,29 @@ followed by R0-R4.
     average.
   - **Tools:** `pktview` takes `PKTVIEW_BG` (a clear colour that makes
     cracks visible); `wldref`'s overlay reads Gouraud packets.
+- **Warping and cracks, steps 2-3: error-based subdivision**
+  (2026-10-15). Details: `docs/porting-notes.md` §19.2-19.3.
+  - **Rule:** an edge splits while its affine error exceeds T px, or while
+    |dx| + |dy| > 500. T follows the fidelity level: low 6, medium 4,
+    high 3, ultra 2. The midpoint is the projected 3D midpoint, computed
+    from the edge's two ends only, so neighbours split alike and no
+    crack opens.
+  - **Where:**
+    - `draw_records` tests each polygon of a flagged record
+      conservatively (`CAREFUL`);
+    - the others go to the rewritten slow path, which reuses the fast
+      path's RTPT results and clips against the near plane only.
+  - **Spec and port:** `engine/r_slow.c` is the specification.
+    - `engine/r_slow.s` is a new kernel: a midpoint table that never needs
+      clearing, one stack word per triangle, children through a jump
+      table, divides overlapped with work.
+    - Display lists are identical, word for word, at high and low (`dlcheck`
+      references `c2hi`, `c2lo`); interpreter hashes match.
+  - **Result:**
+    - cracks: none left on the bench views (only the undrawn sky shows);
+    - simulated mean affine error on start: 1.4 / 1.0 / 0.8 / 0.5 px from
+      low to ultra (5-7 px, up to ~90, before);
+    - spawn views at 1 vblank (release, 128 views): low 121, medium 110,
+      high 101, ultra 80 (all 128 before); the worst, e3m4's, goes from
+      540 k to 842 k (low) … 1 517 k (ultra).
+  - **Open:** reconciling 60 fps with the threshold (§19.3).

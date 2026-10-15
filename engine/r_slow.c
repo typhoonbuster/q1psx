@@ -26,8 +26,6 @@
  * and depths alone:
  *     s = (sa za + sb zb) / (za + zb),   z = (za + zb) / 2,
  *     u, v, light = averages (affine in 3D).
- * A polygon none of whose edges (a quad's GPU diagonal included) splits
- * goes out whole, as the fast path would emit it.
  */
 
 #include <stdint.h>
@@ -39,11 +37,16 @@
 #define VU       6            /* view units per world unit                  */
 #define ZNEAR    (8 * VU)     /* near clip plane                            */
 #define SZ_CLIP  96           /* SZ below this: the GTE's projection is off */
-#define SPANX    500          /* split edges longer than this on screen,    */
-#define SPANY    250          /* the GPU's 1023 x 511 limit with a margin   */
-#define MAXD     8            /* max split depth                            */
-#define OFX      160
-#define OFY      120
+#define SPAN     500          /* split edges with |dx| + |dy| above this: a
+                                 triangle's bbox then fits the GPU's 1023 x
+                                 511 limit                                  */
+#define KOFS     8192         /* rdiv's offset: |sx|, |sy| < 8192 (corners
+                                 within +-1023, clip-path projections of a
+                                 polygon at most 1536 view units wide at
+                                 z >= ZNEAR within +-5300)                  */
+#define MAXD     8            /* max split depth (the asm also stops
+                                 splitting when its 512-entry vertex pool is
+                                 nearly full; no bench view comes close)    */
 
 /* the record's vertex cache in the scratchpad (engine/r_defs.inc) */
 #define SPAD     0x1F800000u
@@ -69,8 +72,8 @@ static void project(sv_t *p)
 {
 	/* past the near plane only: x, y may be far off screen, so divide each
 	   (|x| H < 2^31); subdivision culls or splits what lies outside */
-	p->sx = OFX + p->x * R_SCREEN_H / p->z;
-	p->sy = OFY + p->y * R_SCREEN_H / p->z;
+	p->sx = 160 + p->x * R_SCREEN_H / p->z;
+	p->sy = 120 + p->y * R_SCREEN_H / p->z;
 }
 
 /* Clip-path vertex order: crossings are always interpolated from the same
@@ -164,32 +167,6 @@ static void emit3(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 	s->stat_slow++;
 }
 
-/* a whole quad, corners in PS1 order (the GPU draws 0-1-2 and 1-2-3) */
-static void emit4(r_state_t *s, const sv_t *q)
-{
-	if (s->pkt + 52 > s->pkt_end) {
-		s->stat_skipped++;
-		return;
-	}
-	uint32_t *p = (uint32_t *) s->pkt;
-	p[0]  = (12u << 24) | s->ot_head;
-	p[1]  = 0x3c000000u | grey(q[0].c);        /* POLY_GT4 */
-	p[2]  = sxy(&q[0]);
-	p[3]  = uvword(&q[0]) | clut16;
-	p[4]  = grey(q[1].c);
-	p[5]  = sxy(&q[1]);
-	p[6]  = uvword(&q[1]) | tpage16;
-	p[7]  = grey(q[2].c);
-	p[8]  = sxy(&q[2]);
-	p[9]  = uvword(&q[2]);
-	p[10] = grey(q[3].c);
-	p[11] = sxy(&q[3]);
-	p[12] = uvword(&q[3]);
-	s->ot_head = (uint32_t) p & 0xffffff;
-	s->pkt += 52;
-	s->stat_slow++;
-}
-
 /* ------------------------------------------------------------ subdivision */
 
 static int32_t iabs(int32_t v)
@@ -200,24 +177,25 @@ static int32_t iabs(int32_t v)
 /* Split decision for one edge, from that edge alone (see the header). */
 static int split_edge(const r_state_t *s, const sv_t *p, const sv_t *q)
 {
-	int32_t dx = iabs(p->sx - q->sx), dy = iabs(p->sy - q->sy);
-	if (dx > SPANX || dy > SPANY)
+	int32_t l = iabs(p->sx - q->sx) + iabs(p->sy - q->sy);
+	if (l > SPAN)
 		return 1;
-	return (dx + dy) * iabs(p->z - q->z) > (int32_t) s->warp_t2 * (p->z + q->z);
+	return l * iabs(p->z - q->z) > (int32_t) s->warp_t2 * (p->z + q->z);
 }
 
-/* round(n / d), d > 0, symmetric around 0 */
+/* round(n / d) half up, d > 0: n + KOFS d >= 0 for every n here (|s| <
+   KOFS), so the division is unsigned, as in the asm */
 static int32_t rdiv(int32_t n, int32_t d)
 {
-	return n >= 0 ? (n + (d >> 1)) / d : -((-n + (d >> 1)) / d);
+	return (int32_t) (((uint32_t) n + (uint32_t) d * KOFS + ((uint32_t) d >> 1)) / (uint32_t) d) - KOFS;
 }
 
 static void midpoint(const sv_t *p, const sv_t *q, sv_t *m)
 {
 	/* symmetric in p, q: both neighbours compute the same point */
 	int32_t zs = p->z + q->z;
-	m->sx = OFX + rdiv((p->sx - OFX) * p->z + (q->sx - OFX) * q->z, zs);
-	m->sy = OFY + rdiv((p->sy - OFY) * p->z + (q->sy - OFY) * q->z, zs);
+	m->sx = rdiv(p->sx * p->z + q->sx * q->z, zs);
+	m->sy = rdiv(p->sy * p->z + q->sy * q->z, zs);
 	m->z  = zs >> 1;
 	m->u  = (p->u + q->u) >> 1;
 	m->v  = (p->v + q->v) >> 1;
@@ -337,19 +315,12 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	}
 
 	if (!clip) {
-		/* subdivision straight from the cache */
-		if (nv == 4) {
-			if (!split_edge(s, &q[0], &q[1]) && !split_edge(s, &q[1], &q[3]) &&
-			    !split_edge(s, &q[3], &q[2]) && !split_edge(s, &q[2], &q[0]) &&
-			    !split_edge(s, &q[1], &q[2])) {
-				emit4(s, q);                       /* as the fast path would */
-				return;
-			}
-			subdivide(s, &q[0], &q[1], &q[2]);     /* the GPU's two halves */
+		/* subdivision straight from the cache: a quad as the GPU's two
+		   halves (draw_records' test is close to exact: a quad none of
+		   whose edges splits rarely gets here) */
+		subdivide(s, &q[0], &q[1], &q[2]);
+		if (nv == 4)
 			subdivide(s, &q[1], &q[3], &q[2]);
-		} else {
-			subdivide(s, &q[0], &q[1], &q[2]);
-		}
 		return;
 	}
 
@@ -364,10 +335,11 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		const qw_vert *p = &pool[vidx[poly[j] >> 2]];
 		sv_t *o = &in[k];
 		*o = q[j];
-		o->x = ((m[0] * p->x + m[1] * p->y + m[2] * p->z) >> 12) + s->tr[0];
-		o->y = ((m[3] * p->x + m[4] * p->y + m[5] * p->z) >> 12) + s->tr[1];
+		/* as the GTE's MVMVA (sf = 1): (TR << 12 + R V) >> 12 */
+		o->x = (int32_t) ((((int64_t) s->tr[0] << 12) + m[0] * p->x + m[1] * p->y + m[2] * p->z) >> 12);
+		o->y = (int32_t) ((((int64_t) s->tr[1] << 12) + m[3] * p->x + m[4] * p->y + m[5] * p->z) >> 12);
 		if (!o->cached)
-			o->z = ((m[6] * p->x + m[7] * p->y + m[8] * p->z) >> 12) + s->tr[2];
+			o->z = (int32_t) ((((int64_t) s->tr[2] << 12) + m[6] * p->x + m[7] * p->y + m[8] * p->z) >> 12);
 	}
 
 	/* clip against the near plane (when a vertex is behind it) */
@@ -384,15 +356,13 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		n = clip_near(buf[0], nv, buf[1]);
 		out = buf[1];
 	}
-	if (n >= 3) {
-		for (int i = 0; i < n; i++) {
-			if (out[i].cached)
-				continue;                          /* the cache's own values */
-			if (out[i].z < ZNEAR)
-				out[i].z = ZNEAR;                  /* rounding of the lerp */
-			project(&out[i]);
-		}
-		for (int i = 1; i + 1 < n; i++)
-			subdivide(s, &out[0], &out[i], &out[i + 1]);
+	for (int i = 0; i < n; i++) {
+		if (out[i].cached)
+			continue;                              /* the cache's own values */
+		if (out[i].z < ZNEAR)
+			out[i].z = ZNEAR;                      /* rounding of the lerp */
+		project(&out[i]);
 	}
+	for (int i = 1; i + 1 < n; i++)
+		subdivide(s, &out[0], &out[i], &out[i + 1]);
 }

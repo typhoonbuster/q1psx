@@ -1971,3 +1971,122 @@ ultra 2.
     (355 → 68 px);
   - view 10's crack runs along an edge whose two sides diverge toward the
     camera: one side is re-projected by the slow path.
+### 19.2 Renderer: error-based subdivision (steps 2-3)
+
+**Specification:** `engine/r_slow.c`. The asm port is `engine/r_slow.s`;
+`R_SLOW_C = 1` in `r_defs.inc` runs the C instead, and `dlcheck` compares
+the two.
+
+**Which polygons.** `draw_records` flags a face record from its bounding
+sphere (centre depth z, radius ρ = 1.5 r):
+- bit 0: a vertex may be nearer than `R_SZ_FAST` (96, the clip range);
+- bit 1: z < 6r, so an edge may exceed the 500 px span;
+- bit 2: (z − ρ)·16 < k16·ρ, so the affine error may exceed T, with
+  `k16 = 379 / √T` (`r_set_fidelity`).
+
+A flagged record's polygons each take `CAREFUL`. It is conservative:
+every corner at SZ ≥ 96, W + H ≤ 500 px, and (W + H)(zmax − zmin) ≤
+2·T2·zmin, with T2 = 2T. A polygon that passes goes out as is, because
+none of its edges can split. The others go to `slow_poly`. At most 13 per
+view would turn out whole there.
+
+**The rule, per edge, from its two projected ends only.**
+- **Split** when L = |dx| + |dy| > 500, or when L·|dz| > T2·(za + zb).
+  The second term is the screen displacement of the edge's midpoint
+  between affine and perspective mapping, |ds|·|dz| / (2(za + zb)),
+  with L bounding |ds|.
+- **Midpoint:** the projected 3D midpoint,
+  s = (sa za + sb zb) / (za + zb), rounded half up (offset 8192,
+  unsigned divide); z = (za + zb) / 2; u, v, light averaged.
+- **Why no cracks:** decisions and midpoints depend on the edge alone,
+  and shared vertices come from the same RTPT cache values. A fast-path
+  neighbour has no splitting edge, so both sides of every edge agree.
+- **Limits:** off-screen triangles are culled; depth ≤ 8.
+- **Clip path:** corners the GTE could not project (SZ < 96, or SXY
+  saturated) are clipped against the near plane only. Crossings are
+  interpolated from a canonical end. The fan is then subdivided the same
+  way.
+- **Quads** go straight to their two GPU halves.
+
+**The asm kernel.**
+- **Pool:** 512 entries of 32 B: SXY, z, z·T2, u, v, edge key, grey
+  colour word, uv word.
+- **Corners** come from the record's vertex cache, colour word included.
+- **Midpoint table:** a direct-mapped table of pool indices. A slot is
+  believed only if its index is below the pool count and that entry
+  carries the edge's key, so it is never cleared. A collision costs a
+  duplicate of the same midpoint, never a wrong one.
+- **Triangle stack:** one word per triangle (3 × 9-bit indices, depth),
+  ending on a negative marker.
+- **Children:** pushed through a jump table on the split mask, in the C's
+  order.
+- **Per node:**
+  - 12 loads;
+  - an off-screen test on sign bits (19 instructions);
+  - three split tests of ~15 instructions each.
+- **Midpoint:** two divides, overlapped with the u, v and light work.
+
+**PCSX-Redux cost model** (measured with tight loops):
+- 2 cycles per instruction;
+- a `mult` read straight away costs 6 more;
+- a `div` costs 37 more (the R3000's 36).
+
+These match the hardware's multiplier and divider latencies. RAM wait
+states and the I-cache are not modelled.
+
+**Alternatives studied, then dropped.** A scratch simulator ran over the
+cooked geometry and every view of start, e1m1 and e3m4 (nodes, outputs,
+residual error):
+
+| Alternative | Effect on nodes | Why dropped |
+|---|---|---|
+| Screen midpoint | +25-30 % | |
+| Geometric-mean or min(3 za) depth | +6-10 % | |
+| Euclidean length instead of L1 | −17-20 % | Exactly what raising T by 20 % gives |
+| Quads as quads (strips of GT4) | −3-6 % | Not worth the code |
+| Receding quads zipped from their two subdivided side edges | −10-18 % | Works for only 30 % of quads |
+| Skipping the off-screen test under a fully visible parent | | Only 11-30 % of nodes qualify |
+
+**Verification.**
+- Display lists asm = C, word for word, at high and low (references
+  `c2hi`, `c2lo`).
+- Interpreter hashes = C.
+- Physics diffs: 0 mismatches.
+- Uncovered pixels on the 12 start views at high (`PKTVIEW_BG`): none
+  outside the undrawn sky. This was 801 before §19.1, and 758 after it.
+  The e1m1 views 0-7, a wall at arm's length included, also show none.
+- Residual affine error (simulated, start, on-screen polygons):
+
+| Threshold T | 6 | 4 | 3 | 2 |
+|---|---|---|---|---|
+| Mean error | 1.4 px | 1.0 px | 0.77 px | 0.52 px |
+
+  This was 5-7 px on average, and up to ~90 px, before.
+
+### 19.3 Cost, and the open question of 60 fps
+
+Release build (`PROFILE=0`); "1 vbl" means the frame fits one NTSC frame
+(564 k cycles):
+
+| Level (T) | start: views at 1 vbl | start: view 0 | 128 spawn views: at 1 vbl | worst (e3m4 v0) |
+|---|---|---|---|---|
+| before §19 (high) | 12 / 12 | 396 k | 128 / 128 | 540 k |
+| low (6 px) | 11 / 12 | 683 k | 121 / 128 | 842 k |
+| medium (4 px) | 7 / 12 | 767 k | 110 / 128 | 1 012 k |
+| high (3 px) | 3 / 12 | 888 k | 101 / 128 | 1 159 k |
+| ultra (2 px) | 3 / 12 | 1 081 k | 80 / 128 | 1 517 k |
+
+- **Where the cost goes.** Start's view 0 at high spends 106 k on the
+  walk, 370 k on the records and 437 k on the subdivision (profile
+  build). The records' share includes CAREFUL, about 110 k.
+- **Against the first asm port:** the new kernel is 22 % cheaper.
+- **What limits it:** the work grows with the scene's near, grazing
+  surfaces, whatever the kernel. At high it reaches ~500 output triangles
+  per view, about 1 000 cycles each, CAREFUL included (888 k − 396 k for
+  492 triangles on view 0).
+- **Open (a call to make):** how to reconcile the constant 60 fps target
+  with the warp threshold:
+  - fixed thresholds, accepting 30 fps in the heaviest views;
+  - higher thresholds;
+  - or a threshold that rises for the next frames when a frame overruns
+    and returns to the level's T when there is room.
