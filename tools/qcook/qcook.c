@@ -313,7 +313,7 @@ static int cmd_map(int argc, char **argv)
 	const char *out_tex  = arg(argc, argv, "--tex", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
 	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
-	light_gain           = atof(arg(argc, argv, "--light-gain", "1"));
+	light_gain           = atof(arg(argc, argv, "--light-gain", "1.5"));
 	if (!pak_path || !map || !out_tex || !out_wld)
 		die("usage: qcook map --pak <pak> --map <name> [--fidelity f] --tex <out> --world <out>"
 		    " [--palette-pak <pak0>]");

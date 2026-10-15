@@ -1553,9 +1553,11 @@ enables it in the drawing environment (`vid.c`, `dtd = 1`).
   software colormap (light 127 = row 32, the identity row), so no
   conversion is needed.
 - Faces without a lightmap in a lit map are black, as in Quake.
-- `--light-gain` (`LIGHT_GAIN` in `cook.sh`) scales the light. The default
-  of 1.0 is faithful and dark (start's mean light is 50); 1.6 is much more
-  readable on a TV, where the default is chosen.
+- `--light-gain` (`LIGHT_GAIN` in `cook.sh`) scales the light. 1.0 is
+  faithful and dark (start's mean light is 50); 1.6 is much more readable
+  on a TV. The default is 1.5 (chosen 2026-10-15, to try on
+  a screen). It costs nothing at run time and +584 bytes over the 32
+  maps.
 - **Format QWV7:**
   - each record carries one light byte per vertex, padded to 4, ending
     where the polygons start: `polys - ((num_verts + 3) & ~3)`;

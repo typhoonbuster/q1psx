@@ -10,7 +10,8 @@
 #                QUAKE_PAK1). Unset: the maps already in cooked/id1 (so the
 #                re-cook a build triggers keeps the disc's map set: CMake
 #                globbed it at configure time), or ep1 if there are none.
-#   LIGHT_GAIN   vertex light scale (default 1 = Quake's own brightness)
+#   LIGHT_GAIN   vertex light scale (default 1.5; 1 = Quake's own brightness,
+#                dark on a TV)
 #
 # Output, per map and fidelity (low medium high ultra = disc N 0..3):
 #   cooked/id1/<map>_<fidelity>.tex   QTX3 texture pages  -> disc <MAP>_<N>.TEX
@@ -52,7 +53,7 @@ cook_one() {   # map fidelity
 	case $1 in e2*|e3*|e4*|end) pak=${QUAKE_PAK1:?$1 needs QUAKE_PAK1} ;; esac
 	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
 	                      --fidelity "$2" --tex "cooked/id1/$1_$2.tex" --world "cooked/id1/$1_$2.wld" \
-	                      --light-gain "${LIGHT_GAIN:-1}" \
+	                      --light-gain "${LIGHT_GAIN:-1.5}" \
 	                      > "$LOGS/$1_$2.log" 2>&1 \
 	|| { echo "cook FAILED: $1 $2"; cat "$LOGS/$1_$2.log"; return 1; }
 }

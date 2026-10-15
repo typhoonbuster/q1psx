@@ -363,7 +363,7 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 
 /* ---------------------------------------------------------------- light -- */
 
-double light_gain = 1.0;
+double light_gain = 1.5;
 
 /* A face's lightmap as Quake lays it out (CalcSurfaceExtents): one luxel
    per 16 texels, from texturemins = floor(min / 16) * 16, up to 4 styles. */

@@ -828,3 +828,8 @@ followed by R0-R4.
       540 k);
     - display lists identical, interpreter hashes = dynarec, physics
       diffs 0 mismatches.
+- **Light gain 1.5 by default** (2026-10-15): `cook.sh` and `qcook`
+  default to `--light-gain 1.5` instead of 1.0 (faithful but dark).
+  - Same cycles.
+  - World sizes +584 bytes over the 32 maps.
+  - New display-list reference `lit15`.
