@@ -230,8 +230,9 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	const uint16_t  *uvs   = (const uint16_t *) (poly + 4);
 	static const int quad_cycle[4] = { 0, 1, 3, 2 };   /* PS1 order -> ring */
 
-	clut16  = (uint32_t) r->clut << 16;
-	tpage16 = (uint32_t) r->tpage << 16;
+	const qw_tex *tex = (const qw_tex *) r_state.textures + r->tex;
+	clut16  = (uint32_t) tex->clut << 16;
+	tpage16 = (uint32_t) tex->tpage << 16;
 
 	sv_t in[4];
 	const int16_t *m = s->rot;

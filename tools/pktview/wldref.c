@@ -112,10 +112,27 @@ static void load_tex(const char *path)
 	free(d);
 }
 
+/* the map's texture table, and the record being drawn's window (GP0 E2h) */
+static const qw_tex *textures;
+static uint32_t      twin;
+
+static void use_tex(const qw_record *r, int *tpage, int *clut)
+{
+	const qw_tex *t = &textures[r->tex];
+	*tpage = t->tpage;
+	*clut  = t->clut;
+	twin   = t->window;
+}
+
 static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *op)
 {
 	int px = (tpage & 15) * 64, py = ((tpage >> 4) & 1) * 256;
 	int cx = (clut & 63) * 16, cy = (clut >> 6) & 511;
+	int mx = twin & 31, my = (twin >> 5) & 31, ox = (twin >> 10) & 31, oy = (twin >> 15) & 31;
+	u &= 255;
+	v &= 255;
+	u = (u & ~(mx * 8)) | ((ox & mx) * 8);
+	v = (v & ~(my * 8)) | ((oy & my) * 8);
 	uint16_t w = vram[(py + (v & 255)) & 511][(px + (u & 255) / 2) & 1023];
 	uint16_t c = vram[cy][(cx + ((w >> ((u & 1) * 8)) & 255)) & 1023];
 	*op = c != 0;
@@ -208,6 +225,8 @@ static void render(const uint8_t *d, const qw_header *h, const qw_view *vw)
 	while (at < end) {
 		qw_record r;
 		memcpy(&r, at, sizeof r);
+		int tpage, clut;
+		use_tex(&r, &tpage, &clut);
 		const qw_vert *v = (const qw_vert *) (at + sizeof r);
 		const uint8_t *q = at + sizeof r + r.num_verts * sizeof(qw_vert);
 		cv tv[QW_MAX_VERTS];
@@ -221,8 +240,8 @@ static void render(const uint8_t *d, const qw_header *h, const qw_view *vw)
 				c[i].u = qd.uv[i] & 255;
 				c[i].v = qd.uv[i] >> 8;
 			}
-			tri3(c[0], c[1], c[2], r.tpage, r.clut);
-			tri3(c[1], c[3], c[2], r.tpage, r.clut);
+			tri3(c[0], c[1], c[2], tpage, clut);
+			tri3(c[1], c[3], c[2], tpage, clut);
 		}
 		for (int k = 0; k < r.num_tris; k++, q += sizeof(qw_tri)) {
 			qw_tri tr;
@@ -233,7 +252,7 @@ static void render(const uint8_t *d, const qw_header *h, const qw_view *vw)
 				c[i].u = tr.uv[i] & 255;
 				c[i].v = tr.uv[i] >> 8;
 			}
-			tri3(c[0], c[1], c[2], r.tpage, r.clut);
+			tri3(c[0], c[1], c[2], tpage, clut);
 		}
 		at += r.size;
 	}
@@ -343,6 +362,8 @@ static void render_painter(const uint8_t *d, const qw_header *h, const qw_view *
 		const uint8_t *rp = P_emit[e];
 		qw_record r;
 		memcpy(&r, rp, sizeof r);
+		int tpage, clut;
+		use_tex(&r, &tpage, &clut);
 		const qw_vert *v = (const qw_vert *) (rp + sizeof r);
 		const uint8_t *q = rp + sizeof r + r.num_verts * sizeof(qw_vert);
 		cv tv[QW_MAX_VERTS];
@@ -352,16 +373,16 @@ static void render_painter(const uint8_t *d, const qw_header *h, const qw_view *
 			cv c[4];
 			for (int i = 0; i < 4; i++) { c[i] = tv[qd.idx[i] / 4]; c[i].u = qd.uv[i] & 255; c[i].v = qd.uv[i] >> 8; }
 			for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) zb[y][x] = 1e30f;   /* no depth test */
-			tri3(c[0], c[1], c[2], r.tpage, r.clut);
+			tri3(c[0], c[1], c[2], tpage, clut);
 			for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) zb[y][x] = 1e30f;
-			tri3(c[1], c[3], c[2], r.tpage, r.clut);
+			tri3(c[1], c[3], c[2], tpage, clut);
 		}
 		for (int k = 0; k < r.num_tris; k++, q += sizeof(qw_tri)) {
 			qw_tri tr; memcpy(&tr, q, sizeof tr);
 			cv c[3];
 			for (int i = 0; i < 3; i++) { c[i] = tv[tr.idx[i] / 4]; c[i].u = tr.uv[i] & 255; c[i].v = tr.uv[i] >> 8; }
 			for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) zb[y][x] = 1e30f;
-			tri3(c[0], c[1], c[2], r.tpage, r.clut);
+			tri3(c[0], c[1], c[2], tpage, clut);
 		}
 	}
 	printf("wldref: painter view leaf %d, %d records emitted\n", (int) (vl - P_leaves), P_nemit);
@@ -433,7 +454,8 @@ int main(int argc, char **argv)
 	uint8_t *d = slurp(argv[1], &len);
 	qw_header h;
 	memcpy(&h, d, sizeof h);
-	if (memcmp(h.magic, QWORLD_MAGIC, 4)) { fprintf(stderr, "wldref: not a QWV2 file\n"); return 1; }
+	if (memcmp(h.magic, QWORLD_MAGIC, 4)) { fprintf(stderr, "wldref: not a %s file\n", QWORLD_MAGIC); return 1; }
+	textures = (const qw_tex *) (d + h.ofs_tex);
 	const qw_view *views = (const qw_view *) (d + h.ofs_views);
 	for (uint32_t i = 0; i < h.num_views; i++) {
 		if (argc > 4 && (uint32_t) atoi(argv[4]) != i) continue;

@@ -48,14 +48,8 @@ r_slow_pool:
 
 # -----------------------------------------------------------------------------
 slow_poly:
-	sw      $ra, SP_SPRA($t8)
-	lhu     $t0, R_CLUT($a0)
-	lhu     $t1, R_TPAGE($a0)
-	lui     $v1, %hi(r_slow_pool)
-	sll     $t0, $t0, 16
-	sll     $t1, $t1, 16
-	sw      $t0, SP_CLUT16($t8)
-	sw      $t1, SP_TPAGE16($t8)
+	sw      $ra, SP_SPRA($t8)            # (SP_CLUT16 / SP_TPAGE16: set by
+	lui     $v1, %hi(r_slow_pool)        # draw_records for the record)
 	addiu   $v1, $v1, %lo(r_slow_pool)   # v1 = pool, for the whole routine
 
 	# ---- 1. transform + clip codes ------------------------------------------

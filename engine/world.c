@@ -103,6 +103,8 @@ int world_load(int map, int fid)
 	world.marks       = (uint16_t *) (f + h->ofs_marks);
 	world.faces       = f + h->ofs_faces;
 	world.views       = (const qw_view *) (f + h->ofs_views);
+	world.textures    = (const qw_tex *) (f + h->ofs_tex);
+	world.num_tex     = h->num_tex;
 	world.num_nodes   = h->num_nodes;
 	world.num_leaves  = h->num_leaves;
 	world.num_faces   = h->num_faces;

@@ -26,10 +26,10 @@ typedef struct {
 	const char *name;
 	int  tex_shift;     /* texture resolution = native >> tex_shift          */
 	int  tex_max;       /* max texels per side of one repetition, scaled     */
-	int  tile_min;      /* repeat a small texture in its VRAM tile (powers of
-	                       two) until the tile is >= this many texels per
-	                       side: one polygon then covers several repetitions,
-	                       fewer polygons for the same VRAM. 0 = never.       */
+	int  tile_min;      /* axes that are not powers of two (no hardware
+	                       wrap): repeat the texture in its VRAM tile until
+	                       the tile is >= this many texels, so one polygon
+	                       covers several repetitions. 0 = never.            */
 } fidelity_t;
 
 const fidelity_t *fidelity_find(const char *name);
@@ -79,11 +79,15 @@ void bsp_parse(bsp_t *b, const uint8_t *raw, uint32_t len);
 /* Where a miptex lives in VRAM once packed, plus the words a polygon needs. */
 typedef struct {
 	int      present;        /* packed (has pixels and is not sky)        */
+	int      index;          /* its miptex index = qw_tex table index     */
 	int      rep_w, rep_h;   /* texels of one texture repetition, scaled  */
-	int      reps_x, reps_y; /* repetitions laid side by side in the tile */
+	int      win_x, win_y;   /* axis wraps in hardware (power of two)     */
+	int      reps_x, reps_y; /* repetitions laid side by side in the tile
+	                            (1 on a wrapped axis)                     */
 	int      u0, v0;         /* top-left texel inside its texture page    */
 	uint16_t tpage;          /* GPU tpage word (8bpp)                     */
 	uint16_t clut;           /* GPU CLUT word                             */
+	uint32_t window;         /* GP0 E2h texture-window command            */
 	uint8_t  flags;          /* QWF_* derived from the name               */
 } tex_slot;
 

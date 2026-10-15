@@ -30,6 +30,7 @@
 .set RS_OT_HEAD,      144
 .set RS_STAT_SLOW,    148
 .set RS_TICKS_SLOW,   152
+.set RS_TEXTURES,     156
 
 # ---- qw_node (56 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3] (+ pad): lwc2-ready
@@ -58,10 +59,9 @@
 .set R_NQUADS,    3
 .set R_NTRIS,     4
 .set R_SIZE,      6
-.set R_CLUT,      8
-.set R_TPAGE,    10
-.set R_SC,       12     # bounding sphere centre (lwc2-ready) + radius at +18
-.set R_SR,       18
+.set R_TEX,       8     # index into the qw_tex table (8 B: clut, tpage, window)
+.set R_SR,       10     # bounding sphere radius
+.set R_SC,       12     # bounding sphere centre (lwc2-ready)
 .set R_VERTS,    20
 .set POLY_SIZE,  12
 
@@ -89,8 +89,10 @@
 .set SP_TRI,      0x380   # slow path: triangle stack (up to 16 words)
 .set SP_BLKEND,   0x3c0   # draw_records: end of the current face block
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
+.set SP_TEXBASE,  0x3c8   # qw_tex table
+.set SP_TWIN,     0x3cc   # draw_records: the record's texture-window command
 .set SP_POOLN,    0x3d0   # slow path: vertices in the pool
-.set SP_CLUT16,   0x3d4   # slow path: record clut << 16
+.set SP_CLUT16,   0x3d4   # slow path: record clut << 16 (set by draw_records)
 .set SP_TPAGE16,  0x3d8   # slow path: record tpage << 16
 .set SP_SPRA,     0x3dc   # slow path: its own return address
 .set SP_SLOWTRI,  0x3e0   # slow path: triangles emitted this frame

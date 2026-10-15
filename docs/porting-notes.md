@@ -1292,3 +1292,86 @@ These are R5.3's targets.
   - **R2** cycles the maps; the overlay shows the map and the arena use.
 - **Bench:** `BENCH_MAPS=1 scripts/bench.sh` loads every map and benches
   its four spawn views. All 9 episode-1 maps load and render.
+
+### 14.3 R5.2 — texture windows
+
+**GPU side.** GP0 E2h sets the texture window:
+`texcoord = (texcoord & ~(mask × 8)) | ((offset & mask) × 8)`, per axis,
+in 8-texel units. A texture whose size on an axis is a power of two, placed
+in VRAM at a multiple of that size, then repeats in hardware: the polygon's
+8-bit UV is a virtual coordinate (0..255) and the window folds it onto the
+texture.
+
+**Cook** (`tools/qcook/tex.c`, `world.c`):
+- **Window per axis.** A power-of-two axis wraps; smaller than 8 texels
+  (the window's granularity) is resampled up to 8. Other axes keep the old
+  scheme: VRAM repetitions (`tile_min`) and a cut at every tile.
+  - 11 % of Quake's textures are not powers of two (buttons 48×48,
+    doors 128×192, signs 240×192). Most are 64 or 128 wide, so their u
+    axis still wraps.
+- **Packing.** The shelf packer is replaced by first-fit on a grid of 8×8
+  cells, biggest first. A wrapped axis starts at a multiple of its size.
+- **Cutting.** A wrapped axis is cut every 256 cooked texels (a byte of
+  UV).
+  - The cut grid starts at the face's own first repetition boundary
+    (`floor(smin / w) × w`), not at a global grid. This keeps the virtual
+    coordinate in phase with the texture and cuts each face as little as
+    possible. It does better than the earlier simulation: start high
+    9 927 → 8 207 polygons.
+  - u = 256 does not fit a byte, so it is clamped to 255: a 1/256
+    squeeze on polygons that span a whole cell, invisible.
+- **Format QWV3.**
+  - A per-map texture table `qw_tex {clut, tpage, window}` (8 B per
+    miptex);
+  - records name their texture (`tex`, +8) instead of carrying
+    clut / tpage (same 20 bytes: `sr` +10, `sc` +12).
+  - `qcook check` validates the indices.
+
+**Renderer** (`engine/r_world.s`):
+- **Per record.** Once its polygons are emitted (fast path and slow path),
+  the record prepends a 2-word packet with its E2 command. The bucket is
+  built by prepending, so the command lands in front of its polygons.
+- **Reset.** `r_render` first prepends E2 = 0: it ends up last in the
+  world bucket, so the overlay and the next frame start without a window.
+- **Texture table.** Looked up once per record (the table's base is in the
+  scratchpad); the clut / tpage words go to the scratchpad for the slow
+  path, which no longer reads them from the record.
+
+**Tools.** `pktview` applies E2 packets and `wldref` applies the table's
+windows. The images match the reference; the larger polygons show a little
+more affine warp, as expected (an eye on screen decides).
+
+**Results** (PCSX-Redux dynarec, start, high):
+
+| | before | after |
+|---|---|---|
+| polygons, map | 17 189 | 8 207 |
+| polygons, spawn view | 2 157 | 774 |
+| spawn view, cycles | 620 k (2 vbl) | 426 k (1 vbl) |
+| world, start | 938 KB | 720 KB |
+
+- Every bench view of every episode-1 map now runs in 1 vblank; E1M7's
+  spawn view goes from 566 k (2 vbl) to 424 k.
+- Some near views spend more in the slow path (view 3: 80 k → 212 k),
+  because larger polygons are more often near or oversize. They stay at
+  1 vbl; the slow path is the next thing to tune.
+- Low-fidelity textures shrink from 304 to 25 KB (no more repetitions in
+  VRAM). Low and high now differ mostly in texture resolution: 7 963
+  against 8 207 polygons.
+- **World per map at high:**
+
+  | map | before | after |
+  |---|---|---|
+  | start | 938 KB | 720 KB |
+  | e1m1 | 984 KB | 724 KB |
+  | e1m2 | 1080 KB | 738 KB |
+  | e1m3 | 978 KB | 694 KB |
+  | e1m4 | 1160 KB (fell back to medium) | 823 KB |
+  | e1m5 | 918 KB | 658 KB |
+  | e1m6 | 654 KB | 520 KB |
+  | e1m7 | 291 KB | 213 KB |
+  | e1m8 | 580 KB | 412 KB |
+  | e3m5 | 1427 KB | 933 KB |
+
+  Every episode-1 map now fits at high. Four are still above the 700 KB
+  target, for R5.3.

@@ -712,3 +712,27 @@ followed by R0-R4.
     the maps.
   - **Bench:** `BENCH_MAPS=1` benches every map's spawn views; all 9
     episode-1 maps load and render.
+- **R5.2 — texture windows.** Details: `docs/porting-notes.md` §14.3.
+  - **Cook:**
+    - every power-of-two texture axis wraps in hardware through the GPU
+      texture window (GP0 E2h);
+    - textures are packed aligned to their size;
+    - faces are cut only every 256 texels, from their own repetition
+      boundary;
+    - axes that are not powers of two keep the old per-repetition cuts.
+  - **Format QWV3:** a per-map texture table (clut, tpage, window); records
+    hold a texture index.
+  - **Renderer:** one E2 packet per drawn record, prepended after its
+    polygons, plus a reset at the end of the world bucket.
+  - **Tools:** `pktview` and `wldref` apply the window; images match the
+    reference.
+  - **Results:**
+    - start high: 17 189 → 8 207 polygons;
+    - spawn view: 620 k cycles (2 vbl) → 426 k (1 vbl);
+    - every episode-1 bench view now runs in 1 vblank;
+    - world size: start 938 → 720 KB, e1m4 1160 → 823 KB (fits at high
+      now), e3m5 1427 → 933 KB;
+    - low-fidelity textures 304 → 25 KB.
+  - **Costs:** some near views spend more in the slow path (larger
+    polygons). Affine warp is slightly more visible on big polygons; the
+    eye on screen decides.

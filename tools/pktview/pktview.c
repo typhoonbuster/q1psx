@@ -137,6 +137,8 @@ static void load_tex(const char *path)
 
 typedef struct { int x, y; int u, v; } vtx;
 
+static uint32_t twin;   /* current GP0 E2h texture window (0 = none) */
+
 static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque)
 {
 	int px = (tpage & 15) * 64, py = ((tpage >> 4) & 1) * 256;
@@ -145,6 +147,10 @@ static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque
 	uint16_t c;
 	u &= 255;
 	v &= 255;
+	/* texture window: texcoord = (texcoord & ~(mask * 8)) | ((offset & mask) * 8) */
+	int mx = twin & 31, my = (twin >> 5) & 31, ox = (twin >> 10) & 31, oy = (twin >> 15) & 31;
+	u = (u & ~(mx * 8)) | ((ox & mx) * 8);
+	v = (v & ~(my * 8)) | ((oy & my) * 8);
 	if (mode == 0) {           /* 4bpp */
 		uint16_t w = vram[(py + v) & 511][(px + u / 4) & 1023];
 		c = vram[cy][(cx + ((w >> ((u & 3) * 4)) & 15)) & 1023];
@@ -231,6 +237,11 @@ static void packet(const uint32_t *w, int n)
 	uint32_t code = w[0] >> 24;
 	uint8_t rgb[3] = { (uint8_t) w[0], (uint8_t) (w[0] >> 8), (uint8_t) (w[0] >> 16) };
 
+	if (code == 0xe2) {                  /* texture window */
+		twin = w[0] & 0xfffff;
+		return;
+	}
+
 	/* flat polygons only (textured or not): 001 g q t s r */
 	if ((code & 0xe0) != 0x20 || (code & 0x10))
 		return;
@@ -275,6 +286,7 @@ int main(int argc, char **argv)
 			view = atoi(line + 7);
 			memset(fb, 0, sizeof fb);
 			polys_drawn = polys_huge = 0;
+			twin = 0;
 		} else if (view >= 0 && line[0] == 'P' && line[1] == ' ') {
 			uint32_t w[16];
 			int n = 0;

@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWV2" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWV3" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -13,9 +13,13 @@
  *     Each node has two face blocks: faces facing its front side, then faces
  *     facing its back side. The side the camera is on picks the block — no
  *     per-face backface test.
- *   - Every Quake face is cut on its texture-repeat boundaries (and to a max
- *     piece size), so each piece's UVs sit inside one VRAM tile: no texture
- *     window. Pieces are grouped into "face records" of <= 63 vertices.
+ *   - Every Quake face is cut so each piece's UVs fit a byte. A texture axis
+ *     whose size is a power of two repeats in hardware: the GPU texture
+ *     window (GP0 E2h) wraps it, so that axis is only cut every 256 texels.
+ *     Other axes are cut at every repetition (UVs inside the VRAM tile).
+ *     Each record names its texture in the per-map table (qw_tex), which
+ *     holds the CLUT, tpage and texture-window words. Pieces are grouped
+ *     into "face records" of <= 63 vertices.
  *   - A face record is drawn when its face_id was stamped this frame by a
  *     visible leaf's marksurfaces (Quake's visframe scheme).
  *
@@ -32,7 +36,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV2"
+#define QWORLD_MAGIC "QWV3"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   63      /* per face record (multiple of 3)        */
@@ -50,7 +54,7 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV2"                                  */
+	char     magic[4];             /* "QWV3"                                  */
 	uint32_t num_nodes;
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
@@ -67,8 +71,17 @@ typedef struct {
 	uint32_t root;                 /* node index of the world model root      */
 	uint32_t max_depth;            /* deepest node chain (<= QW_MAX_DEPTH)    */
 	uint32_t num_visleafs;          /* PVS row = (num_visleafs + 7) / 8 bytes */
-	uint32_t reserved[3];
+	uint32_t ofs_tex, num_tex;     /* qw_tex[num_tex], indexed by record.tex  */
+	uint32_t reserved[1];
 } qw_header;
+
+/* One per Quake miptex (unused ones are zero). */
+typedef struct {
+	uint16_t clut;         /* GPU CLUT word                                   */
+	uint16_t tpage;        /* GPU tpage word (8bpp)                           */
+	uint32_t window;       /* GP0 E2h texture-window command; 0xE2000000 = no
+	                          wrap (the axes that are not powers of two)      */
+} qw_tex;                  /* 8 bytes */
 
 typedef struct {
 	int16_t  c[3], pad0;   /* +0  bbox centre, vertex units (lwc2-ready)       */
@@ -108,11 +121,11 @@ typedef struct {
 	uint8_t  num_tris;     /* +4                                              */
 	uint8_t  flags;        /* +5  QWF_*                                       */
 	uint16_t size;         /* +6  whole record, bytes                         */
-	uint16_t clut;         /* +8  GPU CLUT word                               */
-	uint16_t tpage;        /* +10 GPU tpage word (8bpp)                       */
+	uint16_t tex;          /* +8  index into the qw_tex table                 */
+	uint16_t sr;           /* +10 bounding sphere radius, vertex units         */
 	int16_t  sc[3];        /* +12 bounding sphere centre, vertex units:
 	                              +12 / +16 load straight into VXY0 / VZ0       */
-	uint16_t sr;           /* +18 bounding sphere radius, vertex units         */
+	uint16_t pad;          /* +18                                             */
 } qw_record;               /* 20 bytes */
 
 typedef struct {
@@ -121,8 +134,10 @@ typedef struct {
 
 /* Vertex indices are pre-multiplied by 4 (byte offsets into the renderer's
    per-record vertex cache). Quad corners are in PS1 order: the GPU draws
-   triangles (0,1,2) and (1,2,3). uv[k] = u | v << 8, page-relative texels;
-   the renderer ORs the record's CLUT into uv[0] and tpage into uv[1]. */
+   triangles (0,1,2) and (1,2,3). uv[k] = u | v << 8 in texels: on a wrapped
+   axis a virtual 0..255 coordinate the texture window folds onto the
+   texture, otherwise page-relative. The renderer ORs the CLUT into uv[0]
+   and the tpage into uv[1]. */
 typedef struct {
 	uint8_t  idx[4];
 	uint16_t uv[4];

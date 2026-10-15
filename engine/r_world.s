@@ -127,6 +127,16 @@ r_render:
 	lw      $t0, RS_OT_WORLD($s0)
 	nop
 	lw      $fp, 0($t0)
+	lw      $t0, RS_TEXTURES($s0)
+	lui     $t1, 0x0100                  # tag: 1 word
+	sw      $t0, SP_TEXBASE($t8)
+	or      $t1, $t1, $fp
+	lui     $t2, 0xE200
+	sw      $t1, 0($s6)                  # texture window off, first in the
+	sw      $t2, 4($s6)                  # bucket = drawn after the world (the
+	sll     $fp, $s6, 8                  # overlay and the next frame start
+	srl     $fp, $fp, 8                  # unwrapped)
+	addiu   $s6, $s6, 8
 
 	# ---- camera leaf ----------------------------------------------------
 	lw      $s1, RS_ROOT($s0)
@@ -570,19 +580,19 @@ dr_draw:
 	lw      $t0, SP_FULL($t8)
 	lbu     $t2, R_NVERTS($a0)
 	bnez    $t0, dr_done                 # packet arena full
-	lhu     $v0, R_CLUT($a0)
+	lhu     $v0, R_TEX($a0)
 
 	# bounding-sphere frustum test (view space x6; r in vertex units, view
 	# radius 1.5 r): left/right planes have |n| = sqrt2 -> 2.125 r, top/bottom
 	# |n| = 5 -> 8 r. All conservative.
-	# VZ0 is loaded from a sign-extended halfword, not with lwc2: the word
-	# at +16 carries the radius in its upper half, and PCSX-Redux does not
+	# VZ0 is loaded from a sign-extended halfword, not with lwc2: the upper
+	# half of the word at +16 is not part of it, and PCSX-Redux does not
 	# drop those bits the way the 16-bit hardware register does.
 	lwc2    C2_VXY0, R_SC+0($a0)
 	lh      $t9, R_SC+4($a0)
 	lhu     $t3, R_SR($a0)
 	mtc2    $t9, C2_VZ0
-	lhu     $v1, R_TPAGE($a0)
+	lw      $v1, SP_TEXBASE($t8)
 	nop
 	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
 	mfc2    $t0, C2_IR1                  # x
@@ -617,8 +627,16 @@ dr_draw:
 	sll     $t5, $t5, 1                  # GPU's 1023 x 511 px limit
 	or      $a2, $a2, $t5                # a2 bit 1
 
+	sll     $v0, $v0, 3                  # the record's texture (8 B entry)
+	addu    $v0, $v0, $v1
+	lw      $v1, 4($v0)                  # its texture-window command
+	lw      $v0, 0($v0)                  # clut | tpage << 16
+	sw      $v1, SP_TWIN($t8)
+	lui     $t0, 0xffff
+	and     $v1, $v0, $t0                # tpage << 16, ORed into uv1
 	sll     $v0, $v0, 16                 # clut  << 16, ORed into uv0
-	sll     $v1, $v1, 16                 # tpage << 16, ORed into uv1
+	sw      $v0, SP_CLUT16($t8)          # (the slow path's copies)
+	sw      $v1, SP_TPAGE16($t8)
 	lw      $t0, SP_RECORDS($t8)
 	lw      $t1, SP_VERTS($t8)
 	addiu   $t0, $t0, 1
@@ -752,7 +770,7 @@ dr_quad_next:
 dr_tris:
 	lbu     $at, R_NTRIS($a0)
 	nop
-	beqz    $at, dr_rec_next
+	beqz    $at, dr_twin
 	nop
 dr_tri:
 	addiu   $t0, $s6, 32
@@ -815,6 +833,22 @@ dr_tri_next:
 	addiu   $at, $at, -1
 	bgtz    $at, dr_tri
 	addiu   $a3, $a3, POLY_SIZE
+
+	# The record's texture window (GP0 E2h), prepended after its polygons
+	# so it comes first in the bucket: power-of-two textures wrap in
+	# hardware, and the cook only cuts faces every 256 texels.
+dr_twin:
+	addiu   $t0, $s6, 8
+	sltu    $t0, $s7, $t0
+	bnez    $t0, dr_full
+	lw      $t1, SP_TWIN($t8)
+	lui     $t9, 0x0100
+	or      $t9, $t9, $fp
+	sw      $t9, 0($s6)
+	sw      $t1, 4($s6)
+	sll     $fp, $s6, 8
+	srl     $fp, $fp, 8
+	addiu   $s6, $s6, 8
 
 dr_rec_next:
 	lw      $a0, SP_NEXTREC($t8)

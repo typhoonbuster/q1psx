@@ -150,8 +150,8 @@ static void rec_flush(out_t *o, rec_t *r, int face_id, const tex_slot *s)
 	h.flags     = s->flags;
 	h.size      = (uint16_t) (sizeof h + r->nv * sizeof(qw_vert) +
 	                          r->nq * sizeof(qw_quad) + r->nt * sizeof(qw_tri));
-	h.clut      = s->clut;
-	h.tpage     = s->tpage;
+	h.tex       = (uint16_t) s->index;
+	h.pad       = 0;
 
 	/* bounding sphere: bbox centre, radius = farthest vertex (rounded up) */
 	long lo[3] = { 32767, 32767, 32767 }, hi[3] = { -32768, -32768, -32768 };
@@ -187,9 +187,11 @@ static void rec_flush(out_t *o, rec_t *r, int face_id, const tex_slot *s)
 	r->nv = r->nq = r->nt = 0;
 }
 
+/* A wrapped axis gets its virtual 0..256 coordinate (the texture window
+   folds it onto the texture); another axis its page position. */
 static uint16_t uvword(const tex_slot *s, double u, double v)
 {
-	long uu = s->u0 + lround(u), vv = s->v0 + lround(v);
+	long uu = (s->win_x ? 0 : s->u0) + lround(u), vv = (s->win_y ? 0 : s->v0) + lround(v);
 	if (uu < 0) uu = 0;
 	if (uu > 255) uu = 255;
 	if (vv < 0) vv = 0;
@@ -287,29 +289,36 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f)
 		if (pl.v[i].t > tmax) tmax = pl.v[i].t;
 	}
 
-	/* one cell = the tile: reps_x x reps_y texture repetitions */
-	const double W = (double) m->w * s->reps_x, H = (double) m->h * s->reps_y;
-	long i0 = (long) floor(smin / W), i1 = (long) floor((smax - 1e-4) / W);
-	long j0 = (long) floor(tmin / H), j1 = (long) floor((tmax - 1e-4) / H);
+	/* Cells, in Quake texels. A wrapped axis: 256 cooked texels (a byte of
+	   UV), from an origin on a repetition boundary so the virtual
+	   coordinate keeps the texture's phase; the face's own origin, so it
+	   is cut as little as possible. Another axis: the VRAM tile (reps
+	   repetitions) on the global grid. */
+	const double W  = s->win_x ? 256.0 * m->w / s->rep_w : (double) m->w * s->reps_x;
+	const double H  = s->win_y ? 256.0 * m->h / s->rep_h : (double) m->h * s->reps_y;
+	const double s0 = s->win_x ? floor(smin / m->w) * m->w : 0;
+	const double t0 = s->win_y ? floor(tmin / m->h) * m->h : 0;
+	long i0 = (long) floor((smin - s0) / W), i1 = (long) floor((smax - 1e-4 - s0) / W);
+	long j0 = (long) floor((tmin - t0) / H), j1 = (long) floor((tmax - 1e-4 - t0) / H);
 	if ((i1 - i0 + 1) * (j1 - j0 + 1) > 1)
 		o->faces_split++;
 
 	rec_t *r = xcalloc(1, sizeof *r);
 	for (long i = i0; i <= i1; i++) {
 		poly_t a, c;
-		clip_poly(&pl, &a, 0, i * W, +1);
-		clip_poly(&a, &c, 0, (i + 1) * W, -1);
+		clip_poly(&pl, &a, 0, s0 + i * W, +1);
+		clip_poly(&a, &c, 0, s0 + (i + 1) * W, -1);
 		for (long j = j0; j <= j1; j++) {
 			poly_t d, pc;
-			clip_poly(&c, &d, 1, j * H, +1);
-			clip_poly(&d, &pc, 1, (j + 1) * H, -1);
+			clip_poly(&c, &d, 1, t0 + j * H, +1);
+			clip_poly(&d, &pc, 1, t0 + (j + 1) * H, -1);
 			poly_weld(&pc);
 			if (pc.n < 3 || poly_area(&pc) < 1.0 / 64)
 				continue;
-			double uv[MAXPV][2];
+			double uv[MAXPV][2];    /* cooked texels from the cell's corner */
 			for (int k = 0; k < pc.n; k++) {
-				uv[k][0] = (pc.v[k].s - i * W) * s->rep_w * s->reps_x / W;
-				uv[k][1] = (pc.v[k].t - j * H) * s->rep_h * s->reps_y / H;
+				uv[k][0] = (pc.v[k].s - s0 - i * W) * s->rep_w / m->w;
+				uv[k][1] = (pc.v[k].t - t0 - j * H) * s->rep_h / m->h;
 			}
 			rec_add_piece(o, r, &pc, (const double (*)[2]) uv, s, f);
 		}
@@ -608,6 +617,20 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	h.ofs_views = (uint32_t) f.len;  buf_put(&f, views, (size_t) nviews * sizeof *views);
 	buf_align4(&f);
 
+	/* texture table: CLUT, tpage and texture window per miptex */
+	h.ofs_tex = (uint32_t) f.len;
+	h.num_tex = (uint32_t) b->num_miptex;
+	for (int i = 0; i < b->num_miptex; i++) {
+		qw_tex t;
+		memset(&t, 0, sizeof t);
+		if (ts->slots[i].present) {
+			t.clut   = ts->slots[i].clut;
+			t.tpage  = ts->slots[i].tpage;
+			t.window = ts->slots[i].window;
+		}
+		buf_put(&f, &t, sizeof t);
+	}
+
 	/* clip hulls 1 and 2 (all BSP planes, all clipnodes) */
 	{
 		h.ofs_clip = (uint32_t) f.len;
@@ -703,6 +726,7 @@ int world_check(const char *path)
 	SECTION(h.ofs_vis, h.len_vis);
 	SECTION(h.ofs_faces, h.len_faces);
 	SECTION(h.ofs_views, h.num_views * sizeof(qw_view));
+	SECTION(h.ofs_tex, h.num_tex * sizeof(qw_tex));
 	if (h.max_depth > QW_MAX_DEPTH)
 		FAIL("depth %u > %d", h.max_depth, QW_MAX_DEPTH);
 	if (h.root >= h.num_nodes)
@@ -742,6 +766,7 @@ int world_check(const char *path)
 				if (!r.num_verts || r.num_verts > QW_MAX_VERTS)
 					FAIL("record at %u: %u verts", at, r.num_verts);
 				if (r.face_id >= h.num_faces) FAIL("record at %u: face id %u", at, r.face_id);
+				if (r.tex >= h.num_tex) FAIL("record at %u: texture %u", at, r.tex);
 				const uint8_t *q = fs + at + sizeof r + r.num_verts * sizeof(qw_vert);
 				for (int k = 0; k < r.num_quads; k++, q += sizeof(qw_quad))
 					for (int c = 0; c < 4; c++)
