@@ -1594,3 +1594,185 @@ correct light.
   per-view cycle change.
 - The disc image now depends on the cooked files themselves. A manual
   cook used to leave the previous data on the disc.
+
+## §16 — The optimization pass (R6.2, 2026-10-15)
+
+**The goal.** Maximum performance with no quality loss, even a few instructions saved per call, the resources being that limited.
+
+**Method.** Every step was checked three ways before it was kept:
+- `scripts/dlcheck.sh check <ref>`: the display lists of the 12 bench views
+  are identical, word for word, to the reference;
+- the interpreter's hashes (`EMU_ARGS=-interpreter`) match the dynarec's,
+  because the dynarec hides load-delay mistakes (hazcheck only sees linear
+  code, not branch targets);
+- the bench's C-vs-asm physics diffs: 0 mismatches.
+
+One step changes packets on purpose: one texture-window command per run of
+same-texture records (16.1). Its lists were compared after dropping every
+E2 command that sets the window already in force (a no-op on the GPU), and
+were then identical. Reference `r62` was saved after it.
+
+### 16.1 Face records (`draw_records`, the bulk of a frame)
+
+- **KUSEG packets.** `s6` / `s7` run as `0x00xxxxxx` addresses, so a
+  packet's address is its own OT link. The per-packet masks disappear.
+  `walk_done` turns `s6` back into a KSEG0 pointer for C.
+- **Inline in the walk.** `pop` falls straight into `draw_records`, which
+  branches back to `walk`: no `jal` / `jr`. The arena-full test runs once per
+  face block, and the block end stays in `a1`.
+- **Texture cache.** 77-78 % of records use the previous record's texture
+  (measured on start and e1m4). `v0` / `v1` keep its `clut << 16` /
+  `tpage << 16`:
+  - `v1` lives across face blocks (the walk never touches it);
+  - `v0` is reloaded once per block.
+  A miss reads the 8-byte `qw_tex` entry.
+- **One packet-space test per record**, instead of one per polygon. `s7`
+  stops `QW_MAX_REC_PKT + 8` bytes (2056) short of the arena end, so a
+  record that starts below `s7` cannot overflow:
+  - the cook keeps every record under `QW_MAX_REC_PKT` (2048 bytes: 52 per
+    quad, 40 per triangle, 8 for a window command), and the validator
+    checks it;
+  - the largest record of the 32 maps needs 1580 bytes, so the cooked
+    output is unchanged;
+  - the slow path still tests per triangle, and so keeps `s6 <= s7`.
+- **Texture window once per run.** The E2 command goes out when the
+  texture changes (or in `walk_done`), not after every record.
+  - It is prepended last, so it is drawn before every polygon of the run.
+  - 1649 → 379 E2 commands over the bench views, with the same pixels.
+  - This only holds because nothing else draws into the world bucket during
+    the walk. Models drawn into it later will have to set their own
+    window.
+- **RTPS tail.** Records are padded to a multiple of three vertices for
+  RTPT. The last 1 or 2 vertices now get one RTPS each instead of a padded
+  RTPT (about 11 instructions saved per record).
+- **Smaller items:**
+  - culled and unstamped records skip to the next record in 1 and 9
+    instructions;
+  - `(nv + 3) & ~3` takes one `andi`;
+  - the triangles' uv2 word is stored as is (the cook writes `pad2 = 0`,
+    and the validator checks it);
+  - the careful-path size test's first load sits in a delay slot;
+  - the polygon counter counts down at the top of the loop.
+
+### 16.2 The walk
+
+- **Inlined tests.** `frustum` becomes a macro, `FRUSTUM`, used for nodes
+  and leaves; it updates `s2` in place and branches to `pop` on a cull.
+  The plane distance is inlined into the node path. Only the camera-leaf
+  search still calls `plane_dist` (once per level, per frame).
+- **Loads ahead.** The box's loads sit in the visframe test's delay slots
+  (harmless when the node is skipped).
+- **Cheaper tests.** `|d| <= eps` is one unsigned compare:
+  `(unsigned)(d + eps) <= 2 eps`.
+- **Stack word re-encoded:** node address (low 24 bits, KUSEG) | side × 4
+  << 24 | no-draw << 27 | clip flags << 28.
+  - `pop` takes 14 instructions to the face block instead of 18; the far
+    child is `child[1 - side]` at `node - side × 4 + 24`.
+  - The push's spill test doubles as the loop branch.
+- **Mark loop.** It runs on an end pointer, with the next mark loaded in
+  the branch delay slot (6 instructions per mark).
+- **Scratchpad copies.** The plane-table and vertex-pool pointers are
+  copied to the scratchpad (`SP_PLANES`, `SP_VERTPOOL`). The emulator
+  charges RAM and scratchpad loads alike; the hardware does not.
+
+### 16.3 The slow path
+
+Before this pass, a near polygon cost about 1000 instructions, even when it
+emitted almost nothing (view 0: 30 slow polygons for 23 triangles).
+
+- **Per-vertex packet words.** The grey colour word and the rounded uv
+  word are computed once per vertex, at projection. Before, they were
+  computed for each of the ~3 triangles using a vertex.
+  - The pool entry keeps its 32 bytes: the light byte becomes the colour
+    word in place (`PV_GC`); later midpoints read its low byte. `PV_UVW`
+    takes the free word.
+- **Split decisions without calls.** The triangle's 3 SXY and 3 z are
+  loaded once. Both rewritten tests are exact and symmetric, so the output
+  does not change:
+  - `|dx| + |dy| <= SPAN` becomes `|dp| <= SPAN && |dq| <= SPAN`, with
+    p = x + y and q = x − y (because |a| + |b| = max(|a + b|, |a − b|));
+    each half is one unsigned compare;
+  - the depth ratio becomes branch-free: `4 zb < 3 za || 4 za < 3 zb`,
+    exact because z > 0 past the near clip.
+- **Midpoint and projection in one pass.** u, v and the light are averaged
+  while the GTE runs the RTPS. Fan triangles start without a push / pop.
+- **Clipper.**
+  - A first pass computes the plane's distance for every input vertex
+    (one small loop per plane) into the vertex's SXY slot, which is free
+    until projection.
+  - The edge loop keeps its output cursor in a register.
+  - The crossing's interpolation is inline, two fields in flight, with
+    the division's latency covered.
+  - The projection loop is inline.
+- **Smaller items:** the transform loop's `v` uses one `andi`, and the
+  loop's last delay slot holds the next vertex's first step.
+
+### 16.4 Profiling switch
+
+- **Build option.** `Q1PSX_PROFILE` (CMake; default ON: debug overlay, bench
+  breakdown) becomes `R_PROFILE` in the asm. Off, the renderer drops:
+  - the node / record / vertex / polygon counters;
+  - the face-block and slow-path timers;
+  - the slow-polygon counters.
+- **Release preset.** The new `release` preset turns the option off, and the
+  overlay then shows frame totals only.
+- **Bench.** `PROFILE=0 scripts/bench.sh` measures that build; the stage and
+  counter columns then read 0.
+
+### 16.5 Physics
+
+The per-node loops of `pcontents` / `fcontents` lost a `b` + `nop`: the next
+node's first step sits in the loop branch's delay slot. `NODE_DP`'s axial
+path lost a `nop`. The rest of `pmove.s` runs once per tick; its 111 `nop`s
+weigh almost nothing.
+
+### 16.6 What the emulator does not show
+
+PCSX-Redux charges roughly a fixed cost per instruction. On the hardware:
+- a load from main RAM stalls for several cycles (there is no data cache);
+- packet stores drain through a 4-entry write buffer;
+- the instruction cache is 4 KB, direct-mapped.
+
+So where the two disagreed, the hardware won:
+- index bytes are still extracted from one word with ALU operations,
+  rather than loaded byte by byte (4 RAM loads);
+- the grey expansion stays in ALU operations, rather than a table in RAM.
+
+`r_render` is 3.6 KB and `slow_poly` 3 KB. The walk and the record loops
+fit the cache together; a slow-path call evicts part of them.
+
+### 16.7 Results
+
+Frame cycles of the 12 bench views at high, against R6.1:
+
+| | R6.1 | R6.2, profile | R6.2, release |
+|---|---|---|---|
+| total | 3 471 717 | 2 861 950 (−17.6 %) | 2 749 115 (−20.8 %) |
+| start's spawn view (view 0) | 481 422 | 414 463 | 396 005 (−17.7 %) |
+| nearest views (1, 3, 11) | | | −24 to −27 % |
+
+Steps, as a share of the total (profile build):
+
+| Step | Saved |
+|---|---|
+| KUSEG + immediate codes | 0.3 % |
+| `draw_records` (inline, texture cache, one test per record, E2 per run) | 4.7 % |
+| walk inlining | 3.8 % |
+| stack word | 0.9 % |
+| slow-path packet words and splits | 6.1 % |
+| clipper | 1.5 % |
+| RTPS tail | 1.1 % |
+
+The `release` build saves another ~4 %.
+
+`BENCH_MAPS=1 PROFILE=0`: all 128 spawn views of the 32 maps take 1
+vblank. e3m4's first view, the heaviest, went from 669 k cycles (2 vblanks)
+to 540 k.
+
+### 16.8 Not done (they would cost RAM or change the format)
+
+- **CLUT / tpage baked into each polygon's uv words.** −4 ALU operations per
+  quad, but +4 bytes per polygon (~30 KB per map).
+- **Marks stored × 2.** −1 instruction per mark; format change.
+- **A third face word per node,** making `pop`'s block end uniform: +4
+  bytes per node.

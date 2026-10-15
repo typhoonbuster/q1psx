@@ -100,18 +100,19 @@
 .set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table
-.set SP_TWIN,     0x3cc   # draw_records: the record's texture-window command
+.set SP_TWIN,     0x3cc   # draw_records: the current texture's window command
+                          # (emitted when its run of records ends)
 .set SP_POOLN,    0x3d0   # slow path: vertices in the pool
-.set SP_CLUT16,   0x3d4   # slow path: record clut << 16 (set by draw_records)
-.set SP_TPAGE16,  0x3d8   # slow path: record tpage << 16
+.set SP_CLUT16,   0x3d4   # current texture's clut << 16 (draw_records' v0;
+.set SP_TPAGE16,  0x3d8   # tpage << 16, its v1): the slow path reads them
 .set SP_SPRA,     0x3dc   # slow path: its own return address
 .set SP_SLOWTRI,  0x3e0   # slow path: triangles emitted this frame
 .set SP_CODES,    0x3e4   # slow path: clip codes OR
 .set SP_P0,       0x3e8   # slow path: current triangle's 3 vertex pointers
 .set SP_P1,       0x3ec
 .set SP_P2,       0x3f0
-.set SP_CLIPRA,   0x3f4   # slow path: sp_clip's return address
-.set SP_CLIPM,    0x3f8   # slow path: sp_clip's output count
+.set SP_FREE3F4,  0x3f4   # (free)
+.set SP_CLIPM,    0x3f8   # slow path: the clip output list start
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 # slow path tuning (view units: world x 6)

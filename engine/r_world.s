@@ -560,7 +560,7 @@ dr_tex_done:
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
 	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
 	move    $t4, $t8                     # cache cursor
-	move    $t5, $t2                     # vertices left
+	addiu   $t5, $t2, -2                 # vertices left - 2: RTPT while 3+
 dr_xf:
 	lhu     $t0, 0($t3)
 	lhu     $t1, 2($t3)
@@ -607,6 +607,30 @@ dr_xf:
 	swc2    C2_SZ3,  SP_SZ+8($t4)
 	bgtz    $t5, dr_xf
 	addiu   $t4, $t4, 12
+	addiu   $t5, $t5, 2                  # 0, 1 or 2 left: one RTPS each
+	blez    $t5, dr_xf_done              # (rather than a padded RTPT)
+	lhu     $t0, 0($t3)
+dr_one:
+	addiu   $t3, $t3, 2
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t9
+	lwc2    C2_VXY0, 0($t0)
+	lwc2    C2_VZ0,  4($t0)
+	lbu     $t1, 0($at)
+	addiu   $at, $at, 1
+	RTPS
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sw      $t1, SP_COL($t4)
+	addiu   $t5, $t5, -1
+	swc2    C2_SXY2, SP_SXY($t4)
+	swc2    C2_SZ3,  SP_SZ($t4)
+	lhu     $t0, 0($t3)                  # (the next index; the padding at the end)
+	bgtz    $t5, dr_one
+	addiu   $t4, $t4, 4
+dr_xf_done:
 
 	beqz    $a2, dr_polys                # sphere says: nothing near or big
 	move    $t4, $t8

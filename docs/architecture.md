@@ -115,14 +115,18 @@ likewise. There is no general-purpose heap at runtime.
 
 ### Scratchpad (1 KB) — owned by the renderer during `r_frame`
 
+As built (R6.2; the authoritative map is `engine/r_defs.inc`):
+
 | Offset | Size | Contents |
 |---|---|---|
-| `0x000` | 128 B | packet ptr / end, OT ptr, frame counter, camera position, frustum planes |
-| `0x080` | 192 B | explicit BSP walk stack (node + clip flags per word, depth ≤ 48, checked at cook time) |
-| `0x140` | 704 B | projected-vertex cache: 88 entries × 8 B (`SXY`, `SZ` + flags) |
+| `0x000` | 256 B | BSP walk stack, 64 words: node address \| side \| no-draw \| clip flags. Deeper levels spill to RAM in 64-word blocks (depth ≤ 256) |
+| `0x100` | 168 B | per record vertex: `SXY` (42 words) |
+| `0x1A8` | 168 B | per record vertex: `SZ` |
+| `0x250` | 168 B | per record vertex: grey colour word |
+| `0x300` | 256 B | camera, table pointers, texture cache, counters, slow-path state |
 
-The cook tool guarantees that no face block references more than 88 vertices,
-splitting blocks if needed.
+The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
+`QW_MAX_REC_PKT` (2048) bytes of packets.
 
 ### VRAM (1024 × 512 halfwords)
 
@@ -203,12 +207,17 @@ scratchpad for the duration of `r_frame`.
    Each node gets a visframe check and a bbox-vs-frustum test with
    clip-flag inheritance (a fully-inside node stops testing its subtree). The
    plane side picks the near child first and the visible face block.
-3. **Block**: transform the block's vertices with `RTPT` (3 at a time) into
-   the scratchpad cache, recording FLAG bits per vertex.
+3. **Block**: transform each visible face record's vertices into the
+   scratchpad cache:
+   - `RTPT` 3 at a time, `RTPS` for the last 1-2;
+   - the light bytes are expanded into colour words while the GTE runs.
 4. **Emit, fast path**: all vertices of a polygon in front and on screen →
-   write the `POLY_FT4` (XY from the cache, pre-packed words copied) and
-   prepend it to the world bucket. Polygons entirely off one screen edge are
-   dropped with 4 compares.
+   write the `POLY_GT4` / `GT3` (XY and colour from the cache, uv words from
+   the record, CLUT / tpage from the texture cache) and prepend it to the
+   world bucket.
+   - One packet-space test per record.
+   - One texture-window command per run of same-texture records
+     (`docs/porting-notes.md` §16.1).
 5. **Slow path** (the few polygons near the camera):
    - a vertex behind the near plane → clip in view space;
    - a polygon very close (small `SZ`) → subdivide 1-2 levels to keep affine

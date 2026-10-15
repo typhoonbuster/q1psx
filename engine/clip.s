@@ -73,9 +73,8 @@
 
 # NODE_DP: like NODE_DSDD for a point: a0 = point (int32[3]), GTE row 3 =
 # the same point. Out: a2 / a3 = children, t5 = n.p - dist.
-# Clobbers t0-t4, v1.
+# Clobbers t0-t4, v1. t0 = t9 << 2 is done by the caller (a delay slot).
 .macro NODE_DP
-	sll     $t0, $t9, 2
 	sll     $t2, $t9, 1
 	addu    $t0, $t0, $t2                # num * 6
 	addu    $t0, $s1, $t0
@@ -91,10 +90,8 @@
 	sll     $t2, $t2, 2
 	addu    $t2, $a0, $t2
 	lw      $t5, 0($t2)
-	nop
-	sll     $t5, $t5, 12
 	b       .Ldone\@
-	subu    $t5, $t5, $t3
+	sll     $t5, $t5, 12
 .Lgen\@:
 	lh      $v1, PL_N+4($t1)
 	lwc2    C2_VXY0, PL_N+0($t1)
@@ -104,8 +101,8 @@
 	MVMVA   0, 0, 0, 3, 0                # MAC3 = n.point
 	mfc2    $t5, C2_MAC3
 	nop
-	subu    $t5, $t5, $t3
 .Ldone\@:
+	subu    $t5, $t5, $t3
 .endm
 
 # FRAC_MUL rd, a, f: rd = (a * f) >> 16 (64-bit product, floor). Clobbers $at.
@@ -416,17 +413,15 @@ ct_ret:
 # Clobbers t0-t6, t9, a2, a3, v1, at.
 fcontents:
 	bltz    $t9, 9f
-	nop
-1:	NODE_DSDD
+	sll     $t0, $t9, 2                  # (NODE_DSDD's first step)
+1:	NODE_DSDD 0
 	FRAC_MUL $t0, $t6, $t7
 	addu    $t5, $t5, $t0                # t(f)
-	bltz    $t5, 2f
-	nop
-	b       3f
+	bgez    $t5, 3f                      # front
 	move    $t9, $a2
-2:	move    $t9, $a3
+	move    $t9, $a3                     # back
 3:	bgez    $t9, 1b
-	nop
+	sll     $t0, $t9, 2
 9:	jr      $ra
 	move    $v0, $t9
 
@@ -434,15 +429,13 @@ fcontents:
 # hold the same point). Clobbers t0-t5, t9, a2, a3, v1.
 pcontents:
 	bltz    $t9, 9f
-	nop
+	sll     $t0, $t9, 2                  # (NODE_DP's first step)
 1:	NODE_DP
-	bltz    $t5, 2f
-	nop
-	b       3f
+	bgez    $t5, 3f                      # front
 	move    $t9, $a2
-2:	move    $t9, $a3
+	move    $t9, $a3                     # back
 3:	bgez    $t9, 1b
-	nop
+	sll     $t0, $t9, 2
 9:	jr      $ra
 	move    $v0, $t9
 

@@ -10,7 +10,7 @@
 #   4. per-edge subdivision of each fan triangle (an edge splits when it is
 #      longer than SLOW_SPAN px or its depth ratio exceeds 4/3; the decision
 #      depends on the edge alone, so shared edges never crack), emitting
-#      POLY_FT3 packets prepended to the world bucket
+#      POLY_GT3 packets prepended to the world bucket
 #   5. reload the view rotation / translation into the GTE
 #
 #   slow_poly(a0 = face record, a1 = quad/tri, a2 = 4 or 3)
@@ -70,6 +70,7 @@ slow_poly:
 	move    $v0, $zero                   # codes OR
 sp_xf:
 	srl     $t0, $a3, 1
+sp_xf_1:
 	slti    $t1, $a2, 4
 	beqz    $t1, 1f                      # quad: ring order k ^ (k >> 1) = 0,1,3,2
 	xor     $t0, $t0, $a3
@@ -99,8 +100,7 @@ sp_xf:
 	mfc2    $t7, C2_MAC3                 # z
 	andi    $t0, $t3, 0xff
 	sll     $t0, $t0, 8                  # u x 256
-	srl     $t3, $t3, 8
-	sll     $t3, $t3, 8                  # v x 256
+	andi    $t3, $t3, 0xff00             # v x 256
 	sw      $t5, PV_X($t4)
 	sw      $t6, PV_Y($t4)
 	sw      $t7, PV_Z($t4)
@@ -139,14 +139,19 @@ sp_xf:
 	addu    $t0, $t8, $a3
 	sb      $a3, SP_PLA($t0)             # polygon list A[k] = k
 	addiu   $a3, $a3, 1
-	bne     $a3, $a2, sp_xf
-	nop
+	bne     $a3, $a2, sp_xf_1
+	srl     $t0, $a3, 1                  # (the next k's first step)
 
 	bnez    $at, sp_exit                 # entirely outside one plane
 	sw      $v0, SP_CODES($t8)
 	sw      $a2, SP_POOLN($t8)
 
 	# ---- 2. clip against the planes some vertex is outside of ---------------
+	# Sutherland-Hodgman, one plane at a time: index list a0 (a2 entries)
+	# -> a1. First the plane's signed distance of every input vertex
+	# (inside >= 0), kept in its SXY slot (free until the projection); then
+	# the edges: a kept vertex, then the crossing if the edge crosses
+	# (t = (da << 14) / (da - db), one division per crossing).
 	addiu   $a0, $t8, SP_PLA             # src list
 	addiu   $a1, $t8, SP_PLB             # dst list
 	move    $a3, $zero                   # plane
@@ -156,12 +161,182 @@ sp_plane:
 	srlv    $t0, $t0, $a3
 	andi    $t0, $t0, 1
 	beqz    $t0, sp_plane_next
+	addu    $t3, $a0, $a2                # end of the input list
+	lbu     $t0, 0($a0)
+	move    $at, $a0
+	sb      $t0, 0($t3)                  # l[n] = l[0]: the closing edge
+	beqz    $a3, sd_near
+	li      $t2, 2
+	slt     $t1, $a3, $t2
+	bnez    $t1, sd_left                 # 1
+	li      $t1, 3
+	beq     $a3, $t2, sd_right
 	nop
-	jal     sp_clip                      # (a0 src, a1 dst, a2 n, a3 plane) -> a2
+	beq     $a3, $t1, sd_top
 	nop
-	move    $t0, $a0                     # the output becomes the input
-	move    $a0, $a1
-	move    $a1, $t0
+sd_bottom:                               # bottom: 3z - 4y + 48
+	lbu     $t0, 0($at)
+	addiu   $at, $at, 1
+	sll     $t0, $t0, 5
+	addu    $t0, $t0, $v1
+	lw      $t1, PV_Z($t0)
+	lw      $t2, PV_Y($t0)
+	sll     $t9, $t1, 1
+	addu    $t1, $t1, $t9
+	sll     $t2, $t2, 2
+	subu    $t1, $t1, $t2
+	addiu   $t1, $t1, 48
+	bne     $at, $t3, sd_bottom
+	sw      $t1, PV_SXY($t0)
+	b       sc_edges_1
+	lbu     $t0, 0($a0)
+sd_top:                                  # top: 3z + 4y + 48
+	lbu     $t0, 0($at)
+	addiu   $at, $at, 1
+	sll     $t0, $t0, 5
+	addu    $t0, $t0, $v1
+	lw      $t1, PV_Z($t0)
+	lw      $t2, PV_Y($t0)
+	sll     $t9, $t1, 1
+	addu    $t1, $t1, $t9
+	sll     $t2, $t2, 2
+	addu    $t1, $t1, $t2
+	addiu   $t1, $t1, 48
+	bne     $at, $t3, sd_top
+	sw      $t1, PV_SXY($t0)
+	b       sc_edges_1
+	lbu     $t0, 0($a0)
+sd_left:                                 # left: z + x + 12
+	lbu     $t0, 0($at)
+	addiu   $at, $at, 1
+	sll     $t0, $t0, 5
+	addu    $t0, $t0, $v1
+	lw      $t1, PV_Z($t0)
+	lw      $t2, PV_X($t0)
+	nop
+	addu    $t1, $t1, $t2
+	addiu   $t1, $t1, 12
+	bne     $at, $t3, sd_left
+	sw      $t1, PV_SXY($t0)
+	b       sc_edges_1
+	lbu     $t0, 0($a0)
+sd_right:                                # right: z - x + 12
+	lbu     $t0, 0($at)
+	addiu   $at, $at, 1
+	sll     $t0, $t0, 5
+	addu    $t0, $t0, $v1
+	lw      $t1, PV_Z($t0)
+	lw      $t2, PV_X($t0)
+	nop
+	subu    $t1, $t1, $t2
+	addiu   $t1, $t1, 12
+	bne     $at, $t3, sd_right
+	sw      $t1, PV_SXY($t0)
+	b       sc_edges_1
+	lbu     $t0, 0($a0)
+sd_near:                                 # near: z - SLOW_ZNEAR
+	lbu     $t0, 0($at)
+	addiu   $at, $at, 1
+	sll     $t0, $t0, 5
+	addu    $t0, $t0, $v1
+	lw      $t1, PV_Z($t0)
+	nop
+	addiu   $t1, $t1, -SLOW_ZNEAR
+	bne     $at, $t3, sd_near
+	sw      $t1, PV_SXY($t0)
+
+sc_edges:
+	lbu     $t0, 0($a0)                  # a = l[0]
+sc_edges_1:
+	sw      $a1, SP_CLIPM($t8)           # (the output list's start)
+	sll     $t0, $t0, 5
+	addu    $t4, $t0, $v1
+	lw      $t6, PV_SXY($t4)             # da
+	move    $at, $a0
+sc_loop:                                 # a2 edges left; a1 = output cursor
+	lbu     $t0, 1($at)                  # b = l[i + 1] (l[n] = l[0])
+	bltz    $t6, 2f                      # a outside: dropped
+	subu    $t1, $t4, $v1
+	srl     $t1, $t1, 5                  # a's index
+	sb      $t1, 0($a1)
+	addiu   $a1, $a1, 1
+2:	sll     $t0, $t0, 5
+	addu    $t5, $t0, $v1                # b
+	lw      $t7, PV_SXY($t5)             # db
+	addiu   $at, $at, 1
+	xor     $t0, $t6, $t7
+	bgez    $t0, 3f                      # no crossing
+	lw      $v0, SP_POOLN($t8)
+	subu    $t9, $t6, $t7                # den = da - db (never 0: signs differ)
+	sltiu   $t0, $v0, POOL_MAX
+	beqz    $t0, 3f                      # pool full: drop the crossing
+	sll     $t1, $t6, 14
+	div     $zero, $t1, $t9
+	sll     $t0, $v0, 5
+	addu    $t0, $t0, $v1                # the new vertex
+	addiu   $t2, $v0, 1
+	sw      $t2, SP_POOLN($t8)
+	sb      $v0, 0($a1)
+	addiu   $a1, $a1, 1
+	lw      $t1, PV_X($t4)               # a + ((b - a) t >> 14) per field,
+	lw      $t2, PV_X($t5)               # two fields in flight
+	lw      $t3, PV_Y($t4)
+	lw      $v0, PV_Y($t5)
+	subu    $t2, $t2, $t1
+	mflo    $t9                          # t, 14-bit (waits for the division)
+	subu    $v0, $v0, $t3
+	nop
+	mult    $t2, $t9
+	mflo    $t2
+	sra     $t2, $t2, 14
+	addu    $t2, $t2, $t1
+	mult    $v0, $t9
+	sw      $t2, PV_X($t0)
+	lw      $t1, PV_Z($t4)
+	lw      $t2, PV_Z($t5)
+	mflo    $v0
+	sra     $v0, $v0, 14
+	addu    $v0, $v0, $t3
+	subu    $t2, $t2, $t1
+	mult    $t2, $t9
+	sw      $v0, PV_Y($t0)
+	lw      $t3, PV_U($t4)
+	lw      $v0, PV_U($t5)
+	mflo    $t2
+	sra     $t2, $t2, 14
+	addu    $t2, $t2, $t1
+	subu    $v0, $v0, $t3
+	mult    $v0, $t9
+	sw      $t2, PV_Z($t0)
+	lw      $t1, PV_V($t4)
+	lw      $t2, PV_V($t5)
+	mflo    $v0
+	sra     $v0, $v0, 14
+	addu    $v0, $v0, $t3
+	subu    $t2, $t2, $t1
+	mult    $t2, $t9
+	sw      $v0, PV_U($t0)
+	lw      $t3, PV_GC($t4)
+	lw      $v0, PV_GC($t5)
+	mflo    $t2
+	sra     $t2, $t2, 14
+	addu    $t2, $t2, $t1
+	subu    $v0, $v0, $t3
+	mult    $v0, $t9
+	sw      $t2, PV_V($t0)
+	mflo    $v0
+	sra     $v0, $v0, 14
+	addu    $v0, $v0, $t3
+	sw      $v0, PV_GC($t0)
+3:	move    $t4, $t5
+	addiu   $a2, $a2, -1
+	bnez    $a2, sc_loop
+	move    $t6, $t7
+	lw      $t0, SP_CLIPM($t8)           # the output list
+	move    $t1, $a0
+	subu    $a2, $a1, $t0                # its count
+	move    $a0, $t0                     # the output becomes the input
+	move    $a1, $t1
 	slti    $t0, $a2, 3
 	bnez    $t0, sp_exit                 # clipped away
 	nop
@@ -182,17 +357,42 @@ sp_plane_next:
 	ctc2    $zero, C2_TRY
 	ctc2    $zero, C2_TRZ
 
-	move    $at, $zero
+	# project every vertex of the clipped polygon (once each) and ready its
+	# packet words: its light becomes the grey colour word in place, u / v
+	# the rounded uv word
+	move    $at, $a0
+	addu    $t9, $a0, $a2
 sp_projl:
-	addu    $t0, $a0, $at
-	lbu     $t0, 0($t0)
-	nop
-	sll     $t0, $t0, 5
-	jal     sp_proj
-	addu    $t0, $t0, $v1
+	lbu     $t0, 0($at)
 	addiu   $at, $at, 1
-	bne     $at, $a2, sp_projl
-	nop
+	sll     $t0, $t0, 5
+	addu    $t0, $t0, $v1
+	lw      $t1, PV_X($t0)
+	lw      $t2, PV_Y($t0)
+	lw      $t3, PV_Z($t0)
+	andi    $t1, $t1, 0xffff
+	sll     $t2, $t2, 16
+	or      $t1, $t1, $t2
+	mtc2    $t1, C2_VXY0
+	mtc2    $t3, C2_VZ0
+	lw      $t1, PV_U($t0)
+	lw      $t2, PV_V($t0)
+	RTPS
+	addiu   $t1, $t1, 128
+	addiu   $t2, $t2, 128
+	sra     $t1, $t1, 8
+	sra     $t2, $t2, 8
+	sll     $t2, $t2, 8
+	or      $t1, $t1, $t2
+	lw      $t2, PV_GC($t0)
+	sw      $t1, PV_UVW($t0)
+	sll     $t3, $t2, 8
+	or      $t2, $t2, $t3
+	sll     $t3, $t2, 8
+	or      $t2, $t2, $t3
+	sw      $t2, PV_GC($t0)
+	bne     $at, $t9, sp_projl
+	swc2    C2_SXY2, PV_SXY($t0)
 
 	# ---- 4. fan triangles, each subdivided depth-first ----------------------
 	li      $at, 1                       # fan index
@@ -425,7 +625,7 @@ sp_c7:                                   # all three: 4 triangles
 	nop
 
 	# ---- emit one POLY_GT3 ----------------------------------------------------
-	# colour and uv words are ready in the pool (sp_proj)
+	# colour and uv words are ready in the pool (projection, sp_mid)
 sp_emit:
 	addiu   $t0, $s6, 40
 	sltu    $t0, $s7, $t0
@@ -509,147 +709,6 @@ sp_exit:
 	nop
 
 # -----------------------------------------------------------------------------
-# sp_pdist: v0 = signed distance of pool vertex t0 to plane a3 (inside >= 0).
-# Clobbers t2, t3, v0.
-sp_pdist:
-	lw      $t2, PV_Z($t0)
-	li      $v0, 1
-	beq     $a3, $zero, pd_near
-	lw      $t3, PV_X($t0)
-	beq     $a3, $v0, pd_left
-	li      $v0, 2
-	beq     $a3, $v0, pd_right
-	li      $v0, 3
-	lw      $t3, PV_Y($t0)
-	beq     $a3, $v0, pd_top
-	sll     $v0, $t2, 1
-	addu    $v0, $v0, $t2                # bottom: 3z - 4y + 48
-	sll     $t3, $t3, 2
-	subu    $v0, $v0, $t3
-	jr      $ra
-	addiu   $v0, $v0, 48
-pd_top:                                  # top: 3z + 4y + 48
-	addu    $v0, $v0, $t2
-	sll     $t3, $t3, 2
-	addu    $v0, $v0, $t3
-	jr      $ra
-	addiu   $v0, $v0, 48
-pd_near:
-	jr      $ra
-	addiu   $v0, $t2, -SLOW_ZNEAR
-pd_left:                                 # left: z + x + 12
-	addu    $v0, $t2, $t3
-	jr      $ra
-	addiu   $v0, $v0, 12
-pd_right:                                # right: z - x + 12
-	subu    $v0, $t2, $t3
-	jr      $ra
-	addiu   $v0, $v0, 12
-
-# -----------------------------------------------------------------------------
-# sp_clip: Sutherland-Hodgman of index list a0 (a2 entries) against plane
-# a3 into list a1; returns the new count in a2. Keeps a0, a1, a3, v1.
-# Clobbers at, t0-t7, t9, v0.
-sp_clip:
-	sw      $ra, SP_CLIPRA($t8)
-	sw      $zero, SP_CLIPM($t8)       # m
-	lbu     $t0, 0($a0)
-	move    $at, $zero                   # i
-	sll     $t0, $t0, 5
-	addu    $t4, $t0, $v1                # a = pool[l[0]]
-	jal     sp_pdist
-	move    $t0, $t4
-	move    $t6, $v0                     # da
-sc_loop:
-	addiu   $t0, $at, 1
-	bne     $t0, $a2, 1f
-	nop
-	move    $t0, $zero                   # wrap to l[0]
-1:	addu    $t0, $t0, $a0
-	lbu     $t0, 0($t0)
-	nop
-	sll     $t0, $t0, 5
-	addu    $t5, $t0, $v1                # b
-	jal     sp_pdist
-	move    $t0, $t5
-	move    $t7, $v0                     # db
-	bltz    $t6, 2f                      # a outside: dropped
-	subu    $t0, $t4, $v1
-	srl     $t0, $t0, 5                  # a's index
-	lw      $t1, SP_CLIPM($t8)
-	nop
-	addu    $t2, $a1, $t1
-	sb      $t0, 0($t2)
-	addiu   $t1, $t1, 1
-	sw      $t1, SP_CLIPM($t8)
-2:	xor     $t0, $t6, $t7
-	bgez    $t0, 3f                      # no crossing
-	nop
-	jal     sp_lerp                      # keeps t4-t7
-	nop
-	bltz    $v0, 3f                      # pool full: drop the crossing
-	nop
-	lw      $t1, SP_CLIPM($t8)
-	nop
-	addu    $t2, $a1, $t1
-	sb      $v0, 0($t2)
-	addiu   $t1, $t1, 1
-	sw      $t1, SP_CLIPM($t8)
-3:	move    $t4, $t5
-	move    $t6, $t7
-	addiu   $at, $at, 1
-	bne     $at, $a2, sc_loop
-	nop
-	lw      $a2, SP_CLIPM($t8)
-	lw      $ra, SP_CLIPRA($t8)
-	nop
-	jr      $ra
-	nop
-
-# -----------------------------------------------------------------------------
-# sp_lerp: append the point where edge t4 -> t5 crosses the plane (signed
-# distances t6, t7) to the pool; v0 = its index, or -1 when the pool is
-# full. One division: t = (da << 14) / (da - db). Keeps t4-t7.
-# Clobbers t0-t3, t9, v0, HI/LO.
-.macro LERPC off
-	lw      $t1, \off($t4)
-	lw      $t2, \off($t5)
-	nop
-	subu    $t2, $t2, $t1
-	mult    $t2, $t9
-	mflo    $t3
-	sra     $t3, $t3, 14
-	addu    $t3, $t3, $t1
-	sw      $t3, \off($t0)
-.endm
-
-sp_lerp:
-	lw      $v0, SP_POOLN($t8)
-	subu    $t9, $t6, $t7                # den = da - db (never 0: signs differ)
-	sltiu   $t0, $v0, POOL_MAX
-	beqz    $t0, sl_full
-	sll     $t1, $t6, 14
-	div     $zero, $t1, $t9
-	sll     $t0, $v0, 5
-	addu    $t0, $t0, $v1                # new vertex
-	addiu   $t2, $v0, 1
-	sw      $t2, SP_POOLN($t8)
-	mflo    $t9                          # t, 14-bit
-	nop
-	nop
-	LERPC   PV_X
-	LERPC   PV_Y
-	LERPC   PV_Z
-	LERPC   PV_U
-	LERPC   PV_V
-	LERPC   PV_GC
-	jr      $ra
-	nop
-sl_full:
-	jr      $ra
-	li      $v0, -1
-
-# -----------------------------------------------------------------------------
 # sp_mid: append the midpoint of pool vertices t4, t5 (symmetric, so both
 # triangles sharing the edge build the same point), project it and ready its
 # packet words; v0 = index (callers have checked the pool has room).
@@ -709,38 +768,6 @@ sp_mid:
 	sll     $t5, $t4, 8
 	or      $t4, $t4, $t5
 	sw      $t4, PV_GC($t0)              # grey 0x00cccccc
-	swc2    C2_SXY2, PV_SXY($t0)
-	jr      $ra
-	nop
-
-# sp_proj: project pool vertex t0 (GTE in projection mode) and ready its
-# packet words: its light (0..255) becomes the grey colour word in place,
-# u / v the rounded uv word. Once per vertex. Clobbers t1-t3.
-sp_proj:
-	lw      $t1, PV_X($t0)
-	lw      $t2, PV_Y($t0)
-	lw      $t3, PV_Z($t0)
-	andi    $t1, $t1, 0xffff
-	sll     $t2, $t2, 16
-	or      $t1, $t1, $t2
-	mtc2    $t1, C2_VXY0
-	mtc2    $t3, C2_VZ0
-	lw      $t1, PV_U($t0)
-	lw      $t2, PV_V($t0)
-	RTPS
-	addiu   $t1, $t1, 128
-	addiu   $t2, $t2, 128
-	sra     $t1, $t1, 8
-	sra     $t2, $t2, 8
-	sll     $t2, $t2, 8
-	or      $t1, $t1, $t2
-	lw      $t2, PV_GC($t0)
-	sw      $t1, PV_UVW($t0)
-	sll     $t3, $t2, 8
-	or      $t2, $t2, $t3
-	sll     $t3, $t2, 8
-	or      $t2, $t2, $t3
-	sw      $t2, PV_GC($t0)
 	swc2    C2_SXY2, PV_SXY($t0)
 	jr      $ra
 	nop

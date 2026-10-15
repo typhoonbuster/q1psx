@@ -28,7 +28,9 @@ solved, two checks are used:
    reached, no CPU exception. Proves the program loads and runs `main()`.
 2. **Bench (R1.2+):** `scripts/bench.sh` builds the bench variant and
    prints one `bench ...` line per scenario: CPU cycles per stage plus
-   counters. It is the reference for every perf decision.
+   counters. It is the reference for every perf decision. `PROFILE=0`
+   builds it like the `release` preset (no renderer counters / stage
+   timers: frame totals only).
 3. **Manual:** run `scripts/run-emu.sh` and look at the output (needed for
    anything about motion, tearing, flicker, or "does it look right").
 
@@ -52,6 +54,7 @@ solved, two checks are used:
 | R3.x | Bench cycles per stage on every viewpoint; `start.bsp` 60 fps, no hole / flicker / warp | headless bench + GUI (an on-screen look) | required (final 60 fps verdict) |
 | R4.x | `tools/pmsim` stress: 0 ticks in solid, 0 abnormal blocks; the bench's scripted path prints the same positions as `pmsim`; asm vs C differential tests (`VIEWS=0 scripts/bench.sh`, also with `EMU_ARGS=-interpreter`): 0 mismatches; walls, floors, stairs, jump feel right | host + headless bench + GUI | required (controller feel) |
 | R5.x | Every cooked map loads and renders (`BENCH_MAPS=1 scripts/bench.sh`); world size per map against the 700 KB target; no visual regression (display lists / `wldref`) | headless bench + GUI (an eye on the warp) | recommended |
+| R6.x | Optimizations: `scripts/dlcheck.sh check <ref>` reports identical display lists (an intended packet change must be shown pixel-neutral, then saved as the new reference); interpreter hashes equal the dynarec's; the bench's physics diffs show 0 mismatches; cycles per view with and without `PROFILE=0` | headless bench | recommended (RAM wait states, write buffer and I-cache are not emulated) |
 | 7.x | `progs.dat` executed: player spawn, doors/buttons | required | — |
 | 8.x | Enemy + shotgun + HUD working | required | recommended |
 | 9.x | SPU SFX; CD-DA/XA music | required | required (SPU mixing + CD-DA playback differ in emu) |

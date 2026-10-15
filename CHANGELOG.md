@@ -799,3 +799,32 @@ followed by R0-R4.
       console garbles long dumps); dynarec and interpreter hashes match;
     - new `scripts/dlcheck.sh` for the optimization pass;
     - the disc image now depends on the cooked files.
+- **R6.2 — maximum optimization pass, no quality loss** (2026-10-15).
+  Details: `docs/porting-notes.md` §16.
+  - **Face records:**
+    - `draw_records` runs inline in the walk, with packets through KUSEG;
+    - a texture cache, since 3 records in 4 reuse the previous texture;
+    - one packet-space test per record instead of per polygon
+      (`QW_MAX_REC_PKT`, checked by the cook's validator);
+    - one texture-window command per run of same-texture records
+      (1649 → 379 over the bench views, same pixels);
+    - RTPS for the last 1-2 vertices instead of a padded RTPT.
+  - **Walk:** frustum and plane distance inlined; a cheaper stack word and
+    `|d| <= eps` test; the mark loop on an end pointer.
+  - **Slow path:**
+    - the colour and uv words are computed once per vertex;
+    - exact split tests with no calls (`|dp|, |dq| <= SPAN`, branch-free
+      depth ratio);
+    - midpoint and projection in one pass;
+    - an inline clipper with a per-plane distance pass and a pipelined
+      lerp.
+  - **Profiling switch:** CMake `Q1PSX_PROFILE` and a `release` preset
+    without the renderer's counters and timers; `PROFILE=0
+    scripts/bench.sh` measures it.
+  - **Result:**
+    - 12 bench views −17.6 % (profile build), −20.8 % (release); start's
+      spawn view 481 k → 396 k cycles;
+    - all 128 spawn views of the 32 maps take 1 vblank (e3m4 669 k →
+      540 k);
+    - display lists identical, interpreter hashes = dynarec, physics
+      diffs 0 mismatches.
