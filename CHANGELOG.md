@@ -843,3 +843,16 @@ followed by R0-R4.
     percentage: CD reads run in the background (`CdReadRetry` +
     `CdReadSync(1)` polled once per frame). There is no more black
     screen.
+- **Analog controls** (2026-10-15). Details:
+  `docs/porting-notes.md` §18.
+  - **Left stick / d-pad:** walk and strafe, with a speed that follows the
+    stick.
+  - **Right stick:** the camera, inverted up / down; a quadratic response
+    fine near the centre.
+  - **Square / Circle** turn (pads without sticks).
+  - **Physics:** `pmove` takes analog commands the Quake way
+    (`wishspeed = |wishvel|`, capped). The d-pad gives exactly the
+    previous result. C and asm are bit-exact under the random analog
+    differential test (dynarec and interpreter).
+  - **Analog mode** needs the pad's ANALOG button: the BIOS driver cannot
+    force it.

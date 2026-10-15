@@ -30,6 +30,16 @@ void pad_read(void)
 	if (pad.connected)
 		now = (uint16_t) ~p->btn;
 
+	pad.analog = pad.connected && (p->type == PAD_ID_ANALOG || p->type == PAD_ID_ANALOG_STICK);
+	if (pad.analog) {
+		pad.lx = (int) p->ls_x - 128;
+		pad.ly = (int) p->ls_y - 128;
+		pad.rx = (int) p->rs_x - 128;
+		pad.ry = (int) p->rs_y - 128;
+	} else {
+		pad.lx = pad.ly = pad.rx = pad.ry = 0;
+	}
+
 	pad.pressed = now & (uint16_t) ~pad.held;
 	pad.held    = now;
 }

@@ -33,7 +33,6 @@
 #define FLOOR_NZ       2867    /* 0.7 * 4096 — a normal steeper than this walks */
 #define STOP_V         2       /* kill sub-2 u/s creep after a clip            */
 #define NOCLIP_SPEED   4       /* units/frame in free flight (x4 unless walking) */
-#define INV_SQRT2      2896    /* 1/sqrt(2) x4096: diagonal wish direction    */
 
 /* floor(sqrt(v)), bit by bit: no division, exact */
 static int32_t isqrt32(uint32_t v)
@@ -324,8 +323,9 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 		int32_t sp = r_sin(pm->pitch), cp = r_cos(pm->pitch);
 		int32_t fwd[3] = { (cp * cy) >> 12, (cp * sy) >> 12, -sp };
 		int s = NOCLIP_SPEED * CLIP_SUB * (cmd->walk ? 1 : 4);
+		int32_t fs = (cmd->fwd * s) >> 7, ss = (cmd->side * s) >> 7;   /* / PM_AXIS */
 		for (int k = 0; k < 3; k++)
-			pm->pos[k] += (fwd[k] * (cmd->fwd * s) + right[k] * (cmd->side * s)) >> Q_FIX_SHIFT;
+			pm->pos[k] += (fwd[k] * fs + right[k] * ss) >> Q_FIX_SHIFT;
 		pm->pos[2] += cmd->up * s;
 		pm->vel[0] = pm->vel[1] = pm->vel[2] = 0;
 		return;
@@ -336,19 +336,18 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 
 	categorize_position(pm);
 
-	/* wish direction (unit, x4096: forward and right are orthogonal, so a
-	   diagonal only needs 1/sqrt(2)) + speed */
-	int32_t wishdir[3] = {
-		fwd[0] * cmd->fwd + right[0] * cmd->side,
-		fwd[1] * cmd->fwd + right[1] * cmd->side,
-		fwd[2] * cmd->fwd + right[2] * cmd->side,
-	};
-	if (cmd->fwd && cmd->side)
-		for (int k = 0; k < 3; k++)
-			wishdir[k] = (wishdir[k] * INV_SQRT2 + Q_FIX_ONE / 2) >> Q_FIX_SHIFT;
-	int32_t wishspeed = 0;
-	if (cmd->fwd || cmd->side)
-		wishspeed = cmd->walk ? PM_MAXSPEED / 2 : PM_MAXSPEED;
+	/* wish direction and speed, as Quake (wishspeed = |wishvel|, capped at
+	   sv_maxspeed): forward and right are orthogonal unit vectors (x4096),
+	   so |wishvel| = |(fwd, side)|; the direction is normalized by it, the
+	   speed follows it up to PM_AXIS (a d-pad direction: exactly full) */
+	int32_t wishdir[3] = { 0, 0, 0 }, wishspeed = 0;
+	int32_t len = isqrt32((uint32_t) (cmd->fwd * cmd->fwd + cmd->side * cmd->side));
+	if (len) {
+		wishdir[0] = (fwd[0] * cmd->fwd + right[0] * cmd->side) / len;
+		wishdir[1] = (fwd[1] * cmd->fwd + right[1] * cmd->side) / len;
+		int32_t amount = len < PM_AXIS ? len : PM_AXIS;
+		wishspeed = (cmd->walk ? PM_MAXSPEED / 2 : PM_MAXSPEED) * amount >> 7;
+	}
 
 	/* jump */
 	if (cmd->jump && pm->onground) {

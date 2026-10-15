@@ -1061,9 +1061,9 @@ behaviour, minus artefacts that only exist with integers.
 
 | input | action |
 |---|---|
-| d-pad left / right | turn |
-| d-pad up / down | walk |
-| Square / Circle | strafe |
+| left stick / d-pad | walk forward / back, strafe left / right (§18) |
+| right stick | look: turn left / right, up / down inverted (§18) |
+| Square / Circle | turn left / right (pads without sticks) |
 | L1 / R1 | look up / down |
 | Cross | jump (noclip: down) |
 | Triangle | walk slowly (noclip: up) |
@@ -1823,3 +1823,63 @@ map directly).
 menu, load e1m1, SELECT + START, START at ultra, load, SELECT + START, Circle.
 Every step worked and there was no CPU exception. The bench's display lists
 are unchanged.
+
+## §18 — Analog controls (2026-10-15)
+
+**The goal:**
+- the left stick walks forward / back and strafes left / right, and the
+  d-pad does the same;
+- the right stick controls the camera, inverted up / down "like back in
+  the day": push up to look down.
+
+**Reading the pad** (`engine/pad.c`). The BIOS pad driver already returns
+the sticks when the pad is in analog mode.
+- That means type 7 (DualShock / Dual Analog, red LED) or type 5 (the
+  green-LED mode). `pad.lx / ly / rx / ry` are then centred, from −128 to
+  127; they are 0 otherwise.
+- The BIOS driver cannot switch a pad to analog mode. The player presses
+  ANALOG; in an emulator, the pad must be set as an analog one.
+- Forcing analog mode needs a custom SPI driver with the config-mode
+  commands (PSn00bSDK's `io/pads` example), possibly later.
+
+**Input** (`player_cmd` in `engine/main.c`).
+- **Both sticks** go through a radial dead zone of 24, because DualShocks
+  rest a little off centre. The rest of the travel is rescaled to
+  0..`PM_AXIS` (128), keeping the direction.
+- **Left stick:** forward = −ly, strafe = lx. A d-pad direction overrides
+  its axis with ±128 (full speed).
+- **Right stick:** a quadratic response, fine near the centre, up to 48
+  (yaw) / 36 (pitch) binary degrees per tick at full deflection. The pitch
+  is inverted.
+- **Without sticks:** Square / Circle turn, so a digital pad can still turn.
+- **Rates per tick.** Turning and looking now advance per physics tick
+  rather than per frame, so their speed does not depend on the frame rate.
+- **Overlay.** It shows the raw stick values when the pad is analog.
+
+**Physics** (`pmove.c` spec + `pmove.s`, bit-exact).
+- `cmd.fwd / side` are now analog, −128..128. The model is Quake's
+  (`wishspeed = |wishvel|`, capped at `sv_maxspeed`):
+  - `len = isqrt(f² + s²)`;
+  - `wishdir = (fwd·f + right·s) / len` (forward and right are orthogonal
+    unit vectors);
+  - `wishspeed = maxspeed · min(len, 128) / 128`.
+- **A d-pad direction** (±128 on one axis) gives exactly the previous result:
+  the bench's scripted path prints the same positions.
+- **Diagonals** now use `128/181` instead of the old `2896/4096` (1/√2):
+  0.02 % apart.
+- **Noclip** moves by `(f · s) >> 7`.
+
+**Verified:**
+- **Differential test:** the bench's 6000-tick C-vs-asm test now draws random
+  axes (0, ±128 or anywhere), with 0 mismatches under both the dynarec and
+  the interpreter.
+- **pmsim:** the stress walk on start, e1m1 and e1m3 had 0 ticks in solid
+  and 0 stuck segments.
+- **Headless test with a scripted analog pad (not committed):**
+  - left stick up walks forward at 320 u/s;
+  - left stick right strafes right;
+  - right stick right turns right at 48 per tick;
+  - right stick up looks down;
+  - d-pad left strafes left;
+  - half deflection settles at 122 u/s;
+  - a deflection inside the dead zone does not move the player.

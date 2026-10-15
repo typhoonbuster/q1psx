@@ -84,8 +84,8 @@ int main(int argc, char **argv)
 				break;
 			}
 			pm.yaw = rand() & 4095;
-			c.fwd  = 1;
-			c.side = (rand() % 3) - 1;
+			c.fwd  = PM_AXIS;
+			c.side = ((rand() % 3) - 1) * PM_AXIS;
 			int32_t p0[3] = { pm.pos[0], pm.pos[1], pm.pos[2] };
 #ifdef PM_DEBUG
 			printf("=== seg %d yaw %d side %d\n", s, pm.yaw, c.side);
@@ -107,7 +107,8 @@ int main(int argc, char **argv)
 			/* a slow segment is suspect only if the way ahead is open: trace
 			   16 units along the wished direction from where we ended */
 			int32_t sy = r_sin(pm.yaw), cy = r_cos(pm.yaw);
-			double wx = cy + sy * c.side, wy = sy - cy * c.side, wl = sqrt(wx * wx + wy * wy);
+			double sd = c.side / (double) PM_AXIS;
+			double wx = cy + sy * sd, wy = sy - cy * sd, wl = sqrt(wx * wx + wy * wy);
 			int32_t ahead[3] = { pm.pos[0] + (int32_t) (wx / wl * 128), pm.pos[1] + (int32_t) (wy / wl * 128),
 			                     pm.pos[2] };
 			trace_t tr;
@@ -127,7 +128,7 @@ int main(int argc, char **argv)
 
 	/* the PS1 bench's scripted path (engine/main.c): run, jump, run north
 	   into the end wall, turn around and come back up the stairs */
-	c.fwd = 1;
+	c.fwd = PM_AXIS;
 	int t310 = -1;
 	for (int i = 0; i < 60; i++) {
 		pmove_step(&pm, &c);

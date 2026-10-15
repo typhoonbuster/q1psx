@@ -35,7 +35,7 @@
 .set FLOOR_NZ,      2867     # 0.7 x 4096
 .set STOP_V,           2
 .set NOCLIP_SPEED,     4
-.set INV_SQRT2,     2896
+.set PM_AXIS,        128     # full stick deflection (pmove.h)
 
 # VCOPY d, s / VZERO d: int32[3] at scratchpad offsets. VCOPY clobbers t0-t2.
 .macro VCOPY d, s
@@ -188,12 +188,12 @@ pmove_step:
 1:	lw      $t0, CMD_FWD($s1)
 	lw      $t1, CMD_SIDE($s1)
 	mult    $t0, $s6
-	mflo    $t8                          # fs = fwd * s
-	nop
+	mflo    $t8
+	sra     $t8, $t8, 7                  # fs = fwd * s / PM_AXIS
 	nop
 	mult    $t1, $s6
-	mflo    $t9                          # ss = side * s
-	nop
+	mflo    $t9
+	sra     $t9, $t9, 7                  # ss = side * s / PM_AXIS
 	nop
 	# fwd = (cp cy >> 12, cp sy >> 12, -sp), right = (sy, -cy, 0)
 	mult    $s3, $s5
@@ -246,8 +246,24 @@ ps_walk:
 	jal     categorize
 	nop
 
-	# wishdir = fwd * cmd.fwd + right * cmd.side; fwd = (cy, sy, 0),
-	# right = (sy, -cy, 0); a diagonal is scaled by 1/sqrt(2)
+	# wish direction and speed, as Quake (wishspeed = |wishvel|, capped):
+	# len = |(f, s)| (f, s = cmd fwd / side, +-PM_AXIS at most);
+	# wishdir = (fwd f + right s) / len with fwd = (cy, sy, 0), right =
+	# (sy, -cy, 0); wishspeed = maxspeed x min(len, PM_AXIS) / PM_AXIS
+	lw      $t0, CMD_FWD($s1)
+	lw      $t1, CMD_SIDE($s1)
+	sw      $zero, PS_WISH+0($s7)
+	mult    $t0, $t0
+	sw      $zero, PS_WISH+4($s7)
+	sw      $zero, PS_WISH+8($s7)
+	mflo    $a0
+	move    $s2, $zero                   # wishspeed (none without input)
+	nop
+	mult    $t1, $t1
+	mflo    $t2
+	jal     isqrt32                      # v0 = len
+	addu    $a0, $a0, $t2                # f^2 + s^2
+	beqz    $v0, 2f                      # no input
 	lw      $t0, CMD_FWD($s1)
 	lw      $t1, CMD_SIDE($s1)
 	lw      $t2, PS_CY($s7)
@@ -258,7 +274,11 @@ ps_walk:
 	nop
 	mult    $t3, $t1
 	mflo    $t5
-	addu    $t4, $t4, $t5                # wish0 = cy f + sy s
+	addu    $t4, $t4, $t5                # cy f + sy s
+	nop
+	div     $zero, $t4, $v0
+	mflo    $t4                          # wish0 (waits for the division)
+	nop
 	nop
 	mult    $t3, $t0
 	mflo    $t5
@@ -266,31 +286,23 @@ ps_walk:
 	nop
 	mult    $t2, $t1
 	mflo    $t6
-	subu    $t5, $t5, $t6                # wish1 = sy f - cy s
-	beqz    $t0, 1f
+	subu    $t5, $t5, $t6                # sy f - cy s
 	nop
-	beqz    $t1, 1f
-	li      $t6, INV_SQRT2
-	mult    $t4, $t6
-	mflo    $t4
-	addiu   $t4, $t4, Q_FIX_ONE / 2
-	sra     $t4, $t4, 12
-	mult    $t5, $t6
-	mflo    $t5
-	addiu   $t5, $t5, Q_FIX_ONE / 2
-	sra     $t5, $t5, 12
-1:	sw      $t4, PS_WISH+0($s7)
+	div     $zero, $t5, $v0
+	mflo    $t5                          # wish1
+	slti    $t0, $v0, PM_AXIS
+	sw      $t4, PS_WISH+0($s7)
 	sw      $t5, PS_WISH+4($s7)
-	sw      $zero, PS_WISH+8($s7)
-
-	or      $t7, $t0, $t1                # wishspeed (s2)
-	beqz    $t7, 2f
-	move    $s2, $zero
-	lw      $t7, CMD_WALK($s1)
-	li      $s2, PM_MAXSPEED
-	beqz    $t7, 2f
+	bnez    $t0, 1f
+	lw      $t1, CMD_WALK($s1)
+	li      $v0, PM_AXIS                 # amount = min(len, PM_AXIS)
+1:	li      $s2, PM_MAXSPEED
+	beqz    $t1, 1f
 	nop
 	li      $s2, PM_MAXSPEED / 2
+1:	mult    $s2, $v0
+	mflo    $s2
+	sra     $s2, $s2, 7                  # / PM_AXIS
 
 2:	lw      $t0, CMD_JUMP($s1)           # jump
 	lw      $t1, PM_ONGROUND($s7)

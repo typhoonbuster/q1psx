@@ -52,26 +52,67 @@ static void player_spawn(void)
 	player.yaw    = world.spawn_yaw * ANG_TURN / 360;
 }
 
-/* Pad -> one tick of intent (phase 6's mapping):
-     d-pad left/right turn, up/down walk;  Square / Circle strafe;
-     L1 / R1 look up / down;  Cross jump (noclip: down);
-     Triangle hold to walk (noclip: up);  START noclip;  SELECT respawn. */
-static void player_cmd(pmove_cmd_t *cmd)
+/* A stick through a radial dead zone (DualShocks rest a little off
+   centre), the rest of its travel rescaled to 0 .. PM_AXIS; the direction
+   is kept. */
+#define STICK_DEAD 24
+
+static void stick(int *x, int *y)
 {
-	const int turn = 46, look = 34;            /* ~4 and ~3 degrees per tick */
+	int m = (int) q_isqrt64((uint64_t) (*x * *x + *y * *y));
+	if (m <= STICK_DEAD) {
+		*x = *y = 0;
+		return;
+	}
+	int k = (m - STICK_DEAD) * PM_AXIS / (127 - STICK_DEAD);
+	if (k > PM_AXIS)
+		k = PM_AXIS;                           /* the square's corners */
+	*x = *x * k / m;
+	*y = *y * k / m;
+}
+
+/* Pad -> one tick of intent:
+     left stick / d-pad   walk forward / back, strafe left / right
+                          (analog: speed follows the stick);
+     right stick          look: left / right turn, up / down inverted
+                          (push up to look down), finer near the centre;
+     Square / Circle      turn left / right (pads without sticks);
+     L1 / R1              look up / down;
+     Cross                jump (noclip: down);
+     Triangle             hold to walk slowly (noclip: up);
+     START noclip;  SELECT respawn.
+   Turning and looking advance per physics tick (`ticks` this frame), so
+   their speed does not depend on the frame rate. */
+static void player_cmd(pmove_cmd_t *cmd, int ticks)
+{
+	const int turn = 46, look = 34;          /* buttons: ~4 and ~3 degrees per tick */
+	const int stick_turn = 48, stick_look = 36;   /* right stick, full deflection */
 
 	if (pad.pressed & PAD_START)  player.noclip = !player.noclip;
 	if (pad.pressed & PAD_SELECT) player_spawn();
 
-	if (pad.held & PAD_LEFT)  player.yaw += turn;
-	if (pad.held & PAD_RIGHT) player.yaw -= turn;
-	if ((pad.held & PAD_L1) && !(pad.held & PAD_R1)) player.pitch -= look;
-	if ((pad.held & PAD_R1) && !(pad.held & PAD_L1)) player.pitch += look;
+	int lx = pad.lx, ly = pad.ly, rx = pad.rx, ry = pad.ry;
+	stick(&lx, &ly);
+	stick(&rx, &ry);
+
+	int yaw = 0, pitch = 0;
+	if (pad.held & PAD_SQUARE) yaw += turn;
+	if (pad.held & PAD_CIRCLE) yaw -= turn;
+	if ((pad.held & PAD_L1) && !(pad.held & PAD_R1)) pitch -= look;
+	if ((pad.held & PAD_R1) && !(pad.held & PAD_L1)) pitch += look;
+	yaw   -= stick_turn * rx * (rx < 0 ? -rx : rx) / (PM_AXIS * PM_AXIS);
+	pitch -= stick_look * ry * (ry < 0 ? -ry : ry) / (PM_AXIS * PM_AXIS);   /* inverted */
+	player.yaw   += yaw * ticks;
+	player.pitch += pitch * ticks;
 	if (player.pitch >  1012) player.pitch =  1012;    /* +-89 degrees */
 	if (player.pitch < -1012) player.pitch = -1012;
 
-	cmd->fwd  = (pad.held & PAD_UP) ? 1 : (pad.held & PAD_DOWN) ? -1 : 0;
-	cmd->side = (pad.held & PAD_CIRCLE) ? 1 : (pad.held & PAD_SQUARE) ? -1 : 0;
+	cmd->fwd  = -ly;                                    /* stick up = forward */
+	cmd->side = lx;
+	if (pad.held & PAD_UP)    cmd->fwd  =  PM_AXIS;     /* the d-pad: full */
+	if (pad.held & PAD_DOWN)  cmd->fwd  = -PM_AXIS;
+	if (pad.held & PAD_RIGHT) cmd->side =  PM_AXIS;
+	if (pad.held & PAD_LEFT)  cmd->side = -PM_AXIS;
 	cmd->up   = (pad.held & PAD_TRIANGLE) ? 1 : (pad.held & PAD_CROSS) ? -1 : 0;
 	cmd->jump = (pad.pressed & PAD_CROSS) ? 1 : 0;
 	cmd->walk = (pad.held & PAD_TRIANGLE) ? 1 : 0;
@@ -83,10 +124,10 @@ static void player_update(void)
 {
 	uint32_t t0 = prof_now();
 	pmove_cmd_t cmd;
-	player_cmd(&cmd);
 	int ticks = (int) vid_stats.vbl;
 	if (ticks < 1) ticks = 1;
 	if (ticks > 4) ticks = 4;
+	player_cmd(&cmd, ticks);
 	for (int i = 0; i < ticks; i++) {
 		pmove_step(&player, &cmd);
 		cmd.jump = 0;                          /* edge: first tick only */
@@ -190,7 +231,10 @@ static int overlay_on = 1;   /* L1+R1 toggles */
 static void draw_overlay(void)
 {
 	uint32_t t0 = prof_now();
-	char line[256];
+	char line[320], sticks[40] = "";
+
+	if (pad.analog)                    /* raw, before the dead zone */
+		snprintf(sticks, sizeof sticks, "\nsticks L %4d %4d  R %4d %4d", pad.lx, pad.ly, pad.rx, pad.ry);
 
 	int n = snprintf(line, sizeof line,
 	         "q1psx  %s %s  ~%u fps\n"
@@ -210,10 +254,10 @@ static void draw_overlay(void)
 	snprintf(line + n, sizeof line - n,
 	         "%u B%s\n"
 	         "pos %d %d %d\n"
-	         "pad %s type %d btn %04x",
+	         "pad %s type %d btn %04x%s",
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
 	         cam.pos[0] / CLIP_SUB, cam.pos[1] / CLIP_SUB, cam.pos[2] / CLIP_SUB,
-	         pad.connected ? "ok" : "--", pad.type, pad.held);
+	         pad.connected ? "ok" : "--", pad.type, pad.held, sticks);
 	vid_text(8, 8, line);
 	prof_add(PROF_OVERLAY, t0, prof_now());
 }
@@ -380,6 +424,17 @@ static int32_t rng_pm(int32_t r)
 	return (int32_t) (rng() % (uint32_t) (2 * r + 1)) - r;
 }
 
+/* A random stick axis: often centred or full (a d-pad), else anywhere. */
+static int rng_axis(void)
+{
+	switch (rng() & 3) {
+	case 0:  return 0;
+	case 1:  return PM_AXIS;
+	case 2:  return -PM_AXIS;
+	default: return rng_pm(PM_AXIS);
+	}
+}
+
 /* A random point inside the map's bounding box (sub-units); `open` asks for
    one in the empty space of hull 1. */
 static void rng_point(int32_t p[3], int open)
@@ -468,8 +523,8 @@ static void bench_pmove_diff(void)
 		}
 		a.noclip = phase >= 250 && phase < 280;
 		if (t % 30 == 0) {
-			cmd.fwd  = (int) (rng() % 3) - 1;
-			cmd.side = (int) (rng() % 3) - 1;
+			cmd.fwd  = rng_axis();
+			cmd.side = rng_axis();
 			cmd.up   = (int) (rng() % 3) - 1;
 			cmd.walk = (rng() & 7) == 0;
 			a.pitch  = rng_pm(1000);
@@ -519,8 +574,8 @@ static void bench_pmove_diff(void)
 	const qw_clipnode *cn = world.clipnodes;
 	world.clipnodes = NULL;
 	cyc_asm = cyc_c = 0;
-	cmd.fwd = 1;
-	cmd.side = 1;
+	cmd.fwd = PM_AXIS;
+	cmd.side = PM_AXIS;
 	cmd.jump = 0;
 	for (int t = 0; t < 1000; t++) {
 		a.noclip = 0;
@@ -628,7 +683,7 @@ static void run_bench(void)
 			PM_TICK();
 		printf("pmove settle pos %d %d %d ground %d\n", (int) player.pos[0] / CLIP_SUB,
 		       (int) player.pos[1] / CLIP_SUB, (int) player.pos[2] / CLIP_SUB, player.onground);
-		c.fwd = 1;
+		c.fwd = PM_AXIS;
 		int t310 = -1;
 		for (int i = 0; i < 60; i++) {
 			PM_TICK();

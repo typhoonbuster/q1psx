@@ -33,7 +33,11 @@ typedef struct {
 	int32_t grav_acc;     /* sub-unit gravity carry                    */
 } pmove_t;
 
-/* One tick of intent. fwd/side/up are -1, 0 or +1. */
+/* One tick of intent. fwd / side are analog, -PM_AXIS .. PM_AXIS (a stick;
+   a d-pad direction is +-PM_AXIS): the wished speed follows |(fwd, side)|,
+   capped at full speed, as Quake's wishspeed = |wishvel|. up is -1, 0, +1. */
+#define PM_AXIS 128       /* full deflection (2^7)                       */
+
 typedef struct {
 	int fwd, side, up;    /* up: noclip only                           */
 	int jump;             /* edge-triggered                            */
