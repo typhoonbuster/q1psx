@@ -635,3 +635,56 @@ followed by R0-R4.
       solid, 0 blocked with the way ahead open.
   - Cost on the dynarec: **24 k cycles per tick on average, 54 k max** (4-10 %
     of a 60 fps frame). The asm port is next (2026-10-15).
+- **R4.2 validated:** a test of the controls on the pad finds
+  them fine for now; they can be refined later.
+- **R4.3 — physics in asm** (2026-10-15: everything CPU-heavy goes to
+  asm). Details: `docs/porting-notes.md` §13.6.
+  - **C rewritten as the specification** (`clip.c`, `pmove.c`):
+    - 32-bit arithmetic plus 32 × 32 → 64 products only (no libgcc 64-bit
+      division);
+    - an iterative trace;
+    - Quake's sv_maxvelocity cap (2000 u/s per axis), which bounds every
+      product;
+    - diagonal wish directions by 1/√2 instead of a square root and
+      divisions;
+    - friction as one division.
+    - This rewrite alone took the physics from 24 k to ~9.4 k cycles per
+      tick.
+  - **`engine/clip.s`:**
+    - axial planes (78 %) on the CPU from start / delta × 4096 kept in the
+      scratchpad;
+    - general planes through one GTE MVMVA, with start / delta / probe
+      point as the matrix rows;
+    - the split division in 32 bits, its shift taken from LZCS/LZCR;
+    - pending splits on the stack.
+  - **`engine/pmove.s`:** a full port, with the `pmove_t` and every
+    intermediate vector in the scratchpad.
+  - **Clip format** (same size):
+    - distances pre-scaled to 1/8 unit;
+    - clipnodes store their plane's word offset (index × 3);
+    - the cook checks that clip trees are at most 64 deep.
+  - **Differential tests** in the bench. The C is linked as
+    `clip_trace_c` / `pmove_step_c`:
+    - 4000 sweeps + 4000 contents queries: 0 mismatches;
+    - 6000 random-walk ticks (commands, jumps, noclip, teleports): every
+      `pmove_t` field identical;
+    - the scripted path gives identical positions;
+    - all of it holds under the dynarec and under the interpreter.
+    - `VIEWS=0 scripts/bench.sh` runs only these checks.
+  - **Cost (dynarec):**
+
+    | measure | before R4.3 | now |
+    |---|---|---|
+    | random walk | 24 k | 6.8 k (C reference: 9.4 k) |
+    | scripted path (≈ 8 traces / tick against the end wall) | 13.3 k | 11.5 k |
+    | one trace | — | ~1.6 k |
+
+    Traces are about 3/4 of the cost.
+  - **Fixes found on the way:**
+    - CMake did not rebuild asm objects when an `.inc` changed: a stale
+      `pmove.s` overwrote the player position. Asm sources now depend on
+      `engine/*.inc`.
+    - GAS expands the 2-operand `div` / `divu` into a checked macro; the
+      bare form is `div $zero, rs, rt`.
+    - `prof_now` could go back by one counter wrap when the wrap IRQ was
+      still pending (bogus 524 k-cycle maxima).

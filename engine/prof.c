@@ -39,12 +39,20 @@ void prof_init(void)
 
 uint32_t prof_now(void)
 {
+	static uint32_t last;
 	uint32_t hi, lo;
 	do {
 		hi = prof_hi;
 		lo = TIMER_VALUE(2) & 0xffff;
 	} while (hi != prof_hi);   /* a wrap IRQ landed between the two reads */
-	return hi | lo;
+	/* The counter can also have wrapped with its IRQ still pending: the
+	   reading then goes back by 0x10000 (it gave bogus 524 k-cycle maxima).
+	   Time does not go back, and calls are far less than a wrap apart. */
+	uint32_t now = hi | lo;
+	if (now < last)
+		now += 0x10000;
+	last = now;
+	return now;
 }
 
 void prof_frame_reset(void)

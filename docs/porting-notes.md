@@ -1099,3 +1099,105 @@ One physics tick per vblank: a 2-vblank frame runs 2 ticks (at most 4).
   cycles per tick on average, 54 k max**. Most of it is likely libgcc's
   64-bit divisions and multiplies, which the asm port can replace with
   32-bit ones on normalised operands.
+
+### 13.6 The physics in asm (R4.3)
+
+**Method: C specification, asm port, differential test.** The C version
+(`clip.c`, `pmove.c`) was first rewritten into a form the asm can match
+bit for bit:
+- 32-bit integers, plus 32 × 32 → 64 products (one `mult`);
+- no 64-bit division: libgcc's `__divdi3` was most of the old cost;
+- the trace made iterative.
+
+The asm then follows it operation for operation. The bench build also
+links the C, renamed by CMake (`clip_trace_c`, `clip_contents_c`,
+`pmove_step_c`). It compares the two on:
+- 4000 random sweeps over the map, a mix of short / medium / map-crossing,
+  half starting in open space, one in 8 on hull 2: every `trace_t` field;
+- 4000 contents queries;
+- a 6000-tick random walk (commands, turns, jumps, noclip flights, a
+  teleport every 300 ticks): every `pmove_t` field.
+
+The result is 0 mismatches under the dynarec and under the interpreter. On
+a mismatch the bench prints both states and the scratchpad of a replay;
+that dump found the stale-object bug below in one run.
+
+Spec changes made in the process (behaviour unchanged within rounding):
+- Quake's `sv_maxvelocity` (2000 u/s per axis) is now applied. It bounds
+  every product to 32 bits.
+- The wish direction of a diagonal is (fwd + side) × 1/√2: forward and
+  right are orthogonal, so no square root or division is needed.
+- Friction applies one 0.16 scale factor instead of three divisions.
+- The trace's split fraction is `(num << 16) / den`. Both operands are
+  first shifted down until den fits 15 bits.
+
+**`engine/clip.s`**
+- Axial planes (type 0..2, 78 % of `start.bsp`'s clipnodes, n = 4096 on one
+  axis):
+  - n·p is a shift;
+  - start / delta × 4096 sit in the scratchpad, indexed by the axis;
+  - per node: 3 RAM loads (plane offset + children, type, distance), no
+    multiply.
+- General planes go through the GTE:
+  - the rotation matrix holds start, delta and a probe point as its rows;
+  - one `MVMVA` (sf = 0, no translation) of the normal returns n·start,
+    n·delta and n·point in MAC1-3;
+  - positions must therefore fit int16 (maps within ±4095 units);
+  - `r_render` reloads the matrices every frame, so borrowing them is
+    free.
+- The split shift comes from the GTE's leading-zero counter (LZCS/LZCR),
+  followed by one 32-bit `divu`.
+- Pending splits are pushed on the stack (16 B: node pointer | side, f1,
+  fm, f2). F_ONE stays in `$fp`. The walk's next-node test does the next
+  node's first instruction in its delay slot.
+- Format changes, at no size cost:
+  - distances pre-scaled to 1/8 unit;
+  - each clipnode stores its plane as a word offset (index × 3), so no
+    × 12 is left;
+  - the cook checks that clip trees are at most 64 deep.
+
+**`engine/pmove.s`** — a full port of `pmove.c`:
+- The `pmove_t` is copied into the scratchpad (unrolled, 28 loads and
+  stores) and every intermediate vector lives there.
+- Dot products are 3 `mult`s, with the next operands loaded in the HI/LO
+  shadow.
+- `isqrt32` starts at the top bit, found with LZCS.
+- It calls the C `r_sin` / `r_cos`. Inlining them would save about 10
+  instructions per call; not worth it.
+
+**Cost (PCSX-Redux dynarec, cycles):**
+
+| | before R4 fixes | C 32-bit | asm |
+|---|---|---|---|
+| random walk, per tick | — | 9 400 | 6 800 |
+| scripted path, per tick | 24 000 | 13 300 | 11 500 |
+| pmove without its traces, per tick | — | 2 100 | 1 850 |
+| trace (hard mix: long, in solid) | — | 2 400 | 1 650 |
+
+A tick does 4-5 traces, and 8 when the step-up is retried against a wall
+every tick; traces are about 3/4 of the cost.
+
+The dynarec charges roughly per instruction. Real hardware also pays for
+RAM loads (no data cache) and `mult` / `div` latency, which these numbers
+do not show. The asm is written for both: scratchpad state, fewer loads.
+
+**Open option (a call to make: RAM against CPU).** Self-contained
+16-byte clipnodes, holding normal, type, distance and both children, would
+remove the plane indirection. An axial node would need 3 loads and about
+13 instructions instead of 17, so roughly 30 % less per node. The cost is
++20 KB on `start.bsp` (85 KB of clip data instead of 65 KB).
+
+**Lessons**
+- **CMake does not scan `.include` in assembly sources.** A changed
+  scratchpad map in `p_defs.inc` left `pmove.s` on the old one. Its
+  player position then overlapped `clip.s`'s new split record and came out
+  as F_ONE. Every `engine/*.s` now has `OBJECT_DEPENDS` on `engine/*.inc`.
+- **GAS's 2-operand `div` / `divu` is a macro.** It assembles to a zero
+  check, `break 7` and an extra `mflo`. The bare instruction is
+  `div $zero, rs, rt`.
+- **The VZ0 trap again.** The word after a plane's n[0..1] carries the
+  plane type in its upper half, and PCSX-Redux does not drop it on
+  `lwc2 VZ0`. Load it with `lh` + `mtc2`, as the renderer does for its
+  record spheres.
+- **`prof_now` could go back by one counter wrap** when the wrap IRQ was
+  still pending. A monotonic guard now adds the missing 0x10000.

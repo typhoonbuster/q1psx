@@ -321,13 +321,15 @@ static void bench_pmove_diff(void)
 				       (int) c.vel[2], c.onground, (int) c.pos_acc[0], (int) c.pos_acc[1],
 				       (int) c.pos_acc[2], (int) c.grav_acc);
 			if (bad == 1) {
+				/* replay the tick and dump the scratchpad the asm works in
+				   (p_defs.inc has the map) */
 				pmove_t d = before;
 				pmove_step(&d, &cmd);
 				const int32_t *spad = (const int32_t *) 0x1F800000;
 				for (int i = 0; i < 0x1A0 / 4; i += 8)
-					printf("SPAD %03x: %d %d %d %d %d %d %d %d\n", i * 4, (int) spad[i], (int) spad[i + 1],
-					       (int) spad[i + 2], (int) spad[i + 3], (int) spad[i + 4], (int) spad[i + 5],
-					       (int) spad[i + 6], (int) spad[i + 7]);
+					printf("  spad %03x: %d %d %d %d %d %d %d %d\n", i * 4, (int) spad[i],
+					       (int) spad[i + 1], (int) spad[i + 2], (int) spad[i + 3], (int) spad[i + 4],
+					       (int) spad[i + 5], (int) spad[i + 6], (int) spad[i + 7]);
 			}
 			a = c;
 		}

@@ -50,7 +50,7 @@ solved, two checks are used:
 | R1.x | Empty frame on screen + its cycle cost; bench numbers stable across runs | headless bench + GUI | recommended (timing differs from emulators) |
 | R2.x | Cooked data passes the host validator; loads with no error | host + headless | — |
 | R3.x | Bench cycles per stage on every viewpoint; `start.bsp` 60 fps, no hole / flicker / warp | headless bench + GUI (an on-screen look) | required (final 60 fps verdict) |
-| R4.x | `tools/pmsim` stress: 0 ticks in solid, 0 abnormal blocks; the bench's scripted path prints the same positions as `pmsim`; walls, floors, stairs, jump feel right | host + headless bench + GUI | required (controller feel) |
+| R4.x | `tools/pmsim` stress: 0 ticks in solid, 0 abnormal blocks; the bench's scripted path prints the same positions as `pmsim`; asm vs C differential tests (`VIEWS=0 scripts/bench.sh`, also with `EMU_ARGS=-interpreter`): 0 mismatches; walls, floors, stairs, jump feel right | host + headless bench + GUI | required (controller feel) |
 | 7.x | `progs.dat` executed: player spawn, doors/buttons | required | — |
 | 8.x | Enemy + shotgun + HUD working | required | recommended |
 | 9.x | SPU SFX; CD-DA/XA music | required | required (SPU mixing + CD-DA playback differ in emu) |

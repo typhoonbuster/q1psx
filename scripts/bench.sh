@@ -30,7 +30,8 @@ LOG="$ROOT/build-bench/bench.log" \
 	|| { status=$?; tail -n 30 "$ROOT/build-bench/bench.log"; exit $status; }
 
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
-grep -A2 '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" || true
+grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
+grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 [ "$VIEWS" = 0 ] && exit 0
 
 # Render the dumped display lists to PNG (build-bench/views/view<N>.png) so the
