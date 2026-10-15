@@ -519,6 +519,20 @@ dr_rec:
 	sltu    $t0, $s7, $s6                # room for the whole record?
 	bnez    $t0, dr_full
 	or      $a2, $a2, $t5                # a2 bit 1
+.if R_SLOW_C
+	# a2 bit 2: an affine error above the threshold is possible:
+	# (z - rho) x 16 < k16 x rho, rho = 1.5 r (r_set_fidelity)
+	srl     $t5, $t3, 1
+	addu    $t5, $t5, $t3                # rho
+	lw      $t9, RS_WARP_K16($s0)
+	subu    $t6, $t4, $t5                # nearest depth
+	mult    $t9, $t5
+	sll     $t6, $t6, 4
+	mflo    $t9
+	slt     $t9, $t6, $t9
+	sll     $t9, $t9, 2
+	or      $a2, $a2, $t9
+.endif
 
 	lbu     $t2, R_NVERTS($a0)
 	beq     $at, $a3, dr_tex_done        # same texture as the last record
@@ -634,7 +648,7 @@ dr_xf_done:
 
 	beqz    $a2, dr_polys                # sphere says: nothing near or big
 	move    $t4, $t8
-	andi    $t0, $a2, 2
+	andi    $t0, $a2, 6                  # big or warping: careful regardless
 	bnez    $t0, dr_polys                # may be big: careful loop regardless
 	move    $t5, $t2
 	move    $a2, $zero                   # exact check: any real vertex near?
@@ -677,6 +691,10 @@ dr_quad:
 	addu    $t5, $t5, $t8
 	beqz    $a2, dr_quad_emit
 	addu    $t6, $t6, $t8
+.if R_SLOW_C
+	b       dr_quad_skip                 # the C reference decides per polygon
+	nop
+.endif
 	lw      $t0, SP_SZ($t3)              # careful: any corner too near?
 	lw      $t1, SP_SZ($t4)
 	lw      $t2, SP_SZ($t5)
@@ -756,6 +774,10 @@ dr_tri:
 	addu    $t4, $t4, $t8
 	beqz    $a2, dr_tri_emit
 	addu    $t5, $t5, $t8
+.if R_SLOW_C
+	b       dr_tri_skip
+	nop
+.endif
 	lw      $t0, SP_SZ($t3)
 	lw      $t1, SP_SZ($t4)
 	lw      $t2, SP_SZ($t5)

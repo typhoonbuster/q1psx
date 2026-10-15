@@ -200,6 +200,7 @@ static int load_level(int map, int fid)
 			printf("level: %s does not fit at %s, loaded at %s\n", world_map_name(map),
 			       fidelity_name[fid], fidelity_name[fidelity]);
 		r_bind_world();
+		r_set_fidelity(fidelity);
 	}
 	return world_ok;
 }

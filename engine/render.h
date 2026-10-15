@@ -58,6 +58,10 @@ typedef struct {
 	uint32_t vertpool;       /* +160 qw_vert *: the map's vertex pool        */
 	uint32_t nodes;          /* +164 qw_node * (parents are word offsets)    */
 	uint32_t planes;         /* +168 qw_plane *: the nodes' planes (1/8 u)   */
+	uint32_t warp_t2;        /* +172 2 x the affine-error threshold (px)     */
+	uint32_t warp_k16;       /* +176 record bound: no edge of a record whose
+	                                 nearest depth z - 1.5r >= k16 x 1.5r / 16
+	                                 can exceed it (porting-notes §19)       */
 } r_state_t;
 
 extern r_state_t r_state;
@@ -74,6 +78,10 @@ void r_frame(void);
 
 /* Must be called after world_load(): binds the renderer to the new world. */
 void r_bind_world(void);
+
+/* The affine-error threshold of a fidelity level (0 low .. 3 ultra):
+   6, 4, 3, 2 px on screen. */
+void r_set_fidelity(int fid);
 
 /* asm entry point (engine/r_world.s) */
 void r_render(r_state_t *s);

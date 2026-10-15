@@ -34,6 +34,8 @@
 .set RS_VERTPOOL,     160
 .set RS_NODES,        164
 .set RS_PLANES,       168
+.set RS_WARP_T2,      172
+.set RS_WARP_K16,     176
 
 # ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4

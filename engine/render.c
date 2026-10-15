@@ -34,6 +34,8 @@ _Static_assert(offsetof(qw_node, parent)         == 16,  "qw_node layout");
 _Static_assert(offsetof(qw_node, child)          == 20,  "qw_node layout");
 _Static_assert(offsetof(qw_node, faces)          == 28,  "qw_node layout");
 _Static_assert(offsetof(r_state_t, planes)       == 168, "r_state layout");
+_Static_assert(offsetof(r_state_t, warp_t2)      == 172, "r_state layout");
+_Static_assert(offsetof(r_state_t, warp_k16)     == 176, "r_state layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, marks)          == 16,  "qw_leaf layout");
@@ -84,6 +86,24 @@ int16_t r_sin(int a)
 int16_t r_cos(int a)
 {
 	return r_sin(a + 1024);
+}
+
+/* -------------------------------------------------------------- fidelity -- */
+
+void r_set_fidelity(int fid)
+{
+	/* threshold T (px) per level, and the record bound's k = sqrt(560 / T)
+	   (x16): with the record's nearest depth z_m = z - rho and radius rho,
+	   any edge inside it has (|dx| + |dy|) |dz| <= 12.6 H rho^2 / z_m (H =
+	   160, |x|/z and |y|/z bounded by the frustum test), below 2T x 2 z_m
+	   once z_m >= k rho, with ~10 % margin for the integer screen
+	   coordinates. */
+	static const uint8_t t[4]   = { 6, 4, 3, 2 };
+	static const uint16_t k16[4] = { 155, 189, 219, 268 };
+	if (fid < 0) fid = 0;
+	if (fid > 3) fid = 3;
+	r_state.warp_t2  = 2u * t[fid];
+	r_state.warp_k16 = k16[fid];
 }
 
 /* ------------------------------------------------------------------ view -- */
