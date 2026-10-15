@@ -42,6 +42,11 @@
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
                                   renderer's scratchpad holds SXY, SZ and
                                   light for 42 vertices                  */
+#define QW_MAX_REC_PKT 2048     /* GPU packet bytes one face record may emit
+                                  on the fast path: 52 per quad, 40 per tri,
+                                  8 for a texture window. The renderer
+                                  tests the arena once per record against
+                                  an end this far short of the real one  */
 #define QW_MAX_DEPTH  256      /* BSP depth the renderer's stack holds:
                                   64 words of scratchpad + 3 RAM blocks   */
 #define QW_NONE        0xffffffffu

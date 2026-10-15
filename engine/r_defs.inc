@@ -82,8 +82,8 @@
 .set SP_CAM,      0x300   # cam[3], vertex units
 .set SP_FVBASE,   0x30c
 .set SP_SZFAST,   0x310
-.set SP_CODE4,    0x314   # POLY_GT4 code word (ORed with the first colour)
-.set SP_CODE3,    0x318   # POLY_GT3 code word
+.set SP_LASTTEX,  0x314   # draw_records: the last record's texture index
+.set SP_FREE318,  0x318   # (free)
 .set SP_NEXTREC,  0x31c
 .set SP_NODES,    0x320   # counters
 .set SP_RECORDS,  0x324
@@ -97,7 +97,7 @@
 .set SP_PLA,      0x368   # slow path: polygon index list A (12 bytes)
 .set SP_PLB,      0x374   # slow path: polygon index list B (12 bytes)
 .set SP_TRI,      0x380   # slow path: triangle stack (up to 16 words)
-.set SP_BLKEND,   0x3c0   # draw_records: end of the current face block
+.set SP_FREE3C0,  0x3c0   # (free)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table
 .set SP_TWIN,     0x3cc   # draw_records: the record's texture-window command

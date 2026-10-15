@@ -320,7 +320,9 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 		fresh += !seen;
 	}
 	int tris_needed = pc->n - 2;
-	if (r->nv + fresh > QW_MAX_VERTS || r->nq + tris_needed > 255 || r->nt + 1 > 255)
+	int pkt = 8 + (r->nq + tris_needed / 2) * 52 + (r->nt + (tris_needed & 1)) * 40;
+	if (r->nv + fresh > QW_MAX_VERTS || r->nq + tris_needed > 255 || r->nt + 1 > 255 ||
+	    pkt > QW_MAX_REC_PKT)
 		rec_flush(o, r, s);
 
 	int known = 0;
@@ -1138,6 +1140,9 @@ int world_check(const char *path)
 				if (!r.num_verts || r.num_verts > QW_MAX_VERTS)
 					FAIL("record at %u: %u verts", at, r.num_verts);
 				if (r.face_id >= h.num_faces) FAIL("record at %u: face id %u", at, r.face_id);
+				if (8u + r.num_quads * 52u + r.num_tris * 40u > QW_MAX_REC_PKT)
+					FAIL("record at %u: %u quads + %u tris exceed QW_MAX_REC_PKT", at,
+					     r.num_quads, r.num_tris);
 				if (r.tex >= h.num_tex) FAIL("record at %u: texture %u", at, r.tex);
 				const uint16_t *vi = (const uint16_t *) (fs + at + sizeof r);
 				for (uint32_t k = 0; k < nidx; k++)
@@ -1146,9 +1151,12 @@ int world_check(const char *path)
 				for (int k = 0; k < r.num_quads; k++, q += sizeof(qw_quad))
 					for (int c = 0; c < 4; c++)
 						if (q[c] & 3 || q[c] / 4 >= r.num_verts) FAIL("record at %u: quad index", at);
-				for (int k = 0; k < r.num_tris; k++, q += sizeof(qw_tri))
+				for (int k = 0; k < r.num_tris; k++, q += sizeof(qw_tri)) {
 					for (int c = 0; c < 3; c++)
 						if (q[c] & 3 || q[c] / 4 >= r.num_verts) FAIL("record at %u: tri index", at);
+					if (q[10] | q[11])   /* the renderer stores uv2's word as is */
+						FAIL("record at %u: tri pad2 not zero", at);
+				}
 				recs++;
 				polys += r.num_quads + r.num_tris;
 				at += r.size;

@@ -164,7 +164,7 @@ void r_frame(void)
 
 	r_state.ot_world     = (uint32_t) &vid_frame.ot[OT_WORLD];
 	r_state.pkt          = (uint32_t) vid_frame.pkt;
-	r_state.pkt_end      = (uint32_t) vid_frame.end;
+	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 8);   /* see r_world.s */
 	r_state.stat_nodes   = r_state.stat_records = r_state.stat_verts = 0;
 	r_state.stat_polys   = r_state.stat_skipped = 0;
 	r_state.ticks_block  = r_state.ticks_mark = 0;

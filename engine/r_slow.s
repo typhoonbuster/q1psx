@@ -428,7 +428,7 @@ sp_emit:
 	or      $t0, $t0, $fp                # tag: 9 words, link to the old head
 	sw      $t0, 0($s6)
 	lw      $t1, PV_C($t3)
-	lw      $t0, SP_CODE3($t8)
+	lui     $t0, CODE_GT3 >> 16
 	GREY    $t1
 	or      $t1, $t1, $t0                # code | c0
 	sw      $t1, 4($s6)
@@ -461,8 +461,7 @@ sp_emit:
 	sw      $t1, 32($s6)
 	UVWORD  $t5, $t1
 	sw      $t1, 36($s6)
-	sll     $fp, $s6, 8
-	srl     $fp, $fp, 8                  # new bucket head
+	move    $fp, $s6                     # new bucket head (KUSEG address)
 	addiu   $s6, $s6, 40
 	lw      $t0, SP_SLOWTRI($t8)
 	nop
