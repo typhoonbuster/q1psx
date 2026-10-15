@@ -57,6 +57,7 @@ typedef struct {
 	uint32_t textures;       /* +156 qw_tex * (CLUT, tpage, texture window)  */
 	uint32_t vertpool;       /* +160 qw_vert *: the map's vertex pool        */
 	uint32_t nodes;          /* +164 qw_node * (parents are word offsets)    */
+	uint32_t planes;         /* +168 qw_plane *: the nodes' planes (1/8 u)   */
 } r_state_t;
 
 extern r_state_t r_state;

@@ -1491,3 +1491,36 @@ R5.3b, PCSX dynarec):
 Results: images identical; start 589 → 567 KB, e1m4 677 → 655 KB, e3m5
 768 → 739 KB. The 32 maps average 547 KB; three are slightly above 700 KB
 (e3m5 739, e4m7 720, e3m6 704).
+
+### 14.7 R5.3d — the last lossless crumbs (QWV6)
+
+- **Render nodes use the clip section's plane table.** Each node used to
+  embed its plane (12 B); it now holds a word offset (`plane3`), and
+  nodes go from 44 to **36 bytes**.
+  - The table stores distances in 1/8 units ×4096; the renderer works in
+    vertex units (world × 4), so it halves them (`sra 1`).
+  - The back block now ends at `node + 32 + side × 32`, one shift.
+  - The walk costs about 1 % more for the indirection.
+- **Clipnodes go from 8 to 6 bytes** (no padding): `num × 6` is two shifts
+  and an add in the trace, which costs about 5 % more (about 260 cycles
+  per tick). The physics differential tests still show 0 mismatches.
+
+**Result: every map within the 700 KB target.**
+
+| | |
+|---|---|
+| 32 maps at high, average | 514 KB |
+| largest (e3m5) | 696 KB |
+| e4m7 | 677 KB |
+| e3m6 | 664 KB |
+| e1m4 | 617 KB |
+| start | 534 KB |
+
+Images are identical throughout R5.2 → R5.3d.
+
+**R5 summary (high fidelity, PCSX dynarec):**
+- World size, all 32 maps: average 1030 → 514 KB, worst 1427 → 696 KB.
+  Every map cooks and loads; 7 did not fit the 1152 KB arena before.
+- start: 17 189 → 8 207 polygons; the spawn view 620 k (2 vblanks) →
+  440 k cycles (1 vblank). Every episode-1 bench view runs at 60 fps.
+- No lossy step was needed.

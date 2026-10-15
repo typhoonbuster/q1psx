@@ -33,19 +33,23 @@
 .set RS_TEXTURES,     156
 .set RS_VERTPOOL,     160
 .set RS_NODES,        164
+.set RS_PLANES,       168
 
-# ---- qw_node (44 B) ----------------------------------------------------------
+# ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4
 .set N_VISFRAME,  6
 .set N_H,         8     # int16 h[3]
-.set N_TYPE,     14
-.set N_N,        16     # int16 n[3]
-.set N_PARENT,   22     # uint16 word offset into the node array, 0xffff: none
-.set N_DIST,     24
-.set N_CHILD,    28     # child[2] pointers, bit 0 = leaf
-.set N_FACES,    36     # faces[2]: front start, back start (back end = the
+.set N_PLANE3,   14     # plane index x 3: word offset in the plane table
+.set N_PARENT,   16     # uint16 word offset into the node array, 0xffff: none
+.set N_CHILD,    20     # child[2] pointers, bit 0 = leaf
+.set N_FACES,    28     # faces[2]: front start, back start (back end = the
                         # next node's front start; a sentinel ends the array)
-.set N_SIZE,     44
+.set N_SIZE,     36
+
+# ---- qw_plane (12 B, the clip section's table; dist x4096 in 1/8 units) ------
+.set PN_N,        0
+.set PN_TYPE,     6
+.set PN_DIST,     8
 
 # ---- qw_leaf (28 B) ----------------------------------------------------------
 .set L_C,         0

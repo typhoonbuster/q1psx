@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWV5" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWV6" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -36,7 +36,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV5"
+#define QWORLD_MAGIC "QWV6"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   63      /* per face record (multiple of 3)        */
@@ -54,7 +54,7 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV5"                                  */
+	char     magic[4];             /* "QWV6"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
@@ -88,26 +88,27 @@ typedef struct {
 /* Nodes and leaves share their bbox layout (the renderer's frustum test
    takes either): c at +0, h at +8, each followed by a 16-bit field, so VZ is
    loaded with lh + mtc2, never lwc2. Parents are word offsets into the node
-   array (node index x 11), QW_NOPARENT for the root. */
+   array (node index x 9), QW_NOPARENT for the root. A node's plane is the
+   BSP plane in the clip section's table (shared with the clip hulls): the
+   renderer works in vertex units (world x 4), the table in 1/8 units, so
+   the renderer halves the distance. */
 #define QW_NOPARENT 0xffffu
-#define QW_NODE_WORDS 11       /* sizeof(qw_node) / 4                      */
+#define QW_NODE_WORDS 9        /* sizeof(qw_node) / 4                      */
 
 typedef struct {
 	int16_t  c[3];         /* +0  bbox centre, vertex units                    */
 	uint16_t visframe;     /* +6  runtime                                      */
 	int16_t  h[3];         /* +8  bbox half extents, vertex units              */
-	uint8_t  type;         /* +14 0/1/2 = axial X/Y/Z, 3 = general             */
-	uint8_t  pad;          /* +15                                              */
-	int16_t  n[3];         /* +16 plane normal x4096                           */
-	uint16_t parent;       /* +22 word offset of the parent, or QW_NOPARENT    */
-	int32_t  dist;         /* +24 plane distance x4096, vertex units           */
-	uint32_t child[2];     /* +28 disk: index, bit31 = leaf; RAM: ptr, bit0 = leaf */
-	uint32_t faces[2];     /* +36 front start, back start: disk offsets in the
+	uint16_t plane3;       /* +14 plane index x 3 = word offset in the table   */
+	uint16_t parent;       /* +16 word offset of the parent, or QW_NOPARENT    */
+	uint16_t pad;          /* +18                                              */
+	uint32_t child[2];     /* +20 disk: index, bit31 = leaf; RAM: ptr, bit0 = leaf */
+	uint32_t faces[2];     /* +28 front start, back start: disk offsets in the
 	                              face stream, RAM pointers. The back block
 	                              ends where the next node's front block
 	                              starts: nodes[num_nodes] is a sentinel whose
 	                              faces[0] is the end of the stream.           */
-} qw_node;                 /* 44 bytes */
+} qw_node;                 /* 36 bytes */
 
 typedef struct {
 	int16_t  c[3];         /* +0  bbox centre, vertex units                    */
@@ -192,12 +193,11 @@ typedef struct {
 typedef struct {
 	uint16_t plane3;           /* plane index x 3 = its word offset   */
 	int16_t  child[2];         /* >= 0 clipnode, < 0 Quake CONTENTS_* */
-	uint16_t pad;
-} qw_clipnode;                 /* 8 bytes */
+} qw_clipnode;                 /* 6 bytes */
 
 _Static_assert(sizeof(qw_plane) == 12 && __builtin_offsetof(qw_plane, type) == 6 &&
                __builtin_offsetof(qw_plane, dist) == 8, "engine/p_defs.inc PL_*");
-_Static_assert(sizeof(qw_clipnode) == 8 && __builtin_offsetof(qw_clipnode, child) == 2,
+_Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child) == 2,
                "engine/p_defs.inc CN_*");
 
 #define QW_CONTENTS_EMPTY  (-1)

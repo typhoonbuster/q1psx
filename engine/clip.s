@@ -34,12 +34,14 @@
 # NODE_DSDD: t9 = clipnode number (>= 0), s1 = clipnodes, s2 = planes,
 # s7 = scratchpad (PS_S4K / PS_D4K = start / delta x 4096), GTE rows 1-2 =
 # start / delta. Out: t0 = clipnode pointer, a2 / a3 = children, t5 = ds,
-# t6 = dd. Clobbers t1-t4, v1. pre=0: t0 = t9 << 3 is already done (the
-# walk does it in a delay slot).
+# t6 = dd. Clobbers t1-t4, v1. pre=0: t0 = t9 << 2 is already done (the
+# walk does it in a delay slot). Clipnodes are 6 bytes.
 .macro NODE_DSDD pre=1
 	.if \pre
-	sll     $t0, $t9, 3
+	sll     $t0, $t9, 2
 	.endif
+	sll     $t2, $t9, 1
+	addu    $t0, $t0, $t2                # num * 6
 	addu    $t0, $s1, $t0                # clipnode
 	lhu     $t1, CN_PLANE3($t0)
 	lh      $a2, CN_CHILD+0($t0)
@@ -73,7 +75,9 @@
 # the same point. Out: a2 / a3 = children, t5 = n.p - dist.
 # Clobbers t0-t4, v1.
 .macro NODE_DP
-	sll     $t0, $t9, 3
+	sll     $t0, $t9, 2
+	sll     $t2, $t9, 1
+	addu    $t0, $t0, $t2                # num * 6
 	addu    $t0, $s1, $t0
 	lhu     $t1, CN_PLANE3($t0)
 	lh      $a2, CN_CHILD+0($t0)
@@ -283,7 +287,7 @@ ct_node:                                 # t0 = t9 << 3 (ct_next's delay slot)
 	move    $t9, $a3
 ct_next:
 	bgez    $t9, ct_node
-	sll     $t0, $t9, 3                  # ct_node's first step
+	sll     $t0, $t9, 2                  # ct_node's first step
 
 # ---- leaf ---------------------------------------------------------------------
 	li      $t0, QW_CONTENTS_SOLID

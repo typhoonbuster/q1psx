@@ -628,10 +628,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		qw_node *n = &nodes[i];
 
 		bbox(bn->mins, bn->maxs, n->c, n->h);
-		for (int k = 0; k < 3; k++)
-			n->n[k] = clamp16(lround(pl->n[k] * 4096.0));
-		n->type = (uint8_t) (pl->type < 3 ? pl->type : 3);
-		n->dist = (int32_t) lround((double) pl->dist * 4096.0 * QW_VSCALE);
+		(void) pl;
+		n->plane3 = (uint16_t) (bn->planenum * 3);    /* the clip section's table */
 		for (int c = 0; c < 2; c++) {
 			int ch = bn->child[c];
 			n->child[c] = ch >= 0 ? (uint32_t) ch : (0x80000000u | (uint32_t) (-1 - ch));
@@ -948,7 +946,6 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 			qc.plane3   = (uint16_t) (cn->planenum * 3);
 			qc.child[0] = (int16_t) cn->child[0];
 			qc.child[1] = (int16_t) cn->child[1];
-			qc.pad      = 0;
 			buf_put(&f, &qc, sizeof qc);
 		}
 		h.len_clip = (uint32_t) f.len - h.ofs_clip;
@@ -1025,6 +1022,9 @@ int world_check(const char *path)
 
 	const qw_node *nodes = (const qw_node *) (d + h.ofs_nodes);
 	const qw_leaf *leaves = (const qw_leaf *) (d + h.ofs_leaves);
+	if (!h.ofs_clip || h.len_clip < sizeof(qw_clip_header))
+		FAIL("no clip section (the nodes' plane table)");
+	uint32_t num_planes = ((const qw_clip_header *) (d + h.ofs_clip))->num_planes;
 	const uint8_t *fs = d + h.ofs_faces;
 	uint32_t recs = 0, polys = 0;
 
@@ -1037,8 +1037,8 @@ int world_check(const char *path)
 		}
 		if (n->parent != QW_NOPARENT && (n->parent % QW_NODE_WORDS || n->parent / QW_NODE_WORDS >= h.num_nodes))
 			FAIL("node %u: parent out of range", i);
-		if (n->type > 3)
-			FAIL("node %u: bad plane type", i);
+		if (n->plane3 % 3 || n->plane3 / 3 >= num_planes)
+			FAIL("node %u: plane out of range", i);
 		if (!(n->faces[0] <= n->faces[1] && n->faces[1] <= n[1].faces[0] && n[1].faces[0] <= h.len_faces))
 			FAIL("node %u: face block offsets out of order", i);
 

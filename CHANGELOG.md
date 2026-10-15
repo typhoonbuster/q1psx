@@ -771,3 +771,14 @@ followed by R0-R4.
     547 KB, and 3 are slightly above 700 KB.
   - Looser grouping variants were measured and rejected: they drew up to
     +70 % polygons.
+- **R5.3d — the last lossless crumbs.** Details: `docs/porting-notes.md`
+  §14.7.
+  - **Format QWV6:** render nodes reference the clip section's plane table
+    (44 → 36 B); clipnodes go from 8 to 6 B.
+  - **World:** all 32 maps fit the 700 KB target (largest e3m5 696 KB,
+    average 514 KB).
+  - **Cost:** walk +1 %, trace +5 % (about 260 cycles per tick); images
+    identical; physics still bit-exact.
+  - **R5 summary:** world 1030 → 514 KB on average, 1427 → 696 KB at
+    worst; start's spawn view 620 k → 440 k cycles (2 → 1 vblank); no
+    lossy step needed.

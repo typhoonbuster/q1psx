@@ -166,9 +166,11 @@ const qw_leaf *world_point_leaf(const int32_t pos[3])
 	uint32_t at = (uint32_t) world.root;
 	while (!(at & 1)) {
 		const qw_node *n = (const qw_node *) at;
-		int32_t d = n->type < 3
-		          ? p[n->type] * 4096 - n->dist
-		          : n->n[0] * p[0] + n->n[1] * p[1] + n->n[2] * p[2] - n->dist;
+		const qw_plane *pl = (const qw_plane *) ((const int32_t *) world.planes + n->plane3);
+		int32_t dist = pl->dist >> 1;    /* 1/8 units -> vertex units, x4096 */
+		int32_t d = pl->type < 3
+		          ? p[pl->type] * 4096 - dist
+		          : pl->n[0] * p[0] + pl->n[1] * p[1] + pl->n[2] * p[2] - dist;
 		at = n->child[d <= 0];   /* Quake: d > 0 is the front child */
 	}
 	return (const qw_leaf *) (at & ~1u);

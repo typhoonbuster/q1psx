@@ -310,11 +310,9 @@ pop:
 	sll     $t3, $t3, 2                  # side * 4
 	addu    $t5, $t3, $t2
 	lw      $a0, N_FACES($t5)            # block on the camera's side
-	sll     $t6, $t3, 3
-	sll     $t3, $t3, 1
-	addu    $t6, $t6, $t3                # side * 40: the block ends at faces[1]
-	addu    $t6, $t6, $t2                # (front) or at the next node's
-	lw      $a1, N_FACES+4($t6)          # faces[0] (back)
+	sll     $t6, $t3, 3                  # side * 32 (= N_SIZE - 4): the block
+	addu    $t6, $t6, $t2                # ends at faces[1] (front) or at the
+	lw      $a1, N_FACES+4($t6)          # next node's faces[0] (back)
 	nop
 	beq     $a0, $a1, walk
 	nop
@@ -364,8 +362,14 @@ walk_done:
 # plane_dist: v0 = n . cam - dist for node a0 (x4096, vertex units).
 # Axial planes skip the products. Clobbers t0-t4, v0.
 plane_dist:
-	lbu     $t0, N_TYPE($a0)
-	lw      $t1, N_DIST($a0)
+	lhu     $t0, N_PLANE3($a0)           # the node's plane, in the shared
+	lw      $t1, RS_PLANES($s0)          # table (dist in 1/8 units)
+	sll     $t0, $t0, 2
+	addu    $t5, $t0, $t1
+	lbu     $t0, PN_TYPE($t5)
+	lw      $t1, PN_DIST($t5)
+	nop
+	sra     $t1, $t1, 1                  # -> vertex units, x4096
 	sltiu   $t2, $t0, 3
 	beqz    $t2, pd_general
 	sll     $t0, $t0, 2
@@ -376,17 +380,17 @@ plane_dist:
 	jr      $ra
 	subu    $v0, $v0, $t1
 pd_general:
-	lh      $t2, N_N+0($a0)
+	lh      $t2, PN_N+0($t5)
 	lw      $t3, SP_CAM+0($t8)
 	nop
 	mult    $t2, $t3
-	lh      $t2, N_N+2($a0)
+	lh      $t2, PN_N+2($t5)
 	lw      $t3, SP_CAM+4($t8)
 	mflo    $v0
 	nop
 	nop
 	mult    $t2, $t3
-	lh      $t2, N_N+4($a0)
+	lh      $t2, PN_N+4($t5)
 	lw      $t3, SP_CAM+8($t8)
 	mflo    $t4
 	addu    $v0, $v0, $t4

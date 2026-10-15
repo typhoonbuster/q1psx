@@ -272,12 +272,15 @@ static uint8_t *P_leafvis, *P_nodevis, *P_face;
 static const uint8_t **P_emit;
 static int P_nemit;
 static double P_cam4[3];
+static const qw_plane *P_planes;   /* the clip section's table: dist in 1/8 units */
 
 static double p_dist(const qw_node *n)
 {
-	if (n->type < 3)
-		return P_cam4[n->type] * 4096.0 - n->dist;
-	return n->n[0] * P_cam4[0] + n->n[1] * P_cam4[1] + n->n[2] * P_cam4[2] - n->dist;
+	const qw_plane *pl = (const qw_plane *) ((const int32_t *) P_planes + n->plane3);
+	double dist = pl->dist / 2.0;     /* 1/8 units -> vertex units */
+	if (pl->type < 3)
+		return P_cam4[pl->type] * 4096.0 - dist;
+	return pl->n[0] * P_cam4[0] + pl->n[1] * P_cam4[1] + pl->n[2] * P_cam4[2] - dist;
 }
 
 static void p_walk_node(uint32_t ni, const uint8_t *d, const qw_header *h)
@@ -458,6 +461,7 @@ int main(int argc, char **argv)
 	if (memcmp(h.magic, QWORLD_MAGIC, 4)) { fprintf(stderr, "wldref: not a %s file\n", QWORLD_MAGIC); return 1; }
 	textures = (const qw_tex *) (d + h.ofs_tex);
 	pool     = (const qw_vert *) (d + h.ofs_verts);
+	P_planes = (const qw_plane *) (d + h.ofs_clip + sizeof(qw_clip_header));
 	const qw_view *views = (const qw_view *) (d + h.ofs_views);
 	for (uint32_t i = 0; i < h.num_views; i++) {
 		if (argc > 4 && (uint32_t) atoi(argv[4]) != i) continue;
