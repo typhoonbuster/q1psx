@@ -1069,7 +1069,9 @@ behaviour, minus artefacts that only exist with integers.
 | Triangle | walk slowly (noclip: up) |
 | START | noclip |
 | SELECT | respawn |
+| SELECT + START | back to the map menu (§17) |
 | L2 | next fidelity level |
+| R2 | next map |
 | L1 + R1 | overlay |
 
 One physics tick per vblank: a 2-vblank frame runs 2 ticks (at most 4).
@@ -1778,3 +1780,46 @@ to 540 k.
 - **Marks stored × 2.** −1 instruction per mark; format change.
 - **A third face word per node,** making `pop`'s block end uniform: +4
   bytes per node.
+
+## §17 — Map menu and loading bar (2026-10-15)
+
+**The goal.** Pick the map to test from a menu at boot, come back to
+it with SELECT + START, tag START `(default)` and the visually heaviest
+map `(complex)`, and stop the black screen / freeze during loads.
+
+**Menu** (`engine/main.c`, normal build only; the bench still loads its
+map directly).
+- **Layout:** the maps found on the disc, in two columns of 16, plus the
+  fidelity level.
+  - The d-pad picks the map, L1 / R1 the fidelity level.
+  - Cross or START loads the map; Circle goes back to the map already
+    loaded.
+  - The cursor starts on START.
+- **Back to the menu:** in game, SELECT + START (both held, one just
+  pressed) returns to it, with the current map highlighted.
+- **Tags:**
+  - `(default)`: START, where Quake begins and the skill is chosen.
+  - `(complex)`: the map with the heaviest view in `BENCH_MAPS=1`. That is
+    e3m4: 540 k cycles at high, R6.2, where the next ones are 419 k (e1m8)
+    and 396 k (start).
+  - e3m5 is the biggest map (10 827 polygons, 731 KB), but its views are
+    lighter. On an episode-1 disc, the tag falls back to e1m8.
+
+**Loading bar.**
+- **CD reads.** `cd_load` takes a poll callback. `CdReadRetry` reads in the
+  background, and `CdReadSync(1)` returns the sectors still to come.
+  - The callback runs once per frame until the read is done; that call
+    also lets CdReadRetry retry a failed read.
+  - Without a callback, the read blocks as before (the bench).
+- **Progress.** `world_load` reports bytes read over both files (texture
+  pages, then the world), plus one step after the VRAM upload and one at
+  the end.
+- **Screen.** `loading_screen` draws the map, the level, a bar (two TILEs
+  in the overlay bucket) and the percentage, then flips.
+- **Measured.** In the emulator, about 300 KB/s (double speed): ~3 s for
+  e1m1 at high (879 KB), with the bar advancing every frame.
+
+**Verified** headless, with a scripted pad (not committed). The sequence:
+menu, load e1m1, SELECT + START, START at ultra, load, SELECT + START, Circle.
+Every step worked and there was no CPU exception. The bench's display lists
+are unchanged.

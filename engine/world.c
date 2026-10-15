@@ -48,13 +48,30 @@ const char *world_map_name(int i)
 	return i >= 0 && i < num_disc_maps ? disc_maps[i] : "?";
 }
 
+/* load progress: bytes of the files before the current one, and in all */
+static world_progress_fn load_progress;
+static uint32_t          load_base, load_total;
+
+static void load_poll(uint32_t bytes)
+{
+	uint32_t done = load_base + bytes;
+	load_progress(done < load_total ? done : load_total, load_total);
+}
+
+static void load_step(uint32_t base)
+{
+	load_base = base;
+	if (load_progress)
+		load_poll(0);
+}
+
 static int load_textures(const char *map, int fid)
 {
 	char name[24];
 	snprintf(name, sizeof name, "\\MAPS\\%s_%d.TEX;1", map, fid);
 
 	uint32_t mark = mem_level_mark(), size;
-	const uint8_t *f = cd_load(name, &size);
+	const uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
 	if (!f || size < sizeof(qtex_header) || memcmp(f, QTEX_MAGIC, 4)) {
 		printf("world: bad texture file %s\n", name);
 		mem_level_release(mark);
@@ -78,20 +95,31 @@ static int load_textures(const char *map, int fid)
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-int world_load(int map, int fid)
+int world_load(int map, int fid, world_progress_fn progress)
 {
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
 	if (map < 0 || map >= num_disc_maps)
 		return 0;
 
+	char name[24], tex_name[24];
+	snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_%d.TEX;1", disc_maps[map], fid);
+	snprintf(name, sizeof name, "\\MAPS\\%s_%d.WLD;1", disc_maps[map], fid);
+	uint32_t tex_size = 0, wld_size = 0;
+	load_progress = progress;
+	if (progress) {
+		cd_exists(tex_name, &tex_size);
+		cd_exists(name, &wld_size);
+		load_total = tex_size + wld_size;
+		load_step(0);
+	}
+
 	if (!load_textures(disc_maps[map], fid))
 		return 0;
 
-	char name[24];
-	snprintf(name, sizeof name, "\\MAPS\\%s_%d.WLD;1", disc_maps[map], fid);
+	load_step(tex_size);                 /* the pages are in VRAM */
 	uint32_t size;
-	uint8_t *f = cd_load(name, &size);
+	uint8_t *f = cd_load(name, &size, progress ? load_poll : NULL);
 	if (!f || size < sizeof(qw_header) || memcmp(f, QWORLD_MAGIC, 4)) {
 		printf("world: bad world file %s\n", name);
 		return 0;
@@ -157,6 +185,7 @@ int world_load(int map, int fid)
 	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, arena %u KB\n",
 	       name, h->num_nodes, h->num_leaves, h->num_records, h->num_pieces,
 	       mem_level_used() / 1024);
+	load_step(load_total);
 	return 1;
 }
 

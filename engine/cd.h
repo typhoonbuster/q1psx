@@ -12,9 +12,15 @@
 
 void  cd_init(void);
 
+/* Called about once per frame while a read is in flight, with the bytes read
+   so far (whole sectors). It may draw and flip a frame (a loading bar). */
+typedef void (*cd_poll_fn)(uint32_t bytes_done);
+
 /* Load a whole file into the level arena. Returns NULL if it is missing or
-   the read fails; *size receives the exact byte size. */
-void *cd_load(const char *name, uint32_t *size);
+   the read fails; *size receives the exact byte size. With `poll`, the read
+   runs in the background and `poll` is called until it is done; NULL
+   blocks. */
+void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll);
 
 /* Is the file on the disc? (No read; *size may be NULL.) */
 int   cd_exists(const char *name, uint32_t *size);

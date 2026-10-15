@@ -1,8 +1,9 @@
 /*
  * q1psx — boot + main loop.
  *
- * Normal build: load the first map on the disc (start, fidelity "high"),
- * player physics over the asm-rendered world, debug overlay.
+ * Normal build: a map menu (every map on the disc, the fidelity level),
+ * then player physics over the asm-rendered world with the debug overlay;
+ * SELECT + START goes back to the menu. Loads show a progress bar.
  * Bench build (Q1PSX_BENCH, CMake preset "bench"): render every cooked bench
  * viewpoint, print one "bench ..." line each (+ a packet dump of one frame for
  * tools/pktview), then "bench done" — see scripts/bench.sh.
@@ -34,6 +35,8 @@ typedef struct {
 
 static camera_t cam;
 static pmove_t  player;
+static int      in_menu;        /* the map menu is up (normal build)   */
+static int      menu_sel;       /* the map highlighted in the menu      */
 static int      world_ok;
 static int      map_index;      /* into world_map_name(); R2 cycles it */
 static int      fid_wanted = 2; /* 0 low .. 3 ultra; L2 cycles it      */
@@ -98,13 +101,56 @@ static void player_update(void)
 
 /* ------------------------------------------------------- map / fidelity -- */
 
+/* ------------------------------------------------------- loading bar -- */
+
+static int load_map, load_fid;   /* what the bar is loading */
+
+/* A bordered TILE in the overlay bucket. */
+static void ui_rect(int x, int y, int w, int h, int r, int g, int b)
+{
+	TILE *t = vid_alloc(sizeof *t);
+	if (!t)
+		return;
+	setTile(t);
+	setXY0(t, x, y);
+	setWH(t, w, h);
+	setRGB0(t, r, g, b);
+	vid_link(OT_OVERLAY, t);
+}
+
+/* One frame of the loading screen: the map, the level, a bar and the
+   percentage (texture file + world file, in bytes read from the CD). */
+static void loading_screen(uint32_t done, uint32_t total)
+{
+	enum { BX = 40, BY = 116, BW = 240, BH = 10 };
+	char line[48];
+	int  fill = total ? (int) (done * BW / total) : 0;   /* < 2 MB: no overflow */
+
+	snprintf(line, sizeof line, "loading %s  (%s)", world_map_name(load_map),
+	         fidelity_name[load_fid]);
+	vid_text(BX, BY - 16, line);
+	snprintf(line, sizeof line, "%3d %%", total ? (int) (done * 100 / total) : 0);
+	vid_text(BX + BW - 40, BY + BH + 8, line);
+	ui_rect(BX + 1, BY + 1, fill > BW - 2 ? BW - 2 : fill, BH - 2, 230, 170, 60);  /* bar */
+	ui_rect(BX, BY, BW, BH, 70, 74, 90);                                        /* frame */
+	vid_flip();
+}
+
+#ifdef Q1PSX_BENCH
+#define LOAD_PROGRESS NULL         /* the bench measures; no screen */
+#else
+#define LOAD_PROGRESS loading_screen
+#endif
+
 /* Load `map` at fidelity `fid`, or the highest lower level that fits the
    level arena. Sets world_ok / fidelity and binds the renderer. */
 static int load_level(int map, int fid)
 {
 	world_ok = 0;
+	load_map = map;
 	for (int f = fid; f >= 0 && !world_ok; f--) {
-		world_ok = world_load(map, f);
+		load_fid = f;
+		world_ok = world_load(map, f, LOAD_PROGRESS);
 		if (world_ok)
 			fidelity = f;
 	}
@@ -118,12 +164,9 @@ static int load_level(int map, int fid)
 }
 
 /* L2: reload the map at the next fidelity level, keeping the camera where
-   it is; R2: next map, at its spawn. The CD reads block for a moment: fine
-   for debug controls. */
+   it is; R2: next map, at its spawn. */
 static void switch_level(int next_map)
 {
-	vid_text(8, 8, "loading...");
-	vid_flip();
 	if (next_map)
 		map_index = (map_index + 1) % (world_num_maps() ? world_num_maps() : 1);
 	else
@@ -182,6 +225,12 @@ static void run_frame(int interactive, int dump)
 	uint32_t t0 = prof_now();
 	if (interactive) {
 		pad_read();
+		if ((pad.held & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START) &&
+		    (pad.pressed & (PAD_SELECT | PAD_START))) {
+			in_menu  = 1;                      /* SELECT + START: the map menu */
+			menu_sel = map_index;
+			return;
+		}
 		if ((pad.held & (PAD_L1 | PAD_R1)) == (PAD_L1 | PAD_R1) &&
 		    (pad.pressed & (PAD_L1 | PAD_R1)))
 			overlay_on = !overlay_on;
@@ -199,6 +248,100 @@ static void run_frame(int interactive, int dump)
 		vid_dump();
 	vid_flip();
 }
+
+/* ------------------------------------------------------------ map menu -- */
+
+#ifndef Q1PSX_BENCH
+
+#define MENU_ROWS 16       /* two columns of 16: Quake's 32 maps */
+
+static int         complex_map = -1;      /* the "(complex)" one          */
+static const char *menu_msg = "";
+
+/* START is where Quake begins (the skill is picked there). The heaviest
+   view of all the cooked maps is e3m4's (540 k cycles at high,
+   BENCH_MAPS=1 scripts/bench.sh, R6.2); an episode-1 disc falls back to
+   e1m8's (419 k). */
+static void menu_init(void)
+{
+	static const char *const heaviest[] = { "E3M4", "E1M8" };
+	menu_sel = 0;
+	for (int m = 0; m < world_num_maps(); m++)
+		if (!strcmp(world_map_name(m), "START"))
+			menu_sel = m;
+	for (int i = 0; i < 2 && complex_map < 0; i++)
+		for (int m = 0; m < world_num_maps(); m++)
+			if (!strcmp(world_map_name(m), heaviest[i]))
+				complex_map = m;
+}
+
+static const char *map_tag(int m)
+{
+	if (!strcmp(world_map_name(m), "START"))
+		return " (default)";
+	return m == complex_map ? " (complex)" : "";
+}
+
+/* One frame of the menu: d-pad picks a map, L1 / R1 the fidelity level,
+   Cross / START loads it, Circle goes back to the loaded one. */
+static void menu_frame(void)
+{
+	int n = world_num_maps();
+
+	pad_read();
+	if (n) {
+		if (pad.pressed & PAD_UP)
+			menu_sel = (menu_sel + n - 1) % n;
+		if (pad.pressed & PAD_DOWN)
+			menu_sel = (menu_sel + 1) % n;
+		if (pad.pressed & PAD_RIGHT) {
+			if (menu_sel + MENU_ROWS < n)
+				menu_sel += MENU_ROWS;
+			else if (menu_sel < MENU_ROWS && n > MENU_ROWS)
+				menu_sel = n - 1;
+		}
+		if ((pad.pressed & PAD_LEFT) && menu_sel >= MENU_ROWS)
+			menu_sel -= MENU_ROWS;
+	}
+	if (pad.pressed & PAD_L1)
+		fid_wanted = (fid_wanted + FIDELITY_LEVELS - 1) % FIDELITY_LEVELS;
+	if (pad.pressed & PAD_R1)
+		fid_wanted = (fid_wanted + 1) % FIDELITY_LEVELS;
+	if ((pad.pressed & PAD_CIRCLE) && world_ok) {
+		in_menu = 0;                         /* back to the loaded map */
+		return;
+	}
+	if (n && (pad.pressed & (PAD_CROSS | PAD_START))) {
+		map_index = menu_sel;
+		if (load_level(map_index, fid_wanted)) {
+			player_spawn();
+			in_menu  = 0;
+			menu_msg = "";
+			return;
+		}
+		menu_msg = "could not load that map";
+	}
+
+	char line[48];
+	snprintf(line, sizeof line, "Q1PSX - choose a map (%d on the disc)", n);
+	vid_text(16, 10, line);
+	for (int m = 0; m < n; m++) {
+		int x = 24 + (m / MENU_ROWS) * 148, y = 30 + (m % MENU_ROWS) * 10;
+		snprintf(line, sizeof line, "%s%s", world_map_name(m), map_tag(m));
+		vid_text(x, y, line);
+		if (m == menu_sel)
+			ui_rect(x - 4, y - 1, 140, 10, 60, 70, 120);
+	}
+	if (!n)
+		vid_text(24, 30, "no cooked map on the disc");
+	snprintf(line, sizeof line, "fidelity  < %s >   (L1 / R1)", fidelity_name[fid_wanted]);
+	vid_text(16, 196, line);
+	vid_text(16, 208, world_ok ? "X / START load   O back to the map" : "X / START load");
+	vid_text(16, 220, menu_msg[0] ? menu_msg : "in game: SELECT + START = this menu");
+	vid_flip();
+}
+
+#endif /* !Q1PSX_BENCH */
 
 /* --------------------------------------------------------------- bench -- */
 
@@ -544,14 +687,17 @@ int main(void)
 	world_scan_maps();
 #ifdef Q1PSX_BENCH
 	fid_wanted = Q1PSX_BENCH_FID;
-#endif
 	if (load_level(map_index, fid_wanted))
 		player_spawn();
-
-#ifdef Q1PSX_BENCH
 	run_bench();
 #else
-	for (;;)
-		run_frame(1, 0);
+	menu_init();
+	in_menu = 1;
+	for (;;) {
+		if (in_menu)
+			menu_frame();
+		else
+			run_frame(1, 0);
+	}
 #endif
 }

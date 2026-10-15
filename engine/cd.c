@@ -23,7 +23,7 @@ int cd_exists(const char *name, uint32_t *size)
 	return 1;
 }
 
-void *cd_load(const char *name, uint32_t *size)
+void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll)
 {
 	CdlFILE file;
 	if (!CdSearchFile(&file, name)) {
@@ -37,7 +37,18 @@ void *cd_load(const char *name, uint32_t *size)
 		return NULL;
 
 	CdControl(CdlSetloc, &file.pos, NULL);
-	if (!CdReadRetry((int) sectors, buf, CdlModeSpeed, 3) || CdReadSync(0, NULL) < 0) {
+	int left = -1;
+	if (CdReadRetry((int) sectors, buf, CdlModeSpeed, 3)) {
+		if (poll) {
+			/* CdReadSync(1) returns the sectors still to come, and must be
+			   called regularly for CdReadRetry to retry a failed read */
+			while ((left = CdReadSync(1, NULL)) > 0)
+				poll((sectors - (uint32_t) left) * SECTOR);
+		} else {
+			left = CdReadSync(0, NULL);
+		}
+	}
+	if (left < 0) {
 		printf("cd: read error on %s\n", name);
 		return NULL;
 	}

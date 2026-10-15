@@ -53,9 +53,15 @@ int         world_scan_maps(void);
 int         world_num_maps(void);
 const char *world_map_name(int map);   /* "START", "E1M1", ... */
 
+/* Load progress: `done` of `total` bytes (texture file + world file). Called
+   about once per frame while the CD reads, and once per step in between; it
+   may draw and flip a frame (a loading bar). */
+typedef void (*world_progress_fn)(uint32_t done, uint32_t total);
+
 /* Load map `map` (0 .. world_num_maps() - 1) at a fidelity level; resets
-   the level arena. 1 on success, 0 if missing or too big for the arena. */
-int world_load(int map, int fidelity);
+   the level arena. 1 on success, 0 if missing or too big for the arena.
+   `progress` may be NULL (the reads then block). */
+int world_load(int map, int fidelity, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);

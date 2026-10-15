@@ -833,3 +833,13 @@ followed by R0-R4.
   - Same cycles.
   - World sizes +584 bytes over the 32 maps.
   - New display-list reference `lit15`.
+- **Map menu + loading bar** (2026-10-15). Details:
+  `docs/porting-notes.md` §17.
+  - **Menu.** At boot, a menu lists every map on the disc (two columns)
+    and the fidelity level; SELECT + START in game comes back to it. START
+    is tagged `(default)` and e3m4 `(complex)` (the heaviest view of all
+    maps, 540 k cycles).
+  - **Loading bar.** Loads show the map, a progress bar and a
+    percentage: CD reads run in the background (`CdReadRetry` +
+    `CdReadSync(1)` polled once per frame). There is no more black
+    screen.
