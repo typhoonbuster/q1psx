@@ -1375,3 +1375,40 @@ more affine warp, as expected (an eye on screen decides).
 
   Every episode-1 map now fits at high. Four are still above the 700 KB
   target, for R5.3.
+
+### 14.4 R5.3a — shared vertices
+
+Each Quake vertex was stored once per face record that used it: 3.4 copies
+on average (e1m4: 27 509 vertices, 8 145 distinct).
+- **Format QWV4.** A per-map vertex pool (`qw_vert`, 8 B, `lwc2`-ready).
+- **Records.** They hold 16-bit indices into the pool, padded with copies
+  of the first to a multiple of 3, then to 4 bytes, plus the offset of
+  their first polygon (`polys`, +18).
+  - The padding is there because the renderer transforms three vertices
+    at a time and once read up to two vertices past the list.
+  - The polygons' per-record slot indices (× 4, into the scratchpad
+    cache) are unchanged.
+- **Renderer.** `dr_xf` gathers the three vertices of each RTPT through the
+  indices (`lhu`, `sll 3`, `addu` the pool base). The slow path and its C
+  reference fetch through the pool the same way.
+- **Cook.** A hash table on (x, y, z) builds the pool; `qcook check`
+  validates every index.
+
+**Results.**
+- World, high:
+
+  | map | before | after |
+  |---|---|---|
+  | start | 720 KB | 648 KB |
+  | e1m4 | 823 KB | 741 KB |
+  | e1m7 | 213 KB | 191 KB |
+
+  Episode 1 now spans 191-741 KB; only e1m4 is still above 700 KB.
+- The gather costs about 5 % of the heaviest frame: start's spawn view
+  426 k → 450 k cycles, still 1 vblank everywhere.
+- The images are identical to R5.2.
+- Caching transformed vertices across records (each pool vertex
+  transformed once per frame) would need about 8 B of RAM per vertex,
+  which is what this step saves; not done.
+- `scripts/cook.sh` now empties `cooked/id1` first: a map cooked earlier
+  in an older format had stayed on the disc and failed to load.

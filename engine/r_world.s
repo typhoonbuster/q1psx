@@ -644,18 +644,29 @@ dr_draw:
 	sw      $t0, SP_RECORDS($t8)
 	sw      $t1, SP_VERTS($t8)
 
-	addiu   $t3, $a0, R_VERTS            # vertex source
+	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
+	lw      $t9, RS_VERTPOOL($s0)        # (padded to threes: no stray reads)
 	move    $t4, $t8                     # cache cursor
 	move    $t5, $t2                     # vertices left
 dr_xf:
-	lwc2    C2_VXY0, 0($t3)
-	lwc2    C2_VZ0,  4($t3)
-	lwc2    C2_VXY1, 8($t3)
-	lwc2    C2_VZ1, 12($t3)
-	lwc2    C2_VXY2,16($t3)
-	lwc2    C2_VZ2, 20($t3)
-	addiu   $t3, $t3, 24
+	lhu     $t0, 0($t3)
+	lhu     $t1, 2($t3)
+	lhu     $t6, 4($t3)
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t9
+	sll     $t1, $t1, 3
+	lwc2    C2_VXY0, 0($t0)
+	lwc2    C2_VZ0,  4($t0)
+	addu    $t1, $t1, $t9
+	sll     $t6, $t6, 3
+	lwc2    C2_VXY1, 0($t1)
+	lwc2    C2_VZ1,  4($t1)
+	addu    $t6, $t6, $t9
+	addiu   $t3, $t3, 6
+	lwc2    C2_VXY2, 0($t6)
+	lwc2    C2_VZ2,  4($t6)
 	addiu   $t5, $t5, -3
+	nop
 	RTPT
 	swc2    C2_SXY0, SP_SXY+0($t4)
 	swc2    C2_SXY1, SP_SXY+4($t4)
@@ -682,9 +693,9 @@ dr_nz:
 
 dr_polys:
 
-	sll     $t0, $t2, 3
-	addu    $a3, $a0, $t0
-	addiu   $a3, $a3, R_VERTS            # first polygon
+	lhu     $t0, R_POLYS($a0)
+	nop
+	addu    $a3, $a0, $t0                # first polygon
 	lbu     $at, R_NQUADS($a0)
 	lw      $t1, SP_POLYS($t8)
 	lbu     $t0, R_NTRIS($a0)

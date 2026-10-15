@@ -31,6 +31,7 @@
 .set RS_STAT_SLOW,    148
 .set RS_TICKS_SLOW,   152
 .set RS_TEXTURES,     156
+.set RS_VERTPOOL,     160
 
 # ---- qw_node (56 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3] (+ pad): lwc2-ready
@@ -62,6 +63,7 @@
 .set R_TEX,       8     # index into the qw_tex table (8 B: clut, tpage, window)
 .set R_SR,       10     # bounding sphere radius
 .set R_SC,       12     # bounding sphere centre (lwc2-ready)
+.set R_POLYS,    18     # byte offset of the first quad / tri
 .set R_VERTS,    20
 .set POLY_SIZE,  12
 

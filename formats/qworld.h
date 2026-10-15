@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWV3" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWV4" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -36,7 +36,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV3"
+#define QWORLD_MAGIC "QWV4"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   63      /* per face record (multiple of 3)        */
@@ -54,7 +54,7 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV3"                                  */
+	char     magic[4];             /* "QWV4"                                  */
 	uint32_t num_nodes;
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
@@ -72,6 +72,8 @@ typedef struct {
 	uint32_t max_depth;            /* deepest node chain (<= QW_MAX_DEPTH)    */
 	uint32_t num_visleafs;          /* PVS row = (num_visleafs + 7) / 8 bytes */
 	uint32_t ofs_tex, num_tex;     /* qw_tex[num_tex], indexed by record.tex  */
+	uint32_t ofs_verts, num_verts; /* qw_vert[num_verts]: the map's vertex pool,
+	                                  shared by every record (16-bit indices) */
 	uint32_t reserved[1];
 } qw_header;
 
@@ -109,9 +111,10 @@ typedef struct {
 	int32_t  contents;     /* +32 Quake CONTENTS_*                             */
 } qw_leaf;                 /* 36 bytes */
 
-/* Face record: header, then verts, then quads, then tris. All the pieces of
-   a record come from one Quake face, hence one texture: the GPU tpage and
-   CLUT words are stored once here. */
+/* Face record: header, then its vertex indices into the map's pool (uint16,
+   padded with copies of the first to a multiple of 3 entries, then to 4
+   bytes: the renderer transforms three at a time), then quads, then tris.
+   All the pieces of a record come from one Quake face, hence one texture. */
 typedef struct {
 	uint16_t face_id;      /* +0  Quake face index (visframe slot)            */
 	uint8_t  num_verts;    /* +2  <= QW_MAX_VERTS (the renderer transforms in
@@ -125,7 +128,7 @@ typedef struct {
 	uint16_t sr;           /* +10 bounding sphere radius, vertex units         */
 	int16_t  sc[3];        /* +12 bounding sphere centre, vertex units:
 	                              +12 / +16 load straight into VXY0 / VZ0       */
-	uint16_t pad;          /* +18                                             */
+	uint16_t polys;        /* +18 byte offset of the first quad / tri         */
 } qw_record;               /* 20 bytes */
 
 typedef struct {

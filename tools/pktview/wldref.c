@@ -114,6 +114,7 @@ static void load_tex(const char *path)
 
 /* the map's texture table, and the record being drawn's window (GP0 E2h) */
 static const qw_tex *textures;
+static const qw_vert *pool;     /* the map's vertex pool */
 static uint32_t      twin;
 
 static void use_tex(const qw_record *r, int *tpage, int *clut)
@@ -227,10 +228,10 @@ static void render(const uint8_t *d, const qw_header *h, const qw_view *vw)
 		memcpy(&r, at, sizeof r);
 		int tpage, clut;
 		use_tex(&r, &tpage, &clut);
-		const qw_vert *v = (const qw_vert *) (at + sizeof r);
-		const uint8_t *q = at + sizeof r + r.num_verts * sizeof(qw_vert);
+		const uint16_t *v = (const uint16_t *) (at + sizeof r);   /* pool indices */
+		const uint8_t *q = at + r.polys;
 		cv tv[QW_MAX_VERTS];
-		for (int i = 0; i < r.num_verts; i++) to_view(&v[i], &tv[i]);
+		for (int i = 0; i < r.num_verts; i++) to_view(&pool[v[i]], &tv[i]);
 		for (int k = 0; k < r.num_quads; k++, q += sizeof(qw_quad)) {
 			qw_quad qd;
 			memcpy(&qd, q, sizeof qd);
@@ -364,10 +365,10 @@ static void render_painter(const uint8_t *d, const qw_header *h, const qw_view *
 		memcpy(&r, rp, sizeof r);
 		int tpage, clut;
 		use_tex(&r, &tpage, &clut);
-		const qw_vert *v = (const qw_vert *) (rp + sizeof r);
-		const uint8_t *q = rp + sizeof r + r.num_verts * sizeof(qw_vert);
+		const uint16_t *v = (const uint16_t *) (rp + sizeof r);
+		const uint8_t *q = rp + r.polys;
 		cv tv[QW_MAX_VERTS];
-		for (int i = 0; i < r.num_verts; i++) to_view(&v[i], &tv[i]);
+		for (int i = 0; i < r.num_verts; i++) to_view(&pool[v[i]], &tv[i]);
 		for (int k = 0; k < r.num_quads; k++, q += sizeof(qw_quad)) {
 			qw_quad qd; memcpy(&qd, q, sizeof qd);
 			cv c[4];
@@ -456,6 +457,7 @@ int main(int argc, char **argv)
 	memcpy(&h, d, sizeof h);
 	if (memcmp(h.magic, QWORLD_MAGIC, 4)) { fprintf(stderr, "wldref: not a %s file\n", QWORLD_MAGIC); return 1; }
 	textures = (const qw_tex *) (d + h.ofs_tex);
+	pool     = (const qw_vert *) (d + h.ofs_verts);
 	const qw_view *views = (const qw_view *) (d + h.ofs_views);
 	for (uint32_t i = 0; i < h.num_views; i++) {
 		if (argc > 4 && (uint32_t) atoi(argv[4]) != i) continue;

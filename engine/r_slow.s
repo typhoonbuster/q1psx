@@ -63,14 +63,18 @@ sp_xf:
 	xor     $t0, $t0, $a3
 	move    $t0, $a3                     # triangle: k
 1:	addu    $t1, $a1, $t0
-	lbu     $t2, 0($t1)                  # vertex offset (index x 4)
+	lbu     $t2, 0($t1)                  # vertex slot (x 4)
 	sll     $t3, $t0, 1
 	addu    $t3, $t3, $a1
 	lhu     $t3, 4($t3)                  # uv
-	sll     $t2, $t2, 1                  # index x 8
+	srl     $t2, $t2, 1                  # slot x 2: its pool index's offset
 	addu    $t2, $t2, $a0
-	lwc2    C2_VXY0, R_VERTS+0($t2)
-	lwc2    C2_VZ0,  R_VERTS+4($t2)
+	lhu     $t2, R_VERTS($t2)            # pool index
+	lw      $t9, RS_VERTPOOL($s0)
+	sll     $t2, $t2, 3
+	addu    $t2, $t2, $t9
+	lwc2    C2_VXY0, 0($t2)
+	lwc2    C2_VZ0,  4($t2)
 	sll     $t4, $a3, 5
 	addu    $t4, $t4, $v1                # pool[k]
 	MVMVA   1, 0, 0, 0, 0                # MAC = rot * v + TR (view space)

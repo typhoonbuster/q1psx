@@ -25,6 +25,7 @@ _Static_assert(offsetof(r_state_t, force_mark)   == 136, "r_state layout");
 _Static_assert(offsetof(r_state_t, leaves_end)   == 140, "r_state layout");
 _Static_assert(offsetof(r_state_t, ot_head)      == 144, "r_state layout");
 _Static_assert(offsetof(r_state_t, textures)     == 156, "r_state layout");
+_Static_assert(offsetof(r_state_t, vertpool)     == 160, "r_state layout");
 _Static_assert(offsetof(r_state_t, stat_slow)    == 148, "r_state layout");
 _Static_assert(offsetof(r_state_t, ticks_slow)   == 152, "r_state layout");
 _Static_assert(offsetof(qw_node, faces)          == 44,  "qw_node layout");
@@ -94,6 +95,7 @@ void r_bind_world(void)
 	r_state.leaves_end    = (uint32_t) (world.leaves + world.num_leaves);
 	r_state.rowbytes      = world.vis_rowbytes;
 	r_state.textures      = (uint32_t) world.textures;
+	r_state.vertpool      = (uint32_t) world.verts;
 	r_state.framecount    = 1;
 	r_state.visframe      = 1;
 	r_state.view_leaf     = 0;

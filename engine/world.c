@@ -105,6 +105,8 @@ int world_load(int map, int fid)
 	world.views       = (const qw_view *) (f + h->ofs_views);
 	world.textures    = (const qw_tex *) (f + h->ofs_tex);
 	world.num_tex     = h->num_tex;
+	world.verts       = (const qw_vert *) (f + h->ofs_verts);
+	world.num_verts   = h->num_verts;
 	world.num_nodes   = h->num_nodes;
 	world.num_leaves  = h->num_leaves;
 	world.num_faces   = h->num_faces;

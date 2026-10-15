@@ -55,6 +55,7 @@ typedef struct {
 	uint32_t stat_slow;      /* +148 triangles emitted by the slow path      */
 	uint32_t ticks_slow;     /* +152 timer-2 ticks spent in the slow path    */
 	uint32_t textures;       /* +156 qw_tex * (CLUT, tpage, texture window)  */
+	uint32_t vertpool;       /* +160 qw_vert *: the map's vertex pool        */
 } r_state_t;
 
 extern r_state_t r_state;

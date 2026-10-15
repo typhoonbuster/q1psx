@@ -33,6 +33,8 @@ typedef struct {
 	int32_t        hull1_root, hull2_root;
 	const qw_tex  *textures;        /* [num_tex]: CLUT, tpage, window */
 	uint32_t       num_tex;
+	const qw_vert *verts;           /* [num_verts]: the vertex pool   */
+	uint32_t       num_verts;
 } world_t;
 
 #ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */

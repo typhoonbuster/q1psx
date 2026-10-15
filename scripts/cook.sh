@@ -33,7 +33,10 @@ case "${COOK_MAPS:-ep1}" in
 esac
 
 make -s -C tools/qcook
+# start clean: the disc carries every cooked file, so a map cooked earlier
+# (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
+rm -f cooked/id1/*.tex cooked/id1/*.wld
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 

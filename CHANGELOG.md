@@ -736,3 +736,14 @@ followed by R0-R4.
   - **Costs:** some near views spend more in the slow path (larger
     polygons). Affine warp is slightly more visible on big polygons; the
     eye on screen decides.
+- **R5.3a — shared vertices.** Details: `docs/porting-notes.md` §14.4.
+  - **Format QWV4:** a per-map vertex pool; records hold 16-bit indices
+    (padded to threes) and their polygon offset.
+  - **Engine:** the renderer, the slow path and the tools gather through
+    the pool.
+  - **World, high:** start 720 → 648 KB, e1m4 823 → 741 KB; episode 1 now
+    spans 191-741 KB.
+  - **Cost:** about +5 % on the heaviest frame (426 k → 450 k, still
+    1 vblank). Images identical to R5.2.
+  - `cook.sh` starts from an empty `cooked/id1`, so a stale map of an
+    older format can no longer reach the disc.

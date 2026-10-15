@@ -226,7 +226,8 @@ static void subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 {
 	const qw_record *r     = (const qw_record *) rec;
-	const qw_vert   *verts = (const qw_vert *) (rec + sizeof(qw_record));
+	const uint16_t  *vidx  = (const uint16_t *) (rec + sizeof(qw_record));   /* into the pool */
+	const qw_vert   *pool  = (const qw_vert *) s->vertpool;
 	const uint16_t  *uvs   = (const uint16_t *) (poly + 4);
 	static const int quad_cycle[4] = { 0, 1, 3, 2 };   /* PS1 order -> ring */
 
@@ -238,7 +239,7 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	const int16_t *m = s->rot;
 	for (int k = 0; k < nv; k++) {
 		int j = nv == 4 ? quad_cycle[k] : k;
-		const qw_vert *p = &verts[poly[j] >> 2];
+		const qw_vert *p = &pool[vidx[poly[j] >> 2]];
 		sv_t *o = &in[k];
 		o->x = ((m[0] * p->x + m[1] * p->y + m[2] * p->z) >> 12) + s->tr[0];
 		o->y = ((m[3] * p->x + m[4] * p->y + m[5] * p->z) >> 12) + s->tr[1];

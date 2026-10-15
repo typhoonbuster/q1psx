@@ -122,7 +122,50 @@ typedef struct {
 typedef struct {
 	buf_t    stream;
 	uint32_t records, quads, tris, verts, pieces, faces_split;
+	vkey    *pool;          /* the map's distinct vertices          */
+	int      npool, cap;
+	int     *hash;          /* open addressing: pool index + 1      */
+	int      hsize;         /* power of two                         */
 } out_t;
+
+/* index of vertex k in the map's pool, adding it if new */
+static int pool_index(out_t *o, vkey k)
+{
+	if (2 * (o->npool + 1) > o->hsize) {               /* grow + rehash */
+		int nh = o->hsize ? o->hsize * 2 : 1 << 14;
+		int *h = xcalloc((size_t) nh, sizeof *h);
+		for (int i = 0; i < o->npool; i++) {
+			uint32_t x = ((uint32_t) (uint16_t) o->pool[i].x * 73856093u) ^
+			             ((uint32_t) (uint16_t) o->pool[i].y * 19349663u) ^
+			             ((uint32_t) (uint16_t) o->pool[i].z * 83492791u);
+			uint32_t at = x & (uint32_t) (nh - 1);
+			while (h[at]) at = (at + 1) & (uint32_t) (nh - 1);
+			h[at] = i + 1;
+		}
+		free(o->hash);
+		o->hash  = h;
+		o->hsize = nh;
+	}
+	uint32_t x = ((uint32_t) (uint16_t) k.x * 73856093u) ^ ((uint32_t) (uint16_t) k.y * 19349663u) ^
+	             ((uint32_t) (uint16_t) k.z * 83492791u);
+	uint32_t at = x & (uint32_t) (o->hsize - 1);
+	while (o->hash[at]) {
+		const vkey *p = &o->pool[o->hash[at] - 1];
+		if (p->x == k.x && p->y == k.y && p->z == k.z)
+			return o->hash[at] - 1;
+		at = (at + 1) & (uint32_t) (o->hsize - 1);
+	}
+	if (o->npool >= 65535)
+		die("more than 65535 distinct vertices");
+	if (o->npool == o->cap) {
+		o->cap  = o->cap ? o->cap * 2 : 4096;
+		o->pool = realloc(o->pool, (size_t) o->cap * sizeof *o->pool);
+		if (!o->pool) die("out of memory");
+	}
+	o->pool[o->npool] = k;
+	o->hash[at] = o->npool + 1;
+	return o->npool++;
+}
 
 static int rec_find_or_add(rec_t *r, vkey k)
 {
@@ -148,10 +191,11 @@ static void rec_flush(out_t *o, rec_t *r, int face_id, const tex_slot *s)
 	h.num_quads = (uint8_t) r->nq;
 	h.num_tris  = (uint8_t) r->nt;
 	h.flags     = s->flags;
-	h.size      = (uint16_t) (sizeof h + r->nv * sizeof(qw_vert) +
-	                          r->nq * sizeof(qw_quad) + r->nt * sizeof(qw_tri));
 	h.tex       = (uint16_t) s->index;
-	h.pad       = 0;
+	int nidx    = (r->nv + 2) / 3 * 3;                /* padded index count */
+	int ibytes  = (nidx * 2 + 3) & ~3;
+	h.polys     = (uint16_t) (sizeof h + ibytes);
+	h.size      = (uint16_t) (h.polys + r->nq * sizeof(qw_quad) + r->nt * sizeof(qw_tri));
 
 	/* bounding sphere: bbox centre, radius = farthest vertex (rounded up) */
 	long lo[3] = { 32767, 32767, 32767 }, hi[3] = { -32768, -32768, -32768 };
@@ -173,10 +217,12 @@ static void rec_flush(out_t *o, rec_t *r, int face_id, const tex_slot *s)
 	if (rad > 65000) die("record radius %.0f too large", rad);
 	h.sr = (uint16_t) ceil(rad + 1);
 	buf_put(&o->stream, &h, sizeof h);
-	for (int i = 0; i < r->nv; i++) {
-		qw_vert v = { r->v[i].x, r->v[i].y, r->v[i].z, 0 };
-		buf_put(&o->stream, &v, sizeof v);
-	}
+	uint16_t idx[QW_MAX_VERTS + 3] = { 0 };
+	for (int i = 0; i < r->nv; i++)
+		idx[i] = (uint16_t) pool_index(o, r->v[i]);
+	for (int i = r->nv; i < nidx; i++)
+		idx[i] = idx[0];
+	buf_put(&o->stream, idx, (size_t) ibytes);
 	buf_put(&o->stream, r->q, (size_t) r->nq * sizeof(qw_quad));
 	buf_put(&o->stream, r->t, (size_t) r->nt * sizeof(qw_tri));
 
@@ -617,6 +663,14 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	h.ofs_views = (uint32_t) f.len;  buf_put(&f, views, (size_t) nviews * sizeof *views);
 	buf_align4(&f);
 
+	/* the vertex pool every record indexes */
+	h.ofs_verts = (uint32_t) f.len;
+	h.num_verts = (uint32_t) o.npool;
+	for (int i = 0; i < o.npool; i++) {
+		qw_vert v = { o.pool[i].x, o.pool[i].y, o.pool[i].z, 0 };
+		buf_put(&f, &v, sizeof v);
+	}
+
 	/* texture table: CLUT, tpage and texture window per miptex */
 	h.ofs_tex = (uint32_t) f.len;
 	h.num_tex = (uint32_t) b->num_miptex;
@@ -682,10 +736,10 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	printf("qcook: %s — %u B: nodes %zu, leaves %zu, marks %u, vis %u, faces %u\n",
 	       out_path, (uint32_t) f.len, b->num_nodes * sizeof *nodes,
 	       b->num_leaves * sizeof *leaves, b->num_marks * 2, b->vis_len, h.len_faces);
-	printf("qcook:   %u records, %u pieces -> %u quads + %u tris, %u verts "
-	       "(%.1f/record); %u faces split; depth %u; %d bench views\n",
+	printf("qcook:   %u records, %u pieces -> %u quads + %u tris, %u vertex refs "
+	       "(%.1f/record) into a pool of %d; %u faces split; depth %u; %d bench views\n",
 	       o.records, o.pieces, o.quads, o.tris, o.verts,
-	       o.records ? (double) o.verts / o.records : 0.0, o.faces_split,
+	       o.records ? (double) o.verts / o.records : 0.0, o.npool, o.faces_split,
 	       h.max_depth, nviews);
 	if (has_spawn)
 		printf("qcook:   spawn %d %d %d yaw %d\n", h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
@@ -727,6 +781,7 @@ int world_check(const char *path)
 	SECTION(h.ofs_faces, h.len_faces);
 	SECTION(h.ofs_views, h.num_views * sizeof(qw_view));
 	SECTION(h.ofs_tex, h.num_tex * sizeof(qw_tex));
+	SECTION(h.ofs_verts, h.num_verts * sizeof(qw_vert));
 	if (h.max_depth > QW_MAX_DEPTH)
 		FAIL("depth %u > %d", h.max_depth, QW_MAX_DEPTH);
 	if (h.root >= h.num_nodes)
@@ -760,14 +815,20 @@ int world_check(const char *path)
 				qw_record r;
 				if (at + sizeof r > end) FAIL("node %u: truncated record", i);
 				memcpy(&r, fs + at, sizeof r);
-				uint32_t sz = (uint32_t) (sizeof r + r.num_verts * sizeof(qw_vert) +
-				              r.num_quads * sizeof(qw_quad) + r.num_tris * sizeof(qw_tri));
+				uint32_t nidx = (r.num_verts + 2u) / 3u * 3u;
+				uint32_t pofs = (uint32_t) sizeof r + ((nidx * 2u + 3u) & ~3u);
+				uint32_t sz = pofs + r.num_quads * (uint32_t) sizeof(qw_quad) +
+				              r.num_tris * (uint32_t) sizeof(qw_tri);
+				if (r.polys != pofs) FAIL("record at %u: polys at %u != %u", at, r.polys, pofs);
 				if (r.size != sz) FAIL("record at %u: size %u != %u", at, r.size, sz);
 				if (!r.num_verts || r.num_verts > QW_MAX_VERTS)
 					FAIL("record at %u: %u verts", at, r.num_verts);
 				if (r.face_id >= h.num_faces) FAIL("record at %u: face id %u", at, r.face_id);
 				if (r.tex >= h.num_tex) FAIL("record at %u: texture %u", at, r.tex);
-				const uint8_t *q = fs + at + sizeof r + r.num_verts * sizeof(qw_vert);
+				const uint16_t *vi = (const uint16_t *) (fs + at + sizeof r);
+				for (uint32_t k = 0; k < nidx; k++)
+					if (vi[k] >= h.num_verts) FAIL("record at %u: vertex %u out of the pool", at, vi[k]);
+				const uint8_t *q = fs + at + r.polys;
 				for (int k = 0; k < r.num_quads; k++, q += sizeof(qw_quad))
 					for (int c = 0; c < 4; c++)
 						if (q[c] & 3 || q[c] / 4 >= r.num_verts) FAIL("record at %u: quad index", at);
