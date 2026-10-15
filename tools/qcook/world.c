@@ -117,7 +117,30 @@ typedef struct {
 	int     nq, nt;
 	qw_quad q[256];
 	qw_tri  t[256];
+	int     faces[256];     /* Quake faces with pieces in this record */
+	int     nfaces;
+	double  mn[3], mx[3];   /* bbox of those faces (world units)      */
 } rec_t;
+
+/* A record holding several faces stays about one qbsp face in size: its
+   bounding sphere is the renderer's frustum test, and a bigger one lets
+   off-screen neighbours through. */
+#define REC_MAX_RADIUS 160.0
+
+static void face_bbox(const bsp_t *b, int f, double mn[3], double mx[3])
+{
+	const bsp_face *bf = &b->faces[f];
+	for (int k = 0; k < 3; k++) { mn[k] = 1e30; mx[k] = -1e30; }
+	for (int e = 0; e < bf->numedges; e++) {
+		int se = b->surfedges[bf->firstedge + e];
+		int vi = se >= 0 ? b->edges[se * 2] : b->edges[-se * 2 + 1];
+		for (int k = 0; k < 3; k++) {
+			double v = b->verts[vi * 3 + k];
+			if (v < mn[k]) mn[k] = v;
+			if (v > mx[k]) mx[k] = v;
+		}
+	}
+}
 
 typedef struct {
 	buf_t    stream;
@@ -126,6 +149,9 @@ typedef struct {
 	int      npool, cap;
 	int     *hash;          /* open addressing: pool index + 1      */
 	int      hsize;         /* power of two                         */
+	int     *pair_face;     /* (face, record) pairs: which records  */
+	int     *pair_rec;      /* draw a piece of which face           */
+	int      npairs, pcap;
 } out_t;
 
 /* index of vertex k in the map's pool, adding it if new */
@@ -178,7 +204,10 @@ static int rec_find_or_add(rec_t *r, vkey k)
 	return r->nv++;
 }
 
-static void rec_flush(out_t *o, rec_t *r, int face_id, const tex_slot *s)
+/* A record's visibility id is its own index: the walk stamps it when any
+   leaf marking one of its faces is visible (marks are rewritten from faces
+   to records). */
+static void rec_flush(out_t *o, rec_t *r, const tex_slot *s)
 {
 	if (!r->nq && !r->nt) {
 		r->nv = 0;
@@ -186,7 +215,22 @@ static void rec_flush(out_t *o, rec_t *r, int face_id, const tex_slot *s)
 	}
 
 	qw_record h;
-	h.face_id   = (uint16_t) face_id;
+	if (o->records >= 65535)
+		die("more than 65535 face records");
+	h.face_id   = (uint16_t) o->records;
+	for (int i = 0; i < r->nfaces; i++) {
+		if (o->npairs == o->pcap) {
+			o->pcap      = o->pcap ? o->pcap * 2 : 4096;
+			o->pair_face = realloc(o->pair_face, (size_t) o->pcap * sizeof *o->pair_face);
+			o->pair_rec  = realloc(o->pair_rec, (size_t) o->pcap * sizeof *o->pair_rec);
+			if (!o->pair_face || !o->pair_rec) die("out of memory");
+		}
+		o->pair_face[o->npairs] = r->faces[i];
+		o->pair_rec[o->npairs]  = (int) o->records;
+		o->npairs++;
+	}
+	r->nfaces = 0;
+	for (int k = 0; k < 3; k++) { r->mn[k] = 1e30; r->mx[k] = -1e30; }
 	h.num_verts = (uint8_t) r->nv;
 	h.num_quads = (uint8_t) r->nq;
 	h.num_tris  = (uint8_t) r->nt;
@@ -248,7 +292,7 @@ static uint16_t uvword(const tex_slot *s, double u, double v)
 /* Add one convex piece (UVs already local to its tile) to the record,
    flushing first if its vertices would not fit. */
 static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*uv)[2],
-                          const tex_slot *s, int face_id)
+                          const tex_slot *s, int face)
 {
 	vkey keys[MAXPV];
 	for (int i = 0; i < pc->n; i++) {
@@ -269,7 +313,13 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 	}
 	int tris_needed = pc->n - 2;
 	if (r->nv + fresh > QW_MAX_VERTS || r->nq + tris_needed > 255 || r->nt + 1 > 255)
-		rec_flush(o, r, face_id, s);
+		rec_flush(o, r, s);
+
+	int known = 0;
+	for (int i = 0; i < r->nfaces && !known; i++)
+		known = r->faces[i] == face;
+	if (!known)
+		r->faces[r->nfaces++] = face;
 
 	int idx[MAXPV];
 	for (int i = 0; i < pc->n; i++) {
@@ -301,8 +351,56 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 	o->pieces++;
 }
 
-/* Cut one Quake face on its texture-repeat grid and append its records. */
-static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f)
+/* union-find over faces */
+static int uf_find(int *up, int x)
+{
+	while (up[x] != x) {
+		up[x] = up[up[x]];
+		x = up[x];
+	}
+	return x;
+}
+
+/* Are two faces marked by exactly the same leaves? (lists sorted) Then
+   they are always visible together, and a record holding both draws
+   nothing a per-face record would not. */
+static int same_marks(const int *first, const int *leaf, int f, int g)
+{
+	int a = first[f], ae = first[f + 1], c = first[g], ce = first[g + 1];
+	if (ae - a != ce - c)
+		return 0;
+	for (; a < ae; a++, c++)
+		if (leaf[a] != leaf[c])
+			return 0;
+	return 1;
+}
+
+/* do two faces share an edge? */
+static int faces_adjacent(const bsp_t *b, int f, int g)
+{
+	const bsp_face *a = &b->faces[f], *c = &b->faces[g];
+	for (int i = 0; i < a->numedges; i++) {
+		int ea = abs(b->surfedges[a->firstedge + i]);
+		for (int j = 0; j < c->numedges; j++)
+			if (abs(b->surfedges[c->firstedge + j]) == ea)
+				return 1;
+	}
+	return 0;
+}
+
+/* the miptex a face uses, or -1 */
+static int face_miptex(const bsp_t *b, int f)
+{
+	const bsp_face *bf = &b->faces[f];
+	if (bf->texinfo < 0 || bf->texinfo >= b->num_texinfo)
+		return -1;
+	int mt = b->texinfo[bf->texinfo].miptex;
+	return mt >= 0 && mt < b->num_miptex ? mt : -1;
+}
+
+/* Cut one Quake face on its texture-repeat grid and add its pieces to
+   record r (flushed whenever it fills up). */
+static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t *r)
 {
 	const bsp_face *bf = &b->faces[f];
 	if (bf->numedges < 3 || bf->texinfo < 0 || bf->texinfo >= b->num_texinfo)
@@ -349,7 +447,6 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f)
 	if ((i1 - i0 + 1) * (j1 - j0 + 1) > 1)
 		o->faces_split++;
 
-	rec_t *r = xcalloc(1, sizeof *r);
 	for (long i = i0; i <= i1; i++) {
 		poly_t a, c;
 		clip_poly(&pl, &a, 0, s0 + i * W, +1);
@@ -369,8 +466,6 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f)
 			rec_add_piece(o, r, &pc, (const double (*)[2]) uv, s, f);
 		}
 	}
-	rec_flush(o, r, f, s);
-	free(r);
 }
 
 /* ------------------------------------------------------------- entities -- */
@@ -490,6 +585,38 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	}
 
 	/* face stream, node by node: front block then back block */
+	int *uf_up     = xmalloc((size_t) b->num_faces * sizeof *uf_up);
+	int *edge_face = xmalloc((size_t) b->num_edges * sizeof *edge_face);   /* last face seen on an edge */
+	for (int e = 0; e < b->num_edges; e++)
+		edge_face[e] = -1;
+	int *face_group = xmalloc((size_t) b->num_faces * sizeof *face_group);
+	for (int f = 0; f < b->num_faces; f++)
+		face_group[f] = -1;
+	/* per face, the sorted list of leaves that mark it */
+	int *face_mfirst = xcalloc((size_t) b->num_faces + 1, sizeof *face_mfirst);
+	int *face_mleaf  = xmalloc((size_t) b->num_marks * sizeof *face_mleaf + 4);
+	for (int i = 0; i < b->num_leaves; i++)
+		for (int k = 0; k < b->leaves[i].nummarks; k++) {
+			int mk = b->leaves[i].firstmark + k;
+			if (mk >= 0 && mk < b->num_marks && b->marks[mk] < b->num_faces)
+				face_mfirst[b->marks[mk] + 1]++;
+		}
+	for (int f = 0; f < b->num_faces; f++)
+		face_mfirst[f + 1] += face_mfirst[f];
+	{
+		int *fill = xmalloc((size_t) b->num_faces * sizeof *fill);
+		memcpy(fill, face_mfirst, (size_t) b->num_faces * sizeof *fill);
+		for (int i = 0; i < b->num_leaves; i++)          /* leaves ascending: lists sorted */
+			for (int k = 0; k < b->leaves[i].nummarks; k++) {
+				int mk = b->leaves[i].firstmark + k;
+				if (mk >= 0 && mk < b->num_marks && b->marks[mk] < b->num_faces)
+					face_mleaf[fill[b->marks[mk]]++] = i;
+			}
+		free(fill);
+	}
+	int *memb  = xmalloc((size_t) b->num_faces * sizeof *memb);    /* a group's faces */
+	int *order = xmalloc((size_t) b->num_faces * sizeof *order);   /* ... breadth first */
+
 	out_t o;
 	memset(&o, 0, sizeof o);
 	if ((long) b->num_nodes * QW_NODE_WORDS >= QW_NOPARENT)
@@ -512,15 +639,117 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		n->parent = node_parent[i] == QW_NONE ? QW_NOPARENT
 		          : (uint16_t) (node_parent[i] * QW_NODE_WORDS);
 
+		/* Records hold several faces: those of a node side with the same
+		   texture that are connected (share an edge) - typically one surface
+		   qbsp cut for lightmaps, which the PS1 does not use. They share the
+		   record header and vertices. Visibility is per record (drawn when
+		   any leaf marking one of its faces is visible): records are filled
+		   breadth first, so a record is a compact patch and drawing it whole
+		   costs little. Unconnected faces stay apart. */
+		for (int f = bn->firstface; f < bn->firstface + bn->numfaces; f++)
+			uf_up[f] = f;
+		for (int f = bn->firstface; f < bn->firstface + bn->numfaces; f++)
+			for (int e = 0; e < b->faces[f].numedges; e++) {
+				int se = b->surfedges[b->faces[f].firstedge + e];
+				int ed = se >= 0 ? se : -se;
+				if (edge_face[ed] >= bn->firstface && edge_face[ed] < f &&
+				    b->faces[edge_face[ed]].side == b->faces[f].side &&
+				    face_miptex(b, edge_face[ed]) == face_miptex(b, f) &&
+				    same_marks(face_mfirst, face_mleaf, edge_face[ed], f))
+					uf_up[uf_find(uf_up, f)] = uf_find(uf_up, edge_face[ed]);
+				edge_face[ed] = f;
+			}
 		for (int side = 0; side < 2; side++) {
 			n->faces[side] = (uint32_t) o.stream.len;
-			if (!reach[i])
-				continue;
-			for (int f = bn->firstface; f < bn->firstface + bn->numfaces; f++)
-				if (b->faces[f].side == side)
-					emit_face(&o, b, ts, f);
+			for (int f = bn->firstface; f < bn->firstface + bn->numfaces; f++) {
+				if (b->faces[f].side != side || face_group[f] >= 0)
+					continue;
+				/* the group's faces, breadth first over shared edges, so each
+				   record holds a compact patch */
+				int root = uf_find(uf_up, f), nm = 0, nq = 0;
+				for (int g = f; g < bn->firstface + bn->numfaces; g++)
+					if (face_group[g] < 0 && uf_find(uf_up, g) == root)
+						memb[nm++] = g;
+				order[nq++] = memb[0];
+				face_group[memb[0]] = 1;
+				for (int q = 0; q < nq; q++)
+					for (int k = 0; k < nm; k++)
+						if (face_group[memb[k]] < 0 && faces_adjacent(b, order[q], memb[k])) {
+							face_group[memb[k]] = 1;
+							order[nq++] = memb[k];
+						}
+				for (int k = 0; k < nm; k++)           /* (connected: none left) */
+					if (face_group[memb[k]] < 0) {
+						face_group[memb[k]] = 1;
+						order[nq++] = memb[k];
+					}
+				rec_t *r = xcalloc(1, sizeof *r);
+				for (int k = 0; k < 3; k++) { r->mn[k] = 1e30; r->mx[k] = -1e30; }
+				if (reach[i])
+					for (int q = 0; q < nq; q++) {
+						/* keep the record compact: flush before a face that
+						   would grow it past REC_MAX_RADIUS */
+						double fmn[3], fmx[3], h2 = 0;
+						face_bbox(b, order[q], fmn, fmx);
+						for (int k = 0; k < 3; k++) {
+							double lo = fmn[k] < r->mn[k] ? fmn[k] : r->mn[k];
+							double hi = fmx[k] > r->mx[k] ? fmx[k] : r->mx[k];
+							h2 += (hi - lo) * (hi - lo) / 4;
+						}
+						if ((r->nq || r->nt) && h2 > REC_MAX_RADIUS * REC_MAX_RADIUS)
+							rec_flush(&o, r, &ts->slots[face_miptex(b, f)]);
+						for (int k = 0; k < 3; k++) {
+							if (fmn[k] < r->mn[k]) r->mn[k] = fmn[k];
+							if (fmx[k] > r->mx[k]) r->mx[k] = fmx[k];
+						}
+						emit_face(&o, b, ts, order[q], r);
+					}
+				if (r->nq || r->nt)
+					rec_flush(&o, r, &ts->slots[face_miptex(b, f)]);
+				free(r);
+			}
 		}
 	}
+
+	/* marksurfaces: faces -> the records drawing them, deduplicated per
+	   leaf; records are the visibility ids */
+	int *pair_first = xmalloc((size_t) b->num_faces * sizeof *pair_first);
+	int *pair_next  = xmalloc((size_t) (o.npairs + 1) * sizeof *pair_next);
+	for (int f = 0; f < b->num_faces; f++)
+		pair_first[f] = -1;
+	for (int p = o.npairs - 1; p >= 0; p--) {
+		pair_next[p] = pair_first[o.pair_face[p]];
+		pair_first[o.pair_face[p]] = p;
+	}
+	size_t mark_bound = 1;                     /* before deduplication */
+	for (int mk = 0; mk < b->num_marks; mk++)
+		if (b->marks[mk] < b->num_faces)
+			for (int p = pair_first[b->marks[mk]]; p >= 0; p = pair_next[p])
+				mark_bound++;
+	uint16_t *gmarks = xmalloc(mark_bound * 2);
+	int      *gfirst = xmalloc((size_t) b->num_leaves * sizeof *gfirst);
+	int      *gcount = xmalloc((size_t) b->num_leaves * sizeof *gcount);
+	int       ngmarks = 0;
+	for (int i = 0; i < b->num_leaves; i++) {
+		const bsp_leaf *bl = &b->leaves[i];
+		gfirst[i] = ngmarks;
+		for (int k = 0; k < bl->nummarks; k++) {
+			int mk = bl->firstmark + k;
+			if (mk < 0 || mk >= b->num_marks || b->marks[mk] >= b->num_faces)
+				continue;
+			for (int p = pair_first[b->marks[mk]]; p >= 0; p = pair_next[p]) {
+				uint16_t g = (uint16_t) o.pair_rec[p];
+				int seen = 0;
+				for (int j = gfirst[i]; j < ngmarks && !seen; j++)
+					seen = gmarks[j] == g;
+				if (!seen)
+					gmarks[ngmarks++] = g;
+			}
+		}
+		gcount[i] = ngmarks - gfirst[i];
+	}
+	free(pair_first);
+	free(pair_next);
 	nodes[b->num_nodes].faces[0] = (uint32_t) o.stream.len;   /* sentinel: end of the stream */
 
 	/* leaves */
@@ -529,8 +758,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		const bsp_leaf *bl = &b->leaves[i];
 		qw_leaf *l = &leaves[i];
 		bbox(bl->mins, bl->maxs, l->c, l->h);
-		l->num_marks = (uint16_t) bl->nummarks;
-		l->marks     = (uint32_t) bl->firstmark;
+		l->num_marks = (uint16_t) gcount[i];
+		l->marks     = (uint32_t) gfirst[i];
 		l->parent    = leaf_parent[i] == QW_NONE ? QW_NOPARENT
 		             : (uint16_t) (leaf_parent[i] * QW_NODE_WORDS);
 		l->vis       = bl->visofs >= 0 && (uint32_t) bl->visofs < b->vis_len
@@ -638,8 +867,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	memcpy(h.magic, QWORLD_MAGIC, 4);
 	h.num_nodes   = (uint32_t) b->num_nodes;
 	h.num_leaves  = (uint32_t) b->num_leaves;
-	h.num_marks   = (uint32_t) b->num_marks;
-	h.num_faces   = (uint32_t) b->num_faces;
+	h.num_marks   = (uint32_t) ngmarks;
+	h.num_faces   = o.records;                 /* visibility ids: the records */
 	h.num_records = o.records;
 	h.num_pieces  = o.quads + o.tris;
 	h.num_views   = (uint32_t) nviews;
@@ -658,7 +887,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	buf_put(&f, &h, sizeof h);
 	h.ofs_nodes = (uint32_t) f.len;  buf_put(&f, nodes, (size_t) (b->num_nodes + 1) * sizeof *nodes);
 	h.ofs_leaves = (uint32_t) f.len; buf_put(&f, leaves, (size_t) b->num_leaves * sizeof *leaves);
-	h.ofs_marks = (uint32_t) f.len;  buf_put(&f, b->marks, (size_t) b->num_marks * 2); buf_align4(&f);
+	h.ofs_marks = (uint32_t) f.len;  buf_put(&f, gmarks, (size_t) ngmarks * 2); buf_align4(&f);
 	h.ofs_vis = (uint32_t) f.len;    buf_put(&f, b->vis, b->vis_len); buf_align4(&f);
 	h.len_vis = b->vis_len;
 	h.ofs_faces = (uint32_t) f.len;  buf_put(&f, o.stream.p, o.stream.len);
@@ -739,7 +968,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 
 	printf("qcook: %s — %u B: nodes %zu, leaves %zu, marks %u, vis %u, faces %u\n",
 	       out_path, (uint32_t) f.len, b->num_nodes * sizeof *nodes,
-	       b->num_leaves * sizeof *leaves, b->num_marks * 2, b->vis_len, h.len_faces);
+	       b->num_leaves * sizeof *leaves, ngmarks * 2, b->vis_len, h.len_faces);
 	printf("qcook:   %u records, %u pieces -> %u quads + %u tris, %u vertex refs "
 	       "(%.1f/record) into a pool of %d; %u faces split; depth %u; %d bench views\n",
 	       o.records, o.pieces, o.quads, o.tris, o.verts,
@@ -750,6 +979,9 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 
 	free(f.p); free(o.stream.p); free(nodes); free(leaves);
 	free(node_parent); free(leaf_parent); free(reach);
+	free(face_group); free(gmarks); free(gfirst); free(gcount); free(uf_up); free(edge_face);
+	free(memb); free(order); free(o.pair_face); free(o.pair_rec);
+	free(face_mfirst); free(face_mleaf);
 }
 
 /* ---------------------------------------------------------------- check -- */

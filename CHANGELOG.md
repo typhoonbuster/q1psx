@@ -759,3 +759,15 @@ followed by R0-R4.
   - **Cost:** about +3 % on the walk; images identical.
   - **Build:** a build-triggered re-cook keeps the cooked map set (it
     broke the ISO step).
+- **R5.3c — several faces per record.** Details: `docs/porting-notes.md`
+  §14.6.
+  - A record merges faces that qbsp cut for lightmaps: adjacent, same node
+    side and texture, marked by exactly the same leaves (visibility stays
+    exact), within a 160-unit radius (the frustum test stays tight).
+  - Records are the visibility ids, and the marks are rewritten to them.
+  - Every bench view is at or below its R5.3b cost (start's spawn view
+    454 k → 436 k); images identical.
+  - World: e3m5 768 → 739 KB, e1m4 677 → 655 KB; the 32 maps average
+    547 KB, and 3 are slightly above 700 KB.
+  - Looser grouping variants were measured and rejected: they drew up to
+    +70 % polygons.

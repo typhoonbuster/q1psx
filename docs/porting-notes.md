@@ -1456,3 +1456,38 @@ selects a set explicitly.
 That is not enough for e3m5's −68 KB. The step after this is R5.4: measure
 again, then lossy decimation for the few maps still over budget, or a
 budget revised once QuakeC and the models are measured (a call to make).
+
+### 14.6 R5.3c — several faces per record
+
+qbsp cuts large surfaces into faces of about 240 units, for lightmaps the
+PS1 does not use. A record may now hold several faces: adjacent (sharing an
+edge), same node side and texture. They share the 20-byte header and their
+vertex indices. Record ids are the visibility ids: a record is drawn when a
+leaf marking one of its faces is visible, and the marks are rewritten from
+faces to records (deduplicated per leaf).
+
+**Variants measured** (start's 12 views against the per-face records of
+R5.3b, PCSX dynarec):
+
+| grouping | worst frame | other views | polygons drawn, view 8 | e3m5 |
+|---|---|---|---|---|
+| none (R5.3b) | 454 k | — | 279 | 768 KB |
+| same node side + texture | 434 k | up to +40 % | 483 | 678 KB |
+| + connected, visibility per record | 422 k | up to +40 % | 465 | 684 KB |
+| + identical marking leaves | 431 k | +5 to +9 % | 333 | 715 KB |
+| **+ radius ≤ 160 units (kept)** | **436 k** | **all ≤ R5.3b** | **302** | **739 KB** |
+
+1. Grouping only by node side and texture draws whole groups (faces from
+   other rooms on the same plane) when one face is visible.
+2. Connectivity alone is not enough: a big floor cut into pieces spans
+   leaves with different visibility.
+3. Grouping only faces marked by exactly the same leaves makes visibility
+   exact. Bigger records then still let off-screen neighbours through the
+   per-record sphere test.
+4. Capping the merged record's radius at 160 units (about one qbsp face)
+   removes that. Faces are taken breadth first over shared edges, so
+   records are compact patches.
+
+Results: images identical; start 589 → 567 KB, e1m4 677 → 655 KB, e3m5
+768 → 739 KB. The 32 maps average 547 KB; three are slightly above 700 KB
+(e3m5 739, e4m7 720, e3m6 704).
