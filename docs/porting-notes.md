@@ -1883,3 +1883,91 @@ the sticks when the pad is in analog mode.
   - d-pad left strafes left;
   - half deflection settles at 122 u/s;
   - a deflection inside the dead zone does not move the player.
+
+## §19 — Texture warping and cracks (2026-10-15)
+
+**The report:** gaps between some textures, and texture warping severe enough to break the immersion, against the GBA engines
+in `reference/`, where there is no warping.
+
+**Why the GBA version has none.** Its renderer ("Mode 5 - quake ...
+correct") rasterizes in software:
+- it interpolates u/z, v/z and 1/z across each span;
+- it divides once per pixel (`fixdiv(1, z)` in its `AFFINE` macro).
+
+The PS1 GPU interpolates u and v linearly (affine) and cannot do that.
+The PS1 equivalent is to subdivide polygons until the affine error stays
+below a few pixels on screen.
+
+**Measured on the R6.2 renderer** (tools: `wldref`, a perspective-correct
+reference; `pktview` with `PKTVIEW_BG=255,0,255`, where uncovered pixels
+show up):
+- **Affine error.** The screen displacement of the texture between the
+  affine and the perspective-correct mapping, sampled over each drawn
+  triangle:
+  - 5-7 px on average over the bench views;
+  - 20-40 % of the drawn area above 4 px;
+  - up to ~90 px.
+
+  Only polygons nearer than 43 units were subdivided (span 96 px, depth
+  ratio 4/3); everything else is drawn as is. R5.2's texture windows made
+  the polygons bigger.
+- **Cracks.** 801 uncovered pixels over the 12 views, from three causes:
+  1. T-junctions in the cooked data: vertices of one piece lying on the
+     edge of another, from the cook's texture-grid cuts and qbsp's own
+     leftovers;
+  2. the slow path's subdivision splits shared edges that the fast-path
+     neighbour does not split;
+  3. the slow path re-projects its vertices itself (MVMVA, then RTPS in
+     2·I mode), so a shared edge lands up to a pixel away from the fast
+     path's RTPT one.
+
+**The plan chosen:**
+1. Repair T-junctions in the cook.
+2. Subdivide every polygon by an affine-error criterion. The criterion is
+   evaluated per edge from its two projected ends, so both neighbours
+   decide alike. It runs on a light screen-space path that reuses the
+   RTPT results.
+3. Put the slow path on the same data.
+
+The threshold follows the fidelity level: low 6 px, medium 4, high 3,
+ultra 2.
+
+### 19.1 Cook: T-junctions (step 1)
+
+- **`face_pieces`.** Every face of the world model is first cut into its
+  texture-grid pieces, for the whole map.
+- **`tj_repair`.** Each piece edge gets, in order, every quantized pool
+  position lying on it:
+  - "on it" means within half a world unit of the segment, more than half
+    a unit from its ends;
+  - the search runs on a 64-unit grid;
+  - their s/t come from the face's own texture vectors at that position,
+    so the pool shares them with the neighbour.
+- **Ear clipping** (`ear_clip`). Many pieces already had collinear
+  vertices on their boundary (qbsp's own T-junction fixes, the cook's
+  cuts). The fan of quads from vertex 0 paired them into zero-area
+  triangles, drawing the boundary as one segment over them. A piece whose
+  fan would have a zero-area GPU triangle is now ear-clipped:
+  - largest ear first;
+  - never an ear that would leave the rest flat;
+  - pairs of triangles sharing an edge go out as one quad, which the GPU
+    draws as exactly those two triangles.
+
+**Result on start at high:**
+
+| | before | after |
+|---|---|---|
+| T-junctions on piece boundaries | 217 | 0 |
+| polygons | 8207 | 8337 (+1.6 %) |
+| bench frame cycles | | −0.5 % |
+
+- **Repair counts:** 253 vertices inserted into 203 pieces; 1284 pieces
+  ear-clipped.
+- **World size:** 541 → 543 KB on average; the largest is e3m5, 738 KB.
+- **Visible cracks:** 801 → 758 px over the 12 bench views. Views 3, 4, 8
+  and 9 lost theirs.
+- **What remains comes from the renderer:**
+  - lowering the slow path's threshold removed view 0's line of cracks
+    (355 → 68 px);
+  - view 10's crack runs along an edge whose two sides diverge toward the
+    camera: one side is re-projected by the slow path.

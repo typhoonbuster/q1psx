@@ -13,6 +13,10 @@
  *
  * Supported: POLY_FT3 / POLY_FT4 (raw or blended), flat/gouraud polygons
  * drawn as flat. Everything else (sprites, debug font) is skipped.
+ *
+ * PKTVIEW_BG=r,g,b sets the clear colour (default black). A colour no
+ * texture produces (e.g. 255,0,255) makes every pixel no polygon covers
+ * stand out: cracks between polygons.
  */
 
 #include <stdint.h>
@@ -27,6 +31,7 @@
 
 static uint16_t vram[512][1024];
 static uint8_t  fb[H][W][3];
+static uint8_t  bg[3];          /* clear colour (PKTVIEW_BG) */
 
 /* ------------------------------------------------------------------ png -- */
 
@@ -306,6 +311,13 @@ int main(int argc, char **argv)
 	}
 	crc_init();
 	load_tex(argv[2]);
+	const char *bgs = getenv("PKTVIEW_BG");
+	unsigned br, bgg, bb;
+	if (bgs && sscanf(bgs, "%u,%u,%u", &br, &bgg, &bb) == 3) {
+		bg[0] = (uint8_t) br;
+		bg[1] = (uint8_t) bgg;
+		bg[2] = (uint8_t) bb;
+	}
 
 	FILE *log = fopen(argv[1], "r");
 	if (!log) { fprintf(stderr, "pktview: cannot open %s\n", argv[1]); return 1; }
@@ -315,7 +327,9 @@ int main(int argc, char **argv)
 	while (fgets(line, sizeof line, log)) {
 		if (!strncmp(line, "D view ", 7)) {
 			view = atoi(line + 7);
-			memset(fb, 0, sizeof fb);
+			for (int y = 0; y < H; y++)
+				for (int x = 0; x < W; x++)
+					memcpy(fb[y][x], bg, 3);
 			polys_drawn = polys_huge = 0;
 			twin = 0;
 		} else if (view >= 0 && line[0] == 'P' && line[1] == ' ') {

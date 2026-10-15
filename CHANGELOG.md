@@ -856,3 +856,17 @@ followed by R0-R4.
     differential test (dynarec and interpreter).
   - **Analog mode** needs the pad's ANALOG button: the BIOS driver cannot
     force it.
+- **Warping and cracks, step 1: T-junction repair in the cook**
+  (2026-10-15). Details: `docs/porting-notes.md` §19.
+  - **Diagnosis:**
+    - the PS1 GPU maps textures affinely, whereas the GBA reference divides
+      per pixel; the affine error averages 5-7 px over the bench views;
+    - cracks come from cooked T-junctions, from the slow path's
+      subdivision, and from its separate projection.
+  - **Repair:** qcook cuts every face first, inserts the vertices lying on
+    other pieces' edges, and ear-clips pieces with collinear boundary
+    vertices, pairing the triangles back into quads.
+  - **Result on start:** 0 T-junctions, +1.6 % polygons, world +2 KB on
+    average.
+  - **Tools:** `pktview` takes `PKTVIEW_BG` (a clear colour that makes
+    cracks visible); `wldref`'s overlay reads Gouraud packets.

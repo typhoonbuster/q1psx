@@ -144,7 +144,7 @@ static void face_bbox(const bsp_t *b, int f, double mn[3], double mx[3])
 
 typedef struct {
 	buf_t    stream;
-	uint32_t records, quads, tris, verts, pieces, faces_split;
+	uint32_t records, quads, tris, verts, pieces, faces_split, pieces_eared;
 	vkey    *pool;          /* the map's distinct vertices          */
 	int      npool, cap;
 	int     *hash;          /* open addressing: pool index + 1      */
@@ -294,8 +294,80 @@ static uint16_t uvword(const tex_slot *s, double u, double v)
 	return (uint16_t) (uu | (vv << 8));
 }
 
+/* twice the area of triangle (a, b, c), squared, in pool units */
+static double tri_area2(const vkey *a, const vkey *b, const vkey *c)
+{
+	double u[3] = { b->x - a->x, b->y - a->y, b->z - a->z };
+	double v[3] = { c->x - a->x, c->y - a->y, c->z - a->z };
+	double cx = u[1] * v[2] - u[2] * v[1], cy = u[2] * v[0] - u[0] * v[2], cz = u[0] * v[1] - u[1] * v[0];
+	return cx * cx + cy * cy + cz * cz;
+}
+
+/* Ear clipping of a convex piece that has collinear vertices on its boundary
+   (T-junction vertices, its own or inserted by tj_repair): clip the corner
+   with the largest triangle each time. Every boundary vertex stays on the
+   outline, so a neighbour that has it meets this piece edge for edge. A fan
+   would pair up collinear corners into zero-area triangles and draw the
+   boundary as one segment over them. Returns the triangle count. */
+static int ear_clip(const vkey *k, int n, int (*tri)[3])
+{
+	int ring[MAXPV], nt = 0;
+	for (int i = 0; i < n; i++)
+		ring[i] = i;
+	while (n > 3) {
+		int best = -1;
+		double best_a = 0.25;
+		for (int i = 0; i < n; i++) {
+			double a = tri_area2(&k[ring[(i + n - 1) % n]], &k[ring[i]], &k[ring[(i + 1) % n]]);
+			if (a <= best_a)
+				continue;
+			/* not if the rest would be flat (it would lose its vertices) */
+			int flat = 1;
+			for (int j = 0; j < n && flat; j++) {
+				if (j == i)
+					continue;
+				int jp = (j + n - 1) % n, jn = (j + 1) % n;
+				if (jp == i) jp = (jp + n - 1) % n;
+				if (jn == i) jn = (jn + 1) % n;
+				flat = tri_area2(&k[ring[jp]], &k[ring[j]], &k[ring[jn]]) <= 0.25;
+			}
+			if (flat)
+				continue;
+			best_a = a;
+			best = i;
+		}
+		if (best < 0)
+			return nt;                       /* the rest is flat: no pixel */
+		tri[nt][0] = ring[(best + n - 1) % n];
+		tri[nt][1] = ring[best];
+		tri[nt][2] = ring[(best + 1) % n];
+		nt++;
+		for (int i = best; i + 1 < n; i++)
+			ring[i] = ring[i + 1];
+		n--;
+	}
+	if (tri_area2(&k[ring[0]], &k[ring[1]], &k[ring[2]]) > 0.25) {
+		tri[nt][0] = ring[0]; tri[nt][1] = ring[1]; tri[nt][2] = ring[2];
+		nt++;
+	}
+	return nt;
+}
+
+/* Would the fan of quads from vertex 0 draw a zero-area triangle? (Then a
+   boundary vertex is skipped: see ear_clip.) */
+static int quad_fan_degenerate(const vkey *k, int n)
+{
+	int i = 1;
+	for (; i + 2 < n; i += 2)                /* GPU halves (0, i, i+2), (i, i+2, i+1) */
+		if (tri_area2(&k[0], &k[i], &k[i + 2]) <= 0.25 || tri_area2(&k[i], &k[i + 2], &k[i + 1]) <= 0.25)
+			return 1;
+	return i + 1 < n && tri_area2(&k[0], &k[i], &k[i + 1]) <= 0.25;
+}
+
 /* Add one convex piece (UVs already local to its tile) to the record,
-   flushing first if its vertices would not fit. */
+   flushing first if its vertices would not fit: a fan of quads from vertex 0
+   (+ a triangle when odd), or ear-clipped triangles when the piece has
+   collinear vertices on its boundary. */
 static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*uv)[2],
                           const uint8_t *light, const tex_slot *s, int face)
 {
@@ -320,8 +392,45 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 		fresh += !seen;
 	}
 	int tris_needed = pc->n - 2;
-	int pkt = 8 + (r->nq + tris_needed / 2) * 52 + (r->nt + (tris_needed & 1)) * 40;
-	if (r->nv + fresh > QW_MAX_VERTS || r->nq + tris_needed > 255 || r->nt + 1 > 255 ||
+	int ears[MAXPV][3], nears = 0, use_ears = quad_fan_degenerate(keys, pc->n);
+	int pairs[MAXPV][4], npairs = 0, single[MAXPV], nsingle = 0;
+	if (use_ears) {
+		/* then two triangles sharing an edge go out as one quad: the GPU
+		   draws a quad (a, b, c, d) as (a, b, c) + (b, c, d) */
+		nears = ear_clip(keys, pc->n, ears);
+		int used[MAXPV] = { 0 };
+		for (int x = 0; x < nears; x++) {
+			if (used[x])
+				continue;
+			for (int y = x + 1; y < nears && !used[x]; y++) {
+				if (used[y])
+					continue;
+				int sh[2], ns = 0, ax = -1, dy = -1;
+				for (int u = 0; u < 3; u++) {
+					int in = 0;
+					for (int v = 0; v < 3; v++)
+						in |= ears[x][u] == ears[y][v];
+					if (in && ns < 2) sh[ns++] = ears[x][u];
+					else if (!in) ax = ears[x][u];
+				}
+				if (ns != 2)
+					continue;
+				for (int v = 0; v < 3; v++)
+					if (ears[y][v] != sh[0] && ears[y][v] != sh[1])
+						dy = ears[y][v];
+				pairs[npairs][0] = ax; pairs[npairs][1] = sh[0];
+				pairs[npairs][2] = sh[1]; pairs[npairs][3] = dy;
+				npairs++;
+				used[x] = used[y] = 1;
+			}
+			if (!used[x])
+				single[nsingle++] = x;
+		}
+		o->pieces_eared++;
+	}
+	int add_q = use_ears ? npairs : tris_needed / 2, add_t = use_ears ? nsingle : (tris_needed & 1);
+	int pkt = 8 + (r->nq + add_q) * 52 + (r->nt + add_t) * 40;
+	if (r->nv + fresh > QW_MAX_VERTS || r->nq + add_q > 255 || r->nt + add_t > 255 ||
 	    pkt > QW_MAX_REC_PKT)
 		rec_flush(o, r, s);
 
@@ -336,6 +445,27 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 		idx[i] = rec_find_or_add(r, keys[i]);
 		if (idx[i] < 0)
 			die("piece with %d vertices does not fit a record", pc->n);
+	}
+
+	if (use_ears) {
+		for (int e = 0; e < npairs; e++) {   /* PS1 corner order: (a, b, c, d) */
+			qw_quad *q = &r->q[r->nq++];
+			for (int k = 0; k < 4; k++) {
+				q->idx[k] = (uint8_t) (idx[pairs[e][k]] * 4);
+				q->uv[k]  = uvword(s, uv[pairs[e][k]][0], uv[pairs[e][k]][1]);
+			}
+		}
+		for (int e = 0; e < nsingle; e++) {
+			qw_tri *t = &r->t[r->nt++];
+			for (int q = 0; q < 3; q++) {
+				t->idx[q] = (uint8_t) (idx[ears[single[e]][q]] * 4);
+				t->uv[q]  = uvword(s, uv[ears[single[e]][q]][0], uv[ears[single[e]][q]][1]);
+			}
+			t->pad = 0;
+			t->pad2 = 0;
+		}
+		o->pieces++;
+		return;
 	}
 
 	/* fan of quads (p0, pi, pi+1, pi+2) -> PS1 order (p0, pi, pi+2, pi+1) */
@@ -475,10 +605,30 @@ static int face_miptex(const bsp_t *b, int f)
 	return mt >= 0 && mt < b->num_miptex ? mt : -1;
 }
 
-/* Cut one Quake face on its texture-repeat grid and add its pieces to
-   record r (flushed whenever it fills up). */
-static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t *r)
+/* ------------------------------------------------- pieces + T-junctions -- */
+
+/* Every drawn face is cut on its texture-repeat grid first (face_pieces),
+   for the whole map, so that T-junctions can be repaired before records are
+   built: a vertex lying on another piece's edge (a cut of one face along its
+   neighbour's edge, qbsp's own leftovers) leaves a crack on screen, because
+   the two sides of that edge are not drawn between the same vertices.
+   tj_repair inserts such vertices into the edges they lie on. */
+typedef struct {
+	int    face;
+	int    fixed;           /* T-junction vertices inserted               */
+	double s_off, t_off;    /* the cell's corner, Quake texels            */
+	poly_t pl;
+} piece_t;
+
+static piece_t *pc_list;
+static int      pc_num, pc_cap;
+static int     *pc_first, *pc_count;   /* per face */
+static uint32_t tj_inserted, tj_pieces;
+
+static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 {
+	pc_first[f] = pc_num;
+	pc_count[f] = 0;
 	const bsp_face *bf = &b->faces[f];
 	if (bf->numedges < 3 || bf->texinfo < 0 || bf->texinfo >= b->num_texinfo)
 		return;
@@ -502,9 +652,6 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 		v->t = v->p[0] * ti->vecs[1][0] + v->p[1] * ti->vecs[1][1] + v->p[2] * ti->vecs[1][2] + ti->vecs[1][3];
 	}
 
-	facelight fl;
-	face_light_setup(b, f, &pl, &fl);
-
 	double smin = 1e30, smax = -1e30, tmin = 1e30, tmax = -1e30;
 	for (int i = 0; i < pl.n; i++) {
 		if (pl.v[i].s < smin) smin = pl.v[i].s;
@@ -524,8 +671,6 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 	const double t0 = s->win_y ? floor(tmin / m->h) * m->h : 0;
 	long i0 = (long) floor((smin - s0) / W), i1 = (long) floor((smax - 1e-4 - s0) / W);
 	long j0 = (long) floor((tmin - t0) / H), j1 = (long) floor((tmax - 1e-4 - t0) / H);
-	if ((i1 - i0 + 1) * (j1 - j0 + 1) > 1)
-		o->faces_split++;
 
 	for (long i = i0; i <= i1; i++) {
 		poly_t a, c;
@@ -538,15 +683,199 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 			poly_weld(&pc);
 			if (pc.n < 3 || poly_area(&pc) < 1.0 / 64)
 				continue;
-			double  uv[MAXPV][2];    /* cooked texels from the cell's corner */
-			uint8_t light[MAXPV];
-			for (int k = 0; k < pc.n; k++) {
-				uv[k][0] = (pc.v[k].s - s0 - i * W) * s->rep_w / m->w;
-				uv[k][1] = (pc.v[k].t - t0 - j * H) * s->rep_h / m->h;
-				light[k] = face_light_at(&fl, pc.v[k].s, pc.v[k].t);
+			if (pc_num == pc_cap) {
+				pc_cap = pc_cap ? 2 * pc_cap : 4096;
+				pc_list = realloc(pc_list, (size_t) pc_cap * sizeof *pc_list);
+				if (!pc_list)
+					die("out of memory (pieces)");
 			}
-			rec_add_piece(o, r, &pc, (const double (*)[2]) uv, light, s, f);
+			piece_t *p = &pc_list[pc_num++];
+			p->face  = f;
+			p->fixed = 0;
+			p->s_off = s0 + i * W;
+			p->t_off = t0 + j * H;
+			p->pl    = pc;
+			pc_count[f]++;
 		}
+	}
+}
+
+/* quantized vertex positions (the pool's: QW_VSCALE units) on a grid */
+typedef struct { int32_t q[3]; } qv_t;
+#define TJ_CELL  256                     /* grid cell, quantized units (64 world units) */
+#define TJ_HSIZE (1 << 16)
+
+static qv_t *tj_v;
+static int   tj_nv, tj_cap;
+static int  *tj_head, *tj_next;           /* hash of cells -> vertex chains */
+
+static uint32_t tj_cell_hash(int32_t cx, int32_t cy, int32_t cz)
+{
+	uint32_t h = (uint32_t) cx * 73856093u ^ (uint32_t) cy * 19349663u ^ (uint32_t) cz * 83492791u;
+	return h & (TJ_HSIZE - 1);
+}
+
+static int32_t tj_quant(double v)
+{
+	return (int32_t) lround(v * QW_VSCALE);
+}
+
+static int32_t tj_floordiv(int32_t a, int32_t b)
+{
+	return a >= 0 ? a / b : -((-a + b - 1) / b);
+}
+
+/* add a quantized vertex once */
+static void tj_add(const double p[3])
+{
+	int32_t q[3] = { tj_quant(p[0]), tj_quant(p[1]), tj_quant(p[2]) };
+	uint32_t h = tj_cell_hash(tj_floordiv(q[0], TJ_CELL), tj_floordiv(q[1], TJ_CELL), tj_floordiv(q[2], TJ_CELL));
+	for (int i = tj_head[h]; i >= 0; i = tj_next[i])
+		if (tj_v[i].q[0] == q[0] && tj_v[i].q[1] == q[1] && tj_v[i].q[2] == q[2])
+			return;
+	if (tj_nv == tj_cap) {
+		tj_cap  = tj_cap ? 2 * tj_cap : 16384;
+		tj_v    = realloc(tj_v, (size_t) tj_cap * sizeof *tj_v);
+		tj_next = realloc(tj_next, (size_t) tj_cap * sizeof *tj_next);
+		if (!tj_v || !tj_next)
+			die("out of memory (T-junctions)");
+	}
+	memcpy(tj_v[tj_nv].q, q, sizeof q);
+	tj_next[tj_nv] = tj_head[h];
+	tj_head[h] = tj_nv++;
+}
+
+/* Insert into every piece edge the map's vertices lying on it (within half
+   a world unit of the segment, strictly between its ends), in order. Their
+   texture coordinates come from the face's own mapping at their quantized
+   position, so the pool shares them with the neighbour. */
+static void tj_repair(const bsp_t *b)
+{
+	tj_head = xmalloc(TJ_HSIZE * sizeof *tj_head);
+	for (int i = 0; i < TJ_HSIZE; i++)
+		tj_head[i] = -1;
+	for (int i = 0; i < pc_num; i++)
+		for (int k = 0; k < pc_list[i].pl.n; k++)
+			tj_add(pc_list[i].pl.v[k].p);
+
+	int *stamp = xmalloc((size_t) tj_nv * sizeof *stamp);
+	for (int i = 0; i < tj_nv; i++)
+		stamp[i] = -1;
+	int edge_id = 0;
+
+	for (int pi = 0; pi < pc_num; pi++) {
+		piece_t *pc = &pc_list[pi];
+		const bsp_texinfo *ti = &b->texinfo[b->faces[pc->face].texinfo];
+		poly_t out;
+		out.n = 0;
+		for (int e = 0; e < pc->pl.n; e++) {
+			const pvert *va = &pc->pl.v[e], *vb = &pc->pl.v[(e + 1) % pc->pl.n];
+			if (out.n < MAXPV)
+				out.v[out.n++] = *va;
+			int32_t qa[3] = { tj_quant(va->p[0]), tj_quant(va->p[1]), tj_quant(va->p[2]) };
+			int32_t qb[3] = { tj_quant(vb->p[0]), tj_quant(vb->p[1]), tj_quant(vb->p[2]) };
+			double D[3] = { qb[0] - qa[0], qb[1] - qa[1], qb[2] - qa[2] };
+			double L2 = D[0] * D[0] + D[1] * D[1] + D[2] * D[2];
+			if (L2 < 16)                   /* shorter than a world unit */
+				continue;
+			double L = sqrt(L2);
+
+			/* candidates: the cells along the segment and their neighbours */
+			struct { double t; int v; } hit[MAXPV];
+			int nhit = 0;
+			edge_id++;
+			int steps = (int) (L / (TJ_CELL / 2)) + 1;
+			for (int st = 0; st <= steps; st++) {
+				double f = (double) st / steps;
+				int32_t c0 = tj_floordiv((int32_t) lround(qa[0] + f * D[0]), TJ_CELL);
+				int32_t c1 = tj_floordiv((int32_t) lround(qa[1] + f * D[1]), TJ_CELL);
+				int32_t c2 = tj_floordiv((int32_t) lround(qa[2] + f * D[2]), TJ_CELL);
+				for (int dx = -1; dx <= 1; dx++)
+				for (int dy = -1; dy <= 1; dy++)
+				for (int dz = -1; dz <= 1; dz++)
+					for (int v = tj_head[tj_cell_hash(c0 + dx, c1 + dy, c2 + dz)]; v >= 0; v = tj_next[v]) {
+						if (stamp[v] == edge_id)
+							continue;
+						stamp[v] = edge_id;
+						const int32_t *q = tj_v[v].q;
+						double d[3] = { q[0] - qa[0], q[1] - qa[1], q[2] - qa[2] };
+						double t = (d[0] * D[0] + d[1] * D[1] + d[2] * D[2]) / L2;
+						if (t * L < 2 || (1 - t) * L < 2)
+							continue;          /* an end (or beyond) */
+						double cx = d[1] * D[2] - d[2] * D[1], cy = d[2] * D[0] - d[0] * D[2],
+						       cz = d[0] * D[1] - d[1] * D[0];
+						if ((cx * cx + cy * cy + cz * cz) / L2 > 4.0)
+							continue;          /* > half a world unit off the line */
+						if (nhit < MAXPV) {
+							hit[nhit].t = t;
+							hit[nhit].v = v;
+							nhit++;
+						}
+					}
+			}
+			for (int x = 1; x < nhit; x++)       /* in order along the edge */
+				for (int y = x; y > 0 && hit[y].t < hit[y - 1].t; y--) {
+					double tt = hit[y].t; int vv = hit[y].v;
+					hit[y].t = hit[y - 1].t; hit[y].v = hit[y - 1].v;
+					hit[y - 1].t = tt; hit[y - 1].v = vv;
+				}
+			for (int x = 0; x < nhit && out.n < MAXPV; x++) {
+				pvert *nv = &out.v[out.n++];
+				for (int k = 0; k < 3; k++)
+					nv->p[k] = tj_v[hit[x].v].q[k] / (double) QW_VSCALE;
+				nv->s = nv->p[0] * ti->vecs[0][0] + nv->p[1] * ti->vecs[0][1] + nv->p[2] * ti->vecs[0][2] + ti->vecs[0][3];
+				nv->t = nv->p[0] * ti->vecs[1][0] + nv->p[1] * ti->vecs[1][1] + nv->p[2] * ti->vecs[1][2] + ti->vecs[1][3];
+				tj_inserted++;
+			}
+			if (nhit)
+				pc->fixed = 1;
+		}
+		if (pc->fixed) {
+			pc->pl = out;
+			tj_pieces++;
+		}
+	}
+	free(stamp);
+	free(tj_head);
+}
+
+/* Add a face's (repaired) pieces to record r (flushed whenever it fills
+   up): UVs from the cell's corner, light from the face's lightmap. */
+static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t *r)
+{
+	if (!pc_count[f])
+		return;
+	const bsp_face    *bf = &b->faces[f];
+	const bsp_texinfo *ti = &b->texinfo[bf->texinfo];
+	const tex_slot    *s  = &ts->slots[ti->miptex];
+	const bsp_miptex  *m  = &b->miptex[ti->miptex];
+
+	poly_t pl;                          /* the whole face, for its lightmap */
+	pl.n = 0;
+	for (int e = 0; e < bf->numedges && pl.n < MAXPV; e++) {
+		int se = b->surfedges[bf->firstedge + e];
+		int vi = se >= 0 ? b->edges[se * 2] : b->edges[-se * 2 + 1];
+		pvert *v = &pl.v[pl.n++];
+		for (int k = 0; k < 3; k++)
+			v->p[k] = b->verts[vi * 3 + k];
+		v->s = v->p[0] * ti->vecs[0][0] + v->p[1] * ti->vecs[0][1] + v->p[2] * ti->vecs[0][2] + ti->vecs[0][3];
+		v->t = v->p[0] * ti->vecs[1][0] + v->p[1] * ti->vecs[1][1] + v->p[2] * ti->vecs[1][2] + ti->vecs[1][3];
+	}
+	facelight fl;
+	face_light_setup(b, f, &pl, &fl);
+	if (pc_count[f] > 1)
+		o->faces_split++;
+
+	for (int i = 0; i < pc_count[f]; i++) {
+		const piece_t *p = &pc_list[pc_first[f] + i];
+		double  uv[MAXPV][2];            /* cooked texels from the cell's corner */
+		uint8_t light[MAXPV];
+		for (int k = 0; k < p->pl.n; k++) {
+			uv[k][0] = (p->pl.v[k].s - p->s_off) * s->rep_w / m->w;
+			uv[k][1] = (p->pl.v[k].t - p->t_off) * s->rep_h / m->h;
+			light[k] = face_light_at(&fl, p->pl.v[k].s, p->pl.v[k].t);
+		}
+		rec_add_piece(o, r, &p->pl, (const double (*)[2]) uv, light, s, f);
 	}
 }
 
@@ -646,6 +975,16 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 {
 	(void) fid;
 	const bsp_model *wm = &b->models[0];
+
+	/* every drawn face cut into pieces, T-junctions repaired */
+	pc_first = xmalloc((size_t) b->num_faces * sizeof *pc_first);
+	pc_count = xmalloc((size_t) b->num_faces * sizeof *pc_count);
+	for (int f = 0; f < b->num_faces; f++) {   /* the world model's faces only */
+		pc_count[f] = 0;
+		if (f >= wm->firstface && f < wm->firstface + wm->numfaces)
+			face_pieces(b, ts, f);
+	}
+	tj_repair(b);
 	int root = wm->headnode[0];
 
 	uint8_t *reach = xcalloc((size_t) b->num_nodes, 1);
@@ -1053,6 +1392,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	       o.records, o.pieces, o.quads, o.tris, o.verts,
 	       o.records ? (double) o.verts / o.records : 0.0, o.npool, o.faces_split,
 	       h.max_depth, nviews);
+	printf("qcook:   T-junctions: %u vertices inserted into %u pieces; %u pieces ear-clipped\n",
+	       tj_inserted, tj_pieces, o.pieces_eared);
 	if (has_spawn)
 		printf("qcook:   spawn %d %d %d yaw %d\n", h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
 

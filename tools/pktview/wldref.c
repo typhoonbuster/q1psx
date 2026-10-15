@@ -449,7 +449,8 @@ static void overlay(const char *log_path, uint32_t view)
 		if ((code & 0xe4) != 0x24) continue;          /* textured flat polys */
 		int nv = (code & 8) ? 4 : 3;
 		int xs[4], ys[4];
-		for (int i = 0; i < nv; i++) { xs[i] = (int16_t) (w[1 + 2 * i] & 0xffff); ys[i] = (int16_t) (w[1 + 2 * i] >> 16); }
+		int st = (code & 0x10) ? 3 : 2;               /* gouraud: a colour per corner */
+		for (int i = 0; i < nv; i++) { xs[i] = (int16_t) (w[1 + st * i] & 0xffff); ys[i] = (int16_t) (w[1 + st * i] >> 16); }
 		/* PS1 order: quad edges 0-1, 1-3, 3-2, 2-0 */
 		static const int q[4][2] = { { 0, 1 }, { 1, 3 }, { 3, 2 }, { 2, 0 } };
 		static const int t[3][2] = { { 0, 1 }, { 1, 2 }, { 2, 0 } };
