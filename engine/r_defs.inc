@@ -76,13 +76,14 @@
 
 # ---- scratchpad map (base 0x1F800000) ---------------------------------------
 .set SP_STACK,    0x000   # walk stack, 64 words (spills to RAM beyond)
-.set SP_SXY,      0x100   # projected XY per record vertex (index x4)
-.set SP_SZ,       0x200   # SZ per record vertex
+.set SP_SXY,      0x100   # projected XY per record vertex (index x4), 42 words
+.set SP_SZ,       0x1a8   # SZ per record vertex, 42 words
+.set SP_COL,      0x250   # light per record vertex as 0x00cccccc, 42 words
 .set SP_CAM,      0x300   # cam[3], vertex units
 .set SP_FVBASE,   0x30c
 .set SP_SZFAST,   0x310
-.set SP_CODE4,    0x314   # POLY_FT4 code word
-.set SP_CODE3,    0x318   # POLY_FT3 code word
+.set SP_CODE4,    0x314   # POLY_GT4 code word (ORed with the first colour)
+.set SP_CODE3,    0x318   # POLY_GT3 code word
 .set SP_NEXTREC,  0x31c
 .set SP_NODES,    0x320   # counters
 .set SP_RECORDS,  0x324
@@ -127,6 +128,6 @@
                           # upper half (0x1F801120)
 
 # ---- GPU packets --------------------------------------------------------------
-.set CODE_FT4,    0x2d808080   # textured quad, opaque, raw texture
-.set CODE_FT3,    0x25808080   # textured triangle, opaque, raw texture
+.set CODE_GT4,    0x3c000000   # Gouraud textured quad, opaque, texture x colour
+.set CODE_GT3,    0x34000000   # Gouraud textured triangle, opaque
 .set BACKFACE_EPS, 164         # Quake's 0.01 unit, x4096 x4

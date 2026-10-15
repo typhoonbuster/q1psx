@@ -135,7 +135,13 @@ static void load_tex(const char *path)
 
 /* --------------------------------------------------------------- raster -- */
 
-typedef struct { int x, y; int u, v; } vtx;
+typedef struct { int x, y; int u, v; int r, g, b; } vtx;
+
+/* the GPU's 4x4 dither offsets (GP0(E1h) bit 9, which the engine sets),
+   added to 8-bit components before they are cut to 5 bits */
+static const int dither[4][4] = {
+	{ -4, +0, -3, +1 }, { +2, -2, +3, -1 }, { -3, +1, -4, +0 }, { +3, -1, +2, -2 },
+};
 
 static uint32_t twin;   /* current GP0 E2h texture window (0 = none) */
 
@@ -173,8 +179,10 @@ static long edge(const vtx *a, const vtx *b, int x, int y)
 
 static int polys_drawn, polys_huge;
 
-/* Affine triangle: barycentric interpolation of u,v in screen space. */
-static void tri(vtx a, vtx b, vtx c, int textured, int tpage, int clut, const uint8_t rgb[3])
+/* Affine triangle: barycentric interpolation of u, v and colour in screen
+   space. `raw` textures skip the modulation; anything shaded or modulated
+   is dithered, as the GPU does. */
+static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 {
 	long area = edge(&a, &b, c.x, c.y);
 	if (area == 0)
@@ -209,7 +217,12 @@ static void tri(vtx a, vtx b, vtx c, int textured, int tpage, int clut, const ui
 			    (w1 == 0 && (a.y > c.y || (a.y == c.y && a.x < c.x))) ||
 			    (w2 == 0 && (b.y > a.y || (b.y == a.y && b.x < a.x))))
 				continue;
-			uint8_t col[3] = { rgb[0], rgb[1], rgb[2] };
+			int shade[3] = {
+				(int) ((w0 * a.r + w1 * b.r + w2 * c.r) / area),
+				(int) ((w0 * a.g + w1 * b.g + w2 * c.g) / area),
+				(int) ((w0 * a.b + w1 * b.b + w2 * c.b) / area),
+			};
+			uint8_t col[3] = { (uint8_t) shade[0], (uint8_t) shade[1], (uint8_t) shade[2] };
 			if (textured) {
 				int u = (int) ((w0 * a.u + w1 * b.u + w2 * c.u) / area);
 				int v = (int) ((w0 * a.v + w1 * b.v + w2 * c.v) / area);
@@ -217,52 +230,70 @@ static void tri(vtx a, vtx b, vtx c, int textured, int tpage, int clut, const ui
 				texel(tpage, clut, u, v, col, &op);
 				if (!op)
 					continue;
+				if (raw) {
+					memcpy(fb[y][x], col, 3);
+					continue;
+				}
+				for (int k = 0; k < 3; k++) {       /* texel x colour / 128 */
+					int m = col[k] * shade[k] >> 7;
+					col[k] = (uint8_t) (m > 255 ? 255 : m);
+				}
+			}
+			for (int k = 0; k < 3; k++) {           /* dither, cut to 5 bits */
+				int d = col[k] + dither[y & 3][x & 3];
+				d = d < 0 ? 0 : d > 255 ? 255 : d;
+				col[k] = (uint8_t) (d & 0xf8);
 			}
 			memcpy(fb[y][x], col, 3);
 		}
 }
 
-static vtx mkv(uint32_t xy, uint32_t uv)
+static vtx mkv(uint32_t xy, uint32_t uv, uint32_t rgb)
 {
 	vtx v;
 	v.x = (int16_t) (xy & 0xffff);
 	v.y = (int16_t) (xy >> 16);
 	v.u = (int) (uv & 255);
 	v.v = (int) ((uv >> 8) & 255);
+	v.r = (int) (rgb & 255);
+	v.g = (int) ((rgb >> 8) & 255);
+	v.b = (int) ((rgb >> 16) & 255);
 	return v;
 }
 
 static void packet(const uint32_t *w, int n)
 {
 	uint32_t code = w[0] >> 24;
-	uint8_t rgb[3] = { (uint8_t) w[0], (uint8_t) (w[0] >> 8), (uint8_t) (w[0] >> 16) };
 
 	if (code == 0xe2) {                  /* texture window */
 		twin = w[0] & 0xfffff;
 		return;
 	}
 
-	/* flat polygons only (textured or not): 001 g q t s r */
-	if ((code & 0xe0) != 0x20 || (code & 0x10))
+	/* polygons (001 g q t s r): flat or Gouraud, textured or not. Per
+	   vertex: [colour (Gouraud, after the first)] xy [uv (textured)]. */
+	if ((code & 0xe0) != 0x20)
 		return;
-	int quad = code & 8, tex = code & 4;
-	int nv = quad ? 4 : 3, stride = tex ? 2 : 1;
-	if (n < 1 + nv * stride)
+	int gour = code & 0x10, quad = code & 8, tex = code & 4, raw = code & 1;
+	int nv = quad ? 4 : 3, stride = 1 + (tex ? 1 : 0) + (gour ? 1 : 0);
+	if (n < nv * stride + (gour ? 0 : 1))
 		return;
 
 	vtx v[4];
 	int tpage = 0, clut = 0;
 	for (int i = 0; i < nv; i++) {
-		uint32_t xy = w[1 + i * stride];
-		uint32_t uv = tex ? w[2 + i * stride] : 0;
-		v[i] = mkv(xy, uv);
+		const uint32_t *pv = gour ? &w[i * stride] : &w[1 + i * stride - 1];
+		uint32_t rgb = gour ? pv[0] : w[0];
+		uint32_t xy  = pv[1];
+		uint32_t uv  = tex ? pv[2] : 0;
+		v[i] = mkv(xy, uv, rgb);
 		if (i == 0) clut  = (int) (uv >> 16);
 		if (i == 1) tpage = (int) (uv >> 16);
 	}
 	polys_drawn++;
-	tri(v[0], v[1], v[2], tex, tpage, clut, rgb);
+	tri(v[0], v[1], v[2], tex, raw, tpage, clut);
 	if (quad)
-		tri(v[1], v[2], v[3], tex, tpage, clut, rgb);
+		tri(v[1], v[2], v[3], tex, raw, tpage, clut);
 }
 
 /* ----------------------------------------------------------------- main -- */

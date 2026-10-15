@@ -782,3 +782,20 @@ followed by R0-R4.
   - **R5 summary:** world 1030 → 514 KB on average, 1427 → 696 KB at
     worst; start's spawn view 620 k → 440 k cycles (2 → 1 vblank); no
     lossy step needed.
+- **Static lighting + dithering** (2026-10-15: the quake-psx look).
+  Details: `docs/porting-notes.md` §15.
+  - **Cook:** Quake's lightmaps are sampled per vertex (bilinear, all
+    styles) into one light byte per record vertex (format QWV7). 128 =
+    texture as is, matching Quake's software colormap. `LIGHT_GAIN` scales
+    it (default 1.0, faithful).
+  - **Renderer:** POLY_GT4 / GT3, texture × light. The colours are expanded
+    while the GTE computes the RTPT, and the slow path interpolates them.
+    Dithering is enabled in the drawing environment (polygons cannot set
+    it).
+  - **Cost:** start's spawn view 440 k → 481 k cycles (1 vblank); world
+    534 → 570 KB.
+  - **Verification:**
+    - `vid_dump` prints a hash of the display list (the interpreter's
+      console garbles long dumps); dynarec and interpreter hashes match;
+    - new `scripts/dlcheck.sh` for the optimization pass;
+    - the disc image now depends on the cooked files.

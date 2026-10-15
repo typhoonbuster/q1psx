@@ -206,6 +206,8 @@ void bsp_parse(bsp_t *b, const uint8_t *raw, uint32_t len)
 		d->firstedge = rd_i32(p + 4);
 		d->numedges  = rd_i16(p + 8);
 		d->texinfo   = rd_i16(p + 10);
+		memcpy(d->styles, p + 12, 4);
+		d->lightofs  = rd_i32(p + 16);
 	}
 
 	p = lump(b, L_CLIPNODES, &n, 8);
@@ -260,6 +262,7 @@ void bsp_parse(bsp_t *b, const uint8_t *raw, uint32_t len)
 		b->marks[i] = rd_u16(p + i * 2);
 
 	b->vis = lump(b, L_VISIBILITY, &b->vis_len, 0);
+	b->lighting = lump(b, L_LIGHTING, &b->light_len, 0);
 	b->entities = (const char *) lump(b, L_ENTITIES, &b->ent_len, 0);
 
 	/* miptex: all four box-filtered mip levels */
@@ -310,6 +313,7 @@ static int cmd_map(int argc, char **argv)
 	const char *out_tex  = arg(argc, argv, "--tex", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
 	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
+	light_gain           = atof(arg(argc, argv, "--light-gain", "1"));
 	if (!pak_path || !map || !out_tex || !out_wld)
 		die("usage: qcook map --pak <pak> --map <name> [--fidelity f] --tex <out> --world <out>"
 		    " [--palette-pak <pak0>]");

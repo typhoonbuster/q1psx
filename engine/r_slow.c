@@ -15,7 +15,8 @@
  *   3. fan-triangulate, then split each triangle on its longest screen edge
  *      (3D midpoint, UVs interpolated) until it is small on screen and its
  *      depth range is narrow enough for affine texturing to look right,
- *   4. project with integer division and emit raw-texture POLY_FT3 packets,
+ *   4. project with integer division and emit POLY_GT3 packets (texture x
+ *      the interpolated vertex light),
  *      prepended to the world OT bucket exactly like the asm does.
  */
 
@@ -35,6 +36,7 @@
 typedef struct {
 	int32_t x, y, z;          /* view space                                  */
 	int32_t u, v;             /* texels x256 (page-relative)                 */
+	int32_t c;                /* light 0..255                                */
 	int32_t sx, sy;           /* projected                                   */
 } sv_t;
 
@@ -64,6 +66,7 @@ static void lerp(const sv_t *a, const sv_t *b, int32_t num, int32_t den, sv_t *o
 	o->z = a->z + (((b->z - a->z) * t) >> 14);
 	o->u = a->u + (((b->u - a->u) * t) >> 14);
 	o->v = a->v + (((b->v - a->v) * t) >> 14);
+	o->c = a->c + (((b->c - a->c) * t) >> 14);
 }
 
 /* Signed distance to clip plane `plane` (inside >= 0). The frustum planes
@@ -104,23 +107,31 @@ static uint32_t uvword(const sv_t *p)
 	return (uint32_t) (u | (v << 8));
 }
 
+/* light 0..255 -> GPU colour 0x00cccccc */
+static uint32_t grey(int32_t c)
+{
+	return (uint32_t) c * 0x010101u;
+}
+
 static void emit(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 {
-	if (s->pkt + 32 > s->pkt_end) {
+	if (s->pkt + 40 > s->pkt_end) {
 		s->stat_skipped++;
 		return;
 	}
 	uint32_t *p = (uint32_t *) s->pkt;
-	p[0] = (7u << 24) | s->ot_head;
-	p[1] = 0x25808080u;                        /* POLY_FT3, raw texture */
+	p[0] = (9u << 24) | s->ot_head;
+	p[1] = 0x34000000u | grey(a->c);           /* POLY_GT3: texture x light */
 	p[2] = ((uint32_t) a->sx & 0xffff) | ((uint32_t) a->sy << 16);
 	p[3] = uvword(a) | clut16;
-	p[4] = ((uint32_t) b->sx & 0xffff) | ((uint32_t) b->sy << 16);
-	p[5] = uvword(b) | tpage16;
-	p[6] = ((uint32_t) c->sx & 0xffff) | ((uint32_t) c->sy << 16);
-	p[7] = uvword(c);
+	p[4] = grey(b->c);
+	p[5] = ((uint32_t) b->sx & 0xffff) | ((uint32_t) b->sy << 16);
+	p[6] = uvword(b) | tpage16;
+	p[7] = grey(c->c);
+	p[8] = ((uint32_t) c->sx & 0xffff) | ((uint32_t) c->sy << 16);
+	p[9] = uvword(c);
 	s->ot_head = (uint32_t) p & 0xffffff;
-	s->pkt += 32;
+	s->pkt += 40;
 	s->stat_slow++;
 }
 
@@ -146,6 +157,7 @@ static void midpoint(const sv_t *p, const sv_t *q, sv_t *m)
 	m->z = (p->z + q->z) >> 1;
 	m->u = (p->u + q->u) >> 1;
 	m->v = (p->v + q->v) >> 1;
+	m->c = (p->c + q->c) >> 1;
 	project(m);
 }
 
@@ -227,6 +239,7 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 {
 	const qw_record *r     = (const qw_record *) rec;
 	const uint16_t  *vidx  = (const uint16_t *) (rec + sizeof(qw_record));   /* into the pool */
+	const uint8_t   *light = rec + r->polys - ((r->num_verts + 3) & ~3);
 	const qw_vert   *pool  = (const qw_vert *) s->vertpool;
 	const uint16_t  *uvs   = (const uint16_t *) (poly + 4);
 	static const int quad_cycle[4] = { 0, 1, 3, 2 };   /* PS1 order -> ring */
@@ -246,6 +259,7 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		o->z = ((m[6] * p->x + m[7] * p->y + m[8] * p->z) >> 12) + s->tr[2];
 		o->u = (int32_t) (uvs[j] & 0xff) << 8;
 		o->v = (int32_t) (uvs[j] >> 8) << 8;
+		o->c = light[poly[j] >> 2];
 	}
 
 	/* Clip in view space against the near plane AND the four frustum planes

@@ -141,5 +141,5 @@ psn00bsdk_add_cd_image(
 	iso        # target
 	q1psx      # -> q1psx.bin + q1psx.cue
 	${PROJECT_SOURCE_DIR}/iso/iso.xml
-	DEPENDS q1psx ${_cooked_stamp}
+	DEPENDS q1psx ${_cooked_stamp} ${_cooked}   # (a manual cook too)
 )

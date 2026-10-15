@@ -109,7 +109,7 @@ static void poly_weld(poly_t *pl)
 
 /* ------------------------------------------------------- record builder -- */
 
-typedef struct { int16_t x, y, z; } vkey;
+typedef struct { int16_t x, y, z; uint8_t c; } vkey;   /* c: vertex light */
 
 typedef struct {
 	int     nv;
@@ -196,7 +196,7 @@ static int pool_index(out_t *o, vkey k)
 static int rec_find_or_add(rec_t *r, vkey k)
 {
 	for (int i = 0; i < r->nv; i++)
-		if (r->v[i].x == k.x && r->v[i].y == k.y && r->v[i].z == k.z)
+		if (r->v[i].x == k.x && r->v[i].y == k.y && r->v[i].z == k.z && r->v[i].c == k.c)
 			return i;
 	if (r->nv >= QW_MAX_VERTS)
 		return -1;
@@ -238,7 +238,8 @@ static void rec_flush(out_t *o, rec_t *r, const tex_slot *s)
 	h.tex       = (uint16_t) s->index;
 	int nidx    = (r->nv + 2) / 3 * 3;                /* padded index count */
 	int ibytes  = (nidx * 2 + 3) & ~3;
-	h.polys     = (uint16_t) (sizeof h + ibytes);
+	int cbytes  = (r->nv + 3) & ~3;                  /* light bytes: polys - this */
+	h.polys     = (uint16_t) (sizeof h + ibytes + cbytes);
 	h.size      = (uint16_t) (h.polys + r->nq * sizeof(qw_quad) + r->nt * sizeof(qw_tri));
 
 	/* bounding sphere: bbox centre, radius = farthest vertex (rounded up) */
@@ -267,6 +268,10 @@ static void rec_flush(out_t *o, rec_t *r, const tex_slot *s)
 	for (int i = r->nv; i < nidx; i++)
 		idx[i] = idx[0];
 	buf_put(&o->stream, idx, (size_t) ibytes);
+	uint8_t col[QW_MAX_VERTS + 4] = { 0 };       /* vertex light, per slot */
+	for (int i = 0; i < r->nv; i++)
+		col[i] = r->v[i].c;
+	buf_put(&o->stream, col, (size_t) cbytes);
 	buf_put(&o->stream, r->q, (size_t) r->nq * sizeof(qw_quad));
 	buf_put(&o->stream, r->t, (size_t) r->nt * sizeof(qw_tri));
 
@@ -292,13 +297,14 @@ static uint16_t uvword(const tex_slot *s, double u, double v)
 /* Add one convex piece (UVs already local to its tile) to the record,
    flushing first if its vertices would not fit. */
 static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*uv)[2],
-                          const tex_slot *s, int face)
+                          const uint8_t *light, const tex_slot *s, int face)
 {
 	vkey keys[MAXPV];
 	for (int i = 0; i < pc->n; i++) {
 		keys[i].x = clamp16(lround(pc->v[i].p[0] * QW_VSCALE));
 		keys[i].y = clamp16(lround(pc->v[i].p[1] * QW_VSCALE));
 		keys[i].z = clamp16(lround(pc->v[i].p[2] * QW_VSCALE));
+		keys[i].c = light[i];
 	}
 
 	/* will it fit? count new vertices */
@@ -306,9 +312,11 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 	for (int i = 0; i < pc->n; i++) {
 		int seen = 0;
 		for (int j = 0; j < r->nv && !seen; j++)
-			seen = r->v[j].x == keys[i].x && r->v[j].y == keys[i].y && r->v[j].z == keys[i].z;
+			seen = r->v[j].x == keys[i].x && r->v[j].y == keys[i].y && r->v[j].z == keys[i].z &&
+			       r->v[j].c == keys[i].c;
 		for (int j = 0; j < i && !seen; j++)
-			seen = keys[j].x == keys[i].x && keys[j].y == keys[i].y && keys[j].z == keys[i].z;
+			seen = keys[j].x == keys[i].x && keys[j].y == keys[i].y && keys[j].z == keys[i].z &&
+			       keys[j].c == keys[i].c;
 		fresh += !seen;
 	}
 	int tris_needed = pc->n - 2;
@@ -349,6 +357,73 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 		t->pad2 = 0;
 	}
 	o->pieces++;
+}
+
+/* ---------------------------------------------------------------- light -- */
+
+double light_gain = 1.0;
+
+/* A face's lightmap as Quake lays it out (CalcSurfaceExtents): one luxel
+   per 16 texels, from texturemins = floor(min / 16) * 16, up to 4 styles. */
+typedef struct {
+	double         smin, tmin;
+	int            w, h;           /* luxels                      */
+	const uint8_t *maps[4];
+	int            nmaps;
+} facelight;
+
+static void face_light_setup(const bsp_t *b, int f, const poly_t *pl, facelight *fl)
+{
+	const bsp_face *bf = &b->faces[f];
+	double mn[2] = { 1e30, 1e30 }, mx[2] = { -1e30, -1e30 };
+	for (int i = 0; i < pl->n; i++) {
+		double st[2] = { pl->v[i].s, pl->v[i].t };
+		for (int k = 0; k < 2; k++) {
+			if (st[k] < mn[k]) mn[k] = st[k];
+			if (st[k] > mx[k]) mx[k] = st[k];
+		}
+	}
+	int b0 = (int) floor(mn[0] / 16), b1 = (int) ceil(mx[0] / 16);
+	int c0 = (int) floor(mn[1] / 16), c1 = (int) ceil(mx[1] / 16);
+	fl->smin = b0 * 16.0;
+	fl->tmin = c0 * 16.0;
+	fl->w    = b1 - b0 + 1;
+	fl->h    = c1 - c0 + 1;
+	fl->nmaps = 0;
+	if (bf->lightofs < 0 || !b->lighting)
+		return;
+	for (int k = 0; k < 4 && bf->styles[k] != 255; k++) {
+		size_t at = (size_t) bf->lightofs + (size_t) k * fl->w * fl->h;
+		if (at + (size_t) fl->w * fl->h > b->light_len)
+			break;
+		fl->maps[fl->nmaps++] = b->lighting + at;
+	}
+}
+
+/* Light at texture coordinates (s, t): bilinear over the luxels, summed over
+   the styles (each at its normal brightness), 0..255. It modulates the
+   texture as the GPU does: 128 leaves the texel as is, 255 about doubles it
+   - the same scale as Quake's software colormap (light 127 = row 32). A face
+   without a lightmap in a lit map is black, as in Quake. */
+static uint8_t face_light_at(const facelight *fl, double s, double t)
+{
+	if (!fl->nmaps)
+		return 0;
+	double u = (s - fl->smin) / 16, v = (t - fl->tmin) / 16;
+	if (u < 0) u = 0;
+	if (v < 0) v = 0;
+	if (u > fl->w - 1) u = fl->w - 1;
+	if (v > fl->h - 1) v = fl->h - 1;
+	int u0 = (int) u, v0 = (int) v;
+	int u1 = u0 + 1 < fl->w ? u0 + 1 : u0, v1 = v0 + 1 < fl->h ? v0 + 1 : v0;
+	double fu = u - u0, fv = v - v0, sum = 0;
+	for (int k = 0; k < fl->nmaps; k++) {
+		const uint8_t *m = fl->maps[k];
+		sum += (m[v0 * fl->w + u0] * (1 - fu) + m[v0 * fl->w + u1] * fu) * (1 - fv)
+		     + (m[v1 * fl->w + u0] * (1 - fu) + m[v1 * fl->w + u1] * fu) * fv;
+	}
+	long l = lround(sum * light_gain);
+	return (uint8_t) (l > 255 ? 255 : l);
 }
 
 /* union-find over faces */
@@ -425,6 +500,9 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 		v->t = v->p[0] * ti->vecs[1][0] + v->p[1] * ti->vecs[1][1] + v->p[2] * ti->vecs[1][2] + ti->vecs[1][3];
 	}
 
+	facelight fl;
+	face_light_setup(b, f, &pl, &fl);
+
 	double smin = 1e30, smax = -1e30, tmin = 1e30, tmax = -1e30;
 	for (int i = 0; i < pl.n; i++) {
 		if (pl.v[i].s < smin) smin = pl.v[i].s;
@@ -458,12 +536,14 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 			poly_weld(&pc);
 			if (pc.n < 3 || poly_area(&pc) < 1.0 / 64)
 				continue;
-			double uv[MAXPV][2];    /* cooked texels from the cell's corner */
+			double  uv[MAXPV][2];    /* cooked texels from the cell's corner */
+			uint8_t light[MAXPV];
 			for (int k = 0; k < pc.n; k++) {
 				uv[k][0] = (pc.v[k].s - s0 - i * W) * s->rep_w / m->w;
 				uv[k][1] = (pc.v[k].t - t0 - j * H) * s->rep_h / m->h;
+				light[k] = face_light_at(&fl, pc.v[k].s, pc.v[k].t);
 			}
-			rec_add_piece(o, r, &pc, (const double (*)[2]) uv, s, f);
+			rec_add_piece(o, r, &pc, (const double (*)[2]) uv, light, s, f);
 		}
 	}
 }
@@ -1050,7 +1130,7 @@ int world_check(const char *path)
 				if (at + sizeof r > end) FAIL("node %u: truncated record", i);
 				memcpy(&r, fs + at, sizeof r);
 				uint32_t nidx = (r.num_verts + 2u) / 3u * 3u;
-				uint32_t pofs = (uint32_t) sizeof r + ((nidx * 2u + 3u) & ~3u);
+				uint32_t pofs = (uint32_t) sizeof r + ((nidx * 2u + 3u) & ~3u) + ((r.num_verts + 3u) & ~3u);
 				uint32_t sz = pofs + r.num_quads * (uint32_t) sizeof(qw_quad) +
 				              r.num_tris * (uint32_t) sizeof(qw_tri);
 				if (r.polys != pofs) FAIL("record at %u: polys at %u != %u", at, r.polys, pofs);

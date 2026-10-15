@@ -1524,3 +1524,73 @@ Images are identical throughout R5.2 → R5.3d.
 - start: 17 189 → 8 207 polygons; the spawn view 620 k (2 vblanks) →
   440 k cycles (1 vblank). Every episode-1 bench view runs at 60 fps.
 - No lossy step was needed.
+
+---
+
+## §15 — Static lighting and dithering (2026-10-15)
+
+**The goal.** quake-psx has no dynamic lighting, yet it looks clean,
+noisy but smooth. What gives that look is Quake's **static** lighting (the
+lightmaps qbsp / light baked into the map), smoothed by the GPU's
+dithering.
+
+**What dithering is on the PS1.** A drawing-mode bit, GP0(E1h) bit 9.
+When a pixel's colour goes through the GPU's 24-bit path (Gouraud shading
+or texture modulation), it is rounded to 15 bits with a 4×4 offset pattern
+instead of being truncated. It costs nothing and gains nothing in speed.
+Raw-textured polygons, which the world used until now, never go through
+that path, so the bit alone changed nothing. Textured polygons cannot set
+it either: bits 9-10 of their texpage attribute are ignored. The engine
+enables it in the drawing environment (`vid.c`, `dtd = 1`).
+
+**Cook** (`tools/qcook/world.c`):
+- Each face's lightmap is located as Quake does it (`CalcSurfaceExtents`):
+  one luxel per 16 texels, from `floor(min / 16) × 16`, up to 4 styles.
+- Every piece vertex gets the light sampled bilinearly at its texture
+  coordinates, summed over the styles at their normal brightness.
+- The byte modulates the texture the way the GPU does: 128 leaves the
+  texel as is, 255 about doubles it. This is the same scale as Quake's
+  software colormap (light 127 = row 32, the identity row), so no
+  conversion is needed.
+- Faces without a lightmap in a lit map are black, as in Quake.
+- `--light-gain` (`LIGHT_GAIN` in `cook.sh`) scales the light. The default
+  of 1.0 is faithful and dark (start's mean light is 50); 1.6 is much more
+  readable on a TV, where the default is chosen.
+- **Format QWV7:**
+  - each record carries one light byte per vertex, padded to 4, ending
+    where the polygons start: `polys - ((num_verts + 3) & ~3)`;
+  - the light is part of a record slot's key, because two faces in one
+    record can light a shared corner differently;
+  - `QW_MAX_VERTS` drops from 63 to 42, so the scratchpad holds SXY, SZ
+    and light per slot (3 × 168 B in 0x100-0x2F7).
+
+**Renderer:**
+- `dr_xf` expands the three light bytes to `0x00cccccc` while the GTE
+  computes the RTPT (`x = c | c << 8`, then `x | x << 8`), into `SP_COL`.
+- Polygons go out as POLY_GT4 (12 words) / POLY_GT3 (9), texture ×
+  colour.
+- The slow path carries the light in its pool vertices (+24): it is
+  interpolated by the clip lerps and the subdivision midpoints, and
+  triangles go out as GT3. Its C reference matches.
+
+**Tools.** `pktview` decodes Gouraud polygons and applies the modulation
+and the GPU's dither matrix. `wldref` does the same with perspective-
+correct light.
+
+**Cost.**
+- Start's spawn view goes from 440 k to 481 k cycles (+9 %): bigger
+  packets, and three colours per vertex. Every view stays at 1 vblank.
+- World: start 534 → 570 KB (light bytes, plus slots split by light).
+
+**Verification and tooling.**
+- The interpreter's console doubles or drops characters on long dumps,
+  so the text display lists of the dynarec and the interpreter differed
+  by 115 garbled lines.
+  - `vid_dump` now also prints an FNV-1a hash of the display list,
+    computed on the PS1 (`H` line).
+- `scripts/dlcheck.sh save|check <name>` reruns the bench and compares
+  the display lists and hashes with a saved reference. An optimization
+  that changes no pixel must leave them identical. It also prints the
+  per-view cycle change.
+- The disc image now depends on the cooked files themselves. A manual
+  cook used to leave the previous data on the disc.

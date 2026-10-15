@@ -108,8 +108,8 @@ r_render:
 	sw      $t2, SP_CAM+8($t8)
 	sw      $t3, SP_FVBASE($t8)
 	sw      $t4, SP_SZFAST($t8)
-	li      $t0, CODE_FT4
-	li      $t1, CODE_FT3
+	li      $t0, CODE_GT4
+	li      $t1, CODE_GT3
 	sw      $t0, SP_CODE4($t8)
 	sw      $t1, SP_CODE3($t8)
 	sw      $zero, SP_NODES($t8)
@@ -657,6 +657,12 @@ dr_draw:
 	sw      $t0, SP_RECORDS($t8)
 	sw      $t1, SP_VERTS($t8)
 
+	lhu     $t0, R_POLYS($a0)            # light bytes: polys - ((nv + 3) & ~3)
+	addiu   $t1, $t2, 3
+	srl     $t1, $t1, 2
+	sll     $t1, $t1, 2
+	addu    $t0, $t0, $a0
+	subu    $at, $t0, $t1
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
 	lw      $t9, RS_VERTPOOL($s0)        # (padded to threes: no stray reads)
 	move    $t4, $t8                     # cache cursor
@@ -681,6 +687,25 @@ dr_xf:
 	addiu   $t5, $t5, -3
 	nop
 	RTPT
+	lbu     $t0, 0($at)                  # while the GTE works: the three
+	lbu     $t1, 1($at)                  # lights, grey c -> 0x00cccccc
+	lbu     $t6, 2($at)                  # (x = c | c << 8; x | x << 8)
+	addiu   $at, $at, 3
+	sll     $a3, $t0, 8
+	or      $t0, $t0, $a3
+	sll     $a3, $t0, 8
+	or      $t0, $t0, $a3
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sll     $a3, $t6, 8
+	or      $t6, $t6, $a3
+	sll     $a3, $t6, 8
+	or      $t6, $t6, $a3
+	sw      $t0, SP_COL+0($t4)
+	sw      $t1, SP_COL+4($t4)
+	sw      $t6, SP_COL+8($t4)
 	swc2    C2_SXY0, SP_SXY+0($t4)
 	swc2    C2_SXY1, SP_SXY+4($t4)
 	swc2    C2_SXY2, SP_SXY+8($t4)
@@ -718,7 +743,7 @@ dr_polys:
 	sw      $t1, SP_POLYS($t8)
 
 dr_quad:
-	addiu   $t0, $s6, 40
+	addiu   $t0, $s6, 52
 	sltu    $t0, $s7, $t0
 	bnez    $t0, dr_full
 	lw      $t0, 0($a3)                  # 4 vertex offsets
@@ -757,35 +782,43 @@ dr_quad:
 	SIZEOK  $t1, dr_quad_skip
 	SIZEOK  $t2, dr_quad_skip
 	SIZEOK  $t9, dr_quad_skip
-dr_quad_emit:
+dr_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
+	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
-	lw      $t2, 8($a3)                  # uv2 | uv3 << 16
-	lw      $t3, SP_SXY($t3)
-	lw      $t4, SP_SXY($t4)
-	lw      $t5, SP_SXY($t5)
-	lw      $t6, SP_SXY($t6)
+	lw      $t3, SP_SXY($t3)             # xy0
+	lw      $t9, SP_CODE4($t8)
+	lw      $t2, SP_COL($t4)             # c1
+	lw      $t4, SP_SXY($t4)             # xy1
+	or      $t0, $t0, $t9                # code | c0
+	sw      $t0, 4($s6)
+	sw      $t3, 8($s6)
 	andi    $t0, $t1, 0xffff
 	or      $t0, $t0, $v0                # uv0 | clut
+	sw      $t0, 12($s6)
+	sw      $t2, 16($s6)
+	sw      $t4, 20($s6)
 	srl     $t1, $t1, 16
 	or      $t1, $t1, $v1                # uv1 | tpage
-	lui     $t9, 0x0900
-	or      $t9, $t9, $fp                # tag: 9 words, link to previous head
-	sw      $t9, 0($s6)
-	lw      $t9, SP_CODE4($t8)
-	sw      $t3, 8($s6)
-	sw      $t9, 4($s6)
-	sw      $t0, 12($s6)
-	sw      $t4, 16($s6)
-	sw      $t1, 20($s6)
-	sw      $t5, 24($s6)
-	andi    $t0, $t2, 0xffff
+	sw      $t1, 24($s6)
+	lw      $t0, SP_COL($t5)             # c2
+	lw      $t1, SP_SXY($t5)             # xy2
+	lw      $t2, 8($a3)                  # uv2 | uv3 << 16
 	sw      $t0, 28($s6)
+	sw      $t1, 32($s6)
+	andi    $t0, $t2, 0xffff
+	sw      $t0, 36($s6)
+	lw      $t0, SP_COL($t6)             # c3
+	lw      $t1, SP_SXY($t6)             # xy3
 	srl     $t2, $t2, 16
-	sw      $t6, 32($s6)
-	sw      $t2, 36($s6)
+	sw      $t0, 40($s6)
+	sw      $t1, 44($s6)
+	sw      $t2, 48($s6)
+	lui     $t9, 0x0c00
+	or      $t9, $t9, $fp                # tag: 12 words, link to previous head
+	sw      $t9, 0($s6)
 	sll     $fp, $s6, 8
 	srl     $fp, $fp, 8                  # new bucket head
-	addiu   $s6, $s6, 40
+	addiu   $s6, $s6, 52
 dr_quad_next:
 	addiu   $at, $at, -1
 	bgtz    $at, dr_quad
@@ -797,7 +830,7 @@ dr_tris:
 	beqz    $at, dr_twin
 	nop
 dr_tri:
-	addiu   $t0, $s6, 32
+	addiu   $t0, $s6, 40
 	sltu    $t0, $s7, $t0
 	bnez    $t0, dr_full
 	lw      $t0, 0($a3)
@@ -828,31 +861,37 @@ dr_tri:
 	subu    $t2, $t2, $t0
 	SIZEOK  $t1, dr_tri_skip
 	SIZEOK  $t2, dr_tri_skip
-dr_tri_emit:
+dr_tri_emit:                             # POLY_GT3
+	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
-	lw      $t2, 8($a3)                  # uv2 | pad
-	lw      $t3, SP_SXY($t3)
-	lw      $t4, SP_SXY($t4)
-	lw      $t5, SP_SXY($t5)
-	andi    $t0, $t1, 0xffff
-	or      $t0, $t0, $v0
-	srl     $t1, $t1, 16
-	or      $t1, $t1, $v1
-	lui     $t9, 0x0700
-	or      $t9, $t9, $fp
-	sw      $t9, 0($s6)
+	lw      $t3, SP_SXY($t3)             # xy0
 	lw      $t9, SP_CODE3($t8)
+	lw      $t2, SP_COL($t4)             # c1
+	lw      $t4, SP_SXY($t4)             # xy1
+	or      $t0, $t0, $t9
+	sw      $t0, 4($s6)
 	sw      $t3, 8($s6)
-	sw      $t9, 4($s6)
+	andi    $t0, $t1, 0xffff
+	or      $t0, $t0, $v0                # uv0 | clut
 	sw      $t0, 12($s6)
-	sw      $t4, 16($s6)
-	sw      $t1, 20($s6)
+	sw      $t2, 16($s6)
+	sw      $t4, 20($s6)
+	srl     $t1, $t1, 16
+	or      $t1, $t1, $v1                # uv1 | tpage
+	sw      $t1, 24($s6)
+	lw      $t0, SP_COL($t5)             # c2
+	lw      $t1, SP_SXY($t5)             # xy2
+	lw      $t2, 8($a3)                  # uv2 | pad
+	sw      $t0, 28($s6)
+	sw      $t1, 32($s6)
 	andi    $t2, $t2, 0xffff
-	sw      $t5, 24($s6)
-	sw      $t2, 28($s6)
+	sw      $t2, 36($s6)
+	lui     $t9, 0x0900
+	or      $t9, $t9, $fp                # tag: 9 words
+	sw      $t9, 0($s6)
 	sll     $fp, $s6, 8
 	srl     $fp, $fp, 8
-	addiu   $s6, $s6, 32
+	addiu   $s6, $s6, 40
 dr_tri_next:
 	addiu   $at, $at, -1
 	bgtz    $at, dr_tri

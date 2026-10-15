@@ -36,6 +36,7 @@
 .set PV_U,    12
 .set PV_V,    16
 .set PV_SXY,  20
+.set PV_C,    24       # light, 0..255 (interpolated like u / v)
 
 	.section .bss.r_slow_pool, "aw", @nobits
 	.align  4
@@ -49,7 +50,15 @@ r_slow_pool:
 # -----------------------------------------------------------------------------
 slow_poly:
 	sw      $ra, SP_SPRA($t8)            # (SP_CLUT16 / SP_TPAGE16: set by
-	lui     $v1, %hi(r_slow_pool)        # draw_records for the record)
+	lhu     $t0, R_POLYS($a0)            # draw_records for the record)
+	lbu     $t1, R_NVERTS($a0)
+	lui     $v1, %hi(r_slow_pool)
+	addiu   $t1, $t1, 3                  # the record's light bytes:
+	srl     $t1, $t1, 2                  # polys - ((nv + 3) & ~3), kept in
+	sll     $t1, $t1, 2                  # SP_P0 during the transform
+	addu    $t0, $t0, $a0
+	subu    $t0, $t0, $t1
+	sw      $t0, SP_P0($t8)
 	addiu   $v1, $v1, %lo(r_slow_pool)   # v1 = pool, for the whole routine
 
 	# ---- 1. transform + clip codes ------------------------------------------
@@ -67,7 +76,11 @@ sp_xf:
 	sll     $t3, $t0, 1
 	addu    $t3, $t3, $a1
 	lhu     $t3, 4($t3)                  # uv
+	srl     $t9, $t2, 2                  # slot
+	lw      $t1, SP_P0($t8)              # the record's light bytes
 	srl     $t2, $t2, 1                  # slot x 2: its pool index's offset
+	addu    $t1, $t1, $t9
+	lbu     $t1, 0($t1)                  # light
 	addu    $t2, $t2, $a0
 	lhu     $t2, R_VERTS($t2)            # pool index
 	lw      $t9, RS_VERTPOOL($s0)
@@ -90,6 +103,7 @@ sp_xf:
 	sw      $t7, PV_Z($t4)
 	sw      $t0, PV_U($t4)
 	sw      $t3, PV_V($t4)
+	sw      $t1, PV_C($t4)
 
 	addiu   $t0, $t7, -SLOW_ZNEAR        # bit 0: near
 	slt     $t9, $t0, $zero
@@ -383,7 +397,7 @@ sp_c7:                                   # all three: 4 triangles
 	b       sp_sub
 	nop
 
-	# ---- emit one POLY_FT3 ----------------------------------------------------
+	# ---- emit one POLY_GT3 ----------------------------------------------------
 .macro UVWORD rp, dst
 	lw      \dst, PV_U(\rp)
 	lw      $v0, PV_V(\rp)
@@ -395,41 +409,61 @@ sp_c7:                                   # all three: 4 triangles
 	or      \dst, \dst, $v0
 .endm
 
+# GREY r: light 0..255 -> GPU colour 0x00cccccc. Clobbers v0.
+.macro GREY r
+	sll     $v0, \r, 8
+	or      \r, \r, $v0
+	sll     $v0, \r, 8
+	or      \r, \r, $v0
+.endm
+
 sp_emit:
-	addiu   $t0, $s6, 32
+	addiu   $t0, $s6, 40
 	sltu    $t0, $s7, $t0
 	bnez    $t0, sp_full
 	lw      $t3, SP_P0($t8)
 	lw      $t4, SP_P1($t8)
 	lw      $t5, SP_P2($t8)
-	lui     $t0, 0x0700
-	or      $t0, $t0, $fp                # tag: 7 words, link to the old head
+	lui     $t0, 0x0900
+	or      $t0, $t0, $fp                # tag: 9 words, link to the old head
 	sw      $t0, 0($s6)
+	lw      $t1, PV_C($t3)
 	lw      $t0, SP_CODE3($t8)
+	GREY    $t1
+	or      $t1, $t1, $t0                # code | c0
+	sw      $t1, 4($s6)
 	lw      $t1, PV_SXY($t3)
-	sw      $t0, 4($s6)
+	nop
 	sw      $t1, 8($s6)
 	UVWORD  $t3, $t1
 	lw      $t0, SP_CLUT16($t8)
 	nop
 	or      $t1, $t1, $t0
 	sw      $t1, 12($s6)
+	lw      $t1, PV_C($t4)
+	nop
+	GREY    $t1
+	sw      $t1, 16($s6)
 	lw      $t1, PV_SXY($t4)
 	nop
-	sw      $t1, 16($s6)
+	sw      $t1, 20($s6)
 	UVWORD  $t4, $t1
 	lw      $t0, SP_TPAGE16($t8)
 	nop
 	or      $t1, $t1, $t0
-	sw      $t1, 20($s6)
+	sw      $t1, 24($s6)
+	lw      $t1, PV_C($t5)
+	nop
+	GREY    $t1
+	sw      $t1, 28($s6)
 	lw      $t1, PV_SXY($t5)
 	nop
-	sw      $t1, 24($s6)
+	sw      $t1, 32($s6)
 	UVWORD  $t5, $t1
-	sw      $t1, 28($s6)
+	sw      $t1, 36($s6)
 	sll     $fp, $s6, 8
 	srl     $fp, $fp, 8                  # new bucket head
-	addiu   $s6, $s6, 32
+	addiu   $s6, $s6, 40
 	lw      $t0, SP_SLOWTRI($t8)
 	nop
 	addiu   $t0, $t0, 1
@@ -605,6 +639,7 @@ sp_lerp:
 	LERPC   PV_Z
 	LERPC   PV_U
 	LERPC   PV_V
+	LERPC   PV_C
 	jr      $ra
 	nop
 sl_full:
@@ -636,6 +671,7 @@ sp_mid:
 	MIDC    PV_Z
 	MIDC    PV_U
 	MIDC    PV_V
+	MIDC    PV_C
 	# fall through: project pool vertex t0
 
 # sp_proj: project pool vertex t0 (GTE in projection mode). Clobbers t1-t3.

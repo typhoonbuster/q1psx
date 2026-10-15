@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWV6" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWV7" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -36,10 +36,12 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV6"
+#define QWORLD_MAGIC "QWV7"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
-#define QW_MAX_VERTS   63      /* per face record (multiple of 3)        */
+#define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
+                                  renderer's scratchpad holds SXY, SZ and
+                                  light for 42 vertices                  */
 #define QW_MAX_DEPTH  256      /* BSP depth the renderer's stack holds:
                                   64 words of scratchpad + 3 RAM blocks   */
 #define QW_NONE        0xffffffffu
@@ -54,7 +56,7 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV6"                                  */
+	char     magic[4];             /* "QWV7"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
@@ -130,8 +132,12 @@ static inline uint32_t qw_face_end(const qw_node *n, int side)
 
 /* Face record: header, then its vertex indices into the map's pool (uint16,
    padded with copies of the first to a multiple of 3 entries, then to 4
-   bytes: the renderer transforms three at a time), then quads, then tris.
-   All the pieces of a record come from one Quake face, hence one texture. */
+   bytes: the renderer transforms three at a time), then one light byte per
+   vertex (Quake's lightmap at the vertex, 128 = texture as is), padded to
+   4 bytes, so they start at polys - ((num_verts + 3) & ~3); then quads,
+   then tris. The pieces of a record
+   share one texture (one or several adjacent Quake faces). Polygons are
+   drawn Gouraud-shaded, texture x light, dithered. */
 typedef struct {
 	uint16_t face_id;      /* +0  Quake face index (visframe slot)            */
 	uint8_t  num_verts;    /* +2  <= QW_MAX_VERTS (the renderer transforms in

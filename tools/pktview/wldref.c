@@ -146,7 +146,12 @@ static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *op)
 
 static double rot[3][3], cam[3];
 
-typedef struct { double x, y, z; double u, v; } cv;   /* view space + uv */
+typedef struct { double x, y, z; double u, v; double l; } cv;   /* view space + uv + light */
+
+/* the GPU's 4x4 dither offsets (the engine sets GP0(E1h) bit 9) */
+static const int dither[4][4] = {
+	{ -4, +0, -3, +1 }, { +2, -2, +3, -1 }, { -3, +1, -4, +0 }, { +3, -1, +2, -2 },
+};
 
 static void to_view(const qw_vert *p, cv *o)
 {
@@ -169,7 +174,7 @@ static void tri3(cv a, cv b, cv c, int tpage, int clut)
 		if ((p->z >= ZNEAR) != (q->z >= ZNEAR)) {
 			double t = (ZNEAR - p->z) / (q->z - p->z);
 			cv r = { p->x + t * (q->x - p->x), p->y + t * (q->y - p->y), ZNEAR,
-			         p->u + t * (q->u - p->u), p->v + t * (q->v - p->v) };
+			         p->u + t * (q->u - p->u), p->v + t * (q->v - p->v), p->l + t * (q->l - p->l) };
 			out[n++] = r;
 		}
 	}
@@ -201,10 +206,16 @@ static void tri3(cv a, cv b, cv c, int tpage, int clut)
 				if (z >= zb[y][x]) continue;
 				double u = (w0 * t[0].u * iz[0] + w1 * t[1].u * iz[1] + w2 * t[2].u * iz[2]) * z;
 				double v = (w0 * t[0].v * iz[0] + w1 * t[1].v * iz[1] + w2 * t[2].v * iz[2]) * z;
+				double l = (w0 * t[0].l * iz[0] + w1 * t[1].l * iz[1] + w2 * t[2].l * iz[2]) * z;
 				uint8_t col[3];
 				int op;
 				texel(tpage, clut, (int) u, (int) v, col, &op);
 				if (!op) continue;
+				for (int k = 0; k < 3; k++) {       /* texel x light / 128, dithered */
+					int m = (int) (col[k] * l) >> 7;
+					m = (m > 255 ? 255 : m) + dither[y & 3][x & 3];
+					col[k] = (uint8_t) ((m < 0 ? 0 : m > 255 ? 255 : m) & 0xf8);
+				}
 				zb[y][x] = (float) z;
 				memcpy(fb[y][x], col, 3);
 			}
@@ -229,6 +240,7 @@ static void render(const uint8_t *d, const qw_header *h, const qw_view *vw)
 		int tpage, clut;
 		use_tex(&r, &tpage, &clut);
 		const uint16_t *v = (const uint16_t *) (at + sizeof r);   /* pool indices */
+		const uint8_t  *lt = at + r.polys - ((r.num_verts + 3) & ~3);
 		const uint8_t *q = at + r.polys;
 		cv tv[QW_MAX_VERTS];
 		for (int i = 0; i < r.num_verts; i++) to_view(&pool[v[i]], &tv[i]);
@@ -238,6 +250,7 @@ static void render(const uint8_t *d, const qw_header *h, const qw_view *vw)
 			cv c[4];
 			for (int i = 0; i < 4; i++) {
 				c[i] = tv[qd.idx[i] / 4];
+				c[i].l = lt[qd.idx[i] / 4];
 				c[i].u = qd.uv[i] & 255;
 				c[i].v = qd.uv[i] >> 8;
 			}
@@ -250,6 +263,7 @@ static void render(const uint8_t *d, const qw_header *h, const qw_view *vw)
 			cv c[3];
 			for (int i = 0; i < 3; i++) {
 				c[i] = tv[tr.idx[i] / 4];
+				c[i].l = lt[tr.idx[i] / 4];
 				c[i].u = tr.uv[i] & 255;
 				c[i].v = tr.uv[i] >> 8;
 			}
@@ -369,13 +383,14 @@ static void render_painter(const uint8_t *d, const qw_header *h, const qw_view *
 		int tpage, clut;
 		use_tex(&r, &tpage, &clut);
 		const uint16_t *v = (const uint16_t *) (rp + sizeof r);
+		const uint8_t  *lt = rp + r.polys - ((r.num_verts + 3) & ~3);
 		const uint8_t *q = rp + r.polys;
 		cv tv[QW_MAX_VERTS];
 		for (int i = 0; i < r.num_verts; i++) to_view(&pool[v[i]], &tv[i]);
 		for (int k = 0; k < r.num_quads; k++, q += sizeof(qw_quad)) {
 			qw_quad qd; memcpy(&qd, q, sizeof qd);
 			cv c[4];
-			for (int i = 0; i < 4; i++) { c[i] = tv[qd.idx[i] / 4]; c[i].u = qd.uv[i] & 255; c[i].v = qd.uv[i] >> 8; }
+			for (int i = 0; i < 4; i++) { c[i] = tv[qd.idx[i] / 4]; c[i].u = qd.uv[i] & 255; c[i].v = qd.uv[i] >> 8; c[i].l = lt[qd.idx[i] / 4]; }
 			for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) zb[y][x] = 1e30f;   /* no depth test */
 			tri3(c[0], c[1], c[2], tpage, clut);
 			for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) zb[y][x] = 1e30f;
@@ -384,7 +399,7 @@ static void render_painter(const uint8_t *d, const qw_header *h, const qw_view *
 		for (int k = 0; k < r.num_tris; k++, q += sizeof(qw_tri)) {
 			qw_tri tr; memcpy(&tr, q, sizeof tr);
 			cv c[3];
-			for (int i = 0; i < 3; i++) { c[i] = tv[tr.idx[i] / 4]; c[i].u = tr.uv[i] & 255; c[i].v = tr.uv[i] >> 8; }
+			for (int i = 0; i < 3; i++) { c[i] = tv[tr.idx[i] / 4]; c[i].u = tr.uv[i] & 255; c[i].v = tr.uv[i] >> 8; c[i].l = lt[tr.idx[i] / 4]; }
 			for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) zb[y][x] = 1e30f;
 			tri3(c[0], c[1], c[2], tpage, clut);
 		}

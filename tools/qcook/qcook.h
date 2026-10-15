@@ -42,7 +42,8 @@ typedef struct { int planenum; int child[2]; int16_t mins[3], maxs[3];
 typedef struct { int contents, visofs; int16_t mins[3], maxs[3];
                  int firstmark, nummarks; } bsp_leaf;
 typedef struct { float vecs[2][4]; int miptex, flags; } bsp_texinfo;
-typedef struct { int planenum, side, firstedge, numedges, texinfo; } bsp_face;
+typedef struct { int planenum, side, firstedge, numedges, texinfo;
+                 uint8_t styles[4]; int lightofs; } bsp_face;   /* lightofs -1: none */
 typedef struct { int planenum; int child[2]; } bsp_clipnode;
 typedef struct { float mins[3], maxs[3]; int headnode[4], visleafs, firstface, numfaces; } bsp_model;
 
@@ -69,6 +70,7 @@ typedef struct {
 	uint16_t     *marks;     int num_marks;
 	bsp_miptex   *miptex;    int num_miptex;
 	const uint8_t *vis;      uint32_t vis_len;
+	const uint8_t *lighting; uint32_t light_len;   /* lightmaps, 1 byte per luxel */
 	const char   *entities;  uint32_t ent_len;
 } bsp_t;
 
@@ -102,6 +104,7 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 
 /* ---------------------------------------------------------------- world -- */
 
+extern double light_gain;   /* vertex light scale (qcook --light-gain), 1 = Quake */
 void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
                  const char *out_path);
 

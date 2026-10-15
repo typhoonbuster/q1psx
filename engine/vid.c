@@ -37,7 +37,8 @@ void vid_init(void)
 		SetDefDispEnv(&buf[i].disp, 0, i * VID_H, VID_W, VID_H);
 		SetDefDrawEnv(&buf[i].draw, 0, i * VID_H, VID_W, VID_H);
 		buf[i].draw.isbg = 1;
-		buf[i].draw.dtd  = 0;   /* no dithering: flat-textured world */
+		buf[i].draw.dtd  = 1;   /* dither the shaded (lit) world: GP0(E1h)
+		                           bit 9; polygons cannot set it themselves */
 	}
 	vid_set_bg(0, 0, 0);
 
@@ -119,17 +120,23 @@ void vid_dump(void)
 {
 	const uint32_t *ot = vid_frame.ot;
 	uint32_t at = (uint32_t) &ot[VID_OT_LEN - 1];
+	uint32_t hash = 2166136261u, words = 0;   /* FNV-1a over the payloads */
 
 	while ((at & 0xffffff) != 0xffffff) {
 		const uint32_t *p = (const uint32_t *) (0x80000000u | (at & 0xffffff));
 		uint32_t n = p[0] >> 24;
 		if (n) {
 			printf("P");
-			for (uint32_t i = 1; i <= n; i++)
+			for (uint32_t i = 1; i <= n; i++) {
 				printf(" %08x", (unsigned) p[i]);
+				hash = (hash ^ p[i]) * 16777619u;
+			}
 			printf("\n");
+			words += n;
 		}
 		at = p[0];
 	}
-	printf("E\n");
+	/* the hash survives a console that drops or doubles characters (the
+	   emulator's interpreter does on long dumps) */
+	printf("E\nH %08x %u\n", (unsigned) hash, (unsigned) words);
 }
