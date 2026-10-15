@@ -34,7 +34,7 @@
 #define PLANE(cn) ((const qw_plane *) ((const int32_t *) world.planes + (cn)->plane3))
 #define F_SHIFT   16
 #define F_ONE     (1 << F_SHIFT)
-#define MAX_SPLIT 64   /* pending splits; the clip trees are <= 26 deep */
+#define MAX_SPLIT QW_MAX_SPLIT   /* pending splits <= clip tree depth (cook-checked) */
 
 /* n . v (x4096). Axial planes (type 0..2) have n = 4096 on their axis. */
 static int32_t dot_n(const qw_plane *pl, const int32_t v[3])

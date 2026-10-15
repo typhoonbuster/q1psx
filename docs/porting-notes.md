@@ -1201,3 +1201,94 @@ remove the plane indirection. An axial node would need 3 loads and about
   record spheres.
 - **`prof_now` could go back by one counter wrap** when the wrap IRQ was
   still pending. A monotonic guard now adds the missing 0x10000.
+
+---
+
+## §14 — Geometry and RAM (R5, 2026-10-15)
+
+### 14.1 Measurements and the decision
+
+Every Quake map was cooked: 32 maps, low and high.
+
+| world in RAM | high | low |
+|---|---|---|
+| episode 1 average | 833 KB | 643 KB |
+| episodes 2-4 average | 980-1104 KB | 713-837 KB |
+| worst map (e3m5) | 1427 KB | 1008 KB |
+| maps above today's 1152 KB arena | 7 | 0 |
+
+QuakeC, entities and models will need a good part of that arena.
+
+**Decision (2026-10-15):**
+- target about **700 KB of world per map** at the default fidelity
+  (revisited in Phase 7-8);
+- plan:
+  1. R5.1: every map loads;
+  2. R5.2: texture windows;
+  3. R5.3: shared vertices and a compact format;
+  4. measure again; lossy decimation only where still needed, models
+     when they arrive.
+
+**Where the polygons come from.** Quake's geometry is already coarse,
+about 5 k faces per map. Most of our polygons come from cutting faces at
+every texture repetition: the PS1 has no wrap mode, so a polygon's UVs must
+stay inside one VRAM tile.
+- At high, 40-55 % of the polygons are such cuts.
+- The GPU's texture window (GP0 E2h) repeats a power-of-two texture in
+  hardware, within the 8-bit UV range.
+- Simulating it in the cook (repetitions up to 256 texels) gives high
+  fidelity exactly the polygon count of low:
+
+  | map | polygons high | with texture window | world |
+  |---|---|---|---|
+  | start | 17 189 | 9 927 | 926 → 752 KB |
+  | e3m5 | 32 468 | 14 568 | 1427 → 1009 KB |
+
+  Low's 1/4-resolution textures, tiled 4 times in a 64-texel VRAM tile,
+  already cover 256 original texels; that is why the counts match.
+
+The remaining world on e3m5 after that would be:
+
+| part | size |
+|---|---|
+| nodes | 190 KB |
+| vertices | 300 KB |
+| polygons | 175 KB |
+| record headers | 125 KB |
+| leaves | 65 KB |
+| PVS | 50 KB |
+| clip hulls | 95 KB |
+
+These are R5.3's targets.
+
+### 14.2 R5.1 — every map loads
+
+- **BSP depth up to 110** (e3m5); the renderer's walk stack was 64 words of
+  scratchpad. Rather than giving it scratchpad the caches need, the full
+  64-word block is spilled to RAM (`r_walk_spill`, 3 blocks, so depth ≤
+  256 = `QW_MAX_DEPTH`).
+  - It is refilled when `pop` finds the scratchpad stack empty: that test
+    already existed, so pops cost nothing.
+  - Pushes pay 2 instructions: about +1 % on the walk.
+  - Validation: with `WALK_SHIFT` forced to 8-entry blocks, the dumped
+    display lists of the 12 `start.bsp` views are identical word for word
+    to a normal run.
+- **Clip hulls up to 65 deep** (hull 2 of e1m2): the trace's pending-split
+  limit is now `QW_MAX_SPLIT` = 128, and the cook checks it.
+- **Disc layout:** every cooked map ships at 4 levels as
+  `\MAPS\<MAP>_<N>.TEX/.WLD`.
+  - They sit in a subdirectory because the BIOS reads only the root
+    directory's first sector. With the maps in the root, `SYSTEM.CNF`
+    sorted past it and the disc booted into the OpenBIOS shell.
+  - PSn00bSDK's `CdSearchFile` reads whole multi-sector directories.
+- **Cook:** `scripts/cook.sh` cooks in parallel.
+  - `COOK_MAPS` = `ep1` (default), `all` (needs `QUAKE_PAK1`) or a list.
+  - Retail maps take the palette from pak0 (`qcook --palette-pak`).
+- **Engine:**
+  - `world_scan_maps` probes the disc and `world_load(map, fidelity)`
+    loads one map.
+  - A map too big for the arena falls back to the highest level that
+    fits: e1m4 high is 1160 KB, so it loads at medium.
+  - **R2** cycles the maps; the overlay shows the map and the arena use.
+- **Bench:** `BENCH_MAPS=1 scripts/bench.sh` loads every map and benches
+  its four spawn views. All 9 episode-1 maps load and render.

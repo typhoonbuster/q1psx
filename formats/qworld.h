@@ -36,7 +36,8 @@
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   63      /* per face record (multiple of 3)        */
-#define QW_MAX_DEPTH   64      /* BSP depth the renderer's stack holds   */
+#define QW_MAX_DEPTH  256      /* BSP depth the renderer's stack holds:
+                                  64 words of scratchpad + 3 RAM blocks   */
 #define QW_NONE        0xffffffffu
 
 /* face record flags */
@@ -138,6 +139,8 @@ typedef struct {
    physics' position unit (1/QW_CLIP_SUB world unit) and clipnodes hold their
    plane's offset in words, so no per-node multiply is left. */
 #define QW_CLIP_SUB 8              /* physics positions: 1/8 world unit  */
+#define QW_MAX_SPLIT 128           /* clip-hull depth the trace handles
+                                      (Quake maps reach 65)              */
 typedef struct {
 	uint32_t num_planes;
 	uint32_t num_clipnodes;

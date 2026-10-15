@@ -66,7 +66,7 @@
 .set POLY_SIZE,  12
 
 # ---- scratchpad map (base 0x1F800000) ---------------------------------------
-.set SP_STACK,    0x000   # walk stack, 64 words
+.set SP_STACK,    0x000   # walk stack, 64 words (spills to RAM beyond)
 .set SP_SXY,      0x100   # projected XY per record vertex (index x4)
 .set SP_SZ,       0x200   # SZ per record vertex
 .set SP_CAM,      0x300   # cam[3], vertex units
@@ -88,6 +88,7 @@
 .set SP_PLB,      0x374   # slow path: polygon index list B (12 bytes)
 .set SP_TRI,      0x380   # slow path: triangle stack (up to 16 words)
 .set SP_BLKEND,   0x3c0   # draw_records: end of the current face block
+.set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_POOLN,    0x3d0   # slow path: vertices in the pool
 .set SP_CLUT16,   0x3d4   # slow path: record clut << 16
 .set SP_TPAGE16,  0x3d8   # slow path: record tpage << 16
@@ -107,6 +108,9 @@
 .set SLOW_MAXD,   5       # max split depth
 .set POOL_MAX,    128     # vertex pool entries (32 bytes each)
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
+.set WALK_SHIFT,  8       # walk stack block = 1 << 8 bytes (64 entries): the
+                          # scratchpad part, and the unit spilled to RAM
+.set WALK_RAM,    768     # RAM behind it: depth <= 64 + 192 = 256 (QW_MAX_DEPTH)
 
 .set TIMER2,      0x1120  # root counter 2 value, offset from 0x1F800000's
                           # upper half (0x1F801120)

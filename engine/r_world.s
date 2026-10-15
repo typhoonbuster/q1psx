@@ -46,6 +46,11 @@
 	nop
 .endm
 
+	.section .bss.r_walk_spill, "aw", @nobits
+	.align  4
+r_walk_spill:                            # walk stack overflow (see walk_spill)
+	.space  WALK_RAM
+
 	.section .text.r_render, "ax", @progbits
 	.global r_render
 	.type   r_render, @function
@@ -157,6 +162,7 @@ mark_done:
 	lw      $s1, RS_ROOT($s0)
 	li      $s2, 0xf                     # all four frustum planes active
 	move    $s3, $t8                     # walk stack = scratchpad + 0
+	sw      $zero, SP_SPILLS($t8)
 
 walk:
 	andi    $t0, $s1, 1
@@ -195,10 +201,54 @@ wn_side:
 	or      $t3, $t3, $t4
 	sw      $t3, SP_STACK($s3)           # push (node, flags, side, draw)
 	addiu   $s3, $s3, 4
+	andi    $at, $s3, (1 << WALK_SHIFT) - 1
+	beqz    $at, walk_spill              # the scratchpad block is full
 	sll     $t0, $t0, 2
+walk_pushed:
 	addu    $t0, $t0, $s1
 	lw      $s1, N_CHILD($t0)            # near child first
 	b       walk
+	nop
+
+	# Deep BSPs (Quake maps reach 110 levels): the full scratchpad stack is
+	# moved to the next RAM block and starts over; `pop` brings it back when
+	# it runs empty. Only pushes pay a test (2 instructions).
+walk_spill:
+	lw      $t1, SP_SPILLS($t8)
+	lui     $t2, %hi(r_walk_spill)
+	addiu   $t2, $t2, %lo(r_walk_spill)
+	sll     $t4, $t1, WALK_SHIFT         # block offset
+	addu    $t2, $t2, $t4
+	addiu   $t1, $t1, 1
+	sw      $t1, SP_SPILLS($t8)
+	move    $t4, $t8
+1:	lw      $t5, 0($t4)
+	addiu   $t4, $t4, 4
+	sw      $t5, 0($t2)
+	bne     $t4, $s3, 1b
+	addiu   $t2, $t2, 4
+	b       walk_pushed
+	move    $s3, $t8
+
+walk_refill:                             # scratchpad stack empty: next RAM block
+	lw      $t1, SP_SPILLS($t8)
+	nop
+	beqz    $t1, walk_done               # nothing spilled: the walk is over
+	addiu   $t1, $t1, -1
+	sw      $t1, SP_SPILLS($t8)
+	lui     $t2, %hi(r_walk_spill)
+	addiu   $t2, $t2, %lo(r_walk_spill)
+	sll     $t4, $t1, WALK_SHIFT
+	addu    $t2, $t2, $t4
+	move    $t4, $t8
+	addiu   $s3, $t8, 1 << WALK_SHIFT
+2:	lw      $t5, 0($t2)
+	addiu   $t2, $t2, 4
+	sw      $t5, 0($t4)
+	addiu   $t4, $t4, 4
+	bne     $t4, $s3, 2b
+	nop
+	b       pop
 	nop
 
 walk_leaf:
@@ -229,7 +279,7 @@ wl_mark:
 	sh      $s4, 0($t0)                  # face_visframe[mark] = framecount
 
 pop:
-	beq     $s3, $t8, walk_done
+	beq     $s3, $t8, walk_refill
 	nop
 	addiu   $s3, $s3, -4
 	lw      $t0, SP_STACK($s3)

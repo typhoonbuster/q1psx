@@ -12,10 +12,46 @@ world_t world;
 
 const char *const fidelity_name[FIDELITY_LEVELS] = { "low", "medium", "high", "ultra" };
 
-static int load_textures(int fid)
+/* Every Quake map, in play order; the disc carries some of them
+   (scripts/cook.sh: episode 1 by default, all with COOK_MAPS=all). */
+static const char *const quake_maps[] = {
+	"START", "E1M1", "E1M2", "E1M3", "E1M4", "E1M5", "E1M6", "E1M7", "E1M8",
+	"E2M1", "E2M2", "E2M3", "E2M4", "E2M5", "E2M6", "E2M7",
+	"E3M1", "E3M2", "E3M3", "E3M4", "E3M5", "E3M6", "E3M7",
+	"E4M1", "E4M2", "E4M3", "E4M4", "E4M5", "E4M6", "E4M7", "E4M8", "END",
+};
+#define NUM_QUAKE_MAPS (int) (sizeof quake_maps / sizeof quake_maps[0])
+
+static const char *disc_maps[NUM_QUAKE_MAPS];
+static int         num_disc_maps;
+
+int world_scan_maps(void)
+{
+	num_disc_maps = 0;
+	for (int i = 0; i < NUM_QUAKE_MAPS; i++) {
+		char name[24];
+		snprintf(name, sizeof name, "\\MAPS\\%s_0.WLD;1", quake_maps[i]);
+		if (cd_exists(name, NULL))
+			disc_maps[num_disc_maps++] = quake_maps[i];
+	}
+	printf("world: %d maps on the disc\n", num_disc_maps);
+	return num_disc_maps;
+}
+
+int world_num_maps(void)
+{
+	return num_disc_maps;
+}
+
+const char *world_map_name(int i)
+{
+	return i >= 0 && i < num_disc_maps ? disc_maps[i] : "?";
+}
+
+static int load_textures(const char *map, int fid)
 {
 	char name[24];
-	snprintf(name, sizeof name, "\\START%d.TEX;1", fid);
+	snprintf(name, sizeof name, "\\MAPS\\%s_%d.TEX;1", map, fid);
 
 	uint32_t mark = mem_level_mark(), size;
 	const uint8_t *f = cd_load(name, &size);
@@ -42,16 +78,18 @@ static int load_textures(int fid)
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-int world_load(int fid)
+int world_load(int map, int fid)
 {
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
+	if (map < 0 || map >= num_disc_maps)
+		return 0;
 
-	if (!load_textures(fid))
+	if (!load_textures(disc_maps[map], fid))
 		return 0;
 
 	char name[24];
-	snprintf(name, sizeof name, "\\START%d.WLD;1", fid);
+	snprintf(name, sizeof name, "\\MAPS\\%s_%d.WLD;1", disc_maps[map], fid);
 	uint32_t size;
 	uint8_t *f = cd_load(name, &size);
 	if (!f || size < sizeof(qw_header) || memcmp(f, QWORLD_MAGIC, 4)) {

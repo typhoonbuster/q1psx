@@ -398,8 +398,8 @@ static void bbox(const int16_t mins[3], const int16_t maxs[3], int16_t c[3], int
 	}
 }
 
-/* depth of a clip hull (engine/clip.c keeps at most 64 pending splits, one
-   per node on the current path) */
+/* depth of a clip hull (engine/clip.c keeps at most QW_MAX_SPLIT pending
+   splits, one per node on the current path) */
 static int clip_depth(const bsp_t *b, int n)
 {
 	if (n < 0)
@@ -642,9 +642,11 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 			buf_put(&f, &qc, sizeof qc);
 		}
 		h.len_clip = (uint32_t) f.len - h.ofs_clip;
-		for (int hull = 1; hull <= 2; hull++)
-			if (clip_depth(b, wm->headnode[hull]) > 64)
-				die("clip hull %d deeper than 64 nodes", hull);
+		for (int hull = 1; hull <= 2; hull++) {
+			int d = clip_depth(b, wm->headnode[hull]);
+			if (d > QW_MAX_SPLIT)
+				die("clip hull %d depth %d > %d", hull, d, QW_MAX_SPLIT);
+		}
 	}
 	memcpy(f.p, &h, sizeof h);
 

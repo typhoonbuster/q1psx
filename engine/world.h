@@ -43,8 +43,15 @@ _Static_assert(__builtin_offsetof(world_t, hull2_root) == 88, "p_defs.inc W_HULL
 extern world_t world;
 extern const char *const fidelity_name[FIDELITY_LEVELS];
 
-/* Load START<fidelity>.TEX + .WLD; resets the level arena. 1 on success. */
-int world_load(int fidelity);
+/* Find which Quake maps the disc carries (<MAP>_<fidelity>.TEX / .WLD);
+   returns how many. Call once after cd_init. */
+int         world_scan_maps(void);
+int         world_num_maps(void);
+const char *world_map_name(int map);   /* "START", "E1M1", ... */
+
+/* Load map `map` (0 .. world_num_maps() - 1) at a fidelity level; resets
+   the level arena. 1 on success, 0 if missing or too big for the arena. */
+int world_load(int map, int fidelity);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);

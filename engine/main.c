@@ -1,8 +1,8 @@
 /*
  * q1psx — boot + main loop.
  *
- * Normal build: load start.bsp (fidelity "high"), free-fly camera over the
- * asm-rendered world, debug overlay.
+ * Normal build: load the first map on the disc (start, fidelity "high"),
+ * player physics over the asm-rendered world, debug overlay.
  * Bench build (Q1PSX_BENCH, CMake preset "bench"): render every cooked bench
  * viewpoint, print one "bench ..." line each (+ a packet dump of one frame for
  * tools/pktview), then "bench done" — see scripts/bench.sh.
@@ -35,7 +35,10 @@ typedef struct {
 static camera_t cam;
 static pmove_t  player;
 static int      world_ok;
-static int      fidelity = 2;   /* 0 low .. 3 ultra; L2 cycles it */
+static int      map_index;      /* into world_map_name(); R2 cycles it */
+static int      fid_wanted = 2; /* 0 low .. 3 ultra; L2 cycles it      */
+static int      fidelity   = 2; /* the level actually loaded (a map too
+                                   big for the arena falls back lower)  */
 
 static void player_spawn(void)
 {
@@ -93,19 +96,40 @@ static void player_update(void)
 	prof_add(PROF_SIM, t0, prof_now());
 }
 
-/* ------------------------------------------------------------ fidelity -- */
+/* ------------------------------------------------------- map / fidelity -- */
 
-/* Reload the map at the next fidelity level (textures + world), keeping the
-   camera where it is. The CD reads block for a moment: fine for a debug
-   control. */
-static void switch_fidelity(void)
+/* Load `map` at fidelity `fid`, or the highest lower level that fits the
+   level arena. Sets world_ok / fidelity and binds the renderer. */
+static int load_level(int map, int fid)
 {
-	fidelity = (fidelity + 1) % FIDELITY_LEVELS;
+	world_ok = 0;
+	for (int f = fid; f >= 0 && !world_ok; f--) {
+		world_ok = world_load(map, f);
+		if (world_ok)
+			fidelity = f;
+	}
+	if (world_ok) {
+		if (fidelity != fid)
+			printf("level: %s does not fit at %s, loaded at %s\n", world_map_name(map),
+			       fidelity_name[fid], fidelity_name[fidelity]);
+		r_bind_world();
+	}
+	return world_ok;
+}
+
+/* L2: reload the map at the next fidelity level, keeping the camera where
+   it is; R2: next map, at its spawn. The CD reads block for a moment: fine
+   for debug controls. */
+static void switch_level(int next_map)
+{
 	vid_text(8, 8, "loading...");
 	vid_flip();
-	world_ok = world_load(fidelity);
-	if (world_ok)
-		r_bind_world();
+	if (next_map)
+		map_index = (map_index + 1) % (world_num_maps() ? world_num_maps() : 1);
+	else
+		fid_wanted = (fid_wanted + 1) % FIDELITY_LEVELS;
+	if (load_level(map_index, fid_wanted) && next_map)
+		player_spawn();
 }
 
 /* --------------------------------------------------------------- frame -- */
@@ -126,16 +150,16 @@ static void draw_overlay(void)
 	char line[256];
 
 	snprintf(line, sizeof line,
-	         "q1psx  %s  ~%u fps\n"
-	         "frame %6u cyc  gpu wait %u\n"
+	         "q1psx  %s %s  ~%u fps\n"
+	         "frame %6u cyc  gpu wait %u  arena %u KB\n"
 	         "walk %u  mark %u  faces %u\n"
 	         "nodes %u recs %u verts %u\n"
 	         "polys %u  near %u  %u B%s\n"
 	         "pos %d %d %d\n"
 	         "pad %s type %d btn %04x",
-	         world_ok ? fidelity_name[fidelity] : "no world",
+	         world_map_name(map_index), world_ok ? fidelity_name[fidelity] : "no world",
 	         vid_stats.vbl ? 60 / vid_stats.vbl : 60,
-	         prof_stage[PROF_FRAME], vid_stats.sync_cycles,
+	         prof_stage[PROF_FRAME], vid_stats.sync_cycles, mem_level_used() / 1024,
 	         prof_stage[PROF_R_WALK], prof_stage[PROF_R_SETUP], prof_stage[PROF_R_BLOCK],
 	         prof_count[PROF_N_NODES], prof_count[PROF_N_BLOCKS], prof_count[PROF_N_VERTS],
 	         prof_count[PROF_N_POLYS], prof_count[PROF_N_SLOW],
@@ -158,7 +182,9 @@ static void run_frame(int interactive, int dump)
 			overlay_on = !overlay_on;
 		player_update();
 		if (pad.pressed & PAD_L2)
-			switch_fidelity();
+			switch_level(0);
+		else if (pad.pressed & PAD_R2)
+			switch_level(1);
 	}
 	frame_work();
 	prof_add(PROF_FRAME, t0, prof_now());
@@ -179,6 +205,9 @@ static void run_frame(int interactive, int dump)
 
 #ifndef Q1PSX_BENCH_VIEWS
 #define Q1PSX_BENCH_VIEWS 1   /* 0: physics checks only (VIEWS=0 scripts/bench.sh) */
+#endif
+#ifndef Q1PSX_BENCH_MAPS
+#define Q1PSX_BENCH_MAPS 0    /* 1: every map on the disc (BENCH_MAPS=1 scripts/bench.sh) */
 #endif
 
 #define BENCH_WARMUP 8
@@ -363,11 +392,50 @@ static void bench_pmove_diff(void)
 	       (unsigned) (cyc_c / 1000));
 }
 
+/* Every map on the disc: load it (falling back to a lower fidelity when it
+   does not fit the arena), then its four spawn views, briefly. */
+static void bench_maps(void)
+{
+	static char names[4][16];
+	for (int m = 0; m < world_num_maps(); m++) {
+		if (!load_level(m, Q1PSX_BENCH_FID)) {
+			printf("bench map %s FAILED to load\n", world_map_name(m));
+			continue;
+		}
+		printf("bench map %s fid %s arena %u KB\n", world_map_name(m), fidelity_name[fidelity],
+		       mem_level_used() / 1024);
+		for (uint32_t v = 0; v < 4 && v < world.num_views; v++) {
+			const qw_view *vw = &world.views[v];
+			cam.pos[0] = vw->pos[0] * CLIP_SUB;
+			cam.pos[1] = vw->pos[1] * CLIP_SUB;
+			cam.pos[2] = vw->pos[2] * CLIP_SUB;
+			cam.yaw    = vw->yaw * ANG_TURN / 360;
+			cam.pitch  = vw->pitch * ANG_TURN / 360;
+			snprintf(names[v], sizeof names[v], "%s.v%u", world_map_name(m), v);
+			bench_acc_t acc;
+			bench_reset(&acc, names[v]);
+			for (int i = 0; i < 4; i++)
+				run_frame(0, 0);
+			for (int i = 0; i < 16; i++) {
+				run_frame(0, 0);
+				bench_add(&acc, vid_stats.vbl);
+			}
+			bench_print(&acc);
+		}
+	}
+}
+
 static void run_bench(void)
 {
 	static char names[16][8];
 
 	printf("bench start\n");
+	if (Q1PSX_BENCH_MAPS) {
+		bench_maps();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
 	if (world_ok) {
 		bench_clip_diff();
 		bench_pmove_diff();
@@ -468,15 +536,12 @@ int main(void)
 
 	printf("q1psx\n");
 
+	world_scan_maps();
 #ifdef Q1PSX_BENCH
-	world_ok = world_load(Q1PSX_BENCH_FID);
-#else
-	world_ok = world_load(fidelity);
+	fid_wanted = Q1PSX_BENCH_FID;
 #endif
-	if (world_ok) {
-		r_bind_world();
+	if (load_level(map_index, fid_wanted))
 		player_spawn();
-	}
 
 #ifdef Q1PSX_BENCH
 	run_bench();

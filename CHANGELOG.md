@@ -688,3 +688,27 @@ followed by R0-R4.
       bare form is `div $zero, rs, rt`.
     - `prof_now` could go back by one counter wrap when the wrap IRQ was
       still pending (bogus 524 k-cycle maxima).
+- **R5 decided** (2026-10-15):
+  - plan: every map loadable, then texture windows, then shared vertices
+    and a compact format; lossy decimation only where still needed;
+  - target about 700 KB of world per map.
+  - Measurements of all 32 maps and a texture-window simulation (high
+    fidelity −40 to −55 % polygons at no VRAM cost):
+    `docs/porting-notes.md` §14.1.
+- **R5.1 — every map loads.** Details: `docs/porting-notes.md` §14.2.
+  - **Renderer walk stack:** Quake BSPs reach 110 levels. The 64-word
+    scratchpad stack now spills whole blocks to RAM (depth ≤ 256). Forced
+    spills give identical display lists; the walk costs about +1 %.
+  - **Physics:** the trace's pending-split limit is 128 (hull 2 reaches
+    65).
+  - **Disc:** every cooked map ships as `\MAPS\<MAP>_<N>.TEX/.WLD`. The
+    subdirectory is needed because the BIOS reads only the root
+    directory's first sector.
+  - **Cook:** `scripts/cook.sh` runs in parallel. `COOK_MAPS` takes `ep1`
+    (default), `all` (retail pak1, with the palette taken from pak0) or a
+    list.
+  - **Engine:** `world_load(map, fidelity)` falls back to a lower level
+    when a map does not fit the arena (e1m4 high → medium). **R2** cycles
+    the maps.
+  - **Bench:** `BENCH_MAPS=1` benches every map's spawn views; all 9
+    episode-1 maps load and render.

@@ -13,6 +13,16 @@ void cd_init(void)
 	CdInit();
 }
 
+int cd_exists(const char *name, uint32_t *size)
+{
+	CdlFILE file;
+	if (!CdSearchFile(&file, name))
+		return 0;
+	if (size)
+		*size = (uint32_t) file.size;
+	return 1;
+}
+
 void *cd_load(const char *name, uint32_t *size)
 {
 	CdlFILE file;

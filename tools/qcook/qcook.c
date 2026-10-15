@@ -309,18 +309,23 @@ static int cmd_map(int argc, char **argv)
 	const char *fid_name = arg(argc, argv, "--fidelity", "high");
 	const char *out_tex  = arg(argc, argv, "--tex", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
+	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
 	if (!pak_path || !map || !out_tex || !out_wld)
-		die("usage: qcook map --pak <pak> --map <name> [--fidelity f] --tex <out> --world <out>");
+		die("usage: qcook map --pak <pak> --map <name> [--fidelity f] --tex <out> --world <out>"
+		    " [--palette-pak <pak0>]");
 
 	const fidelity_t *fid = fidelity_find(fid_name);
 
 	long pak_len;
 	uint8_t *pak = read_file(pak_path, &pak_len);
 
+	/* the retail pak1.pak has maps but no palette: take it from pak0 */
 	uint32_t pal_len, bsp_len;
-	const uint8_t *pal = pak_find(pak, pak_len, "gfx/palette.lmp", &pal_len);
+	long     ppak_len = pak_len;
+	uint8_t *ppak     = pal_pak ? read_file(pal_pak, &ppak_len) : pak;
+	const uint8_t *pal = pak_find(ppak, ppak_len, "gfx/palette.lmp", &pal_len);
 	if (!pal || pal_len < 768)
-		die("gfx/palette.lmp missing in %s", pak_path);
+		die("gfx/palette.lmp missing in %s", pal_pak ? pal_pak : pak_path);
 	const uint8_t *raw = pak_find(pak, pak_len, map, &bsp_len);
 	if (!raw)
 		die("%s not found in %s", map, pak_path);
