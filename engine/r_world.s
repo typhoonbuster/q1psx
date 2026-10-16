@@ -192,17 +192,16 @@
 .endif
 	bnez    $t7, \skip                   # a corner nearer than r_slow.c SZ_CLIP
 	subu    $t7, $t1, $t0                # depth range
-	mult    $v1, $t0                     # T2 zmin
+	mult    $v1, $t0                     # T2 zmin (read after the x range)
 	lh      $t0, SP_SXY($t3)             # x
 	lh      $t1, SP_SXY($t4)
 	lh      $t2, SP_SXY($t5)
 .if \quad
 	lh      $t9, SP_SXY($t6)
-	mflo    $v1
 	MINMAX4 $t0, $t1, $t2, $t9, $v0, "lh $t2, SP_SXY+2($t5)"
-.else
 	mflo    $v1
-	MINMAX3 $t0, $t1, $t2, $v0
+.else
+	MINMAX3 $t0, $t1, $t2, $v0, "mflo $v1"
 .endif
 	subu    $v0, $t1, $t0                # W
 	sw      $v0, SP_FREE3E8($t8)
@@ -220,12 +219,12 @@
 	mult    $v0, $t7                     # (W + H) x depth range
 	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
 	beqz    $t0, \skip
-	sll     $v1, $v1, 1                  # 2 T2 zmin
-	mflo    $v0
-	sltu    $v0, $v1, $v0
+	sll     $t9, $v1, 1                  # 2 T2 zmin
+	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the skip path
+	mflo    $v0                          #  reloads them)
+	sltu    $v0, $t9, $v0
 	bnez    $v0, \skip
-	lw      $v0, SP_CLUT16($t8)          # (clut / tpage back)
-	lw      $v1, SP_TPAGE16($t8)
+	lw      $v0, SP_CLUT16($t8)
 .endm
 
 	.section .bss.r_walk_spill, "aw", @nobits
@@ -307,7 +306,6 @@ r_render:
 	sw      $zero, SP_POLYS($t8)
 	sw      $zero, SP_SKIPPED($t8)
 	sw      $zero, SP_TBLOCK($t8)
-	sw      $zero, SP_SLOWTRI($t8)
 	sw      $zero, SP_TSLOW($t8)
 .endif
 	li      $t0, -1
@@ -755,9 +753,9 @@ dr_one:
 	or      $t1, $t1, $a3
 	sw      $t1, SP_COL($t4)
 	addiu   $t5, $t5, -1
+	lhu     $t0, 0($t3)                  # (the next index; the padding at the end)
 	swc2    C2_SXY2, SP_SXY($t4)
 	swc2    C2_SZ3,  SP_SZ($t4)
-	lhu     $t0, 0($t3)                  # (the next index; the padding at the end)
 	bgtz    $t5, dr_one
 	addiu   $t4, $t4, 4
 dr_xf_done:
@@ -1018,18 +1016,14 @@ walk_done:
 	lw      $t3, SP_POLYS($t8)
 	lw      $t4, SP_SKIPPED($t8)
 	lw      $t5, SP_TBLOCK($t8)
+	lw      $t6, SP_TSLOW($t8)
 	sw      $t0, RS_STAT_NODES($s0)
 	sw      $t1, RS_STAT_RECORDS($s0)
 	sw      $t2, RS_STAT_VERTS($s0)
 	sw      $t3, RS_STAT_POLYS($s0)
 	sw      $t4, RS_STAT_SKIPPED($s0)
 	sw      $t5, RS_TICKS_BLOCK($s0)
-	lw      $t0, SP_SLOWTRI($t8)
-	lw      $t1, RS_STAT_SLOW($s0)
-	lw      $t2, SP_TSLOW($t8)
-	addu    $t1, $t1, $t0                # the C reference adds its own count
-	sw      $t1, RS_STAT_SLOW($s0)
-	sw      $t2, RS_TICKS_SLOW($s0)
+	sw      $t6, RS_TICKS_SLOW($s0)
 .endif
 
 	lw      $ra, 44($sp)                 # first: jr must not sit in its delay slot

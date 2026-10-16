@@ -53,7 +53,8 @@ typedef struct {
 	uint32_t force_mark;     /* +136 non-zero: re-mark even if leaf same    */
 	uint32_t vis_lastmask;   /* +140 a PVS row's last byte: its leaves' bits */
 	uint32_t ot_head;        /* +144 world-bucket link while asm calls C     */
-	uint32_t stat_slow;      /* +148 triangles emitted by the slow path      */
+	uint32_t stat_slow;      /* +148 triangles emitted by the slow path: its
+	                                 POLY_GT3s, slow_bytes / 40 (render.c)   */
 	uint32_t ticks_slow;     /* +152 timer-2 ticks spent in the slow path    */
 	uint32_t textures;       /* +156 qw_tex * (CLUT, tpage, texture window)  */
 	uint32_t vertpool;       /* +160 qw_vert *: the map's vertex pool        */

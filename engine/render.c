@@ -243,7 +243,6 @@ void r_frame(void)
 	r_state.stat_nodes   = r_state.stat_records = r_state.stat_verts = 0;
 	r_state.stat_polys   = r_state.stat_skipped = 0;
 	r_state.ticks_block  = r_state.ticks_mark = 0;
-	r_state.stat_slow    = 0;
 
 	uint32_t t0 = prof_now();
 	r_render(&r_state);
@@ -276,6 +275,7 @@ void r_frame(void)
 	prof_count[PROF_N_VERTS]  += r_state.stat_verts;
 	prof_count[PROF_N_POLYS]  += r_state.stat_polys;
 	prof_count[PROF_N_SLOW]   += r_state.stat_skipped;
+	r_state.stat_slow = r_state.slow_bytes / 40;   /* (POLY_GT3s only) */
 	prof_count[PROF_N_SLOWTRI] += r_state.stat_slow;
 #endif
 }

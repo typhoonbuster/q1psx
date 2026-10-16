@@ -128,11 +128,11 @@ sp_ctab:                                 # children by split mask (1..7)
 .endm
 
 # CORNER k: pool entry k from the record's vertex cache, for corner k of the
-# polygon at a1 (t7 = T2): SXY, z, z T2, u and v (x 256), the packet uv word,
-# the grey colour word; bit k of s1 set when the GTE could not project it
-# (SZ < SZ_CLIP, or x / y saturated: outside -1023..1022). Its key stays
-# that of a corner: entries 0..2 are never midpoints (their key word is
-# never written), the caller clears entry 3's. Clobbers t0-t5.
+# polygon at a1 (t7 = T2, t9 = 2045): SXY, z, z T2, u and v (x 256), the
+# packet uv word, the grey colour word; bit k of s1 set when the GTE could
+# not project it (SZ < SZ_CLIP, or x / y saturated: outside -1023..1022).
+# Its key stays that of a corner: entries 0..2 are never midpoints (their
+# key word is never written), the caller clears entry 3's. Clobbers t0-t5.
 .macro CORNER k
 	lbu     $t1, \k($a1)                 # slot x 4
 	lhu     $t3, (4 + 2 * \k)($a1)       # uv
@@ -153,13 +153,12 @@ sp_ctab:                                 # children by split mask (1..7)
 	sll     $t0, $t4, 16
 	sra     $t0, $t0, 16                 # x
 	addiu   $t0, $t0, 1023
-	sltiu   $t0, $t0, 2046               # 1: x in range
+	sltu    $t0, $t9, $t0                # 1: x off range (unsigned x + 1023 > 2045)
 	sra     $t1, $t4, 16                 # y
 	addiu   $t1, $t1, 1023
-	sltiu   $t1, $t1, 2046               # 1: y in range
-	and     $t0, $t0, $t1
+	sltu    $t1, $t9, $t1                # 1: y off range
+	or      $t0, $t0, $t1
 	sltiu   $t2, $t5, SZ_CLIP            # 1: too near
-	xori    $t0, $t0, 1
 	or      $t2, $t2, $t0
 .if \k
 	sll     $t2, $t2, \k
@@ -171,7 +170,8 @@ sp_ctab:                                 # children by split mask (1..7)
 
 # MIDLOOK dst: dst = the pool index of the midpoint of entries t0, t1
 # (indices), found through the table or made by sm_new (the table slot is
-# written in the call's delay slot). Clobbers at, v0, t0-t7, t9, a0-a2.
+# written in the call's delay slot; sm_new's first instruction is done
+# here, in the table load's slot). Clobbers at, v0, t0-t7, t9, a0-a2.
 .macro MIDLOOK dst
 	sltu    $at, $t0, $t1                # key: lower << 9 | higher
 	bnez    $at, 91f
@@ -187,7 +187,7 @@ sp_ctab:                                 # children by split mask (1..7)
 	sll     $t3, $t3, 1
 	addu    $t6, $t3, $v1                # (pool-relative)
 	lhu     $v0, HASH_OFS($t6)           # the index it holds
-	nop
+	sll     $t0, $t0, 5                  # (sm_new's first: p's offset)
 	sltu    $at, $v0, $s4                # one of this polygon's?
 	beqz    $at, 92f
 	sll     $t4, $v0, 5
@@ -196,7 +196,7 @@ sp_ctab:                                 # children by split mask (1..7)
 	move    \dst, $v0                    # (if it is the one)
 	beq     $t4, $t2, 93f                # found
 	nop
-92:	jal     sm_new                       # else made: v0 = its index
+92:	jal     sm_new_1                     # else made: v0 = its index
 	sh      $s4, HASH_OFS($t6)           # (the table: this edge -> n)
 	move    \dst, $v0
 93:
@@ -221,6 +221,7 @@ slow_poly:
 
 	# ---- 1. corners (PS1 order) from the cache ---------------------------
 	move    $s1, $zero                   # clip mask: bit k = corner k off range
+	li      $t9, 2045                    # (CORNER's range bound)
 	CORNER  0
 	CORNER  1
 	CORNER  2
@@ -457,19 +458,17 @@ sp_sub:
 	NOSPLIT $at, $t3, $t4, $t5, $s5, $t6, $t7, $s1, $ra, 0   # p1-p2
 	sll     $at, $at, 1
 	or      $s3, $s3, $at
-	NOSPLIT $at, $t6, $t7, $s1, $ra, $t0, $t1, $t2, $s0      # p2-p0
-	sll     $at, $at, 2
-	or      $s3, $s3, $at
+	NOSPLIT $at, $t6, $t7, $s1, $ra, $t0, $t1, $t2, $s0, 1, "sltu $t2, $s7, $s6"   # p2-p0
+	sll     $at, $at, 2                  # (t2: sp_emit's arena test, r_frame
+	or      $s3, $s3, $at                #  leaves 40 bytes over s7 for it)
 	xori    $s3, $s3, 7                  # split: bit 0 p0-p1, 1 p1-p2, 2 p2-p0
 	bnez    $s3, sp_split
-	sltu    $t0, $s7, $s6                # (sp_emit's: the arena full? r_frame
-	                                     #  leaves 40 bytes over s7 for it)
+	lui     $t9, CODE_GT3 >> 16          # (sp_emit's; sp_split's t9 is its own)
 
-	# ---- a leaf: one POLY_GT3 (a0 / a1 / a2 = its pool entries; t0 = 1 if
-	# the arena is full) ---------------------------------------------------------
+	# ---- a leaf: one POLY_GT3 (a0 / a1 / a2 = its pool entries; t2 = 1 if
+	# the arena is full, t9 = the command) ---------------------------------------
 sp_emit:
-	bnez    $t0, sp_full
-	lui     $t9, CODE_GT3 >> 16
+	bnez    $t2, sp_full
 	lw      $t0, PV_GC($a0)
 	lw      $t1, PV_SXY($a0)
 	lw      $t2, PV_UVW($a0)
@@ -497,17 +496,8 @@ sp_emit:
 	or      $t9, $t9, $fp                # tag: 9 words, link to the old head
 	sw      $t9, 0($s6)
 	move    $fp, $s6                     # new bucket head (KUSEG address)
-.if R_PROFILE
-	addiu   $s6, $s6, 40
-	lw      $t0, SP_SLOWTRI($t8)
-	nop
-	addiu   $t0, $t0, 1
-	b       sp_sub
-	sw      $t0, SP_SLOWTRI($t8)
-.else
 	b       sp_sub
 	addiu   $s6, $s6, 40
-.endif
 
 	# ---- split: the midpoints, then the children ---------------------------
 sp_split:                                # s3 = mask, s2 = the triangle
@@ -631,10 +621,10 @@ sp_leaf_max:
 	move    $t9, $t7
 4:	subu    $t9, $t9, $at
 	sltiu   $t9, $t9, 512
-	bnez    $t9, sp_emit
-	sltu    $t0, $s7, $s6                # (sp_emit's arena test)
-	b       sp_sub
-	nop
+	beqz    $t9, sp_sub
+	sltu    $t2, $s7, $s6                # (sp_emit's arena test)
+	b       sp_emit
+	lui     $t9, CODE_GT3 >> 16
 
 sp_full:
 	li      $t0, 1
@@ -652,80 +642,93 @@ sp_done:
 # -----------------------------------------------------------------------------
 # sm_new: a new vertex at index n = s4, the projected 3D midpoint of pool
 # entries t0, t1 (indices; t2 = their key). v0 = n. Clobbers at, t0-t7, t9,
-# a0-a2 (s-registers, v1, a3 kept; s4 grows by one).
+# a0-a2 (s-registers, v1, a3 kept; s4 grows by one). MIDLOOK enters at
+# sm_new_1, its first instruction done.
+# Scheduled around HI / LO: the four products, then the two divisions with
+# the u, v and light work in their shadows (36 cycles each). z T2 needs no
+# multiply: the pool holds pz T2 and qz T2, T2 is even, so
+# T2 (zs >> 1) = (pz T2 + qz T2) / 2 - (zs & 1) T, exactly.
 sm_new:
 	sll     $t0, $t0, 5
+sm_new_1:
 	addu    $a0, $t0, $v1                # p
+	lh      $t0, PV_SXY($a0)             # px
+	lw      $t3, PV_Z($a0)               # pz
 	sll     $t1, $t1, 5
 	addu    $a1, $t1, $v1                # q
-	lw      $t3, PV_Z($a0)               # pz
-	lh      $t0, PV_SXY($a0)             # px
-	lw      $t5, PV_Z($a1)               # qz
-	lh      $t1, PV_SXY($a1)             # qx
-	sll     $a2, $s4, 5
 	mult    $t0, $t3                     # px pz
+	lh      $t1, PV_SXY($a1)             # qx
+	lw      $t5, PV_Z($a1)               # qz
+	sll     $a2, $s4, 5
 	addu    $a2, $a2, $v1                # m
-	addu    $t6, $t3, $t5                # zs
-	srl     $t7, $t6, 1                  # z = zs >> 1
 	mflo    $t0
-	sll     $t9, $t6, 13                 # zs KOFS
+	addu    $t6, $t3, $t5                # zs
 	sw      $t2, PV_KEY($a2)
 	mult    $t1, $t5                     # qx qz
-	addu    $t9, $t9, $t7                # + zs / 2: the rounding offset
-	sw      $t7, PV_Z($a2)
-	lw      $t2, SP_T2($t8)
+	srl     $t7, $t6, 1                  # z = zs >> 1
+	sll     $t9, $t6, 13
+	addu    $t9, $t9, $t7                # zs KOFS + zs / 2: the rounding offset
+	lh      $at, PV_SXY+2($a0)           # py
 	mflo    $t1
 	addu    $t0, $t0, $t9
+	sw      $t7, PV_Z($a2)
+	mult    $at, $t3                     # py pz
 	addu    $t0, $t0, $t1                # px pz + qx qz + offset
-	mult    $t7, $t2                     # z T2
-	lh      $t2, PV_SXY+2($a0)           # py
-	lh      $t4, PV_SXY+2($a1)           # qy
-	addiu   $s4, $s4, 1
-	mflo    $t7
+	lh      $t1, PV_SXY+2($a1)           # qy
+	lw      $t3, PV_ZT($a0)              # pz T2
+	mflo    $at
+	lw      $t7, PV_ZT($a1)              # qz T2
+	addu    $at, $at, $t9
+	mult    $t1, $t5                     # qy qz
+	lw      $t9, SP_T2($t8)
+	addu    $t3, $t3, $t7                # T2 zs
+	srl     $t3, $t3, 1                  # T zs
+	mflo    $t1
+	sll     $t5, $t6, 31
+	sra     $t5, $t5, 31                 # -1 if zs is odd
+	divu    $zero, $t0, $t6              # x + KOFS (while it divides: z T2, u, v)
+	addu    $at, $at, $t1                # py pz + qy qz + offset
+	srl     $t9, $t9, 1                  # T
+	and     $t5, $t5, $t9
+	subu    $t3, $t3, $t5                # z T2
+	sw      $t3, PV_ZT($a2)
 	lw      $t1, PV_U($a0)
-	sw      $t7, PV_ZT($a2)
-	divu    $zero, $t0, $t6              # x + KOFS (while it divides: u, v)
-	lw      $t7, PV_U($a1)
-	lw      $t0, PV_V($a0)
-	addu    $t1, $t1, $t7
+	lw      $t3, PV_U($a1)
+	lw      $t5, PV_V($a0)
 	lw      $t7, PV_V($a1)
+	addu    $t1, $t1, $t3
 	sra     $t1, $t1, 1                  # u
+	addu    $t5, $t5, $t7
+	sra     $t5, $t5, 1                  # v
 	sw      $t1, PV_U($a2)
-	addu    $t0, $t0, $t7
-	sra     $t0, $t0, 1                  # v
-	sw      $t0, PV_V($a2)
+	sw      $t5, PV_V($a2)
 	addiu   $t1, $t1, 128                # uv word: rounded texels
 	srl     $t1, $t1, 8
-	addiu   $t0, $t0, 128
-	andi    $t0, $t0, 0xff00
-	or      $t1, $t1, $t0
-	sw      $t1, PV_UVW($a2)
+	addiu   $t5, $t5, 128
 	mflo    $t0                          # x + KOFS
+	andi    $t5, $t5, 0xff00
+	or      $t1, $t1, $t5
+	divu    $zero, $at, $t6              # y + KOFS (while it divides: x, light)
+	sw      $t1, PV_UVW($a2)
 	addiu   $t0, $t0, -KOFS
 	sh      $t0, PV_SXY($a2)             # x
-	mult    $t2, $t3                     # py pz
 	lw      $t1, PV_GC($a0)
-	lw      $t7, PV_GC($a1)
-	mflo    $t2
+	lw      $t3, PV_GC($a1)
+	addiu   $s4, $s4, 1
 	andi    $t1, $t1, 0xff
-	addu    $t2, $t2, $t9
-	mult    $t4, $t5                     # qy qz
-	andi    $t7, $t7, 0xff
-	addu    $t1, $t1, $t7
+	andi    $t3, $t3, 0xff
+	addu    $t1, $t1, $t3
 	srl     $t1, $t1, 1                  # light
-	mflo    $t4
-	sll     $t7, $t1, 8                  # grey c -> 0x00cccccc
-	addu    $t2, $t2, $t4                # py pz + qy qz + offset
-	divu    $zero, $t2, $t6              # y + KOFS (while it divides: grey)
-	or      $t1, $t1, $t7
-	sll     $t7, $t1, 8
-	or      $t1, $t1, $t7
+	sll     $t3, $t1, 8                  # grey c -> 0x00cccccc
+	or      $t1, $t1, $t3
+	sll     $t3, $t1, 8
+	or      $t1, $t1, $t3
 	sw      $t1, PV_GC($a2)
-	mflo    $t2                          # y + KOFS
-	addiu   $t2, $t2, -KOFS
-	sh      $t2, PV_SXY+2($a2)           # y
-	jr      $ra
 	addiu   $v0, $s4, -1                 # its index
+	mflo    $t1                          # y + KOFS
+	addiu   $t1, $t1, -KOFS
+	jr      $ra
+	sh      $t1, PV_SXY+2($a2)           # y
 
 # -----------------------------------------------------------------------------
 # sp_lerp: a near-plane crossing, from end t2 (pool index) / t4 (view entry)

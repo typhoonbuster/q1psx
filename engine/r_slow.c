@@ -164,7 +164,6 @@ static void emit3(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 	p[9] = uvword(c);
 	s->ot_head = (uint32_t) p & 0xffffff;
 	s->pkt += 40;
-	s->stat_slow++;
 }
 
 /* ------------------------------------------------------------ subdivision */
