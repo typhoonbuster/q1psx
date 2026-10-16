@@ -103,6 +103,87 @@
 4:
 .endm
 
+# XFORM sz, loop, one, done: a record's vertices into the scratchpad cache
+# (t3 = its indices, t9 = the vertex pool, at = its light bytes, t4 = the
+# cache cursor, t5 = vertex count - 2): RTPT while three are left, then one
+# RTPS each, SXY / light (grey 0x00cccccc) per vertex, SZ too if `sz`. On to
+# `done` (from the RTPT loop, when no vertex is left) or past the end.
+.macro XFORM sz, loop, one, done
+\loop:
+	lhu     $t0, 0($t3)
+	lhu     $t1, 2($t3)
+	lhu     $t6, 4($t3)
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t9
+	sll     $t1, $t1, 3
+	lwc2    C2_VXY0, 0($t0)
+	lwc2    C2_VZ0,  4($t0)
+	addu    $t1, $t1, $t9
+	sll     $t6, $t6, 3
+	lwc2    C2_VXY1, 0($t1)
+	lwc2    C2_VZ1,  4($t1)
+	addu    $t6, $t6, $t9
+	lwc2    C2_VXY2, 0($t6)
+	lwc2    C2_VZ2,  4($t6)
+	addiu   $t3, $t3, 6
+	addiu   $t5, $t5, -3
+	RTPT
+	lbu     $t0, 0($at)                  # while the GTE works: the three
+	lbu     $t1, 1($at)                  # lights, grey c -> 0x00cccccc
+	lbu     $t6, 2($at)                  # (x = c | c << 8; x | x << 8)
+	addiu   $at, $at, 3
+	sll     $a3, $t0, 8
+	or      $t0, $t0, $a3
+	sll     $a3, $t0, 8
+	or      $t0, $t0, $a3
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sll     $a3, $t6, 8
+	or      $t6, $t6, $a3
+	sll     $a3, $t6, 8
+	or      $t6, $t6, $a3
+	sw      $t0, SP_COL+0($t4)
+	sw      $t1, SP_COL+4($t4)
+	sw      $t6, SP_COL+8($t4)
+	swc2    C2_SXY0, SP_SXY+0($t4)
+	swc2    C2_SXY1, SP_SXY+4($t4)
+	swc2    C2_SXY2, SP_SXY+8($t4)
+.if \sz
+	swc2    C2_SZ1,  SP_SZ+0($t4)
+	swc2    C2_SZ2,  SP_SZ+4($t4)
+	swc2    C2_SZ3,  SP_SZ+8($t4)
+.endif
+	bgtz    $t5, \loop
+	addiu   $t4, $t4, 12
+	addiu   $t5, $t5, 2                  # 0, 1 or 2 left: one RTPS each
+	blez    $t5, \done                   # (rather than a padded RTPT)
+	lhu     $t0, 0($t3)
+\one:
+	addiu   $t3, $t3, 2
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t9
+	lwc2    C2_VXY0, 0($t0)
+	lwc2    C2_VZ0,  4($t0)
+	lbu     $t1, 0($at)
+	addiu   $at, $at, 1
+	RTPS
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sll     $a3, $t1, 8
+	or      $t1, $t1, $a3
+	sw      $t1, SP_COL($t4)
+	addiu   $t5, $t5, -1
+	lhu     $t0, 0($t3)                  # (the next index; the padding at the end)
+	swc2    C2_SXY2, SP_SXY($t4)
+.if \sz
+	swc2    C2_SZ3,  SP_SZ($t4)
+.endif
+	bgtz    $t5, \one
+	addiu   $t4, $t4, 4
+.endm
+
 # MINMAX4 a, b, c, d, t [, tail]: a = the least, b = the greatest of the
 # four (signed; all four clobbered, t a temporary). A swap goes through t,
 # loaded in its branch's delay slot. `tail` fills the last branch's delay
@@ -688,79 +769,10 @@ dr_tex_done:
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
 	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
 	move    $t4, $t8                     # cache cursor
-	addiu   $t5, $t2, -2                 # vertices left - 2: RTPT while 3+
-dr_xf:
-	lhu     $t0, 0($t3)
-	lhu     $t1, 2($t3)
-	lhu     $t6, 4($t3)
-	sll     $t0, $t0, 3
-	addu    $t0, $t0, $t9
-	sll     $t1, $t1, 3
-	lwc2    C2_VXY0, 0($t0)
-	lwc2    C2_VZ0,  4($t0)
-	addu    $t1, $t1, $t9
-	sll     $t6, $t6, 3
-	lwc2    C2_VXY1, 0($t1)
-	lwc2    C2_VZ1,  4($t1)
-	addu    $t6, $t6, $t9
-	lwc2    C2_VXY2, 0($t6)
-	lwc2    C2_VZ2,  4($t6)
-	addiu   $t3, $t3, 6
-	addiu   $t5, $t5, -3
-	RTPT
-	lbu     $t0, 0($at)                  # while the GTE works: the three
-	lbu     $t1, 1($at)                  # lights, grey c -> 0x00cccccc
-	lbu     $t6, 2($at)                  # (x = c | c << 8; x | x << 8)
-	addiu   $at, $at, 3
-	sll     $a3, $t0, 8
-	or      $t0, $t0, $a3
-	sll     $a3, $t0, 8
-	or      $t0, $t0, $a3
-	sll     $a3, $t1, 8
-	or      $t1, $t1, $a3
-	sll     $a3, $t1, 8
-	or      $t1, $t1, $a3
-	sll     $a3, $t6, 8
-	or      $t6, $t6, $a3
-	sll     $a3, $t6, 8
-	or      $t6, $t6, $a3
-	sw      $t0, SP_COL+0($t4)
-	sw      $t1, SP_COL+4($t4)
-	sw      $t6, SP_COL+8($t4)
-	swc2    C2_SXY0, SP_SXY+0($t4)
-	swc2    C2_SXY1, SP_SXY+4($t4)
-	swc2    C2_SXY2, SP_SXY+8($t4)
-	swc2    C2_SZ1,  SP_SZ+0($t4)
-	swc2    C2_SZ2,  SP_SZ+4($t4)
-	swc2    C2_SZ3,  SP_SZ+8($t4)
-	bgtz    $t5, dr_xf
-	addiu   $t4, $t4, 12
-	addiu   $t5, $t5, 2                  # 0, 1 or 2 left: one RTPS each
-	blez    $t5, dr_xf_done              # (rather than a padded RTPT)
-	lhu     $t0, 0($t3)
-dr_one:
-	addiu   $t3, $t3, 2
-	sll     $t0, $t0, 3
-	addu    $t0, $t0, $t9
-	lwc2    C2_VXY0, 0($t0)
-	lwc2    C2_VZ0,  4($t0)
-	lbu     $t1, 0($at)
-	addiu   $at, $at, 1
-	RTPS
-	sll     $a3, $t1, 8
-	or      $t1, $t1, $a3
-	sll     $a3, $t1, 8
-	or      $t1, $t1, $a3
-	sw      $t1, SP_COL($t4)
-	addiu   $t5, $t5, -1
-	lhu     $t0, 0($t3)                  # (the next index; the padding at the end)
-	swc2    C2_SXY2, SP_SXY($t4)
-	swc2    C2_SZ3,  SP_SZ($t4)
-	bgtz    $t5, dr_one
-	addiu   $t4, $t4, 4
-dr_xf_done:
-
-	beqz    $a2, dr_polys                # sphere says: nothing near or big
+	beqz    $a2, dr_xfn                  # nothing near or warping: no SZ (only
+	addiu   $t5, $t2, -2                 # CAREFUL and dr_nz read it). Vertices
+	XFORM   1, dr_xf, dr_one, dr_xf_done #  left - 2: RTPT while 3+
+dr_xf_done:                              # (a2 != 0 here)
 	move    $t4, $t8
 	andi    $t0, $a2, 4                  # big or warping: careful regardless
 	bnez    $t0, dr_polys
@@ -776,6 +788,7 @@ dr_nz:
 
 dr_polys:
 	lhu     $t0, R_POLYS($a0)
+dr_polys_1:
 	lbu     $at, R_NQUADS($a0)
 .if R_PROFILE
 	lw      $t1, SP_POLYS($t8)
@@ -967,6 +980,11 @@ dr_slow_call:
 	lw      $v1, SP_TPAGE16($t8)
 	b       dr_tri_next
 	nop
+
+	# the transform of a record CAREFUL will not see: no SZ
+	XFORM   0, dr_xfn, dr_onen, dr_polys
+	b       dr_polys_1
+	lhu     $t0, R_POLYS($a0)            # (dr_polys's first)
 
 dr_full:
 	li      $t0, 1
