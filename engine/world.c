@@ -210,6 +210,19 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		return 0;
 	memset(world.face_visframe, 0, h->num_faces * 2);
 
+	/* each record's face index -> its byte offset in face_visframe (the
+	   asm adds it to the array as it is; faces < 32768) */
+	{
+		uint8_t *r = (uint8_t *) world.faces;
+		for (uint32_t i = 0; i < h->num_records; i++) {
+			qw_record *rec = (qw_record *) r;
+			if (!rec->size)
+				break;
+			rec->face_id = (uint16_t) (rec->face_id << 1);
+			r += rec->size;
+		}
+	}
+
 	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, arena %u KB\n",
 	       name, h->num_nodes, h->num_leaves, h->num_records, h->num_pieces,
 	       mem_level_used() / 1024);

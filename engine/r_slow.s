@@ -92,8 +92,9 @@ sp_ctab:                                 # children by split mask (1..7)
 # NOSPLIT out, xa, ya, za, zta, xb, yb, zb, ztb [, first]: out = 1 when edge
 # (a, b) does not split: |dx| + |dy| <= SPAN and (|dx| + |dy|) |dz| <= zta +
 # ztb (z * T2 each). first = 0: the caller did `subu out, xa, xb` already (a
-# delay slot). Clobbers v0, t9.
-.macro NOSPLIT out, xa, ya, za, zta, xb, yb, zb, ztb, first=1
+# delay slot); next: an instruction for the multiply's shadow (the next
+# test's first). Clobbers v0, t9.
+.macro NOSPLIT out, xa, ya, za, zta, xb, yb, zb, ztb, first=1, next=
 .if \first
 	subu    \out, \xa, \xb
 .endif
@@ -109,6 +110,7 @@ sp_ctab:                                 # children by split mask (1..7)
 3:	mult    \out, $t9                    # (|dx| + |dy|) |dz|
 	sltiu   $v0, \out, SPAN + 1          # 1: short enough
 	addu    $t9, \zta, \ztb              # T2 (za + zb)
+	\next                                # (the next test's first, if given)
 	mflo    \out
 	sltu    \out, $t9, \out              # 1: affine error over the threshold
 	sltu    \out, \out, $v0              # 1: short and under: no split
@@ -451,8 +453,8 @@ sp_sub:
 	sll     $at, $s2, 1                  # depth 8 (MAXD): bit 30
 	bltz    $at, sp_leaf_max
 	subu    $s3, $t0, $t3                # (the first test's x0 - x1)
-	NOSPLIT $s3, $t0, $t1, $t2, $s0, $t3, $t4, $t5, $s5, 0   # p0-p1
-	NOSPLIT $at, $t3, $t4, $t5, $s5, $t6, $t7, $s1, $ra      # p1-p2
+	NOSPLIT $s3, $t0, $t1, $t2, $s0, $t3, $t4, $t5, $s5, 0, "subu $at, $t3, $t6"   # p0-p1
+	NOSPLIT $at, $t3, $t4, $t5, $s5, $t6, $t7, $s1, $ra, 0   # p1-p2
 	sll     $at, $at, 1
 	or      $s3, $s3, $at
 	NOSPLIT $at, $t6, $t7, $s1, $ra, $t0, $t1, $t2, $s0      # p2-p0
@@ -656,75 +658,72 @@ sm_new:
 	addu    $a0, $t0, $v1                # p
 	sll     $t1, $t1, 5
 	addu    $a1, $t1, $v1                # q
-	sll     $a2, $s4, 5
-	addu    $a2, $a2, $v1                # m
-	addiu   $s4, $s4, 1
 	lw      $t3, PV_Z($a0)               # pz
-	lw      $t5, PV_Z($a1)               # qz
 	lh      $t0, PV_SXY($a0)             # px
+	lw      $t5, PV_Z($a1)               # qz
 	lh      $t1, PV_SXY($a1)             # qx
-	sw      $t2, PV_KEY($a2)
+	sll     $a2, $s4, 5
 	mult    $t0, $t3                     # px pz
+	addu    $a2, $a2, $v1                # m
 	addu    $t6, $t3, $t5                # zs
-	sll     $t9, $t6, 13                 # zs KOFS
-	srl     $t7, $t6, 1
-	addu    $t9, $t9, $t7                # + zs / 2: the rounding offset
+	srl     $t7, $t6, 1                  # z = zs >> 1
 	mflo    $t0
+	sll     $t9, $t6, 13                 # zs KOFS
+	sw      $t2, PV_KEY($a2)
+	mult    $t1, $t5                     # qx qz
+	addu    $t9, $t9, $t7                # + zs / 2: the rounding offset
+	sw      $t7, PV_Z($a2)
+	lw      $t2, SP_T2($t8)
+	mflo    $t1
+	addu    $t0, $t0, $t9
+	addu    $t0, $t0, $t1                # px pz + qx qz + offset
+	mult    $t7, $t2                     # z T2
 	lh      $t2, PV_SXY+2($a0)           # py
 	lh      $t4, PV_SXY+2($a1)           # qy
-	mult    $t1, $t5                     # qx qz
-	addu    $t0, $t0, $t9
-	lw      $t7, PV_U($a0)
-	mflo    $t1
-	lw      $at, PV_U($a1)
-	addu    $t0, $t0, $t1                # px pz + qx qz + offset
+	addiu   $s4, $s4, 1
+	mflo    $t7
+	lw      $t1, PV_U($a0)
+	sw      $t7, PV_ZT($a2)
 	divu    $zero, $t0, $t6              # x + KOFS (while it divides: u, v)
+	lw      $t7, PV_U($a1)
 	lw      $t0, PV_V($a0)
-	lw      $t1, PV_V($a1)
-	addu    $t7, $t7, $at
-	sra     $t7, $t7, 1                  # u
-	addu    $t0, $t0, $t1
+	addu    $t1, $t1, $t7
+	lw      $t7, PV_V($a1)
+	sra     $t1, $t1, 1                  # u
+	sw      $t1, PV_U($a2)
+	addu    $t0, $t0, $t7
 	sra     $t0, $t0, 1                  # v
-	sw      $t7, PV_U($a2)
 	sw      $t0, PV_V($a2)
-	addiu   $t7, $t7, 128                # uv word: rounded texels
-	srl     $t7, $t7, 8
+	addiu   $t1, $t1, 128                # uv word: rounded texels
+	srl     $t1, $t1, 8
 	addiu   $t0, $t0, 128
 	andi    $t0, $t0, 0xff00
-	or      $t7, $t7, $t0
-	sw      $t7, PV_UVW($a2)
+	or      $t1, $t1, $t0
+	sw      $t1, PV_UVW($a2)
 	mflo    $t0                          # x + KOFS
 	addiu   $t0, $t0, -KOFS
-	andi    $t0, $t0, 0xffff
+	sh      $t0, PV_SXY($a2)             # x
 	mult    $t2, $t3                     # py pz
 	lw      $t1, PV_GC($a0)
 	lw      $t7, PV_GC($a1)
 	mflo    $t2
 	andi    $t1, $t1, 0xff
-	andi    $t7, $t7, 0xff
-	mult    $t4, $t5                     # qy qz
 	addu    $t2, $t2, $t9
+	mult    $t4, $t5                     # qy qz
+	andi    $t7, $t7, 0xff
 	addu    $t1, $t1, $t7
-	mflo    $t4
 	srl     $t1, $t1, 1                  # light
-	addu    $t2, $t2, $t4                # py pz + qy qz + offset
-	divu    $zero, $t2, $t6              # y + KOFS (while it divides: light, z)
+	mflo    $t4
 	sll     $t7, $t1, 8                  # grey c -> 0x00cccccc
+	addu    $t2, $t2, $t4                # py pz + qy qz + offset
+	divu    $zero, $t2, $t6              # y + KOFS (while it divides: grey)
 	or      $t1, $t1, $t7
 	sll     $t7, $t1, 8
 	or      $t1, $t1, $t7
 	sw      $t1, PV_GC($a2)
-	srl     $t6, $t6, 1                  # z = zs >> 1
-	sw      $t6, PV_Z($a2)
-	lw      $t1, SP_T2($t8)
 	mflo    $t2                          # y + KOFS
 	addiu   $t2, $t2, -KOFS
-	sll     $t2, $t2, 16
-	mult    $t6, $t1                     # z T2
-	or      $t0, $t0, $t2
-	sw      $t0, PV_SXY($a2)
-	mflo    $t0
-	sw      $t0, PV_ZT($a2)
+	sh      $t2, PV_SXY+2($a2)           # y
 	jr      $ra
 	addiu   $v0, $s4, -1                 # its index
 

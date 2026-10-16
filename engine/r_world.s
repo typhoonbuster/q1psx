@@ -97,35 +97,35 @@
 4:
 .endm
 
-# MINMAX4 a, b, c, d, t: a = the least, b = the greatest of the four
-# (signed; all four clobbered, t a temporary). MINMAX3 a, b, c, t likewise.
-# (Not at: the polygon loops count in it.)
-.macro MINMAX4 a, b, c, d, t
+# MINMAX4 a, b, c, d, t [, tail]: a = the least, b = the greatest of the
+# four (signed; all four clobbered, t a temporary). A swap goes through t,
+# loaded in its branch's delay slot. `tail` fills the last branch's delay
+# slot (default nop): an instruction of the caller's that reads neither b
+# nor d and writes none of a, b, d. (Not at: the polygon loops count in it.)
+.macro MINMAX4 a, b, c, d, t, tail=nop
 	slt     \t, \b, \a
 	beqz    \t, 1f
-	nop
-	xor     \a, \a, \b
-	xor     \b, \a, \b
-	xor     \a, \a, \b
+	move    \t, \a
+	move    \a, \b
+	move    \b, \t
 1:	slt     \t, \d, \c
 	beqz    \t, 2f
-	nop
-	xor     \c, \c, \d
-	xor     \d, \c, \d
-	xor     \c, \c, \d
+	move    \t, \c
+	move    \c, \d
+	move    \d, \t
 2:	slt     \t, \c, \a
 	beqz    \t, 3f
 	slt     \t, \b, \d
 	move    \a, \c
 3:	beqz    \t, 4f
-	nop
+	\tail
 	move    \b, \d
 4:
 .endm
 
 # MINMAX4D: MINMAX4 with a second temporary u, which takes the second
 # pair's compare into the first branch's delay slot.
-.macro MINMAX4D a, b, c, d, t, u
+.macro MINMAX4D a, b, c, d, t, u, tail=nop
 	slt     \t, \b, \a
 	beqz    \t, 1f
 	slt     \u, \d, \c
@@ -133,33 +133,32 @@
 	xor     \b, \a, \b
 	xor     \a, \a, \b
 1:	beqz    \u, 2f
-	nop
-	xor     \c, \c, \d
-	xor     \d, \c, \d
-	xor     \c, \c, \d
+	move    \u, \c
+	move    \c, \d
+	move    \d, \u
 2:	slt     \t, \c, \a
 	beqz    \t, 3f
 	slt     \t, \b, \d
 	move    \a, \c
 3:	beqz    \t, 4f
-	nop
+	\tail
 	move    \b, \d
 4:
 .endm
 
-.macro MINMAX3 a, b, c, t
+# MINMAX3 a, b, c, t [, tail]: likewise for three; `tail` must not write c.
+.macro MINMAX3 a, b, c, t, tail=nop
 	slt     \t, \b, \a
 	beqz    \t, 1f
-	nop
-	xor     \a, \a, \b
-	xor     \b, \a, \b
-	xor     \a, \a, \b
+	move    \t, \a
+	move    \a, \b
+	move    \b, \t
 1:	slt     \t, \c, \a
 	beqz    \t, 2f
 	slt     \t, \b, \c
 	move    \a, \c
 2:	beqz    \t, 3f
-	nop
+	\tail
 	move    \b, \c
 3:
 .endm
@@ -180,13 +179,12 @@
 .if \quad
 	lw      $t9, SP_SZ($t6)
 	lw      $v1, SP_T2($t8)
-	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0    # zmin, zmax
+	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0, "sltiu $t7, $t0, 96"   # zmin, zmax
 .else
 	lw      $v1, SP_T2($t8)
-	MINMAX3 $t0, $t1, $t2, $t7
+	MINMAX3 $t0, $t1, $t2, $t7, "sltiu $t7, $t0, 96"
 .endif
-	sltiu   $t7, $t0, 96                 # (r_slow.c SZ_CLIP)
-	bnez    $t7, \skip
+	bnez    $t7, \skip                   # a corner nearer than r_slow.c SZ_CLIP
 	subu    $t7, $t1, $t0                # depth range
 	mult    $v1, $t0                     # T2 zmin
 	lh      $t0, SP_SXY($t3)             # x
@@ -195,7 +193,7 @@
 .if \quad
 	lh      $t9, SP_SXY($t6)
 	mflo    $v1
-	MINMAX4 $t0, $t1, $t2, $t9, $v0
+	MINMAX4 $t0, $t1, $t2, $t9, $v0, "lh $t2, SP_SXY+2($t5)"
 .else
 	mflo    $v1
 	MINMAX3 $t0, $t1, $t2, $v0
@@ -204,14 +202,13 @@
 	sw      $v0, SP_FREE3E8($t8)
 	lh      $t0, SP_SXY+2($t3)           # y
 	lh      $t1, SP_SXY+2($t4)
-	lh      $t2, SP_SXY+2($t5)
 .if \quad
 	lh      $t9, SP_SXY+2($t6)
-	MINMAX4 $t0, $t1, $t2, $t9, $v0
+	MINMAX4 $t0, $t1, $t2, $t9, $v0, "lw $v0, SP_FREE3E8($t8)"
 .else
-	MINMAX3 $t0, $t1, $t2, $v0
+	lh      $t2, SP_SXY+2($t5)
+	MINMAX3 $t0, $t1, $t2, $v0, "lw $v0, SP_FREE3E8($t8)"
 .endif
-	lw      $v0, SP_FREE3E8($t8)
 	subu    $t0, $t1, $t0                # H
 	addu    $v0, $v0, $t0                # W + H
 	mult    $v0, $t7                     # (W + H) x depth range
@@ -573,19 +570,19 @@ draw_records:
 dr_cull:
 	addu    $a0, $a0, $t2                # culled record (t2 = its size): next
 dr_rec:
+	lw      $t0, SP_FVBASE($t8)          # (kept through the unstamped run)
+dr_rec_1:
 .if R_PROFILE
 	beq     $a0, $a1, dr_done
 .else
 	beq     $a0, $a1, walk
 .endif
 	lhu     $t1, R_FACE_ID($a0)          # (at the block end: a harmless read)
-	lw      $t0, SP_FVBASE($t8)
-	sll     $t1, $t1, 1
-	addu    $t1, $t1, $t0
-	lhu     $t1, 0($t1)
 	lhu     $t2, R_SIZE($a0)
-	bne     $t1, $s4, dr_rec             # not stamped this frame: next
-	addu    $a0, $a0, $t2                # (a0 = next record)
+	addu    $t1, $t1, $t0                # (face_id: a byte offset, world.c)
+	lhu     $t1, 0($t1)
+	addu    $a0, $a0, $t2                # a0 = next record
+	bne     $t1, $s4, dr_rec_1           # not stamped this frame: next
 	sw      $a0, SP_NEXTREC($t8)
 	subu    $a0, $a0, $t2                # stamped: back to it
 
