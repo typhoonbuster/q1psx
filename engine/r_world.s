@@ -21,7 +21,7 @@
 # Register roles during the walk (callee-saved, preserved by r_render):
 #   s0 r_state   s1 current node / leaf|1   s2 clip flags   s3 stack ptr
 #   s4 framecount   s5 visframe   s6 packet ptr   s7 packet end (minus
-#   QW_MAX_REC_PKT + 8)   fp OT world-bucket link (24 bits)   t8 scratchpad base
+#   QW_MAX_REC_PKT + 48)   fp OT world-bucket link (24 bits)   t8 scratchpad base
 #   (0x1F800000)   v1 tpage << 16 of the last drawn texture (draw_records'
 #   texture cache: the walk must leave v1 alone)
 
@@ -122,6 +122,30 @@
 4:
 .endm
 
+# MINMAX4D: MINMAX4 with a second temporary u, which takes the second
+# pair's compare into the first branch's delay slot.
+.macro MINMAX4D a, b, c, d, t, u
+	slt     \t, \b, \a
+	beqz    \t, 1f
+	slt     \u, \d, \c
+	xor     \a, \a, \b
+	xor     \b, \a, \b
+	xor     \a, \a, \b
+1:	beqz    \u, 2f
+	nop
+	xor     \c, \c, \d
+	xor     \d, \c, \d
+	xor     \c, \c, \d
+2:	slt     \t, \c, \a
+	beqz    \t, 3f
+	slt     \t, \b, \d
+	move    \a, \c
+3:	beqz    \t, 4f
+	nop
+	move    \b, \d
+4:
+.endm
+
 .macro MINMAX3 a, b, c, t
 	slt     \t, \b, \a
 	beqz    \t, 1f
@@ -154,17 +178,16 @@
 	lw      $t2, SP_SZ($t5)
 .if \quad
 	lw      $t9, SP_SZ($t6)
-	nop
-	MINMAX4 $t0, $t1, $t2, $t9, $t7      # zmin, zmax
+	lw      $v1, SP_T2($t8)
+	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0    # zmin, zmax
 .else
-	nop
+	lw      $v1, SP_T2($t8)
 	MINMAX3 $t0, $t1, $t2, $t7
 .endif
 	sltiu   $t7, $t0, 96                 # (r_slow.c SZ_CLIP)
 	bnez    $t7, \skip
-	lw      $v0, SP_T2($t8)
 	subu    $t7, $t1, $t0                # depth range
-	mult    $v0, $t0                     # T2 zmin
+	mult    $v1, $t0                     # T2 zmin
 	lh      $t0, SP_SXY($t3)             # x
 	lh      $t1, SP_SXY($t4)
 	lh      $t2, SP_SXY($t5)
@@ -183,10 +206,8 @@
 	lh      $t2, SP_SXY+2($t5)
 .if \quad
 	lh      $t9, SP_SXY+2($t6)
-	nop
 	MINMAX4 $t0, $t1, $t2, $t9, $v0
 .else
-	nop
 	MINMAX3 $t0, $t1, $t2, $v0
 .endif
 	lw      $v0, SP_FREE3E8($t8)
@@ -295,9 +316,10 @@ r_render:
 	sw      $t0, SP_TEXBASE($t8)
 	sw      $t2, SP_PLANES($t8)
 	lw      $t2, RS_WARP_T2($s0)
-	nop
-	sw      $t2, SP_T2($t8)
+	lw      $t4, RS_WARP_K16($s0)
 	sw      $t3, SP_VERTPOOL($t8)
+	sw      $t2, SP_T2($t8)
+	sw      $t4, SP_K16($t8)
 	or      $t1, $t1, $fp
 	lui     $t2, 0xE200
 	sw      $t1, 0($s6)                  # texture window off, first in the
@@ -538,9 +560,10 @@ pop:
 # only cuts faces every 256 texels): one command per run of records sharing
 # a texture, prepended when the run ends (a texture change, or walk_done) so
 # it comes first in the bucket, before all of the run's polygons.
-# Packet space: s7 stops QW_MAX_REC_PKT + 8 short of the arena end (r_frame),
-# so one test per record covers all of its packets (the window command of the
-# run it closes included) and walk_done's; the slow path keeps s6 <= s7.
+# Packet space: s7 stops QW_MAX_REC_PKT + 48 short of the arena end
+# (r_frame), so one test per record covers all of its packets (the window
+# command of the run it closes included) and walk_done's; the slow path
+# emits a triangle only while s6 <= s7, so it ends at most 40 bytes over.
 # Clobbers at, v0, a0-a3, t0-t7, t9; back to `walk` when done.
 draw_records:
 .if R_PROFILE
@@ -576,11 +599,15 @@ dr_rec:
 	# drop those bits the way the 16-bit hardware register does.
 	lh      $t9, R_SC+4($a0)
 	lwc2    C2_VXY0, R_SC+0($a0)
-	mtc2    $t9, C2_VZ0
 	lhu     $t3, R_SR($a0)
+	mtc2    $t9, C2_VZ0
 	lhu     $a3, R_TEX($a0)
+	lw      $t9, SP_K16($t8)
 	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
-	lw      $at, SP_LASTTEX($t8)         # (while the GTE works)
+	srl     $t7, $t3, 1                  # (while the GTE works; t2 keeps the
+	addu    $t7, $t7, $t3                #  record's size for dr_cull) rho = 1.5 r
+	mult    $t9, $t7                     # k16 rho, for a2 bit 2 below
+	lw      $at, SP_LASTTEX($t8)
 	mfc2    $t0, C2_IR1                  # x
 	mfc2    $t1, C2_IR2                  # y
 	mfc2    $t4, C2_IR3                  # z
@@ -596,33 +623,25 @@ dr_rec:
 	sll     $t5, $t3, 3                  # 8 r
 	sll     $t6, $t4, 1
 	addu    $t6, $t6, $t4                # 3z
-	sll     $t7, $t1, 2                  # 4y
-	subu    $t9, $t6, $t7                # bottom: 3z - 4y
+	sll     $t0, $t1, 2                  # 4y
+	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, dr_cull
-	addu    $t9, $t6, $t7                # top: 3z + 4y
+	addu    $t9, $t6, $t0                # top: 3z + 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, dr_cull
 	sll     $t5, $t3, 1                  # delay: 2r
+	subu    $t6, $t4, $t7                # nearest depth z - rho
 	lw      $t7, SP_SZFAST($t8)
 	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
 	slt     $a2, $t5, $t7                # a2 bit 0: may come too near
-	sll     $t5, $t3, 2
-	addu    $t5, $t5, $t3
-	addu    $t5, $t5, $t3                # 6r
-	slt     $t5, $t4, $t5                # z < 6r: an edge may exceed the
-	sll     $t5, $t5, 1                  # subdivision's 500 px span (|dx| + |dy|)
 	sltu    $t0, $s7, $s6                # room for the whole record?
 	bnez    $t0, dr_full
-	or      $a2, $a2, $t5                # a2 bit 1
-	# a2 bit 2: an affine error above the threshold is possible:
-	# (z - rho) x 16 < k16 x rho, rho = 1.5 r (render.c, warp_k16)
-	srl     $t5, $t3, 1
-	addu    $t5, $t5, $t3                # rho
-	lw      $t9, RS_WARP_K16($s0)
-	subu    $t6, $t4, $t5                # nearest depth
-	mult    $t9, $t5
 	sll     $t6, $t6, 4
+	# a2 bit 2: an affine error above the threshold is possible: (z - rho)
+	# x 16 < k16 x rho (render.c, warp_k16). It also covers an edge over
+	# the subdivision's 500 px span: k16 >= 67 (T <= 32) puts the bound at
+	# z < 7.8 r, beyond the 6 r where a record's edges can reach 500 px.
 	mflo    $t9
 	slt     $t9, $t6, $t9
 	sll     $t9, $t9, 2
@@ -742,8 +761,8 @@ dr_xf_done:
 
 	beqz    $a2, dr_polys                # sphere says: nothing near or big
 	move    $t4, $t8
-	andi    $t0, $a2, 6                  # big or warping: careful regardless
-	bnez    $t0, dr_polys                # may be big: careful loop regardless
+	andi    $t0, $a2, 4                  # big or warping: careful regardless
+	bnez    $t0, dr_polys
 	move    $t5, $t2
 	move    $a2, $zero                   # exact check: any real vertex near?
 dr_nz:
@@ -939,14 +958,12 @@ dr_slow_call:
 	lw      $a0, SP_SAVE+4($t8)
 	lw      $a1, SP_SAVE+8($t8)
 	lw      $a2, SP_SAVE+12($t8)
-	lw      $a3, SP_SAVE+16($t8)
+	lw      $t0, SP_SAVE+32($t8)
 	lw      $v0, SP_CLUT16($t8)          # (the careful test used them)
 	lw      $v1, SP_TPAGE16($t8)
-	lw      $t0, SP_SAVE+32($t8)
-	lw      $t7, SP_SZFAST($t8)
 	li      $t1, 4
 	beq     $t0, $t1, dr_quad_next
-	nop
+	lw      $a3, SP_SAVE+16($t8)
 	b       dr_tri_next
 	nop
 
@@ -978,7 +995,7 @@ walk_done:
 	bltz    $t0, 1f                      # nothing drawn
 	lui     $t9, 0x0100
 	or      $t9, $t9, $fp                # the last run's texture window
-	sw      $t9, 0($s6)                  # (room: s7 is QW_MAX_REC_PKT + 8
+	sw      $t9, 0($s6)                  # (room: s7 is QW_MAX_REC_PKT + 48
 	sw      $t1, 4($s6)                  # short of the arena end)
 	move    $fp, $s6
 	addiu   $s6, $s6, 8

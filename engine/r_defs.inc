@@ -111,7 +111,8 @@
 .set SP_SPRA,     0x3dc   # slow path: its own return address
 .set SP_SLOWTRI,  0x3e0   # slow path: triangles emitted this frame
 .set SP_T2,       0x3e4   # r_state.warp_t2: 2 x the affine-error threshold
-.set SP_FREE3E8,  0x3e8   # (free: 0x3e8 - 0x3fb)
+.set SP_FREE3E8,  0x3e8   # CAREFUL: a spill
+.set SP_K16,      0x3ec   # r_state.warp_k16, the record warp bound (free: 0x3f0 - 0x3fb)
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)

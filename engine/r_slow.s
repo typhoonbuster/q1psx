@@ -71,23 +71,32 @@
 	.align  4
 r_slow_pool:
 	.space  POOL_N * 32
-r_slow_stack:
-	.space  STACK_N * 4
 r_slow_view:                             # clip path: view x, y, z per pool entry 0..5
 	.space  6 * 16
-r_slow_hash:
+r_slow_hash:                             # (HASH_OFS from the pool: v1-relative)
 	.space  HASH_N * 2
+
+	.section .data.r_slow_stack, "aw", @progbits
+	.align  2
+r_slow_stack:                            # word 0: the end marker under every
+	.word   -1                           # polygon's triangles (never written)
+	.space  (STACK_N - 1) * 4
+
+.set HASH_OFS, r_slow_hash - r_slow_pool
 
 	.section .rodata.r_slow, "a", @progbits
 	.align  2
 sp_ctab:                                 # children by split mask (1..7)
 	.word   0, sp_c1, sp_c2, sp_c3, sp_c4, sp_c5, sp_c6, sp_c7
 
-# NOSPLIT out, xa, ya, za, zta, xb, yb, zb, ztb: out = 1 when edge (a, b)
-# does not split: |dx| + |dy| <= SPAN and (|dx| + |dy|) |dz| <= zta + ztb
-# (z * T2 each). Clobbers v0, t9.
-.macro NOSPLIT out, xa, ya, za, zta, xb, yb, zb, ztb
+# NOSPLIT out, xa, ya, za, zta, xb, yb, zb, ztb [, first]: out = 1 when edge
+# (a, b) does not split: |dx| + |dy| <= SPAN and (|dx| + |dy|) |dz| <= zta +
+# ztb (z * T2 each). first = 0: the caller did `subu out, xa, xb` already (a
+# delay slot). Clobbers v0, t9.
+.macro NOSPLIT out, xa, ya, za, zta, xb, yb, zb, ztb, first=1
+.if \first
 	subu    \out, \xa, \xb
+.endif
 	bgez    \out, 1f
 	subu    $v0, \ya, \yb
 	subu    \out, $zero, \out
@@ -116,6 +125,81 @@ sp_ctab:                                 # children by split mask (1..7)
 	sw      $v0, \off($a3)
 .endm
 
+# CORNER k: pool entry k from the record's vertex cache, for corner k of the
+# polygon at a1 (t7 = T2): SXY, z, z T2, u and v (x 256), the packet uv word,
+# the grey colour word; bit k of s1 set when the GTE could not project it
+# (SZ < SZ_CLIP, or x / y saturated: outside -1023..1022). Its key stays
+# that of a corner: entries 0..2 are never midpoints (their key word is
+# never written), the caller clears entry 3's. Clobbers t0-t5.
+.macro CORNER k
+	lbu     $t1, \k($a1)                 # slot x 4
+	lhu     $t3, (4 + 2 * \k)($a1)       # uv
+	addu    $t1, $t1, $t8
+	lw      $t5, SP_SZ($t1)
+	lw      $t4, SP_SXY($t1)
+	lw      $t1, SP_COL($t1)             # grey colour, light in its low byte
+	mult    $t5, $t7                     # z T2
+	sw      $t5, (32 * \k + PV_Z)($v1)
+	sw      $t4, (32 * \k + PV_SXY)($v1)
+	sw      $t1, (32 * \k + PV_GC)($v1)
+	andi    $t0, $t3, 0xff
+	sll     $t0, $t0, 8                  # u x 256
+	andi    $t2, $t3, 0xff00             # v x 256
+	sw      $t0, (32 * \k + PV_U)($v1)
+	sw      $t2, (32 * \k + PV_V)($v1)
+	sw      $t3, (32 * \k + PV_UVW)($v1) # (u x 256 + 128) >> 8 = the byte
+	sll     $t0, $t4, 16
+	sra     $t0, $t0, 16                 # x
+	addiu   $t0, $t0, 1023
+	sltiu   $t0, $t0, 2046               # 1: x in range
+	sra     $t1, $t4, 16                 # y
+	addiu   $t1, $t1, 1023
+	sltiu   $t1, $t1, 2046               # 1: y in range
+	and     $t0, $t0, $t1
+	sltiu   $t2, $t5, SZ_CLIP            # 1: too near
+	xori    $t0, $t0, 1
+	or      $t2, $t2, $t0
+.if \k
+	sll     $t2, $t2, \k
+.endif
+	or      $s1, $s1, $t2
+	mflo    $t0
+	sw      $t0, (32 * \k + PV_ZT)($v1)
+.endm
+
+# MIDLOOK dst: dst = the pool index of the midpoint of entries t0, t1
+# (indices), found through the table or made by sm_new (the table slot is
+# written in the call's delay slot). Clobbers at, v0, t0-t7, t9, a0-a2.
+.macro MIDLOOK dst
+	sltu    $at, $t0, $t1                # key: lower << 9 | higher
+	bnez    $at, 91f
+	sll     $t2, $t0, 9
+	xor     $t0, $t0, $t1
+	xor     $t1, $t0, $t1
+	xor     $t0, $t0, $t1
+	sll     $t2, $t0, 9
+91:	or      $t2, $t2, $t1
+	srl     $t3, $t2, 4
+	xor     $t3, $t3, $t2
+	andi    $t3, $t3, HASH_N - 1         # slot
+	sll     $t3, $t3, 1
+	addu    $t6, $t3, $v1                # (pool-relative)
+	lhu     $v0, HASH_OFS($t6)           # the index it holds
+	nop
+	sltu    $at, $v0, $s4                # one of this polygon's?
+	beqz    $at, 92f
+	sll     $t4, $v0, 5
+	addu    $t4, $t4, $v1
+	lw      $t4, PV_KEY($t4)
+	move    \dst, $v0                    # (if it is the one)
+	beq     $t4, $t2, 93f                # found
+	nop
+92:	jal     sm_new                       # else made: v0 = its index
+	sh      $s4, HASH_OFS($t6)           # (the table: this edge -> n)
+	move    \dst, $v0
+93:
+.endm
+
 	.section .text.slow_poly, "ax", @progbits
 	.global slow_poly
 	.type   slow_poly, @function
@@ -135,66 +219,31 @@ slow_poly:
 
 	# ---- 1. corners (PS1 order) from the cache ---------------------------
 	move    $s1, $zero                   # clip mask: bit k = corner k off range
-	move    $t9, $zero                   # k
-	move    $t6, $v1                     # pool[k]
-sp_corner:
-	addu    $t0, $a1, $t9
-	lbu     $t1, 0($t0)                  # slot x 4
-	sll     $t2, $t9, 1
-	addu    $t2, $t2, $a1
-	lhu     $t3, 4($t2)                  # uv
-	addu    $t1, $t1, $t8
-	lw      $t5, SP_SZ($t1)
-	lw      $t4, SP_SXY($t1)
-	mult    $t5, $t7                     # z T2
-	lw      $t1, SP_COL($t1)             # grey colour, light in its low byte
-	sw      $t5, PV_Z($t6)
-	sw      $t4, PV_SXY($t6)
-	sw      $t1, PV_GC($t6)
-	andi    $t0, $t3, 0xff
-	sll     $t0, $t0, 8                  # u x 256
-	andi    $t2, $t3, 0xff00             # v x 256
-	sw      $t0, PV_U($t6)
-	sw      $t2, PV_V($t6)
-	sw      $t3, PV_UVW($t6)             # (u x 256 + 128) >> 8 = the byte
-	li      $t0, -1
-	sw      $t0, PV_KEY($t6)             # not a midpoint
-	sltiu   $t2, $t5, SZ_CLIP            # off range: SZ < SZ_CLIP, or x / y
-	sll     $t0, $t4, 16                 # outside -1023..1022
-	sra     $t0, $t0, 16                 # x
-	addiu   $t0, $t0, 1023
-	sltiu   $t0, $t0, 2046               # 1: x in range
-	sra     $t1, $t4, 16                 # y
-	addiu   $t1, $t1, 1023
-	sltiu   $t1, $t1, 2046               # 1: y in range
-	and     $t0, $t0, $t1
-	xori    $t0, $t0, 1
-	or      $t2, $t2, $t0
-	sllv    $t2, $t2, $t9
-	or      $s1, $s1, $t2
-	mflo    $t0
-	sw      $t0, PV_ZT($t6)
-	addiu   $t9, $t9, 1
-	bne     $t9, $a2, sp_corner
-	addiu   $t6, $t6, 32
-
-	move    $s4, $a2                     # pool: the corners
-	lui     $a3, %hi(r_slow_stack)
-	addiu   $a3, $a3, %lo(r_slow_stack)  # a3 = triangle stack
-	li      $t0, -1
-	sw      $t0, 0($a3)                  # the end marker
+	CORNER  0
+	CORNER  1
+	CORNER  2
+	li      $t0, 3
+	beq     $a2, $t0, sp_tri0
+	lui     $a3, %hi(r_slow_stack + 4)
+	CORNER  3
+	sw      $zero, (3 * 32 + PV_KEY)($v1)    # a corner, not a stale midpoint
+	addiu   $a3, $a3, %lo(r_slow_stack + 4)  # a3 = the first free stack word
 	bnez    $s1, sp_clip
-	addiu   $a3, $a3, 4
+	li      $s4, 4                       # (pool: the corners)
 
-	# ---- 2. straight from the cache: (0, 1, 2), then a quad's (1, 3, 2) ----
-	li      $t0, 2 << 18 | 1 << 9 | 0    # (0, 1, 2), depth 0
-	li      $t1, 4
-	bne     $a2, $t1, 1f
-	nop
-	li      $t1, 2 << 18 | 3 << 9 | 1    # (1, 3, 2)
+	# ---- 2. straight from the cache: (1, 3, 2) under (0, 1, 2), depth 0 ---
+	li      $t0, 2 << 18 | 3 << 9 | 1
+	li      $t1, 2 << 18 | 1 << 9 | 0
+	sw      $t0, 0($a3)
+	sw      $t1, 4($a3)
+	b       sp_sub
+	addiu   $a3, $a3, 8
+sp_tri0:                                 # a triangle: (0, 1, 2)
+	addiu   $a3, $a3, %lo(r_slow_stack + 4)
+	bnez    $s1, sp_clip
+	li      $s4, 3
+	li      $t1, 2 << 18 | 1 << 9 | 0
 	sw      $t1, 0($a3)
-	addiu   $a3, $a3, 4
-1:	sw      $t0, 0($a3)
 	b       sp_sub
 	addiu   $a3, $a3, 4
 
@@ -398,13 +447,11 @@ sp_sub:
 	lw      $s5, PV_ZT($a1)
 	lw      $ra, PV_ZT($a2)
 
-	# split decisions (none at max depth, or with the pool nearly full)
+	# split decisions (none at max depth)
 	sll     $at, $s2, 1                  # depth 8 (MAXD): bit 30
 	bltz    $at, sp_leaf_max
-	sltiu   $at, $s4, POOL_N - 2
-	beqz    $at, sp_leaf_max
-	nop
-	NOSPLIT $s3, $t0, $t1, $t2, $s0, $t3, $t4, $t5, $s5      # p0-p1
+	subu    $s3, $t0, $t3                # (the first test's x0 - x1)
+	NOSPLIT $s3, $t0, $t1, $t2, $s0, $t3, $t4, $t5, $s5, 0   # p0-p1
 	NOSPLIT $at, $t3, $t4, $t5, $s5, $t6, $t7, $s1, $ra      # p1-p2
 	sll     $at, $at, 1
 	or      $s3, $s3, $at
@@ -413,12 +460,12 @@ sp_sub:
 	or      $s3, $s3, $at
 	xori    $s3, $s3, 7                  # split: bit 0 p0-p1, 1 p1-p2, 2 p2-p0
 	bnez    $s3, sp_split
-	nop
+	sltu    $t0, $s7, $s6                # (sp_emit's: the arena full? r_frame
+	                                     #  leaves 40 bytes over s7 for it)
 
-	# ---- a leaf: one POLY_GT3 (a0 / a1 / a2 = its pool entries) ------------
+	# ---- a leaf: one POLY_GT3 (a0 / a1 / a2 = its pool entries; t0 = 1 if
+	# the arena is full) ---------------------------------------------------------
 sp_emit:
-	addiu   $t0, $s6, 40
-	sltu    $t0, $s7, $t0
 	bnez    $t0, sp_full
 	lui     $t9, CODE_GT3 >> 16
 	lw      $t0, PV_GC($a0)
@@ -462,28 +509,27 @@ sp_emit:
 
 	# ---- split: the midpoints, then the children ---------------------------
 sp_split:                                # s3 = mask, s2 = the triangle
-	andi    $t0, $s3, 1
-	beqz    $t0, 1f
+	sltiu   $at, $s4, POOL_N - 2         # the pool nearly full: a forced leaf
+	beqz    $at, sp_leaf_max
+	andi    $v0, $s3, 1                  # (harmless there)
+	beqz    $v0, 1f
 	andi    $t0, $s2, 0x1ff              # (i0)
 	srl     $t1, $s2, 9
-	jal     sp_mid
 	andi    $t1, $t1, 0x1ff              # i1
-	move    $s0, $v0                     # s0 = m01
-1:	andi    $t0, $s3, 2
-	beqz    $t0, 2f
+	MIDLOOK $s0                          # s0 = m01
+1:	andi    $v0, $s3, 2
+	beqz    $v0, 2f
 	srl     $t0, $s2, 9
 	andi    $t0, $t0, 0x1ff              # i1
 	srl     $t1, $s2, 18
-	jal     sp_mid
 	andi    $t1, $t1, 0x1ff              # i2
-	move    $s5, $v0                     # s5 = m12
-2:	andi    $t0, $s3, 4
-	beqz    $t0, 3f
+	MIDLOOK $s5                          # s5 = m12
+2:	andi    $v0, $s3, 4
+	beqz    $v0, 3f
 	srl     $t0, $s2, 18
 	andi    $t0, $t0, 0x1ff              # i2
-	jal     sp_mid
 	andi    $t1, $s2, 0x1ff              # i0
-	move    $s1, $v0                     # s1 = m20
+	MIDLOOK $s1                          # s1 = m20
 3:	# children in r_slow.c's order (the last pushed comes out first):
 	# t0..t2 = i0..i2, t9 = (depth + 1) << 27
 	srl     $at, $s2, 27
@@ -584,7 +630,7 @@ sp_leaf_max:
 4:	subu    $t9, $t9, $at
 	sltiu   $t9, $t9, 512
 	bnez    $t9, sp_emit
-	nop
+	sltu    $t0, $s7, $s6                # (sp_emit's arena test)
 	b       sp_sub
 	nop
 
@@ -602,40 +648,10 @@ sp_done:
 	lw      $s5, SP_SV+20($t8)
 
 # -----------------------------------------------------------------------------
-# sp_mid: the midpoint of pool entries t0, t1 (indices): found through the
-# table, or made. v0 = its index. Clobbers at, t0-t7, t9, a0-a2 (the
-# s-registers, v1 and a3 kept; s4 grows by a new one).
-sp_mid:
-	sltu    $at, $t0, $t1                # key: lower << 9 | higher
-	bnez    $at, 1f
-	nop
-	xor     $t0, $t0, $t1
-	xor     $t1, $t0, $t1
-	xor     $t0, $t0, $t1
-1:	sll     $t2, $t0, 9
-	or      $t2, $t2, $t1                # key
-	srl     $t3, $t2, 4
-	xor     $t3, $t3, $t2
-	andi    $t3, $t3, HASH_N - 1         # slot
-	sll     $t3, $t3, 1
-	lui     $t6, %hi(r_slow_hash)
-	addu    $t6, $t6, $t3
-	lhu     $v0, %lo(r_slow_hash)($t6)   # the index it holds
-	addiu   $t6, $t6, %lo(r_slow_hash)   # (the slot, for an insert)
-	sltu    $at, $v0, $s4                # one of this polygon's?
-	beqz    $at, sm_new
-	sll     $t4, $v0, 5
-	addu    $t4, $t4, $v1
-	lw      $t4, PV_KEY($t4)
-	nop
-	bne     $t4, $t2, sm_new             # another edge's
-	nop
-	jr      $ra
-	nop
-
-	# a new vertex at index n = s4: the projected 3D midpoint
+# sm_new: a new vertex at index n = s4, the projected 3D midpoint of pool
+# entries t0, t1 (indices; t2 = their key). v0 = n. Clobbers at, t0-t7, t9,
+# a0-a2 (s-registers, v1, a3 kept; s4 grows by one).
 sm_new:
-	sh      $s4, 0($t6)                  # table: this edge -> n
 	sll     $t0, $t0, 5
 	addu    $a0, $t0, $v1                # p
 	sll     $t1, $t1, 5
@@ -740,8 +756,7 @@ sp_lerp:
 	addu    $t0, $t0, $t7                # view[n]
 	sll     $t1, $s4, 5
 	addu    $t1, $t1, $v1                # pool[n]
-	li      $at, -1
-	sw      $at, PV_KEY($t1)             # not a midpoint
+	sw      $zero, PV_KEY($t1)           # not a midpoint
 	mflo    $t9                          # t
 	LERPF   0, $t4, $t5, $t0             # view x
 	LERPF   4, $t4, $t5, $t0             #      y
