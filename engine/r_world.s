@@ -782,10 +782,8 @@ dr_polys:
 .else
 	addu    $a3, $a0, $t0                # first polygon
 	beqz    $at, dr_tris
-	nop
 .endif
-
-dr_quad:
+dr_quad:                                 # (release: in the delay slot above)
 	lw      $t0, 0($a3)                  # 4 vertex offsets
 	addiu   $at, $at, -1                 # (count down)
 	andi    $t3, $t0, 0xff
@@ -842,12 +840,10 @@ dr_quad_next:
 
 dr_tris:
 	lbu     $at, R_NTRIS($a0)
-	nop
+	lw      $t0, 0($a3)                  # (none: a harmless read)
 	beqz    $at, dr_next
-	nop
-dr_tri:
-	lw      $t0, 0($a3)
-	addiu   $at, $at, -1                 # (count down)
+dr_tri:                                  # t0 = the triangle's 3 vertex offsets
+	addiu   $at, $at, -1                 # (count down; the delay slot above)
 	andi    $t3, $t0, 0xff
 	srl     $t4, $t0, 8
 	andi    $t4, $t4, 0xff
@@ -888,12 +884,13 @@ dr_tri_emit:                             # POLY_GT3
 	move    $fp, $s6
 	addiu   $s6, $s6, 40
 dr_tri_next:
+	lw      $t0, POLY_SIZE($a3)          # the next one's (after the last: harmless)
 	bgtz    $at, dr_tri
 	addiu   $a3, $a3, POLY_SIZE
 dr_next:
 	lw      $a0, SP_NEXTREC($t8)
-	b       dr_rec
-	nop
+	b       dr_rec_1
+	lw      $t0, SP_FVBASE($t8)          # (dr_rec's)
 
 # Near polygon: hand it to the slow path (engine/r_slow.c) — near clip,
 # subdivision, exact projection. t0 = 4 (quad) or 3 (triangle).
