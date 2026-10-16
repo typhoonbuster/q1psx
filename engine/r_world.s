@@ -192,34 +192,33 @@
 .endif
 	bnez    $t7, \skip                   # a corner nearer than r_slow.c SZ_CLIP
 	subu    $t7, $t1, $t0                # depth range
-	mult    $v1, $t0                     # T2 zmin (read after the x range)
-	lh      $t0, SP_SXY($t3)             # x
+	mult    $v1, $t0                     # T2 zmin (LO holds it through the
+	lh      $t0, SP_SXY($t3)             # x       ranges: v1 takes W)
 	lh      $t1, SP_SXY($t4)
 	lh      $t2, SP_SXY($t5)
 .if \quad
 	lh      $t9, SP_SXY($t6)
 	MINMAX4 $t0, $t1, $t2, $t9, $v0, "lh $t2, SP_SXY+2($t5)"
-	mflo    $v1
 .else
-	MINMAX3 $t0, $t1, $t2, $v0, "mflo $v1"
+	MINMAX3 $t0, $t1, $t2, $v0
 .endif
-	subu    $v0, $t1, $t0                # W
-	sw      $v0, SP_FREE3E8($t8)
+	subu    $v1, $t1, $t0                # W
 	lh      $t0, SP_SXY+2($t3)           # y
 	lh      $t1, SP_SXY+2($t4)
 .if \quad
 	lh      $t9, SP_SXY+2($t6)
-	MINMAX4 $t0, $t1, $t2, $t9, $v0, "lw $v0, SP_FREE3E8($t8)"
+	MINMAX4 $t0, $t1, $t2, $t9, $v0
 .else
 	lh      $t2, SP_SXY+2($t5)
-	MINMAX3 $t0, $t1, $t2, $v0, "lw $v0, SP_FREE3E8($t8)"
+	MINMAX3 $t0, $t1, $t2, $v0
 .endif
 	subu    $t0, $t1, $t0                # H
-	addu    $v0, $v0, $t0                # W + H
-	mult    $v0, $t7                     # (W + H) x depth range
+	mflo    $t9                          # T2 zmin
+	addu    $v0, $v1, $t0                # W + H
 	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
+	mult    $v0, $t7                     # (W + H) x depth range
 	beqz    $t0, \skip
-	sll     $t9, $v1, 1                  # 2 T2 zmin
+	sll     $t9, $t9, 1                  # 2 T2 zmin
 	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the skip path
 	mflo    $v0                          #  reloads them)
 	sltu    $v0, $t9, $v0
