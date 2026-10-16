@@ -36,6 +36,7 @@ typedef struct {
 	const qw_vert *verts;           /* [num_verts]: the vertex pool   */
 	uint32_t       num_verts;
 	int            tex4;            /* the 4-bit textures are loaded  */
+	uint32_t       vis_leaves;      /* PVS rows: leaves 1..vis_leaves  */
 } world_t;
 
 #ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */

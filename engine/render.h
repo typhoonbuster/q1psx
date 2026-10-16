@@ -51,7 +51,7 @@ typedef struct {
 	uint32_t ticks_block;    /* +128 timer-2 ticks spent in face records    */
 	uint32_t ticks_mark;     /* +132 timer-2 ticks spent in PVS marking     */
 	uint32_t force_mark;     /* +136 non-zero: re-mark even if leaf same    */
-	uint32_t leaves_end;     /* +140 qw_leaf * one past the last leaf      */
+	uint32_t vis_lastmask;   /* +140 a PVS row's last byte: its leaves' bits */
 	uint32_t ot_head;        /* +144 world-bucket link while asm calls C     */
 	uint32_t stat_slow;      /* +148 triangles emitted by the slow path      */
 	uint32_t ticks_slow;     /* +152 timer-2 ticks spent in the slow path    */

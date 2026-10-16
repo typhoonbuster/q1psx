@@ -26,7 +26,7 @@
 .set RS_TICKS_BLOCK,  128
 .set RS_TICKS_MARK,   132
 .set RS_FORCE_MARK,   136
-.set RS_LEAVES_END,   140
+.set RS_VIS_LASTMASK, 140
 .set RS_OT_HEAD,      144
 .set RS_STAT_SLOW,    148
 .set RS_TICKS_SLOW,   152

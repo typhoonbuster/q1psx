@@ -167,7 +167,11 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 	world.num_views   = h->num_views;
 	world.num_records = h->num_records;
 	world.num_pieces  = h->num_pieces;
-	world.vis_rowbytes = (h->num_visleafs + 7) >> 3;
+	/* PVS rows: leaves 1..num_visleafs, which a malformed map could put
+	   past the leaf array (mark_pvs stamps every leaf a row names) */
+	world.vis_leaves  = h->num_visleafs < h->num_leaves ? h->num_visleafs
+	                  : h->num_leaves ? h->num_leaves - 1 : 0;
+	world.vis_rowbytes = (world.vis_leaves + 7) >> 3;
 	world.root        = &world.nodes[h->root];
 	world.has_spawn   = (int) h->has_spawn;
 	world.spawn_yaw   = h->spawn_yaw;

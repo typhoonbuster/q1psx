@@ -1087,33 +1087,43 @@ pd_general:
 # -----------------------------------------------------------------------------
 # mark_pvs: a0 = new camera leaf. visframe++, then walk the leaf's
 # RLE-compressed PVS row (a zero byte is followed by a count of zero bytes;
-# no row = everything visible) and stamp each visible leaf and its
-# not-yet-stamped ancestors. Clobbers t0-t3, t9, a1-a3, v1, s5.
+# no row = everything visible: one 0xff byte, read again for every byte) and
+# stamp each visible leaf and its not-yet-stamped ancestors. A byte's leaves
+# go highest first. Only the row's last byte can name a leaf past the array:
+# it is masked (r_state vis_lastmask), no other byte is tested.
+# Clobbers t0-t7, t9, a1-a3, s5.
 mark_pvs:
+.if R_PROFILE
 	lhu     $t9, TIMER2($t8)
+.endif
 	lw      $t7, RS_NODES($s0)           # parents are word offsets from here
 	li      $t6, 0xffff                  # no parent
 	sw      $a0, RS_VIEW_LEAF($s0)
 	sw      $zero, RS_FORCE_MARK($s0)
+.if R_PROFILE
 	sw      $t9, SP_T0($t8)
+.endif
 	lw      $s5, RS_VISFRAME($s0)
 	lw      $a1, L_VIS($a0)              # compressed row, or 0
 	addiu   $s5, $s5, 1
 	sw      $s5, RS_VISFRAME($s0)
 	lw      $a2, RS_ROWBYTES($s0)
 	lw      $a3, RS_LEAVES($s0)
-	lw      $v1, RS_LEAVES_END($s0)
-	addiu   $a3, $a3, L_SIZE             # bit 0 is leaf 1
+	lw      $t5, RS_VIS_LASTMASK($s0)
+	addiu   $a2, $a2, -1                 # a2 = row bytes left - 1
+	li      $t4, 1                       # the row: one byte after the other
+	bnez    $a1, mp_byte
+	addiu   $a3, $a3, 8 * L_SIZE         # byte 0's highest leaf: leaf 8
+	lui     $a1, %hi(mp_all)             # no row
+	addiu   $a1, $a1, %lo(mp_all)
+	move    $t4, $zero
 mp_byte:
-	blez    $a2, mp_done
-	nop
-	beqz    $a1, mp_bits
-	li      $t0, 0xff                    # no row: all visible
-	lbu     $t0, 0($a1)
-	addiu   $a1, $a1, 1
+	blez    $a2, mp_last
+	lbu     $t0, 0($a1)                  # (none left: a harmless read)
+	addu    $a1, $a1, $t4
 	bnez    $t0, mp_bits
-	nop
-	lbu     $t1, 0($a1)                  # run of zero bytes
+	move    $t9, $a3                     # (the bits' leaf cursor)
+	lbu     $t1, 0($a1)                  # a zero byte: a run of t1 of them
 	addiu   $a1, $a1, 1
 	subu    $a2, $a2, $t1
 	sll     $t2, $t1, 8
@@ -1121,16 +1131,18 @@ mp_byte:
 	subu    $t1, $t2, $t1                # bytes * 8 leaves * 28 B
 	b       mp_byte
 	addu    $a3, $a3, $t1
-mp_bits:                                 # t0: the byte's bits, leaves from a3
-	addiu   $a2, $a2, -1
+mp_last:                                 # the last byte (t0), unless a run
+	bltz    $a2, mp_done                 # covered it
+	and     $t0, $t0, $t5                # (its bits past the last leaf off)
+	beqz    $t0, mp_done                 # (a zero byte: a run's, nothing)
 	move    $t9, $a3
+mp_bits:                                 # t0: a byte's bits, t9: its leaf 8
+	addiu   $a2, $a2, -1
+	sll     $t0, $t0, 24                 # this leaf's bit at bit 31
 mp_bit:
-	andi    $t1, $t0, 1
-	beqz    $t1, mp_skip
-	srl     $t0, $t0, 1
-	sltu    $t1, $t9, $v1                # (the row's padding: past the last leaf)
-	beqz    $t1, mp_skip
-	lhu     $t2, L_PARENT($t9)           # (past the end: a harmless read)
+	bgez    $t0, mp_skip
+	sll     $t0, $t0, 1
+	lhu     $t2, L_PARENT($t9)
 	sh      $s5, L_VISFRAME($t9)
 mp_up:
 	beq     $t2, $t6, mp_skip            # past the root
@@ -1143,11 +1155,12 @@ mp_up:
 	b       mp_up
 	move    $t2, $t3
 mp_skip:
-	bnez    $t0, mp_bit                  # bits left in this byte
-	addiu   $t9, $t9, L_SIZE
+	bnez    $t0, mp_bit                  # set bits left in this byte
+	addiu   $t9, $t9, -L_SIZE
 	b       mp_byte
 	addiu   $a3, $a3, 8 * L_SIZE
 mp_done:
+.if R_PROFILE
 	lhu     $t0, TIMER2($t8)
 	lw      $t9, SP_T0($t8)
 	lw      $t1, RS_TICKS_MARK($s0)
@@ -1156,5 +1169,13 @@ mp_done:
 	addu    $t1, $t1, $t0
 	jr      $ra
 	sw      $t1, RS_TICKS_MARK($s0)
+.else
+	jr      $ra
+	nop
+.endif
 
 	.size r_render, . - r_render
+
+	.section .rodata.mp_all, "a", @progbits
+mp_all:                                  # mark_pvs: the row of a leaf without one
+	.byte   0xff

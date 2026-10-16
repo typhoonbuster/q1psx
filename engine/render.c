@@ -22,7 +22,7 @@ _Static_assert(offsetof(r_state_t, absrot)       == 88,  "r_state layout");
 _Static_assert(offsetof(r_state_t, stat_nodes)   == 108, "r_state layout");
 _Static_assert(offsetof(r_state_t, ticks_block)  == 128, "r_state layout");
 _Static_assert(offsetof(r_state_t, force_mark)   == 136, "r_state layout");
-_Static_assert(offsetof(r_state_t, leaves_end)   == 140, "r_state layout");
+_Static_assert(offsetof(r_state_t, vis_lastmask) == 140, "r_state layout");
 _Static_assert(offsetof(r_state_t, ot_head)      == 144, "r_state layout");
 _Static_assert(offsetof(r_state_t, textures)     == 156, "r_state layout");
 _Static_assert(offsetof(r_state_t, vertpool)     == 160, "r_state layout");
@@ -176,8 +176,9 @@ void r_bind_world(void)
 	r_state.root          = (uint32_t) world.root & 0x00ffffffu;   /* KUSEG, as the children */
 	r_state.face_visframe = (uint32_t) world.face_visframe;
 	r_state.leaves        = (uint32_t) world.leaves;
-	r_state.leaves_end    = (uint32_t) (world.leaves + world.num_leaves);
 	r_state.rowbytes      = world.vis_rowbytes;
+	r_state.vis_lastmask  = world.vis_rowbytes   /* (the bits of leaves 1..vis_leaves) */
+	                      ? (1u << (world.vis_leaves - 8 * (world.vis_rowbytes - 1))) - 1 : 0;
 	r_state.textures      = (uint32_t) world.textures;
 	r_state.vertpool      = (uint32_t) world.verts;
 	r_state.nodes         = (uint32_t) world.nodes;
