@@ -78,7 +78,7 @@
 .set POLY_SIZE,  12
 
 # ---- scratchpad map (base 0x1F800000) ---------------------------------------
-.set SP_STACK,    0x000   # walk stack, 64 words (spills to RAM beyond)
+.set SP_STACK,    0x000   # walk stack: +4..+0xff, 63 words (spills to RAM beyond)
 .set SP_SXY,      0x100   # projected XY per record vertex (index x4), 42 words
 .set SP_SZ,       0x1a8   # SZ per record vertex, 42 words
 .set SP_COL,      0x250   # light per record vertex as 0x00cccccc, 42 words
@@ -100,6 +100,7 @@
 .set SP_PLA,      0x368   # slow path: polygon index list A (12 bytes)
 .set SP_PLB,      0x374   # slow path: polygon index list B (12 bytes)
 .set SP_SV,       0x380   # slow path: s0-s5 kept across it (6 words)
+.set SP_RSTATE,   0x398   # r_render's r_state (s0 holds the plane table during the walk)
 .set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table
@@ -119,9 +120,10 @@
 .ifndef R_PROFILE           # renderer counters + stage timers (CMake option
 .set R_PROFILE,   1         # Q1PSX_PROFILE passes --defsym R_PROFILE=0|1)
 .endif
-.set WALK_SHIFT,  8       # walk stack block = 1 << 8 bytes (64 entries): the
-                          # scratchpad part, and the unit spilled to RAM
-.set WALK_RAM,    768     # RAM behind it: depth <= 64 + 192 = 256 (QW_MAX_DEPTH)
+.set WALK_SHIFT,  8       # walk stack block = 1 << 8 bytes: the scratchpad
+                          # part (63 entries from +4: an empty pop reads the
+                          # word at +0), and the unit spilled to RAM
+.set WALK_RAM,    1024    # RAM behind it: depth <= 63 x 5 = 315 >= QW_MAX_DEPTH
 
 .set TIMER2,      0x1120  # root counter 2 value, offset from 0x1F800000's
                           # upper half (0x1F801120)

@@ -146,6 +146,9 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 	world.nodes       = (qw_node *) (f + h->ofs_nodes);
 	world.leaves      = (qw_leaf *) (f + h->ofs_leaves);
 	world.marks       = (uint16_t *) (f + h->ofs_marks);
+	for (uint32_t i = 0; i < h->num_marks; i++)
+		world.marks[i] <<= 1;            /* face index -> byte offset in
+		                                    face_visframe (faces < 32768) */
 	world.faces       = f + h->ofs_faces;
 	world.views       = (const qw_view *) (f + h->ofs_views);
 	world.textures    = (const qw_tex *) (f + h->ofs_tex);
@@ -170,15 +173,17 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 	world.spawn_yaw   = h->spawn_yaw;
 	memcpy(world.spawn, h->spawn, sizeof world.spawn);
 
-	/* links: indices / offsets -> pointers (leaf pointers tagged with bit 0) */
+	/* links: indices / offsets -> pointers (leaf pointers tagged with bit 0).
+	   Child pointers go through KUSEG (0x00xxxxxx, the same RAM): the asm
+	   walk ORs them into its stack words as they are, flags in the top byte. */
 	const uint8_t *vis = f + h->ofs_vis;
 	for (uint32_t i = 0; i < h->num_nodes; i++) {
 		qw_node *n = &world.nodes[i];
 		for (int c = 0; c < 2; c++) {
 			uint32_t ch = n->child[c];
-			n->child[c] = (ch & 0x80000000u)
+			n->child[c] = ((ch & 0x80000000u)
 			            ? (uint32_t) &world.leaves[ch & 0x7fffffffu] | 1u
-			            : (uint32_t) &world.nodes[ch];
+			            : (uint32_t) &world.nodes[ch]) & 0x00ffffffu;
 		}
 		n->visframe = 0;                 /* parents stay word offsets */
 		for (int k = 0; k < 2; k++)

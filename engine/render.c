@@ -173,7 +173,7 @@ void r_init(void)
 
 void r_bind_world(void)
 {
-	r_state.root          = (uint32_t) world.root;
+	r_state.root          = (uint32_t) world.root & 0x00ffffffu;   /* KUSEG, as the children */
 	r_state.face_visframe = (uint32_t) world.face_visframe;
 	r_state.leaves        = (uint32_t) world.leaves;
 	r_state.leaves_end    = (uint32_t) (world.leaves + world.num_leaves);

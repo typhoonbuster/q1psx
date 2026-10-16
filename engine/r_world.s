@@ -19,7 +19,8 @@
 # load and the command reading it, two instructions between mflo and mult.
 #
 # Register roles during the walk (callee-saved, preserved by r_render):
-#   s0 r_state   s1 current node / leaf|1   s2 clip flags   s3 stack ptr
+#   s0 the plane table (r_state before and after, and in SP_RSTATE)
+#   s1 current node / leaf|1 (KUSEG pointers)   s2 clip flags   s3 stack ptr
 #   s4 framecount   s5 visframe   s6 packet ptr   s7 packet end (minus
 #   QW_MAX_REC_PKT + 48)   fp OT world-bucket link (24 bits)   t8 scratchpad base
 #   (0x1F800000)   v1 tpage << 16 of the last drawn texture (draw_records'
@@ -359,8 +360,10 @@ mark_done:
 	# ---- BSP walk -------------------------------------------------------
 	lw      $s5, RS_VISFRAME($s0)
 	lw      $s1, RS_ROOT($s0)
+	sw      $s0, SP_RSTATE($t8)          # (walk_done takes it back)
+	lw      $s0, SP_PLANES($t8)          # s0 = the plane table for the walk
 	li      $s2, 0xf                     # all four frustum planes active
-	move    $s3, $t8                     # walk stack = scratchpad + 0
+	addiu   $s3, $t8, 4                  # walk stack = scratchpad + 4
 	sw      $zero, SP_SPILLS($t8)
 
 walk:
@@ -391,10 +394,10 @@ walk_t0:                                 # (t0 = s1 & 1: a leaf?)
 	# planes skip the products
 wn_side:
 	lhu     $t0, N_PLANE3($s1)           # plane index x 3: word offset in the
-wn_side_1:
-	lw      $t1, SP_PLANES($t8)          # shared table (dist in 1/8 units)
+wn_side_1:                               # shared table s0 (dist in 1/8 units)
+	addiu   $s3, $s3, 4                  # (the push's, below)
 	sll     $t0, $t0, 2
-	addu    $t5, $t0, $t1
+	addu    $t5, $t0, $s0
 	lw      $t1, PN_DIST($t5)
 	lbu     $t0, PN_TYPE($t5)
 	sra     $t1, $t1, 1                  # dist -> vertex units, x4096
@@ -403,27 +406,24 @@ wn_side_1:
 	sll     $t0, $t0, 2
 	addu    $t0, $t0, $t8
 	lw      $v0, SP_CAM($t0)             # axial: n . cam = cam[type] x4096
-	sll     $t7, $s1, 8                  # (the push's node pointer, low 24 bits)
+	sll     $t4, $s2, 28                 # (the push's clip flags)
 	sll     $v0, $v0, 12
 	subu    $v0, $v0, $t1
-	# Stack word: node address, low 24 bits (a KUSEG pointer: no mask on
-	# pop) | side x 4 << 24 | no-draw << 27 | clip flags << 28.
-wn_push:
+	# Stack word: node address (a KUSEG pointer, < 0x00200000: no mask on
+	# pop or push) | side x 4 << 24 | no-draw << 27 | clip flags << 28.
+wn_push:                                 # (t4 = clip flags << 28, s3 moved)
 	slt     $t0, $v0, $zero              # side: 1 if the camera is behind
 	addiu   $t2, $v0, BACKFACE_EPS       # no faces if |d| <= eps:
 	sltiu   $t2, $t2, 2 * BACKFACE_EPS + 1   # (unsigned) d + eps <= 2 eps
 	sll     $t2, $t2, 1
 	or      $t2, $t2, $t0
 	sll     $t2, $t2, 26
-	srl     $t3, $t7, 8
-	or      $t3, $t3, $t2
-	sll     $t4, $s2, 28
+	or      $t3, $s1, $t2
 	or      $t3, $t3, $t4
 	sll     $t0, $t0, 2
 	addu    $t0, $t0, $s1
 	lw      $s1, N_CHILD($t0)            # near child first
-	sw      $t3, SP_STACK($s3)           # push
-	addiu   $s3, $s3, 4
+	sw      $t3, SP_STACK - 4($s3)       # push
 	andi    $at, $s3, (1 << WALK_SHIFT) - 1
 	bnez    $at, walk_t0                 # room left in the scratchpad block
 	andi    $t0, $s1, 1
@@ -439,35 +439,35 @@ walk_spill:
 	addu    $t2, $t2, $t4
 	addiu   $t1, $t1, 1
 	sw      $t1, SP_SPILLS($t8)
-	move    $t4, $t8
+	addiu   $t4, $t8, 4
 1:	lw      $t5, 0($t4)
 	addiu   $t4, $t4, 4
 	sw      $t5, 0($t2)
 	bne     $t4, $s3, 1b
 	addiu   $t2, $t2, 4
 	b       walk
-	move    $s3, $t8
+	addiu   $s3, $t8, 4
 
 	# general plane: three products (two instructions between an mflo and
 	# the next mult)
 wn_general:
 	lh      $t2, PN_N+0($t5)
 	lw      $t3, SP_CAM+0($t8)
-	lh      $t4, PN_N+2($t5)
+	lh      $t9, PN_N+2($t5)
 	mult    $t2, $t3
 	lw      $t6, SP_CAM+4($t8)
 	mflo    $v0
 	lh      $t2, PN_N+4($t5)
 	subu    $v0, $v0, $t1
-	mult    $t4, $t6
+	mult    $t9, $t6
 	lw      $t3, SP_CAM+8($t8)
-	mflo    $t4
-	addu    $v0, $v0, $t4
-	sll     $t7, $s1, 8                  # (the push's node pointer)
+	mflo    $t9
+	addu    $v0, $v0, $t9
+	sll     $t4, $s2, 28                 # (the push's clip flags)
 	mult    $t2, $t3
-	mflo    $t4
+	mflo    $t9
 	b       wn_push
-	addu    $v0, $v0, $t4
+	addu    $v0, $v0, $t9
 
 walk_refill:                             # scratchpad stack empty: next RAM block
 	lw      $t1, SP_SPILLS($t8)
@@ -479,7 +479,7 @@ walk_refill:                             # scratchpad stack empty: next RAM bloc
 	addiu   $t2, $t2, %lo(r_walk_spill)
 	sll     $t4, $t1, WALK_SHIFT
 	addu    $t2, $t2, $t4
-	move    $t4, $t8
+	addiu   $t4, $t8, 4
 	addiu   $s3, $t8, 1 << WALK_SHIFT
 2:	lw      $t5, 0($t2)
 	addiu   $t2, $t2, 4
@@ -509,19 +509,17 @@ wl_marks:
 	beqz    $a3, pop
 	addu    $a3, $a3, $a2                # end of the marks
 	lhu     $t0, 0($a2)
-wl_mark:
+wl_mark:                                 # (marks are byte offsets: world.c)
 	addiu   $a2, $a2, 2
-	sll     $t0, $t0, 1
 	addu    $t0, $t0, $t3
 	sh      $s4, 0($t0)                  # face_visframe[mark] = framecount
 	bne     $a2, $a3, wl_mark
 	lhu     $t0, 0($a2)                  # (next; one past the last: harmless)
 
 pop:
-	beq     $s3, $t8, walk_refill
-	addiu   $s3, $s3, -4                 # (the refill resets s3)
-	lw      $t0, SP_STACK($s3)           # (see wn_push)
-	nop
+	addiu   $s3, $s3, -4
+	lw      $t0, SP_STACK($s3)           # (see wn_push; empty: the word at +0)
+	beq     $s3, $t8, walk_refill        # empty (the refill resets s3)
 	srl     $s2, $t0, 28                 # clip flags
 	srl     $t3, $t0, 24
 	andi    $t4, $t3, 8                  # no faces
@@ -923,18 +921,21 @@ dr_slow_call:
 	sw      $t2, SP_SAVE+36($t8)         # slow-path start time
 .endif
 .if R_SLOW_C
-	sw      $s6, RS_PKT($s0)             # the C side emits through r_state
-	sw      $fp, RS_OT_HEAD($s0)
+	lw      $t9, SP_RSTATE($t8)          # (s0 holds the plane table)
 	move    $a1, $a0                     # record
+	sw      $s6, RS_PKT($t9)             # the C side emits through r_state
+	sw      $fp, RS_OT_HEAD($t9)
 	move    $a2, $a3                     # polygon
 	move    $a3, $t0                     # 4 or 3
-	move    $a0, $s0                     # r_state
+	move    $a0, $t9                     # r_state
 	jal     r_slow
 	addiu   $sp, $sp, -16                # o32 argument area
 	addiu   $sp, $sp, 16
 	lui     $t8, 0x1f80
-	lw      $s6, RS_PKT($s0)
-	lw      $fp, RS_OT_HEAD($s0)
+	lw      $t9, SP_RSTATE($t8)
+	nop
+	lw      $s6, RS_PKT($t9)
+	lw      $fp, RS_OT_HEAD($t9)
 .else
 	move    $a1, $a3                     # polygon
 	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3
@@ -958,12 +959,12 @@ dr_slow_call:
 	lw      $a0, SP_SAVE+4($t8)
 	lw      $a1, SP_SAVE+8($t8)
 	lw      $a2, SP_SAVE+12($t8)
+	lw      $a3, SP_SAVE+16($t8)
 	lw      $t0, SP_SAVE+32($t8)
 	lw      $v0, SP_CLUT16($t8)          # (the careful test used them)
-	lw      $v1, SP_TPAGE16($t8)
 	li      $t1, 4
 	beq     $t0, $t1, dr_quad_next
-	lw      $a3, SP_SAVE+16($t8)
+	lw      $v1, SP_TPAGE16($t8)
 	b       dr_tri_next
 	nop
 
@@ -992,6 +993,7 @@ dr_done:
 walk_done:
 	lw      $t0, SP_LASTTEX($t8)
 	lw      $t1, SP_TWIN($t8)
+	lw      $s0, SP_RSTATE($t8)          # r_state again
 	bltz    $t0, 1f                      # nothing drawn
 	lui     $t9, 0x0100
 	or      $t9, $t9, $fp                # the last run's texture window

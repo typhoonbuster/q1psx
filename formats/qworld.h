@@ -48,7 +48,7 @@
                                   tests the arena once per record against
                                   an end this far short of the real one  */
 #define QW_MAX_DEPTH  256      /* BSP depth the renderer's stack holds:
-                                  64 words of scratchpad + 3 RAM blocks   */
+                                  63 words of scratchpad + 4 RAM blocks   */
 #define QW_NONE        0xffffffffu
 
 /* face record flags */
