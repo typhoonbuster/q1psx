@@ -40,10 +40,14 @@
 # x right, y down, z forward, H = 160 on a 320x240 screen -> right z-x >= 0,
 # left z+x >= 0, bottom 3z-4y >= 0, top 3z+4y >= 0. The box goes to view space
 # as centre (rotation + translation) and radius (|rotation| x half extents).
-# Clobbers t0-t7, t9, at, v0, a1.
-.macro FRUSTUM cull
+# Clobbers t0-t7, t9, at, v0, a1. s1a..s1c / s2a, s2b: the caller's
+# instructions for the two MVMVAs' latency (8 cycles each), if it has any.
+.macro FRUSTUM cull, s1a=, s1b=, s1c=, s2a=, s2b=
 	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
 	andi    $at, $s2, 1                  # (right plane still set?)
+	\s1a
+	\s1b
+	\s1c
 	mfc2    $t0, C2_IR1                  # x
 	mfc2    $t1, C2_IR2                  # y
 	mfc2    $t2, C2_IR3                  # z
@@ -51,6 +55,8 @@
 	MVMVA   1, 1, 1, 3, 0                # IR = |rot| * half extents
 	sll     $a1, $t2, 1
 	addu    $a1, $a1, $t2                # 3z
+	\s2a
+	\s2b
 	mfc2    $t3, C2_IR1                  # rx
 	mfc2    $t4, C2_IR2                  # ry
 	mfc2    $t5, C2_IR3                  # rz
@@ -273,6 +279,9 @@ r_render:
 	ctc2    $t2, C2_L33
 
 	# ---- scratchpad globals ---------------------------------------------
+	# The colour matrix's first row is the camera (vertex units, within
+	# int16: the cooked map is), so a general plane's n . cam is one MVMVA
+	# (plane_dist, wn_general).
 	lui     $t8, 0x1f80
 	lw      $t0, RS_CAM+0($s0)
 	lw      $t1, RS_CAM+4($s0)
@@ -284,6 +293,11 @@ r_render:
 	sw      $t2, SP_CAM+8($t8)
 	sw      $t3, SP_FVBASE($t8)
 	sw      $t4, SP_SZFAST($t8)
+	andi    $t0, $t0, 0xffff
+	sll     $t1, $t1, 16
+	or      $t0, $t0, $t1
+	ctc2    $t0, C2_LR1LR2
+	ctc2    $t2, C2_LR3LG1               # (LG1: row 2, unused)
 	sw      $zero, SP_FULL($t8)
 	sw      $zero, SP_SLOWB($t8)
 .if R_PROFILE
@@ -384,44 +398,45 @@ walk_t0:                                 # (t0 = s1 & 1: a leaf?)
 	sw      $t3, SP_NODES($t8)
 .endif
 	beqz    $s2, wn_side_1               # fully inside the frustum already
-	lhu     $t0, N_PLANE3($s1)           # (wn_side's first)
-	FRUSTUM pop
+	lhu     $a2, N_PLANE3($s1)           # (wn_side's first; FRUSTUM keeps a0,
+	FRUSTUM pop, "sll $a2, $a2, 2", "addu $a2, $a2, $s0", "lw $a3, PN_DIST($a2)", "lbu $a0, PN_TYPE($a2)", "sra $a3, $a3, 1"
+	b       wn_side_2                    #  a2, a3: the plane's setup is in its
+	addiu   $s3, $s3, 4                  #  MVMVAs' shadows)
 
 	# the node's plane: d = n . cam - dist (x4096, vertex units); axial
 	# planes skip the products
-wn_side:
-	lhu     $t0, N_PLANE3($s1)           # plane index x 3: word offset in the
-wn_side_1:                               # shared table s0 (dist in 1/8 units)
-	addiu   $s3, $s3, 4                  # (the push's, below)
-	sll     $t0, $t0, 2
-	addu    $t5, $t0, $s0
-	lw      $t1, PN_DIST($t5)
-	lbu     $t0, PN_TYPE($t5)
-	sra     $t1, $t1, 1                  # dist -> vertex units, x4096
-	sltiu   $t2, $t0, 3
+wn_side_1:                               # a2: plane index x 3, a word offset in
+	addiu   $s3, $s3, 4                  # the shared table s0 (dist in 1/8
+	sll     $a2, $a2, 2                  # units). (s3: the push's, below)
+	addu    $a2, $a2, $s0
+	lw      $a3, PN_DIST($a2)
+	lbu     $a0, PN_TYPE($a2)
+	sra     $a3, $a3, 1                  # dist -> vertex units, x4096
+wn_side_2:                               # a2 = the plane, a3 = dist, a0 = type
+	sltiu   $t2, $a0, 3
 	beqz    $t2, wn_general
-	sll     $t0, $t0, 2
+	sll     $t0, $a0, 2
 	addu    $t0, $t0, $t8
 	lw      $v0, SP_CAM($t0)             # axial: n . cam = cam[type] x4096
-	sll     $t4, $s2, 28                 # (the push's clip flags)
+	sll     $t4, $s2, 28                 # (the push word's clip flags,
 	sll     $v0, $v0, 12
-	subu    $v0, $v0, $t1
+	or      $t4, $t4, $s1                #  node
+	andi    $at, $s3, (1 << WALK_SHIFT) - 1   # and room test)
+	subu    $v0, $v0, $a3
 	# Stack word: node address (a KUSEG pointer, < 0x00200000: no mask on
 	# pop or push) | side x 4 << 24 | no-draw << 27 | clip flags << 28.
-wn_push:                                 # (t4 = clip flags << 28, s3 moved)
-	slt     $t0, $v0, $zero              # side: 1 if the camera is behind
-	addiu   $t2, $v0, BACKFACE_EPS       # no faces if |d| <= eps:
-	sltiu   $t2, $t2, 2 * BACKFACE_EPS + 1   # (unsigned) d + eps <= 2 eps
-	sll     $t2, $t2, 1
+wn_push:                                 # (t4 = node | clip flags << 28, at =
+	slt     $t0, $v0, $zero              # room in the block, s3 moved)
+	addiu   $t2, $v0, BACKFACE_EPS       # side: 1 if the camera is behind;
+	sltiu   $t2, $t2, 2 * BACKFACE_EPS + 1   # no faces if |d| <= eps:
+	sll     $t2, $t2, 1                  # (unsigned) d + eps <= 2 eps
 	or      $t2, $t2, $t0
 	sll     $t2, $t2, 26
-	or      $t3, $s1, $t2
-	or      $t3, $t3, $t4
+	or      $t3, $t2, $t4
 	sll     $t0, $t0, 2
 	addu    $t0, $t0, $s1
 	lw      $s1, N_CHILD($t0)            # near child first
 	sw      $t3, SP_STACK - 4($s3)       # push
-	andi    $at, $s3, (1 << WALK_SHIFT) - 1
 	bnez    $at, walk_t0                 # room left in the scratchpad block
 	andi    $t0, $s1, 1
 
@@ -445,26 +460,19 @@ walk_spill:
 	b       walk
 	addiu   $s3, $t8, 4
 
-	# general plane: three products (two instructions between an mflo and
-	# the next mult)
+	# general plane: n . cam by the GTE (the colour matrix's first row is
+	# the camera: r_render), sf 0, exact (|n . cam| < 2^28)
 wn_general:
-	lh      $t2, PN_N+0($t5)
-	lw      $t3, SP_CAM+0($t8)
-	lh      $t9, PN_N+2($t5)
-	mult    $t2, $t3
-	lw      $t6, SP_CAM+4($t8)
-	mflo    $v0
-	lh      $t2, PN_N+4($t5)
-	subu    $v0, $v0, $t1
-	mult    $t9, $t6
-	lw      $t3, SP_CAM+8($t8)
-	mflo    $t9
-	addu    $v0, $v0, $t9
-	sll     $t4, $s2, 28                 # (the push's clip flags)
-	mult    $t2, $t3
-	mflo    $t9
+	lwc2    C2_VXY0, PN_N+0($a2)         # nx | ny << 16
+	lh      $t2, PN_N+4($a2)             # nz (VZ0 from a halfword: see the
+	sll     $t4, $s2, 28                 # record test). (the push word's clip
+	mtc2    $t2, C2_VZ0                  # flags, node and room test, as on
+	or      $t4, $t4, $s1                # the axial path)
+	andi    $at, $s3, (1 << WALK_SHIFT) - 1
+	MVMVA   0, 2, 0, 3, 0                # MAC1 = cam . n
+	mfc2    $v0, C2_MAC1                 # (waits for the GTE)
 	b       wn_push
-	addu    $v0, $v0, $t9
+	subu    $v0, $v0, $a3
 
 walk_refill:                             # scratchpad stack empty: next RAM block
 	lw      $t1, SP_SPILLS($t8)
@@ -1039,7 +1047,8 @@ walk_done:
 
 # -----------------------------------------------------------------------------
 # plane_dist: v0 = n . cam - dist for node a0 (x4096, vertex units).
-# Axial planes skip the products. Clobbers t0-t4, v0.
+# Axial planes skip the products; a general one is an MVMVA, as in the walk.
+# Clobbers t0-t2, t5, v0.
 plane_dist:
 	lhu     $t0, N_PLANE3($a0)           # the node's plane, in the shared
 	lw      $t1, SP_PLANES($t8)          # table (dist in 1/8 units)
@@ -1047,37 +1056,24 @@ plane_dist:
 	addu    $t5, $t0, $t1
 	lbu     $t0, PN_TYPE($t5)
 	lw      $t1, PN_DIST($t5)
-	nop
-	sra     $t1, $t1, 1                  # -> vertex units, x4096
+	lwc2    C2_VXY0, PN_N+0($t5)         # (a general plane's normal, ahead)
 	sltiu   $t2, $t0, 3
 	beqz    $t2, pd_general
 	sll     $t0, $t0, 2
 	addu    $t0, $t0, $t8
 	lw      $v0, SP_CAM($t0)
-	nop
+	sra     $t1, $t1, 1                  # -> vertex units, x4096
 	sll     $v0, $v0, 12
 	jr      $ra
 	subu    $v0, $v0, $t1
 pd_general:
-	lh      $t2, PN_N+0($t5)
-	lw      $t3, SP_CAM+0($t8)
-	nop
-	mult    $t2, $t3
-	lh      $t2, PN_N+2($t5)
-	lw      $t3, SP_CAM+4($t8)
-	mflo    $v0
-	nop
-	nop
-	mult    $t2, $t3
 	lh      $t2, PN_N+4($t5)
-	lw      $t3, SP_CAM+8($t8)
-	mflo    $t4
-	addu    $v0, $v0, $t4
+	sra     $t1, $t1, 1
+	mtc2    $t2, C2_VZ0
 	nop
-	mult    $t2, $t3
 	nop
-	mflo    $t4
-	addu    $v0, $v0, $t4
+	MVMVA   0, 2, 0, 3, 0                # MAC1 = cam . n
+	mfc2    $v0, C2_MAC1                 # (waits for the GTE)
 	jr      $ra
 	subu    $v0, $v0, $t1
 
