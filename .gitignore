@@ -57,3 +57,4 @@ rogue/
 .DS_Store
 .idea/
 .vscode/
+build-release/
