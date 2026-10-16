@@ -122,7 +122,7 @@ void vid_flip(void)
 
 /* Print this frame's display list (draw order) to stdout for tools/pktview:
    one "P <hex words...>" line per packet, then "E". Bench builds only. */
-void vid_dump(void)
+void vid_dump(int hash_only)
 {
 	const uint32_t *ot = vid_frame.ot;
 	uint32_t at = (uint32_t) &ot[VID_OT_LEN - 1];
@@ -132,12 +132,15 @@ void vid_dump(void)
 		const uint32_t *p = (const uint32_t *) (0x80000000u | (at & 0xffffff));
 		uint32_t n = p[0] >> 24;
 		if (n) {
-			printf("P");
+			if (!hash_only)
+				printf("P");
 			for (uint32_t i = 1; i <= n; i++) {
-				printf(" %08x", (unsigned) p[i]);
+				if (!hash_only)
+					printf(" %08x", (unsigned) p[i]);
 				hash = (hash ^ p[i]) * 16777619u;
 			}
-			printf("\n");
+			if (!hash_only)
+				printf("\n");
 			words += n;
 		}
 		at = p[0];

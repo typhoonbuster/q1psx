@@ -303,7 +303,8 @@ static void draw_overlay(void)
 	prof_add(PROF_OVERLAY, t0, prof_now());
 }
 
-/* Run one frame; prof_stage[] / prof_count[] describe it until the next call. */
+/* Run one frame; prof_stage[] / prof_count[] describe it until the next call.
+   dump: 1 prints the frame's display list (vid_dump), 2 only its hash. */
 static void run_frame(int interactive, int dump)
 {
 	prof_frame_reset();
@@ -330,7 +331,7 @@ static void run_frame(int interactive, int dump)
 	if (interactive && overlay_on)
 		draw_overlay();
 	if (dump)
-		vid_dump();
+		vid_dump(dump == 2);
 	vid_flip();
 	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl);
 }
@@ -687,7 +688,8 @@ static void bench_pmove_diff(void)
 }
 
 /* Every map on the disc: load it (falling back to a lower fidelity when it
-   does not fit the arena), then its four spawn views, briefly. */
+   does not fit the arena), then its four spawn views, briefly, each followed
+   by its display list's hash (scripts/dlcheck.sh compares them). */
 static void bench_maps(void)
 {
 	static char names[4][16];
@@ -715,6 +717,8 @@ static void bench_maps(void)
 				bench_add(&acc, vid_stats.vbl);
 			}
 			bench_print(&acc);
+			printf("D %s\n", names[v]);
+			run_frame(0, 2);
 		}
 	}
 }

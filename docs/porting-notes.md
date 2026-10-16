@@ -1732,7 +1732,9 @@ weigh almost nothing.
 
 ### 16.6 What the emulator does not show
 
-PCSX-Redux charges roughly a fixed cost per instruction. On the hardware:
+PCSX-Redux charges roughly a fixed cost per instruction (§21.1 refines
+this: it does model the GTE, multiply and divide latencies). On the
+hardware:
 - a load from main RAM stalls for several cycles (there is no data cache);
 - packet stores drain through a 4-entry write buffer;
 - the instruction cache is 4 KB, direct-mapped.
@@ -2180,3 +2182,194 @@ so this needs real hardware.
 - **Dithering on / off:** GP0(E1h) bit 9 through the draw environment,
   from the next frame. Off, the GPU truncates the modulated colour to
   5 bits per channel, so gradients band.
+
+## §21 — The second asm pass (2026-10-16)
+
+**The goal.** Once the warp menu and the 4-bit textures were in:
+re-read all of the asm and micro-optimize it, instruction by instruction
+(even 0.1 % of performance counts). The asm is written directly, never derived
+from C: the C files (`r_slow.c`, `clip.c`, `pmove.c`) stay as test oracles.
+
+**Method.** As in §16, every step was kept only with:
+- `scripts/dlcheck.sh check t8hi`: the 12 bench views' display lists are
+  identical, word for word (high, T = 8);
+- the interpreter's hashes (`EMU_ARGS=-interpreter`) equal to the
+  reference's;
+- the bench's physics diffs at 0 mismatches.
+
+At the end, the 128 spawn views of the 32 maps (`BENCH_MAPS=1`) were also
+compared, by display-list hash, with the asm from before the pass: all
+identical. That covers e3m5 and the other deep BSPs, whose walk spills its
+stack to RAM. `dlcheck.sh` now does this too (`BENCH_MAPS=1 SECS=3000`).
+
+### 21.1 What PCSX-Redux charges
+
+§16.6 said the emulator charges a fixed cost per instruction. Micro-benchmarks
+(a 100-iteration loop per case, timed with the root counter) show more:
+
+| Operation | Cycles |
+|---|---|
+| Most instructions, loads included | 2 |
+| Store (`sw`) | 3 |
+| Load in a branch delay slot | 2 (no extra) |
+| `mult` result | 6 if \|rs\| < 2^11, 9 if < 2^20, else 13 (rs = the first operand) |
+| `div` / `divu` result | 36 |
+| MVMVA / RTPS / RTPT result | 8 / 15 / 23 |
+
+A result read early stalls for the rest: 2 cycles fewer per instruction in
+between. These are the hardware's latencies (the GTE's, and the R3000's
+operand-sized multiply). The instructions cost about twice the hardware's,
+so a latency is cheaper to cover in the emulator than on the console. The
+rule this pass followed: a latency is filled with work the code needs
+anyway. A `nop` costs what the stall would have.
+
+### 21.2 Walk and PVS
+
+- **General planes on the GTE.** A node's n · cam took three `mult` /
+  `mflo` pairs that stalled about 23 cycles.
+  - It is now one MVMVA on the colour matrix, whose first row `r_render`
+    sets to the camera each frame.
+  - Exact: sf 0, |n · cam| < 2^28.
+  - The camera must fit int16 in vertex units, as the cooked map does.
+  - `plane_dist` (the camera-leaf search) does the same.
+- **FRUSTUM's MVMVA latencies.** The macro takes up to five of its caller's
+  instructions into the two 8-cycle shadows.
+  - The node's plane setup goes there; it now lives in a0 / a2 / a3, which
+    FRUSTUM leaves alone.
+  - The plane index is no longer loaded twice.
+- **The push word.** Its node and its block-room test move ahead of
+  `wn_push`, into the two slots a GTE register write needs before the
+  command.
+- **`mark_pvs`.** A remark costs about 5.2 k cycles less on the bench
+  views:
+  - a byte's leaves go highest first (`bgez` on bit 31), and the loop ends
+    at the byte's last set bit;
+  - only a row's last byte can name a leaf past the array, so it is masked
+    once (`r_state.vis_lastmask`) and no leaf is bound-tested;
+  - `world.vis_leaves` caps a malformed `num_visleafs` at the leaf count;
+  - a leaf without a row reads one `0xff` byte again for every byte;
+  - the mark timer is profile-only.
+- **No `nop` left** in the camera-leaf loop, the remark test or the polygon
+  loops' entries; FRUSTUM keeps its four (the "fully inside" branches).
+
+### 21.3 Face records
+
+**Counts.** CAREFUL runs on about 70 % of the polygons at T = 8: 554 of
+801 in view 0, at about 65 instructions each, some 12 % of the frame. Its
+decisions decide GT4 against the slow path's GT3s, so they must not change.
+Only its code got faster:
+- T2 zmin stays in LO through the x and y ranges, so v1 holds W and the
+  scratchpad spill is gone;
+- `SP_T4` holds 2 T2, so no shift follows the multiply;
+- the x range uses MINMAX4D, with v1 as the second temporary;
+- both products are read after enough work to cover their latency.
+
+**No SZ for records CAREFUL will not see.** Only CAREFUL, `dr_nz` and the
+slow path read a vertex's SZ. A record whose sphere test leaves a2 = 0 takes
+a copy of the transform loop without the SZ stores: the `XFORM` macro, with
+sz = 0.
+
+**Smaller items:**
+- the triangle loop loads the next polygon's word at its tail;
+- `dr_next` goes straight to the record test;
+- the RTPS tail reads its next index before its stores.
+
+### 21.4 Slow path
+
+**Counts.** One frame of view 1 at T = 8:
+
+| Item | Count |
+|---|---|
+| Nodes | 595 (20 % culled off screen) |
+| Leaves | 297 |
+| Splits | 176, mostly two edges |
+| Midpoint lookups | 306, of which 208 new |
+| Clipped polygons | 26 |
+| Crossings | 24 |
+| Projections | 38 |
+
+**`sm_new`.**
+- **HI / LO order.** The four products go first, then the two divisions,
+  with the u, v and light work in their 36-cycle shadows.
+- **z T2 takes no multiply.** The pool holds pz T2 and qz T2, and T2 is
+  even, so T2 (zs >> 1) = (pz T2 + qz T2) / 2 − (zs & 1) T, exactly.
+- **Its first shift** is done in MIDLOOK, in the table load's slot.
+
+**Leaves.**
+- The arena test sits in the third split test's multiply shadow.
+- The slow triangle count is now `slow_bytes / 40`: the path emits only
+  POLY_GT3s, so it no longer counts them one by one.
+
+**`CORNER`.** Its range test compares with a bound held in a register.
+
+**Clip path.**
+- **View entries.** They sit 32 bytes apart, at `VIEW_OFS` from their pool
+  entry: one pointer reaches both.
+- **The corner loop** fills its MVMVA's shadow.
+- **Sutherland-Hodgman** walks the ring with ring[n] = ring[0] (no wrap
+  test) and keeps the crossing out of line.
+- **`before()`.** A crossing's two ends differ in z, so `r_slow.c`'s
+  `before()` always settles on z. The crossing is interpolated from the end
+  behind the plane, and the x / y tie-breaks were never reached.
+- **`sp_lerp`** chains its six products: each field's loads and the last
+  field's store sit in a product's shadow, with four registers in turn.
+- **`sp_proj`** computes x H and y H in shifts (H = 160) and takes z T2 as
+  the short multiply.
+
+### 21.5 Physics: read, not changed
+
+- **Cost.** `pmove_step` takes ~7.1 k cycles a tick, 5 k of them in three
+  traces of ~1.7 k.
+- **What could go faster.** The stalls left have no independent work to
+  overlap:
+  - the divisions by 60;
+  - three-term dot products on one multiplier;
+  - the trace's fixed cost, which the C ABI imposes (ten saved registers,
+    the `trace_t` initialization).
+- **The rewrites studied** save under 0.05 % of a frame:
+  - reciprocal multiplies for the divisions by 60;
+  - GTE dot products.
+  That is below the 0.1 % set for this pass, and their range proofs (|velocity
+  × 8| < 2^15 after a clip) would be a new risk.
+
+### 21.6 Results
+
+12 bench views, profile build, high, T = 8 (frame cycles):
+
+| Step | Total | Saved |
+|---|---|---|
+| Before the pass (`t8hi`) | 4 757 602 | |
+| 1-3: slow-path entry, walk, midpoints, CAREFUL's min / max | 4 535 148 | −222 k |
+| 4-5: `mark_pvs` | 4 535 160 | (a remark: −5.2 k) |
+| 6: polygon-loop entries | 4 530 346 | −4.8 k |
+| 7: GTE planes, FRUSTUM shadows | 4 477 040 | −53 k |
+| 8: `sm_new`, CAREFUL products, leaf tidying | 4 409 300 | −68 k |
+| 9: clip path | 4 358 916 | −50 k |
+| 10-11b: CAREFUL's spill, slots, x range | 4 350 216 | −8.7 k |
+| 12: no SZ when CAREFUL is off | 4 342 011 | −8.2 k |
+| 13: last `nop`s | 4 340 164 | −1.8 k |
+| **Total** | | **−8.8 %** (worst view 671 k → 617 k) |
+
+**All maps** (`BENCH_MAPS=1 PROFILE=0`, high, 8 px, the 128 spawn views):
+
+| | Before | After |
+|---|---|---|
+| Views in one vblank | 122 | 124 |
+| Mean | 247 k | 225 k |
+| Worst | 737 k | 675 k (e3m4 v0) |
+
+Still over one vblank: e3m4 v0, e1m8 v0 (634 k), start v0 (596 k) and
+e1m7 v0 (577 k).
+
+### 21.7 Not done (RAM or format: a call to make)
+
+- **Light as a halfword per vertex** (`0xcccc`): +23 KB per map, about
+  −1 % in the emulator. On the hardware it may give almost nothing, since
+  the expansion hides behind RTPT.
+- **CLUT / tpage baked into the polygons' uv words** (§16.8): +4 bytes per
+  polygon, about 20-30 KB per map.
+  - It saves 2 ORs per polygon.
+  - CAREFUL would no longer reload v0 / v1.
+- **The `release` preset** (no profiling) is another ~3 % faster than the
+  default build, whose overlay counters cost a few instructions per node,
+  record and face block.

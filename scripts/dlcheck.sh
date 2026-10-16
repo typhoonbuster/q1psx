@@ -8,6 +8,10 @@
 # Usage:  [FID=0..3] scripts/dlcheck.sh save   <name>   # record a reference
 #         [FID=0..3] scripts/dlcheck.sh check  <name>   # compare against it
 #
+# The bench's other settings pass through (T, TEX4, PROFILE...). With
+# BENCH_MAPS=1 it covers the 128 spawn views of every map on the disc, by
+# display-list hash only (give it SECS=3000).
+#
 # References live in build-bench/dlref/<name>.{dl,bench}. Prints the frame
 # cycles of every view, the reference's next to them, and the verdict.
 
@@ -23,7 +27,8 @@ mkdir -p "$REF"
 	echo "dlcheck: bench failed (see build-bench/bench.log)"; exit 1; }
 LOG="$ROOT/build-bench/bench.log"
 grep -E '^(P|E|D|H) ' "$LOG" > "$REF/current.dl"
-grep -E '^bench view' "$LOG" | sed -E 's/^bench (view[0-9]+) .* frame=([0-9]+)\/.*/\1 \2/' > "$REF/current.bench"
+grep -E '^bench (view[0-9]+|[A-Z0-9]+\.v[0-9]) ' "$LOG" |
+	sed -E 's/^bench ([^ ]+) .* frame=([0-9]+)\/.*/\1 \2/' > "$REF/current.bench"
 
 if [ "$MODE" = save ]; then
 	cp "$REF/current.dl" "$REF/$NAME.dl"
@@ -33,10 +38,11 @@ if [ "$MODE" = save ]; then
 	exit 0
 fi
 
-join "$REF/$NAME.bench" "$REF/current.bench" | awk '
-	{ d = $3 - $2; tot0 += $2; tot1 += $3; if ($2 > max0) max0 = $2; if ($3 > max1) max1 = $3
-	  printf "%-7s %7d -> %7d  %+6d (%+.1f%%)\n", $1, $2, $3, d, 100.0 * d / $2 }
-	END { printf "total   %7d -> %7d  %+.1f%%   worst %d -> %d\n", tot0, tot1, 100.0 * (tot1 - tot0) / tot0, max0, max1 }'
+awk 'NR == FNR { ref[$1] = $2; next }
+	($1 in ref) { r = ref[$1]; d = $2 - r; tot0 += r; tot1 += $2; if (r > max0) max0 = r; if ($2 > max1) max1 = $2
+	  printf "%-9s %7d -> %7d  %+6d (%+.1f%%)\n", $1, r, $2, d, 100.0 * d / r }
+	END { printf "total     %7d -> %7d  %+.1f%%   worst %d -> %d\n", tot0, tot1, 100.0 * (tot1 - tot0) / tot0, max0, max1 }' \
+	"$REF/$NAME.bench" "$REF/current.bench"
 if cmp -s "$REF/$NAME.dl" "$REF/current.dl"; then
 	echo "dlcheck: display lists IDENTICAL to '$NAME'"
 else

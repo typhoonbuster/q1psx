@@ -927,3 +927,34 @@ followed by R0-R4.
     - `pktview` reads QTX4 and takes `PKTVIEW_DITHER=0`;
     - `scripts/bench.sh` takes `TEX4=1`;
     - the disc grows by 8.4 MB.
+- **Second asm pass** (2026-10-16). Details: `docs/porting-notes.md` §21.
+  - **Cost model, measured:** PCSX-Redux charges the GTE (MVMVA 8, RTPS 15,
+    RTPT 23), `mult` (6 / 9 / 13 by the size of rs) and `div` (36)
+    latencies, and 3 cycles per store. Filling latencies with needed work
+    became the rule.
+  - **Walk:**
+    - a general plane's n · cam is one MVMVA on the colour matrix, whose
+      first row is the camera;
+    - FRUSTUM's two MVMVA shadows take the node's plane setup;
+    - `mark_pvs` stops at a byte's last set bit and tests no bound per
+      leaf (a mask on the row's last byte: `r_state.vis_lastmask`).
+  - **Records:**
+    - CAREFUL keeps T2 zmin in LO, so its spill is gone (`SP_T4` = 2 T2);
+    - a record CAREFUL will not see skips the SZ stores (the `XFORM`
+      macro);
+    - no `nop` at the polygon loops' entries.
+  - **Slow path:**
+    - `sm_new` is scheduled around HI / LO, and its z T2 needs no multiply;
+    - the clip path is rewritten around its latencies: view entries next
+      to the pool, a pipelined `sp_lerp`, `sp_proj` in shifts;
+    - the slow triangle count is `slow_bytes / 40`.
+  - **Physics:** read; what is left there is under 0.05 % of a frame.
+  - **Result:**
+    - 12 bench views: −8.8 % (4 757 602 → 4 340 164 cycles), display
+      lists identical;
+    - 128 spawn views (release): 124 in one vblank (122), mean 225 k
+      (247 k), worst e3m4 v0 675 k (737 k), display-list hashes identical
+      to the asm from before the pass.
+  - **Tools:** with `BENCH_MAPS=1`, the bench prints each spawn view's
+    display-list hash and `scripts/dlcheck.sh` compares them; `vid_dump`
+    can print the hash alone.

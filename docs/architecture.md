@@ -201,7 +201,11 @@ out in the order the walker reads it.
 ## 8. Renderer pipeline (asm)
 
 All stages live in `engine/r_*.s`. The renderer owns the GTE and the
-scratchpad for the duration of `r_frame`.
+scratchpad for the duration of `r_frame`. Its GTE matrices:
+- **rotation:** the view;
+- **light matrix:** |rotation|, for bounding-box radii;
+- **colour matrix:** the camera in its first row, so a general plane's
+  n · cam is one MVMVA (`docs/porting-notes.md` §21.2).
 
 1. `r_frame(view)` loads the rotation and translation into the GTE, builds 4
    frustum planes, finds the camera leaf, and, if the leaf changed, decompresses
@@ -256,7 +260,10 @@ same viewpoint. It is not a second renderer, only the walk logic.
   without a screen, so variants can be run and compared unattended.
   - Caveat 1: that mode has no GPU backend, so it measures CPU cost only.
   - Caveat 2: emulator timing is not cycle-exact hardware. It is good for
-    relative comparisons.
+    relative comparisons. PCSX-Redux charges 2 cycles per instruction and
+    3 per store, and models the GTE, multiply and divide latencies; it
+    does not model RAM wait states, the write buffer or the I-cache
+    (`docs/porting-notes.md` §21.1).
   - GPU fill and the final "is it 60 fps and clean" verdict stay on the GUI /
     real hardware.
 
