@@ -71,8 +71,8 @@
 	.align  4
 r_slow_pool:
 	.space  POOL_N * 32
-r_slow_view:                             # clip path: view x, y, z per pool entry 0..5
-	.space  6 * 16
+r_slow_view:                             # clip path: view x, y, z of pool entries
+	.space  6 * 32                       # 0..5, at VIEW_OFS from each (32 B apart)
 r_slow_hash:                             # (HASH_OFS from the pool: v1-relative)
 	.space  HASH_N * 2
 
@@ -83,6 +83,7 @@ r_slow_stack:                            # word 0: the end marker under every
 	.space  (STACK_N - 1) * 4
 
 .set HASH_OFS, r_slow_hash - r_slow_pool
+.set VIEW_OFS, r_slow_view - r_slow_pool
 
 	.section .rodata.r_slow, "a", @progbits
 	.align  2
@@ -252,153 +253,117 @@ sp_tri0:                                 # a triangle: (0, 1, 2)
 
 	# ---- 3. clip path ---------------------------------------------------------
 	# Corners to view space in ring order (a quad: 0, 1, 3, 2); a corner the
-	# cache holds keeps its SZ as z. Then the near plane.
+	# cache holds keeps its SZ as z. Then the near plane. A pool entry's view
+	# x, y, z (entries 0..5) sit at VIEW_OFS from it.
 sp_clip:
 	lw      $t9, SP_VERTPOOL($t8)
-	lui     $t7, %hi(r_slow_view)
-	addiu   $t7, $t7, %lo(r_slow_view)
+	move    $t2, $v1                     # pool[j]
 	move    $t6, $zero                   # j: corner (PS1 order)
 	move    $s3, $zero                   # behind count
-1:	addu    $t0, $a1, $t6
-	lbu     $t0, 0($t0)                  # slot x 4
-	nop
+	lbu     $t0, 0($a1)                  # corner 0's slot x 4
+1:	srlv    $t1, $s1, $t6
 	srl     $t0, $t0, 1                  # slot x 2: its pool-index offset
 	addu    $t0, $t0, $a0
 	lhu     $t0, R_VERTS($t0)            # pool index
-	nop
+	andi    $t1, $t1, 1                  # 1: not from the cache
 	sll     $t0, $t0, 3
 	addu    $t0, $t0, $t9
 	lwc2    C2_VXY0, 0($t0)
 	lwc2    C2_VZ0,  4($t0)
-	sll     $t1, $t6, 4
-	addu    $t1, $t1, $t7                # view[j]
+	addiu   $t6, $t6, 1
+	lw      $t5, PV_Z($t2)               # (a cached corner's z: its SZ)
 	MVMVA   1, 0, 0, 0, 0                # MAC = rot v + TR (>> 12)
-	sll     $t2, $t6, 5
-	addu    $t2, $t2, $v1                # pool[j]
+	addu    $t0, $a1, $t6
+	lbu     $t0, 0($t0)                  # (the next corner's slot; after the
+	addiu   $t2, $t2, 32                 #  last: harmless)
 	mfc2    $t3, C2_MAC1
 	mfc2    $t4, C2_MAC2
-	mfc2    $t5, C2_MAC3
-	srlv    $t0, $s1, $t6
-	andi    $t0, $t0, 1                  # 1: not from the cache
-	bnez    $t0, 2f
-	sw      $t3, 0($t1)                  # view x
-	lw      $t5, PV_Z($t2)               # cached: its SZ
-2:	sw      $t4, 4($t1)                  # view y
-	sw      $t5, 8($t1)                  # view z
-	slti    $t0, $t5, ZNEAR
-	addu    $s3, $s3, $t0
-	addiu   $t6, $t6, 1
+	beqz    $t1, 2f                      # from the cache: z = its SZ
+	sw      $t3, VIEW_OFS-32+0($t2)      # view x
+	mfc2    $t5, C2_MAC3                 # else the view z
+2:	sw      $t4, VIEW_OFS-32+4($t2)      # view y
+	sw      $t5, VIEW_OFS-32+8($t2)      # view z
+	slti    $t3, $t5, ZNEAR
 	bne     $t6, $a2, 1b
-	nop
+	addu    $s3, $s3, $t3
 	beq     $s3, $a2, sp_done            # all behind the near plane
-	nop
+	li      $t0, 0x0100                  # (ring: 0, 1)
 
-	# the ring (pool indices) in SP_PLA, n in s2
-	li      $t0, 0x0100                  # 0, 1
+	# the ring (pool indices) in SP_PLA, n in s2; ring[n] = ring[0] = 0
 	li      $t1, 4
 	beq     $a2, $t1, 3f
 	lui     $t1, 0x0203                  # quad ring: 0, 1, 3, 2
-	lui     $t1, 0x0002                  # triangle ring: 0, 1, 2
+	lui     $t1, 0x0002                  # triangle ring: 0, 1, 2 (then 0)
 3:	or      $t0, $t0, $t1
 	sw      $t0, SP_PLA($t8)
+	sw      $zero, SP_PLA+4($t8)         # (the quad's ring[4])
 	move    $s2, $a2
-	addiu   $a0, $t8, SP_PLA             # a0 = the list to fan
 	beqz    $s3, sp_project
-	nop
+	addiu   $a0, $t8, SP_PLA             # a0 = the list to fan
 
 	# Sutherland-Hodgman against z >= ZNEAR: SP_PLA -> SP_PLB, crossings
-	# appended to the pool (from the end before() picks: the same point for
-	# both polygons sharing the edge)
+	# appended to the pool (sc_cross)
 	addiu   $a1, $t8, SP_PLB             # output cursor
-	move    $t6, $zero                   # i
-sc_edge:
-	addu    $t0, $a0, $t6
-	lbu     $t2, 0($t0)                  # a
-	addiu   $t1, $t6, 1
-	bne     $t1, $s2, 4f
-	nop
-	move    $t1, $zero
-4:	addu    $t1, $a0, $t1
-	lbu     $t3, 0($t1)                  # b
-	sll     $t4, $t2, 4
-	addu    $t4, $t4, $t7                # view[a]
-	sll     $t5, $t3, 4
-	addu    $t5, $t5, $t7                # view[b]
-	lw      $t0, 8($t4)                  # za
-	lw      $t1, 8($t5)                  # zb
+	lbu     $t2, 0($a0)                  # a = ring[0]
+	addu    $t6, $a0, $s2                # the ring's end
+	sll     $t4, $t2, 5
+	addu    $t4, $t4, $v1                # pool[a]
+	lw      $t0, VIEW_OFS+8($t4)         # za
+	move    $s5, $a0                     # cursor
 	addiu   $t0, $t0, -ZNEAR             # da
-	addiu   $t1, $t1, -ZNEAR             # db
-	bltz    $t0, 5f
-	nop
-	sb      $t2, 0($a1)                  # a kept
+sc_edge:                                 # a: t2 index, t4 entry, t0 da
+	lbu     $t3, 1($s5)                  # b
+	addiu   $s5, $s5, 1
+	sll     $t5, $t3, 5
+	addu    $t5, $t5, $v1                # pool[b]
+	lw      $t1, VIEW_OFS+8($t5)         # zb
+	bltz    $t0, 5f                      # a behind the plane: dropped
+	sb      $t2, 0($a1)                  # (else kept)
 	addiu   $a1, $a1, 1
-5:	xor     $at, $t0, $t1
-	bgez    $at, sc_next                 # no crossing
-	nop
-	# before(a, b): z, then x, then y
-	lw      $at, 8($t4)
-	lw      $v0, 8($t5)
-	nop
-	bne     $at, $v0, 6f
-	slt     $at, $at, $v0                # (delay: za < zb)
-	lw      $at, 0($t4)
-	lw      $v0, 0($t5)
-	nop
-	bne     $at, $v0, 6f
-	slt     $at, $at, $v0
-	lw      $at, 4($t4)
-	lw      $v0, 4($t5)
-	nop
-	slt     $at, $at, $v0
-6:	bnez    $at, 7f                      # a first: lerp(a, b, da, da - db)
-	nop
-	move    $v0, $t2                     # else lerp(b, a, db, db - da)
-	move    $t2, $t3
-	move    $t3, $v0
-	move    $v0, $t4
-	move    $t4, $t5
-	move    $t5, $v0
-	move    $v0, $t0
-	move    $t0, $t1
-	move    $t1, $v0
-7:	jal     sp_lerp                      # (t2 / t4 from, t3 / t5 to, t0 num,
-	subu    $t1, $t0, $t1                #  t1 den) -> new pool entry
-	sb      $v0, 0($a1)
-	addiu   $a1, $a1, 1
+5:	addiu   $t1, $t1, -ZNEAR             # db
+	xor     $at, $t0, $t1
+	bltz    $at, sc_cross                # the ends on both sides: a crossing
+	move    $t7, $t4                     # (from a, if a is behind)
 sc_next:
-	addiu   $t6, $t6, 1
-	bne     $t6, $s2, sc_edge
-	nop
+	move    $t2, $t3                     # b: the next edge's a
+	move    $t4, $t5
+	bne     $s5, $t6, sc_edge
+	move    $t0, $t1
 	addiu   $a0, $t8, SP_PLB
 	subu    $s2, $a1, $a0                # n
 
-	# project what the cache does not hold: clamp z, divide; fill the entry
+	# project what the cache does not hold: clamp z, divide; fill the entry.
+	# t7: bit i set for pool index i to project (the corners not from the
+	# cache, every crossing)
 sp_project:
-	move    $t6, $zero
-8:	addu    $t0, $a0, $t6
-	lbu     $t0, 0($t0)                  # pool index
-	nop
-	sltu    $t1, $t0, $a2
-	beqz    $t1, 9f                      # a crossing (index >= nv): project
-	srlv    $t1, $s1, $t0
+	li      $t7, -1
+	sllv    $t7, $t7, $a2
+	or      $t7, $t7, $s1
+	addu    $t6, $a0, $s2                # the list's end
+	move    $s5, $a0
+	lbu     $t0, 0($s5)                  # pool index
+8:	addiu   $s5, $s5, 1
+	srlv    $t1, $t7, $t0
 	andi    $t1, $t1, 1
-	beqz    $t1, sp_proj_next            # a cached corner: as it is
-	nop
-9:	jal     sp_proj
-	nop
-sp_proj_next:
-	addiu   $t6, $t6, 1
-	bne     $t6, $s2, 8b
-	nop
+	beqz    $t1, 9f                      # from the cache: as it is
+	sll     $t0, $t0, 5                  # (sp_proj's first two)
+	jal     sp_proj_2
+	addu    $t0, $t0, $v1
+9:	bne     $s5, $t6, 8b
+	lbu     $t0, 0($s5)                  # (the next; after the last: harmless)
 
-	# fan from the first vertex: push the last triangle first
-	move    $t9, $zero                   # depth 0
-	addiu   $t6, $s2, -2                 # i = n - 2 .. 1
-10:	addu    $t3, $a0, $t6
+	# fan from the first vertex, depth 0: push the last triangle first
 	lbu     $t0, 0($a0)                  # l[0]
-	lbu     $t1, 0($t3)                  # l[i]
+	addiu   $t6, $s2, -2                 # i = n - 2 .. 1
+	addu    $t3, $a0, $t6
+10:	lbu     $t1, 0($t3)                  # l[i]
 	lbu     $t2, 1($t3)                  # l[i + 1]
-	PUSHW   0, $t0, $t1, $t2
+	addiu   $t3, $t3, -1
+	sll     $v0, $t1, 9
+	sll     $at, $t2, 18
+	or      $v0, $v0, $t0
+	or      $v0, $v0, $at
+	sw      $v0, 0($a3)
 	addiu   $t6, $t6, -1
 	bgtz    $t6, 10b
 	addiu   $a3, $a3, 4
@@ -626,6 +591,24 @@ sp_leaf_max:
 	b       sp_emit
 	lui     $t9, CODE_GT3 >> 16
 
+	# a near-plane crossing (sc_edge), interpolated from its end behind the
+	# plane: r_slow.c before() compares z first, and a crossing's two ends
+	# differ in z, so both polygons sharing the edge make the same point
+sc_cross:
+	move    $t9, $t5                     # to b
+	move    $at, $t0                     # num: da
+	bltz    $t0, 7f                      # a behind: t = da / (da - db)
+	subu    $v0, $t0, $t1
+	move    $t7, $t5                     # else from b: t = db / (db - da)
+	move    $t9, $t4
+	move    $at, $t1
+	subu    $v0, $zero, $v0
+7:	jal     sp_lerp_1
+	sll     $at, $at, 14                 # (sp_lerp's first)
+	sb      $v0, 0($a1)
+	b       sc_next
+	addiu   $a1, $a1, 1
+
 sp_full:
 	li      $t0, 1
 	sw      $t0, SP_FULL($t8)
@@ -731,111 +714,128 @@ sm_new_1:
 	sh      $t1, PV_SXY+2($a2)           # y
 
 # -----------------------------------------------------------------------------
-# sp_lerp: a near-plane crossing, from end t2 (pool index) / t4 (view entry)
-# toward t3 / t5: t = (num << 14) / den (t0 num, t1 den), each of view x,
-# y, z and u, v, light moved by (b - a) t >> 14. Appended to the pool (its
-# view entry too); v0 = its index. Clobbers at, t0-t5, t9. Keeps t6, t7, a*.
-.macro LERPF off, ba, bb, bd
-	lw      $at, \off(\ba)
-	lw      $v0, \off(\bb)
-	nop
-	subu    $v0, $v0, $at
-	mult    $v0, $t9
-	mflo    $v0
-	sra     $v0, $v0, 14
-	addu    $v0, $v0, $at
-	sw      $v0, \off(\bd)
-.endm
-
+# sp_lerp: a near-plane crossing from pool entry t7 toward t9 (their view
+# entries at VIEW_OFS): t = (at << 14) / v0, each of view x, y, z and u, v,
+# light moved by (to - from) t >> 14. Appended to the pool (its view entry
+# too); v0 = its index. The six products go one after the other, the next
+# field's loads and the last one's store in each one's shadow (four
+# registers in turn: at / s0 the from value, s3 the difference, v0 the
+# result). Clobbers at, t0, t2, t4, t7, t9, s0, s3 (sc_edge's a: dead by
+# then). Keeps t1, t3, t5, t6, a*. sc_cross enters at sp_lerp_1.
 sp_lerp:
-	sll     $t0, $t0, 14
-	div     $zero, $t0, $t1
-	sll     $t2, $t2, 5
-	addu    $t2, $t2, $v1                # pool[a]
-	sll     $t3, $t3, 5
-	addu    $t3, $t3, $v1                # pool[b]
-	sll     $t0, $s4, 4
-	addu    $t0, $t0, $t7                # view[n]
-	sll     $t1, $s4, 5
-	addu    $t1, $t1, $v1                # pool[n]
-	sw      $zero, PV_KEY($t1)           # not a midpoint
-	mflo    $t9                          # t
-	LERPF   0, $t4, $t5, $t0             # view x
-	LERPF   4, $t4, $t5, $t0             #      y
-	LERPF   8, $t4, $t5, $t0             #      z
-	LERPF   PV_U, $t2, $t3, $t1
-	LERPF   PV_V, $t2, $t3, $t1
-	lw      $at, PV_GC($t2)              # light (the grey's low byte)
-	lw      $v0, PV_GC($t3)
-	andi    $at, $at, 0xff
-	andi    $v0, $v0, 0xff
-	subu    $v0, $v0, $at
-	mult    $v0, $t9
+	sll     $at, $at, 14
+sp_lerp_1:
+	div     $zero, $at, $v0              # t
+	sll     $t0, $s4, 5
+	addu    $t0, $t0, $v1                # pool[n]
+	lw      $at, VIEW_OFS+0($t7)         # view x
+	lw      $s3, VIEW_OFS+0($t9)
+	sw      $zero, PV_KEY($t0)           # not a midpoint
+	subu    $s3, $s3, $at
+	mflo    $t2                          # t
+	lw      $s0, VIEW_OFS+4($t7)         # view y
+	addiu   $s4, $s4, 1
+	mult    $s3, $t2                     # x
+	lw      $s3, VIEW_OFS+4($t9)
+	nop
+	nop
+	mflo    $v0
+	subu    $s3, $s3, $s0
+	sra     $v0, $v0, 14
+	mult    $s3, $t2                     # y
+	addu    $v0, $v0, $at
+	sw      $v0, VIEW_OFS+0($t0)         # x
+	lw      $at, VIEW_OFS+8($t7)         # view z
+	lw      $s3, VIEW_OFS+8($t9)
+	mflo    $v0
+	subu    $s3, $s3, $at
+	sra     $v0, $v0, 14
+	mult    $s3, $t2                     # z
+	addu    $v0, $v0, $s0
+	sw      $v0, VIEW_OFS+4($t0)         # y
+	lw      $s0, PV_U($t7)               # u
+	lw      $s3, PV_U($t9)
+	mflo    $v0
+	subu    $s3, $s3, $s0
+	sra     $v0, $v0, 14
+	mult    $s3, $t2                     # u
+	addu    $v0, $v0, $at
+	sw      $v0, VIEW_OFS+8($t0)         # z
+	lw      $at, PV_V($t7)               # v
+	lw      $s3, PV_V($t9)
+	mflo    $v0
+	subu    $s3, $s3, $at
+	sra     $v0, $v0, 14
+	mult    $s3, $t2                     # v
+	addu    $v0, $v0, $s0
+	sw      $v0, PV_U($t0)               # u
+	lw      $s0, PV_GC($t7)              # light: the grey's low byte
+	lw      $s3, PV_GC($t9)
+	mflo    $v0
+	andi    $s0, $s0, 0xff
+	andi    $s3, $s3, 0xff
+	subu    $s3, $s3, $s0
+	sra     $v0, $v0, 14
+	mult    $s3, $t2                     # light
+	addu    $v0, $v0, $at
+	sw      $v0, PV_V($t0)               # v
+	nop
+	nop
 	mflo    $v0
 	sra     $v0, $v0, 14
-	addu    $v0, $v0, $at
+	addu    $v0, $v0, $s0                # light
 	sll     $at, $v0, 8                  # grey c -> 0x00cccccc
 	or      $v0, $v0, $at
 	sll     $at, $v0, 8
 	or      $v0, $v0, $at
-	sw      $v0, PV_GC($t1)
-	move    $v0, $s4
+	sw      $v0, PV_GC($t0)
 	jr      $ra
-	addiu   $s4, $s4, 1
+	addiu   $v0, $s4, -1                 # its index
 
 # -----------------------------------------------------------------------------
-# sp_proj: fill pool entry t0 (not from the cache) from its view entry: z
-# clamped to the near plane, sx = OFX + x H / z, sy = OFY + y H / z, z T2,
-# uv word. Clobbers at, t0-t5. Keeps t6, t7, a*.
+# sp_proj: fill pool entry t0 (an index; at sp_proj_2, its address) from its
+# view entry (VIEW_OFS): z clamped to the near plane, sx = OFX + x H / z,
+# sy = OFY + y H / z (x H in shifts: H = 160), z T2, uv word. Clobbers at,
+# t0-t5. Keeps t6, t7, a*, s*.
 sp_proj:
-	lui     $t1, %hi(r_slow_view)
-	addiu   $t1, $t1, %lo(r_slow_view)
-	sll     $t2, $t0, 4
-	addu    $t1, $t1, $t2                # view[i]
 	sll     $t0, $t0, 5
 	addu    $t0, $t0, $v1                # pool[i]
-	lw      $t4, 8($t1)                  # z
-	lw      $t2, 0($t1)                  # x
-	lw      $t3, 4($t1)                  # y
-	slti    $t5, $t4, ZNEAR
-	beqz    $t5, 1f
-	li      $at, 160
+sp_proj_2:
+	lw      $t4, VIEW_OFS+8($t0)         # z
+	lw      $t5, SP_T2($t8)
+	lw      $t2, VIEW_OFS+0($t0)         # x
+	slti    $t1, $t4, ZNEAR
+	beqz    $t1, 1f
+	lw      $t3, VIEW_OFS+4($t0)         # y
 	li      $t4, ZNEAR                   # (the lerp's rounding)
-1:	mult    $t2, $at
+1:	mult    $t5, $t4                     # z T2 (T2 as rs: the short multiply)
+	sll     $t1, $t2, 7                  # x H = x 128 + x 32
+	sll     $t2, $t2, 5
+	addu    $t2, $t2, $t1
+	mflo    $t5
+	sll     $t1, $t3, 7                  # y H
+	sll     $t3, $t3, 5
+	div     $zero, $t2, $t4              # x H / z (while it divides: y H, z,
+	addu    $t3, $t3, $t1                #  the uv word)
+	sw      $t5, PV_ZT($t0)
+	sw      $t4, PV_Z($t0)
+	lw      $t1, PV_U($t0)
+	lw      $t2, PV_V($t0)
+	addiu   $t1, $t1, 128
+	srl     $t1, $t1, 8
+	addiu   $t2, $t2, 128
+	andi    $t2, $t2, 0xff00
+	or      $t1, $t1, $t2
+	sw      $t1, PV_UVW($t0)
 	mflo    $t2
-	nop
-	nop
-	div     $zero, $t2, $t4
-	mflo    $t2
-	nop
-	nop
-	mult    $t3, $at
-	mflo    $t3
-	nop
-	nop
-	div     $zero, $t3, $t4
 	addiu   $t2, $t2, 160                # sx
 	andi    $t2, $t2, 0xffff
+	div     $zero, $t3, $t4              # y H / z
 	mflo    $t3
 	addiu   $t3, $t3, 120                # sy
 	sll     $t3, $t3, 16
 	or      $t2, $t2, $t3
-	sw      $t2, PV_SXY($t0)
-	sw      $t4, PV_Z($t0)
-	lw      $t5, SP_T2($t8)
-	nop
-	mult    $t4, $t5                     # z T2
-	lw      $t2, PV_U($t0)
-	lw      $t3, PV_V($t0)
-	nop
-	addiu   $t2, $t2, 128
-	srl     $t2, $t2, 8
-	addiu   $t3, $t3, 128
-	andi    $t3, $t3, 0xff00
-	or      $t2, $t2, $t3
-	sw      $t2, PV_UVW($t0)
-	mflo    $t2
 	jr      $ra
-	sw      $t2, PV_ZT($t0)
+	sw      $t2, PV_SXY($t0)
 
 	.size slow_poly, . - slow_poly
