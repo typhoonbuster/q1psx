@@ -1121,37 +1121,32 @@ mp_byte:
 	subu    $t1, $t2, $t1                # bytes * 8 leaves * 28 B
 	b       mp_byte
 	addu    $a3, $a3, $t1
-mp_bits:
+mp_bits:                                 # t0: the byte's bits, leaves from a3
 	addiu   $a2, $a2, -1
-	li      $t3, 8
+	move    $t9, $a3
 mp_bit:
 	andi    $t1, $t0, 1
-	beqz    $t1, mp_next
+	beqz    $t1, mp_skip
 	srl     $t0, $t0, 1
-	sltu    $t1, $a3, $v1
-	beqz    $t1, mp_next
-	nop
-	sh      $s5, L_VISFRAME($a3)
-	lhu     $t2, L_PARENT($a3)
-	nop
+	sltu    $t1, $t9, $v1                # (the row's padding: past the last leaf)
+	beqz    $t1, mp_skip
+	lhu     $t2, L_PARENT($t9)           # (past the end: a harmless read)
+	sh      $s5, L_VISFRAME($t9)
 mp_up:
-	beq     $t2, $t6, mp_next            # past the root
+	beq     $t2, $t6, mp_skip            # past the root
 	sll     $t2, $t2, 2
 	addu    $t2, $t2, $t7                # word offset -> node
 	lhu     $t1, N_VISFRAME($t2)
-	nop
-	beq     $t1, $s5, mp_next            # ancestors already stamped
-	nop
-	sh      $s5, N_VISFRAME($t2)
-	lhu     $t2, N_PARENT($t2)
+	lhu     $t3, N_PARENT($t2)
+	beq     $t1, $s5, mp_skip            # ancestors already stamped
+	sh      $s5, N_VISFRAME($t2)         # (stamped again then: harmless)
 	b       mp_up
-	nop
-mp_next:
-	addiu   $t3, $t3, -1
-	bgtz    $t3, mp_bit
-	addiu   $a3, $a3, L_SIZE
+	move    $t2, $t3
+mp_skip:
+	bnez    $t0, mp_bit                  # bits left in this byte
+	addiu   $t9, $t9, L_SIZE
 	b       mp_byte
-	nop
+	addiu   $a3, $a3, 8 * L_SIZE
 mp_done:
 	lhu     $t0, TIMER2($t8)
 	lw      $t9, SP_T0($t8)
