@@ -36,6 +36,7 @@ _Static_assert(offsetof(qw_node, faces)          == 28,  "qw_node layout");
 _Static_assert(offsetof(r_state_t, planes)       == 168, "r_state layout");
 _Static_assert(offsetof(r_state_t, warp_t2)      == 172, "r_state layout");
 _Static_assert(offsetof(r_state_t, warp_k16)     == 176, "r_state layout");
+_Static_assert(offsetof(r_state_t, slow_bytes)   == 180, "r_state layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, marks)          == 16,  "qw_leaf layout");
@@ -88,22 +89,74 @@ int16_t r_cos(int a)
 	return r_sin(a + 1024);
 }
 
-/* -------------------------------------------------------------- fidelity -- */
+/* ------------------------------------------------------------------ warp -- */
 
-void r_set_fidelity(int fid)
+r_warp_t r_warp;
+
+/* The record bound's k = sqrt(560 / T) (x16), T = 1 .. R_WARP_T_MAX: with
+   the record's nearest depth z_m = z - rho and radius rho, any edge inside
+   it has (|dx| + |dy|) |dz| <= 12.6 H rho^2 / z_m (H = 160, |x|/z and |y|/z
+   bounded by the frustum test), below 2T x 2 z_m once z_m >= k rho, with
+   ~10 % margin for the integer screen coordinates. */
+static const uint16_t warp_k16[R_WARP_T_MAX + 1] = {
+	0, 379, 268, 219, 189, 169, 155, 143, 134, 126, 120, 114, 109, 105, 101, 98,
+	95, 92, 89, 87, 85, 83, 81, 79, 77, 76, 74, 73, 72, 70, 69, 68, 67,
+};
+
+static void warp_apply(int t)
 {
-	/* threshold T (px) per level, and the record bound's k = sqrt(560 / T)
-	   (x16): with the record's nearest depth z_m = z - rho and radius rho,
-	   any edge inside it has (|dx| + |dy|) |dz| <= 12.6 H rho^2 / z_m (H =
-	   160, |x|/z and |y|/z bounded by the frustum test), below 2T x 2 z_m
-	   once z_m >= k rho, with ~10 % margin for the integer screen
-	   coordinates. */
-	static const uint8_t t[4]   = { 6, 4, 3, 2 };
-	static const uint16_t k16[4] = { 155, 189, 219, 268 };
-	if (fid < 0) fid = 0;
-	if (fid > 3) fid = 3;
-	r_state.warp_t2  = 2u * t[fid];
-	r_state.warp_k16 = k16[fid];
+	if (t < 1) t = 1;
+	if (t > R_WARP_T_MAX) t = R_WARP_T_MAX;
+	r_warp.t_eff     = t;
+	r_state.warp_t2  = 2u * (uint32_t) t;
+	r_state.warp_k16 = warp_k16[t];
+}
+
+void r_set_warp(int mode, int t_px, int budget)
+{
+	r_warp.mode   = mode;
+	r_warp.t      = t_px;
+	r_warp.budget = budget;
+	r_warp.calm   = 0;
+	warp_apply(t_px);
+}
+
+/* An NTSC frame of CPU time, and the marks around it: above WARP_HIGH (or
+   past a vblank) T rises by a quarter at once; it comes down one pixel at a
+   time after WARP_CALM frames below WARP_LOW, so it does not oscillate. */
+#define WARP_FRAME  (33868800 / 60)
+#define WARP_HIGH   (WARP_FRAME * 7 / 8)
+#define WARP_LOW    (WARP_FRAME * 3 / 4)
+#define WARP_CALM   4
+
+void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl)
+{
+	int over, room;
+	switch (r_warp.mode) {
+	case R_WARP_DYNAMIC:
+		over = vbl > 1 || frame_cycles > WARP_HIGH;
+		room = vbl <= 1 && frame_cycles < WARP_LOW;
+		break;
+	case R_WARP_BUDGET:
+		over = r_warp.tris > (uint32_t) r_warp.budget;
+		room = r_warp.tris < (uint32_t) r_warp.budget * 7 / 8;
+		break;
+	default:
+		return;
+	}
+	int t = r_warp.t_eff;
+	if (over) {
+		t += t >= 4 ? t / 4 : 1;
+		r_warp.calm = 0;
+	} else if (room && t > r_warp.t) {
+		if (++r_warp.calm >= WARP_CALM) {
+			t--;
+			r_warp.calm = 0;
+		}
+	} else {
+		r_warp.calm = 0;
+	}
+	warp_apply(t < r_warp.t ? r_warp.t : t);
 }
 
 /* ------------------------------------------------------------------ view -- */
@@ -198,6 +251,12 @@ void r_frame(void)
 	r_render(&r_state);   /* release: no counters, no stage timers */
 #endif
 
+	/* triangles for the warp budget: fast-path quads are 26 bytes per
+	   triangle (POLY_GT4, 52 B), the slow path's are POLY_GT3 (40 B); the
+	   few window commands go uncounted */
+	uint32_t bytes = r_state.pkt - (uint32_t) vid_frame.pkt;
+	uint32_t slowb = r_state.slow_bytes <= bytes ? r_state.slow_bytes : bytes;
+	r_warp.tris = (bytes - slowb) / 26 + slowb / 40;
 	vid_frame.pkt = (uint8_t *) r_state.pkt;
 
 #if Q1PSX_PROFILE

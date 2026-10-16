@@ -266,6 +266,7 @@ r_render:
 	sw      $t3, SP_FVBASE($t8)
 	sw      $t4, SP_SZFAST($t8)
 	sw      $zero, SP_FULL($t8)
+	sw      $zero, SP_SLOWB($t8)
 .if R_PROFILE
 	sw      $zero, SP_NODES($t8)
 	sw      $zero, SP_RECORDS($t8)
@@ -615,7 +616,7 @@ dr_rec:
 	bnez    $t0, dr_full
 	or      $a2, $a2, $t5                # a2 bit 1
 	# a2 bit 2: an affine error above the threshold is possible:
-	# (z - rho) x 16 < k16 x rho, rho = 1.5 r (r_set_fidelity)
+	# (z - rho) x 16 < k16 x rho, rho = 1.5 r (render.c, warp_k16)
 	srl     $t5, $t3, 1
 	addu    $t5, $t5, $t3                # rho
 	lw      $t9, RS_WARP_K16($s0)
@@ -894,6 +895,7 @@ dr_slow_call:
 	sw      $a2, SP_SAVE+12($t8)
 	sw      $a3, SP_SAVE+16($t8)
 	sw      $t0, SP_SAVE+32($t8)
+	sw      $s6, SP_SAVE+20($t8)         # (the slow path's bytes, below)
 .if R_PROFILE
 	lw      $t1, SP_SKIPPED($t8)         # polygons sent to the slow path
 	lhu     $t2, TIMER2($t8)
@@ -928,7 +930,12 @@ dr_slow_call:
 	addu    $t2, $t2, $t0
 	sw      $t2, SP_TSLOW($t8)
 .endif
+	lw      $t1, SP_SAVE+20($t8)         # bytes it wrote, for the warp
+	lw      $t2, SP_SLOWB($t8)           # control's triangle count
 	lw      $at, SP_SAVE+0($t8)
+	subu    $t1, $s6, $t1
+	addu    $t2, $t2, $t1
+	sw      $t2, SP_SLOWB($t8)
 	lw      $a0, SP_SAVE+4($t8)
 	lw      $a1, SP_SAVE+8($t8)
 	lw      $a2, SP_SAVE+12($t8)
@@ -980,8 +987,9 @@ walk_done:
 	or      $s6, $s6, $t0
 	sw      $s6, RS_PKT($s0)
 	lw      $t0, RS_OT_WORLD($s0)
-	nop
+	lw      $t1, SP_SLOWB($t8)
 	sw      $fp, 0($t0)
+	sw      $t1, RS_SLOW_BYTES($s0)
 .if R_PROFILE
 	lw      $t0, SP_NODES($t8)
 	lw      $t1, SP_RECORDS($t8)

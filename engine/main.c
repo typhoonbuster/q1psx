@@ -1,9 +1,10 @@
 /*
  * q1psx — boot + main loop.
  *
- * Normal build: a map menu (every map on the disc, the fidelity level),
- * then player physics over the asm-rendered world with the debug overlay;
- * SELECT + START goes back to the menu. Loads show a progress bar.
+ * Normal build: a map menu (every map on the disc, the fidelity level, the
+ * texture depth, dithering and the affine-warp control), then player
+ * physics over the asm-rendered world with the debug overlay; SELECT +
+ * START goes back to the menu. Loads show a progress bar.
  * Bench build (Q1PSX_BENCH, CMake preset "bench"): render every cooked bench
  * viewpoint, print one "bench ..." line each (+ a packet dump of one frame for
  * tools/pktview), then "bench done" — see scripts/bench.sh.
@@ -42,6 +43,42 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 static int      fid_wanted = 2; /* 0 low .. 3 ultra; L2 cycles it      */
 static int      fidelity   = 2; /* the level actually loaded (a map too
                                    big for the arena falls back lower)  */
+static int      fid_loaded = -1;/* the fid_wanted of the last load      */
+
+#ifdef Q1PSX_BENCH
+#ifndef Q1PSX_BENCH_T
+#define Q1PSX_BENCH_T    8    /* warp threshold the bench renders with, px */
+#endif
+#ifndef Q1PSX_BENCH_TEX4
+#define Q1PSX_BENCH_TEX4 0    /* 1: the 4-bit textures (TEX4=1 scripts/bench.sh) */
+#endif
+#endif
+
+/* Menu settings (the bench has its own): the affine-warp control
+   (docs/porting-notes.md §19.4), the texture depth, dithering. */
+static const uint8_t  warp_t_px[]    = { 1, 2, 4, 6, 8, 10, 12, 14, 16 };
+static const uint16_t warp_budgets[] = { 1000, 1500, 2000, 2500, 3000, 4000 };
+static const char *const warp_mode_name[R_WARP_MODES] = { "fixed", "dynamic", "budget" };
+#define NUM_WARP_T      (int) (sizeof warp_t_px / sizeof warp_t_px[0])
+#define NUM_WARP_BUDGET (int) (sizeof warp_budgets / sizeof warp_budgets[0])
+
+static int set_warp   = R_WARP_FIXED;
+static int set_t      = 4;      /* 8 px */
+static int set_budget = 2;      /* 2000 triangles */
+static int set_tex4   = 0;      /* 8-bit textures */
+static int set_dither = 1;
+
+static void apply_settings(void)
+{
+#ifdef Q1PSX_BENCH
+	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T, 0);
+	vid_set_dither(1);
+	set_tex4 = Q1PSX_BENCH_TEX4;
+#else
+	r_set_warp(set_warp, warp_t_px[set_t], warp_budgets[set_budget]);
+	vid_set_dither(set_dither);
+#endif
+}
 
 static void player_spawn(void)
 {
@@ -167,8 +204,8 @@ static void loading_screen(uint32_t done, uint32_t total)
 	char line[48];
 	int  fill = total ? (int) (done * BW / total) : 0;   /* < 2 MB: no overflow */
 
-	snprintf(line, sizeof line, "loading %s  (%s)", world_map_name(load_map),
-	         fidelity_name[load_fid]);
+	snprintf(line, sizeof line, "loading %s  (%s%s)", world_map_name(load_map),
+	         fidelity_name[load_fid], set_tex4 ? ", 4-bit" : "");
 	vid_text(BX, BY - 16, line);
 	snprintf(line, sizeof line, "%3d %%", total ? (int) (done * 100 / total) : 0);
 	vid_text(BX + BW - 40, BY + BH + 8, line);
@@ -191,16 +228,16 @@ static int load_level(int map, int fid)
 	load_map = map;
 	for (int f = fid; f >= 0 && !world_ok; f--) {
 		load_fid = f;
-		world_ok = world_load(map, f, LOAD_PROGRESS);
+		world_ok = world_load(map, f, set_tex4, LOAD_PROGRESS);
 		if (world_ok)
 			fidelity = f;
 	}
+	fid_loaded = fid;
 	if (world_ok) {
 		if (fidelity != fid)
 			printf("level: %s does not fit at %s, loaded at %s\n", world_map_name(map),
 			       fidelity_name[fid], fidelity_name[fidelity]);
 		r_bind_world();
-		r_set_fidelity(fidelity);
 	}
 	return world_ok;
 }
@@ -232,7 +269,7 @@ static int overlay_on = 1;   /* L1+R1 toggles */
 static void draw_overlay(void)
 {
 	uint32_t t0 = prof_now();
-	char line[320], sticks[40] = "";
+	char line[384], sticks[40] = "";
 
 	if (pad.analog)                    /* raw, before the dead zone */
 		snprintf(sticks, sizeof sticks, "\nsticks L %4d %4d  R %4d %4d", pad.lx, pad.ly, pad.rx, pad.ry);
@@ -254,9 +291,12 @@ static void draw_overlay(void)
 #endif
 	snprintf(line + n, sizeof line - n,
 	         "%u B%s\n"
+	         "warp %s %dpx  T %d  ~%u tris%s%s\n"
 	         "pos %d %d %d\n"
 	         "pad %s type %d btn %04x%s",
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
+	         warp_mode_name[r_warp.mode], r_warp.t, r_warp.t_eff, (unsigned) r_warp.tris,
+	         world.tex4 ? "  4-bit" : "", set_dither ? "" : "  no dither",
 	         cam.pos[0] / CLIP_SUB, cam.pos[1] / CLIP_SUB, cam.pos[2] / CLIP_SUB,
 	         pad.connected ? "ok" : "--", pad.type, pad.held, sticks);
 	vid_text(8, 8, line);
@@ -292,6 +332,7 @@ static void run_frame(int interactive, int dump)
 	if (dump)
 		vid_dump();
 	vid_flip();
+	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl);
 }
 
 /* ------------------------------------------------------------ map menu -- */
@@ -327,8 +368,49 @@ static const char *map_tag(int m)
 	return m == complex_map ? " (complex)" : "";
 }
 
-/* One frame of the menu: d-pad picks a map, L1 / R1 the fidelity level,
-   Cross / START loads it, Circle goes back to the loaded one. */
+/* The options under the map list: L2 / R2 pick one, L1 / R1 change it. */
+enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_COUNT };
+static int opt_sel;
+
+static void opt_step(int d)
+{
+	switch (opt_sel) {
+	case OPT_FID:    fid_wanted = (fid_wanted + FIDELITY_LEVELS + d) % FIDELITY_LEVELS; break;
+	case OPT_TEX:    set_tex4 ^= 1; break;
+	case OPT_DITHER: set_dither ^= 1; break;
+	case OPT_WARP:   set_warp = (set_warp + R_WARP_MODES + d) % R_WARP_MODES; break;
+	case OPT_T:      set_t = (set_t + NUM_WARP_T + d) % NUM_WARP_T; break;
+	default:         set_budget = (set_budget + NUM_WARP_BUDGET + d) % NUM_WARP_BUDGET; break;
+	}
+	apply_settings();   /* warp and dithering at once; textures, fidelity on load */
+}
+
+static void opt_draw(void)
+{
+	static const char *const label[OPT_COUNT] = {
+		"fidelity", "textures", "dither", "warp", "threshold", "budget",
+	};
+	char line[48], val[16];
+	for (int o = 0; o < OPT_COUNT; o++) {
+		switch (o) {
+		case OPT_FID:    snprintf(val, sizeof val, "%s", fidelity_name[fid_wanted]); break;
+		case OPT_TEX:    snprintf(val, sizeof val, "%s", set_tex4 ? "4 bit" : "8 bit"); break;
+		case OPT_DITHER: snprintf(val, sizeof val, "%s", set_dither ? "on" : "off"); break;
+		case OPT_WARP:   snprintf(val, sizeof val, "%s", warp_mode_name[set_warp]); break;
+		case OPT_T:      snprintf(val, sizeof val, "%d px", warp_t_px[set_t]); break;
+		default:         snprintf(val, sizeof val, "%d tris", warp_budgets[set_budget]); break;
+		}
+		int x = 16 + (o / 3) * 152, y = 186 + (o % 3) * 10;
+		snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
+		vid_text(x, y, line);
+		if (o == opt_sel)
+			ui_rect(x - 4, y - 1, 148, 10, 60, 70, 120);
+	}
+}
+
+/* One frame of the menu: d-pad picks a map, L2 / R2 an option and L1 / R1
+   its value, Cross / START loads the map, Circle goes back to the loaded
+   one (reloading it if the textures or the fidelity changed). */
 static void menu_frame(void)
 {
 	int n = world_num_maps();
@@ -348,13 +430,22 @@ static void menu_frame(void)
 		if ((pad.pressed & PAD_LEFT) && menu_sel >= MENU_ROWS)
 			menu_sel -= MENU_ROWS;
 	}
+	if (pad.pressed & PAD_L2)
+		opt_sel = (opt_sel + OPT_COUNT - 1) % OPT_COUNT;
+	if (pad.pressed & PAD_R2)
+		opt_sel = (opt_sel + 1) % OPT_COUNT;
 	if (pad.pressed & PAD_L1)
-		fid_wanted = (fid_wanted + FIDELITY_LEVELS - 1) % FIDELITY_LEVELS;
+		opt_step(-1);
 	if (pad.pressed & PAD_R1)
-		fid_wanted = (fid_wanted + 1) % FIDELITY_LEVELS;
+		opt_step(1);
 	if ((pad.pressed & PAD_CIRCLE) && world_ok) {
-		in_menu = 0;                         /* back to the loaded map */
-		return;
+		if (world.tex4 != set_tex4 || fid_loaded != fid_wanted)
+			load_level(map_index, fid_wanted);   /* same map, same place */
+		if (world_ok) {
+			in_menu = 0;                         /* back to the loaded map */
+			return;
+		}
+		menu_msg = "could not reload that map";
 	}
 	if (n && (pad.pressed & (PAD_CROSS | PAD_START))) {
 		map_index = menu_sel;
@@ -369,20 +460,19 @@ static void menu_frame(void)
 
 	char line[48];
 	snprintf(line, sizeof line, "Q1PSX - choose a map (%d on the disc)", n);
-	vid_text(16, 10, line);
+	vid_text(16, 6, line);
 	for (int m = 0; m < n; m++) {
-		int x = 24 + (m / MENU_ROWS) * 148, y = 30 + (m % MENU_ROWS) * 10;
+		int x = 24 + (m / MENU_ROWS) * 148, y = 20 + (m % MENU_ROWS) * 10;
 		snprintf(line, sizeof line, "%s%s", world_map_name(m), map_tag(m));
 		vid_text(x, y, line);
 		if (m == menu_sel)
 			ui_rect(x - 4, y - 1, 140, 10, 60, 70, 120);
 	}
 	if (!n)
-		vid_text(24, 30, "no cooked map on the disc");
-	snprintf(line, sizeof line, "fidelity  < %s >   (L1 / R1)", fidelity_name[fid_wanted]);
-	vid_text(16, 196, line);
-	vid_text(16, 208, world_ok ? "X / START load   O back to the map" : "X / START load");
-	vid_text(16, 220, menu_msg[0] ? menu_msg : "in game: SELECT + START = this menu");
+		vid_text(24, 20, "no cooked map on the disc");
+	opt_draw();
+	vid_text(16, 218, "L2/R2 option  L1/R1 value  X load  O back");
+	vid_text(16, 228, menu_msg[0] ? menu_msg : "in game: SELECT + START = this menu");
 	vid_flip();
 }
 
@@ -737,6 +827,7 @@ int main(void)
 	cd_init();
 	r_init();
 	vid_set_bg(40, 44, 60);   /* flat "sky" until R3.4 */
+	apply_settings();
 
 	printf("q1psx\n");
 

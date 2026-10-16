@@ -36,6 +36,7 @@
 .set RS_PLANES,       168
 .set RS_WARP_T2,      172
 .set RS_WARP_K16,     176
+.set RS_SLOW_BYTES,   180
 
 # ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4
@@ -104,7 +105,7 @@
 .set SP_TEXBASE,  0x3c8   # qw_tex table
 .set SP_TWIN,     0x3cc   # draw_records: the current texture's window command
                           # (emitted when its run of records ends)
-.set SP_FREE3D0,  0x3d0   # (free)
+.set SP_SLOWB,    0x3d0   # packet bytes the slow path wrote this frame
 .set SP_CLUT16,   0x3d4   # current texture's clut << 16 (draw_records' v0;
 .set SP_TPAGE16,  0x3d8   # tpage << 16, its v1): the slow path reads them
 .set SP_SPRA,     0x3dc   # slow path: its own return address

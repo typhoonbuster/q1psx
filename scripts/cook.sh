@@ -15,6 +15,7 @@
 #
 # Output, per map and fidelity (low medium high ultra = disc N 0..3):
 #   cooked/id1/<map>_<fidelity>.tex   QTX3 texture pages  -> disc <MAP>_<N>.TEX
+#   cooked/id1/<map>_<fidelity>.tx4   QTX4, same in 4bpp  -> disc <MAP>_<N>.TX4
 #   cooked/id1/<map>_<fidelity>.wld   QWV2 world          -> disc <MAP>_<N>.WLD
 # Jobs run in parallel; each one's log is shown only if it fails.
 
@@ -44,7 +45,7 @@ make -s -C tools/qcook
 # start clean: the disc carries every cooked file, so a map cooked earlier
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
-rm -f cooked/id1/*.tex cooked/id1/*.wld
+rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 
@@ -52,7 +53,8 @@ cook_one() {   # map fidelity
 	local pak=$QUAKE_PAK0
 	case $1 in e2*|e3*|e4*|end) pak=${QUAKE_PAK1:?$1 needs QUAKE_PAK1} ;; esac
 	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
-	                      --fidelity "$2" --tex "cooked/id1/$1_$2.tex" --world "cooked/id1/$1_$2.wld" \
+	                      --fidelity "$2" --tex "cooked/id1/$1_$2.tex" --tex4 "cooked/id1/$1_$2.tx4" \
+	                      --world "cooked/id1/$1_$2.wld" \
 	                      --light-gain "${LIGHT_GAIN:-1.5}" \
 	                      > "$LOGS/$1_$2.log" 2>&1 \
 	|| { echo "cook FAILED: $1 $2"; cat "$LOGS/$1_$2.log"; return 1; }

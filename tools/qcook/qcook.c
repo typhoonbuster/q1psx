@@ -2,7 +2,7 @@
  * q1psx — asset cooker (host tool).
  *
  *   qcook map   --pak <pak0.pak> --map maps/start.bsp [--fidelity high]
- *               --tex <out.tex> --world <out.wld>
+ *               --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld>
  *   qcook check <file.wld>
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
@@ -311,6 +311,7 @@ static int cmd_map(int argc, char **argv)
 	const char *map      = arg(argc, argv, "--map", NULL);
 	const char *fid_name = arg(argc, argv, "--fidelity", "high");
 	const char *out_tex  = arg(argc, argv, "--tex", NULL);
+	const char *out_tex4 = arg(argc, argv, "--tex4", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
 	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
 	light_gain           = atof(arg(argc, argv, "--light-gain", "1.5"));
@@ -341,7 +342,7 @@ static int cmd_map(int argc, char **argv)
 	       bsp.models[0].numfaces, bsp.num_miptex);
 
 	tex_set ts;
-	tex_build(&ts, &bsp, pal, fid, out_tex);
+	tex_build(&ts, &bsp, pal, fid, out_tex, out_tex4);
 	world_build(&bsp, &ts, fid, out_wld);
 	return world_check(out_wld);
 }
@@ -356,7 +357,7 @@ int main(int argc, char **argv)
 	fprintf(stderr,
 	        "usage:\n"
 	        "  qcook map --pak <pak> --map <maps/x.bsp> [--fidelity low|medium|high|ultra]\n"
-	        "            --tex <out.tex> --world <out.wld>\n"
+	        "            --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld>\n"
 	        "  qcook check <file.wld>\n");
 	return 2;
 }

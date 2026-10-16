@@ -1,11 +1,11 @@
 /*
  * pktview — render a q1psx display-list dump to PNG images (host tool).
  *
- *   pktview <bench.log> <textures.tex> <out-prefix>
+ *   pktview <bench.log> <textures.tex|.tx4> <out-prefix>
  *
  * The bench build prints, for one frame per viewpoint, "D view <n>" followed
  * by the frame's packets in GPU draw order ("P <hex words>") and "E".
- * pktview rebuilds VRAM from the QTX3 texture file (CLUT + pages) and
+ * pktview rebuilds VRAM from the QTX3 or QTX4 texture file (CLUTs + pages) and
  * rasterises the textured polygons the way the PS1 GPU does — affine texture
  * mapping in screen space, no depth buffer, painter's order — into
  * <out-prefix><n>.png (320x240). It is how the renderer's output is checked
@@ -16,7 +16,8 @@
  *
  * PKTVIEW_BG=r,g,b sets the clear colour (default black). A colour no
  * texture produces (e.g. 255,0,255) makes every pixel no polygon covers
- * stand out: cracks between polygons.
+ * stand out: cracks between polygons. PKTVIEW_DITHER=0 renders as the GPU
+ * does with dithering off (the menu's option).
  */
 
 #include <stdint.h>
@@ -124,13 +125,25 @@ static void load_tex(const char *path)
 	if (fread(d, 1, (size_t) len, f) != (size_t) len) { fprintf(stderr, "pktview: short read\n"); exit(1); }
 	fclose(f);
 
-	qtex_header h;
-	memcpy(&h, d, sizeof h);
-	if (memcmp(h.magic, QTEX_MAGIC, 4)) { fprintf(stderr, "pktview: not a QTX3 file\n"); exit(1); }
-	memcpy(&vram[QTEX_CLUT_Y][QTEX_CLUT_X], h.clut, sizeof h.clut);
-	for (uint32_t i = 0; i < h.num_rects; i++) {
+	uint32_t nrects, first;
+	if (!memcmp(d, QTEX_MAGIC, 4)) {             /* 8bpp: the CLUT in the header */
+		qtex_header h;
+		memcpy(&h, d, sizeof h);
+		memcpy(&vram[QTEX_CLUT_Y][QTEX_CLUT_X], h.clut, sizeof h.clut);
+		nrects = h.num_rects;
+		first  = sizeof h;
+	} else if (!memcmp(d, QTEX4_MAGIC, 4)) {     /* 4bpp: CLUTs are a rect */
+		qtex4_header h;
+		memcpy(&h, d, sizeof h);
+		nrects = h.num_rects;
+		first  = sizeof h;
+	} else {
+		fprintf(stderr, "pktview: not a QTX3 / QTX4 file\n");
+		exit(1);
+	}
+	for (uint32_t i = 0; i < nrects; i++) {
 		qtex_rect r;
-		memcpy(&r, d + sizeof h + i * sizeof r, sizeof r);
+		memcpy(&r, d + first + i * sizeof r, sizeof r);
 		const uint16_t *px = (const uint16_t *) (d + r.data_ofs);
 		for (int y = 0; y < r.h; y++)
 			memcpy(&vram[r.y + y][r.x], px + y * r.w, r.w * 2u);
@@ -149,6 +162,7 @@ static const int dither[4][4] = {
 };
 
 static uint32_t twin;   /* current GP0 E2h texture window (0 = none) */
+static int dither_on = 1;   /* PKTVIEW_DITHER=0: the engine's dithering off */
 
 static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque)
 {
@@ -245,7 +259,7 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 				}
 			}
 			for (int k = 0; k < 3; k++) {           /* dither, cut to 5 bits */
-				int d = col[k] + dither[y & 3][x & 3];
+				int d = col[k] + (dither_on ? dither[y & 3][x & 3] : 0);
 				d = d < 0 ? 0 : d > 255 ? 255 : d;
 				col[k] = (uint8_t) (d & 0xf8);
 			}
@@ -311,6 +325,9 @@ int main(int argc, char **argv)
 	}
 	crc_init();
 	load_tex(argv[2]);
+	const char *dis = getenv("PKTVIEW_DITHER");
+	if (dis && dis[0] == '0')
+		dither_on = 0;
 	const char *bgs = getenv("PKTVIEW_BG");
 	unsigned br, bgg, bb;
 	if (bgs && sscanf(bgs, "%u,%u,%u", &br, &bgg, &bb) == 3) {

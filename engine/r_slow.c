@@ -6,7 +6,7 @@
  * fast path cannot simply emit: the record's bounding sphere says one of its
  * vertices may be too near (the GTE's projection breaks down), or one of its
  * polygons may be too big for the GPU, or its affine texture error may exceed
- * the fidelity level's threshold (docs/porting-notes.md §19). Per polygon:
+ * the threshold (docs/porting-notes.md §19, §19.4). Per polygon:
  *
  *   - a vertex nearer than SZ_CLIP, or projected beyond the GTE's range:
  *     the clip path. Transform to view space, clip against the near plane

@@ -1,8 +1,8 @@
 /*
  * q1psx — loaded world (formats/qworld.h + qtex.h).
  *
- * world_load() uploads the map's texture pages to VRAM (the QTX3 file is only
- * transient), then loads the QWV2 world into the level arena and rewrites its
+ * world_load() uploads the map's texture pages to VRAM (the QTX3 / QTX4 file
+ * is only transient), then loads the QWV2 world into the level arena and rewrites its
  * link fields into absolute pointers for the asm renderer.
  */
 
@@ -35,6 +35,7 @@ typedef struct {
 	uint32_t       num_tex;
 	const qw_vert *verts;           /* [num_verts]: the vertex pool   */
 	uint32_t       num_verts;
+	int            tex4;            /* the 4-bit textures are loaded  */
 } world_t;
 
 #ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */
@@ -58,10 +59,11 @@ const char *world_map_name(int map);   /* "START", "E1M1", ... */
    may draw and flip a frame (a loading bar). */
 typedef void (*world_progress_fn)(uint32_t done, uint32_t total);
 
-/* Load map `map` (0 .. world_num_maps() - 1) at a fidelity level; resets
-   the level arena. 1 on success, 0 if missing or too big for the arena.
-   `progress` may be NULL (the reads then block). */
-int world_load(int map, int fidelity, world_progress_fn progress);
+/* Load map `map` (0 .. world_num_maps() - 1) at a fidelity level, with
+   its 4-bit textures (<MAP>_<N>.TX4) if `tex4` and the disc has them, else
+   the 8-bit ones; resets the level arena. 1 on success, 0 if missing or too
+   big for the arena. `progress` may be NULL (the reads then block). */
+int world_load(int map, int fidelity, int tex4, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);

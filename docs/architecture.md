@@ -136,6 +136,10 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
   - A tile never straddles a texture-page boundary (u ≤ 255 from the page
     base, v inside one 256-line half).
 - CLUT: Quake's palette, one 256-entry row. A debug font lives in a corner.
+- 4-bit textures (menu option, `<MAP>_<N>.TX4`, `docs/porting-notes.md`
+  §20): the same tiles at the same texel positions, pages at x = 320 + 64 p
+  on the first half (y = 0), and one 16-entry CLUT per texture from
+  (0, 480), 60 per row.
 
 ## 5. Frame structure
 

@@ -48,4 +48,34 @@ typedef struct {
 	uint32_t data_ofs;       /* from file start; w*h*2 bytes, 32-aligned */
 } qtex_rect;
 
+/* "QTX4": the same texture set in 4bpp (the menu's 4-bit textures), one per
+   map and fidelity level next to its QTX3 (<MAP>_<N>.TX4 on the disc).
+   Every tile sits at the same texel position in the same page as in the
+   QTX3, so the world file's UVs and texture windows stay valid; each
+   texture is quantized to its own 16 colours.
+     pages  x = 320 + 64 * p, y = 0 (64 halfwords = 256 4bpp texels)
+     CLUTs  16 entries per texture (miptex index i) at x = 16 * (i % 60),
+            y = 480 + i / 60 (x < 960: the debug font is there)
+   Layout:
+     qtex4_header
+     qtex_rect[num_rects]     the CLUT block first, then the pages
+     qtex4_tex[num_tex]       at ofs_tex: each texture's CLUT and tpage
+                              words, which replace the world's qw_tex ones
+     pixel data               as in QTX3 */
+#define QTEX4_MAGIC          "QTX4"
+#define QTEX4_PAGE_X0        320
+#define QTEX4_CLUT_Y         480
+#define QTEX4_CLUTS_PER_ROW  60
+
+typedef struct {
+	char     magic[4];       /* "QTX4"                                   */
+	uint32_t num_rects;
+	uint32_t num_tex;        /* = the world's num_tex (miptex count)     */
+	uint32_t ofs_tex;        /* qtex4_tex[num_tex], from file start      */
+} qtex4_header;
+
+typedef struct {
+	uint16_t clut, tpage;    /* 4bpp tpage; 0, 0 for an unused miptex    */
+} qtex4_tex;
+
 #endif

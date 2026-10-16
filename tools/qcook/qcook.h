@@ -87,6 +87,8 @@ typedef struct {
 	int      reps_x, reps_y; /* repetitions laid side by side in the tile
 	                            (1 on a wrapped axis)                     */
 	int      u0, v0;         /* top-left texel inside its texture page    */
+	int      page;           /* texture page index (0 .. QTEX_PAGES - 1)  */
+	int      tile_w, tile_h; /* texels of the whole tile                  */
 	uint16_t tpage;          /* GPU tpage word (8bpp)                     */
 	uint16_t clut;           /* GPU CLUT word                             */
 	uint32_t window;         /* GP0 E2h texture-window command            */
@@ -99,8 +101,10 @@ typedef struct {
 	uint32_t  bytes;         /* texture pixels uploaded                   */
 } tex_set;
 
+/* Writes the QTX3 set to out_path and, when out4_path is not NULL, the
+   same tiles in 4bpp (QTX4, 16 colours per texture) to out4_path. */
 void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
-               const fidelity_t *fid, const char *out_path);
+               const fidelity_t *fid, const char *out_path, const char *out4_path);
 
 /* ---------------------------------------------------------------- world -- */
 

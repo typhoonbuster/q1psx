@@ -65,37 +65,52 @@ static void load_step(uint32_t base)
 		load_poll(0);
 }
 
-static int load_textures(const char *map, int fid)
-{
-	char name[24];
-	snprintf(name, sizeof name, "\\MAPS\\%s_%d.TEX;1", map, fid);
+/* A QTX4 set's CLUT / tpage words, kept until the world file is loaded and
+   its texture table can take them. */
+#define TEX4_MAX 512
+static qtex4_tex tex4_tab[TEX4_MAX];
+static uint32_t  tex4_n;
 
+static void upload_rects(const uint8_t *f, const qtex_rect *r, uint32_t n)
+{
+	for (uint32_t i = 0; i < n; i++) {
+		RECT rc = { (int16_t) r[i].x, (int16_t) r[i].y, (int16_t) r[i].w, (int16_t) r[i].h };
+		LoadImage(&rc, (const uint32_t *) (f + r[i].data_ofs));
+	}
+}
+
+/* The map's texture set into VRAM: QTX3 (8bpp, the Quake palette) or QTX4
+   (4bpp, 16 colours per texture). */
+static int load_textures(const char *name)
+{
 	uint32_t mark = mem_level_mark(), size;
 	const uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
-	if (!f || size < sizeof(qtex_header) || memcmp(f, QTEX_MAGIC, 4)) {
+	tex4_n = 0;
+	if (f && size >= sizeof(qtex_header) && !memcmp(f, QTEX_MAGIC, 4)) {
+		const qtex_header *h = (const qtex_header *) f;
+		RECT clut = { QTEX_CLUT_X, QTEX_CLUT_Y, 256, 1 };
+		LoadImage(&clut, (const uint32_t *) h->clut);
+		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
+		printf("world: %s — %u texture pages -> VRAM\n", name, h->num_rects);
+	} else if (f && size >= sizeof(qtex4_header) && !memcmp(f, QTEX4_MAGIC, 4)) {
+		const qtex4_header *h = (const qtex4_header *) f;
+		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
+		tex4_n = h->num_tex < TEX4_MAX ? h->num_tex : TEX4_MAX;
+		memcpy(tex4_tab, f + h->ofs_tex, tex4_n * sizeof *tex4_tab);
+		printf("world: %s — 4bpp, %u rects -> VRAM\n", name, h->num_rects);
+	} else {
 		printf("world: bad texture file %s\n", name);
 		mem_level_release(mark);
 		return 0;
 	}
-	const qtex_header *h = (const qtex_header *) f;
-	const qtex_rect   *r = (const qtex_rect *) (f + sizeof *h);
-
-	RECT clut = { QTEX_CLUT_X, QTEX_CLUT_Y, 256, 1 };
-	LoadImage(&clut, (const uint32_t *) h->clut);
-	for (uint32_t i = 0; i < h->num_rects; i++) {
-		RECT rc = { (int16_t) r[i].x, (int16_t) r[i].y, (int16_t) r[i].w, (int16_t) r[i].h };
-		LoadImage(&rc, (const uint32_t *) (f + r[i].data_ofs));
-	}
 	DrawSync(0);
-	printf("world: %s — %u texture pages -> VRAM\n", name, h->num_rects);
-
 	mem_level_release(mark);   /* pixels live in VRAM now */
 	return 1;
 }
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-int world_load(int map, int fid, world_progress_fn progress)
+int world_load(int map, int fid, int tex4, world_progress_fn progress)
 {
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
@@ -103,9 +118,11 @@ int world_load(int map, int fid, world_progress_fn progress)
 		return 0;
 
 	char name[24], tex_name[24];
-	snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_%d.TEX;1", disc_maps[map], fid);
-	snprintf(name, sizeof name, "\\MAPS\\%s_%d.WLD;1", disc_maps[map], fid);
 	uint32_t tex_size = 0, wld_size = 0;
+	snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_%d.TX4;1", disc_maps[map], fid);
+	if (!tex4 || !cd_exists(tex_name, &tex_size))     /* (an older disc: 8 bits) */
+		snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_%d.TEX;1", disc_maps[map], fid);
+	snprintf(name, sizeof name, "\\MAPS\\%s_%d.WLD;1", disc_maps[map], fid);
 	load_progress = progress;
 	if (progress) {
 		cd_exists(tex_name, &tex_size);
@@ -114,7 +131,7 @@ int world_load(int map, int fid, world_progress_fn progress)
 		load_step(0);
 	}
 
-	if (!load_textures(disc_maps[map], fid))
+	if (!load_textures(tex_name))
 		return 0;
 
 	load_step(tex_size);                 /* the pages are in VRAM */
@@ -133,6 +150,12 @@ int world_load(int map, int fid, world_progress_fn progress)
 	world.views       = (const qw_view *) (f + h->ofs_views);
 	world.textures    = (const qw_tex *) (f + h->ofs_tex);
 	world.num_tex     = h->num_tex;
+	world.tex4        = tex4_n != 0;
+	for (uint32_t i = 0; i < tex4_n && i < h->num_tex; i++) {   /* 4bpp: its CLUTs, pages */
+		qw_tex *t = (qw_tex *) &world.textures[i];
+		t->clut  = tex4_tab[i].clut;
+		t->tpage = tex4_tab[i].tpage;
+	}
 	world.verts       = (const qw_vert *) (f + h->ofs_verts);
 	world.num_verts   = h->num_verts;
 	world.num_nodes   = h->num_nodes;

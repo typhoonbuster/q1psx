@@ -3,9 +3,12 @@
  * repetition at the fidelity's resolution; on an axis that is not a power of
  * two, possibly several), packed into whole 8bpp texture pages, each
  * power-of-two axis aligned for the GPU texture window, written as a QTX3
- * file (formats/qtex.h).
+ * file (formats/qtex.h). Optionally the same pages in 4bpp, each texture
+ * quantized to its own 16 colours (QTX4).
  */
 
+#include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,6 +41,11 @@ static uint16_t gpu_tpage(int vx, int vy)   /* 8bpp, no semi-transparency */
 	return (uint16_t) (((vx & 0x3ff) >> 6) | ((vy >> 8) << 4) | (1 << 7));
 }
 
+static uint16_t gpu_tpage4(int vx, int vy)  /* 4bpp, no semi-transparency */
+{
+	return (uint16_t) (((vx & 0x3ff) >> 6) | ((vy >> 8) << 4));
+}
+
 static uint16_t gpu_clut(int cx, int cy)
 {
 	return (uint16_t) ((cy << 6) | (cx >> 4));
@@ -53,8 +61,264 @@ static uint8_t sample(const bsp_miptex *m, int x, int y, int tw, int th)
 	return m->mip[k][(y * sh / th) * sw + (x * sw / tw)];
 }
 
+/* ------------------------------------------------------------ 4bpp -- */
+
+/* A colour the texture uses: its palette entry and how many texels. */
+typedef struct { int r, g, b; uint32_t w; } qpoint;
+
+/* Perceptual-ish distance (green weighs most, blue least). */
+static uint32_t qdist(int dr, int dg, int db)
+{
+	return 3u * (uint32_t) (dr * dr) + 4u * (uint32_t) (dg * dg) + 2u * (uint32_t) (db * db);
+}
+
+static int qchan(const qpoint *p, int c)
+{
+	return c == 0 ? p->r : c == 1 ? p->g : p->b;
+}
+
+static int qsort_chan;
+static int by_chan(const void *a, const void *b)
+{
+	return qchan(a, qsort_chan) - qchan(b, qsort_chan);
+}
+
+/* Weighted spread of a box along channel c (sum of w (x - mean)^2, scaled by
+   the metric's channel weight). */
+static double box_sse(const qpoint *p, int n, int c)
+{
+	static const double cw[3] = { 3, 4, 2 };
+	double sw = 0, s = 0, s2 = 0;
+	for (int i = 0; i < n; i++) {
+		double x = qchan(&p[i], c);
+		sw += p[i].w;
+		s  += p[i].w * x;
+		s2 += p[i].w * x * x;
+	}
+	return sw > 0 ? cw[c] * (s2 - s * s / sw) : 0;
+}
+
+/* 16 colours for one texture from the histogram of its palette indices:
+   median cut on the weighted colours (split the box and channel with the
+   largest spread at the weighted median), then Lloyd iterations. map[i] =
+   the 4-bit index of palette entry i (for those used), clut = the colours
+   in PS1 BGR555, cut to 5 bits as the 8bpp CLUT is (black = 0x8000, 0x0000
+   would be transparent). */
+static void quantize16(const uint32_t hist[256], const uint8_t pal[768],
+                       uint8_t map[256], uint16_t clut[16])
+{
+	qpoint pts[256];
+	int    idx[256], n = 0;
+	for (int i = 0; i < 256; i++)
+		if (hist[i]) {
+			pts[n].r = pal[i * 3];
+			pts[n].g = pal[i * 3 + 1];
+			pts[n].b = pal[i * 3 + 2];
+			pts[n].w = hist[i];
+			idx[n]   = i;
+			n++;
+		}
+
+	double cr[16], cg[16], cb[16];
+	int    k = 0;
+	if (n <= 16) {
+		for (; k < n; k++) {
+			cr[k] = pts[k].r;
+			cg[k] = pts[k].g;
+			cb[k] = pts[k].b;
+		}
+	} else {
+		/* the points keep their palette index through the sorts */
+		qpoint *q = pts;
+		int    *qi = idx;
+		struct { int start, len; } box[16];
+		box[0].start = 0;
+		box[0].len   = n;
+		int nb = 1;
+		while (nb < 16) {
+			int bb = -1, bc = 0;
+			double best = 0;
+			for (int i = 0; i < nb; i++)
+				if (box[i].len > 1)
+					for (int c = 0; c < 3; c++) {
+						double e = box_sse(q + box[i].start, box[i].len, c);
+						if (e > best) { best = e; bb = i; bc = c; }
+					}
+			if (bb < 0)
+				break;                         /* every box is one colour */
+			int st = box[bb].start, len = box[bb].len;
+			/* sort the box's points (and their indices) by channel bc */
+			struct { qpoint p; int i; } tmp[256];
+			for (int i = 0; i < len; i++) { tmp[i].p = q[st + i]; tmp[i].i = qi[st + i]; }
+			qsort_chan = bc;
+			qsort(tmp, (size_t) len, sizeof tmp[0], by_chan);   /* qpoint first */
+			for (int i = 0; i < len; i++) { q[st + i] = tmp[i].p; qi[st + i] = tmp[i].i; }
+			double tw = 0, acc = 0;
+			for (int i = 0; i < len; i++) tw += q[st + i].w;
+			int m = 1;
+			for (int i = 0; i < len - 1; i++) {
+				acc += q[st + i].w;
+				m = i + 1;
+				if (acc >= tw / 2) break;
+			}
+			box[nb].start = st + m;
+			box[nb].len   = len - m;
+			box[bb].len   = m;
+			nb++;
+		}
+		for (k = 0; k < nb; k++) {
+			double sw = 0, r = 0, g = 0, b = 0;
+			for (int i = 0; i < box[k].len; i++) {
+				const qpoint *p = &q[box[k].start + i];
+				sw += p->w; r += p->w * p->r; g += p->w * p->g; b += p->w * p->b;
+			}
+			cr[k] = r / sw; cg[k] = g / sw; cb[k] = b / sw;
+		}
+		/* Lloyd: assign to the nearest, move to the weighted mean */
+		for (int it = 0; it < 12; it++) {
+			double sr[16] = { 0 }, sg[16] = { 0 }, sb[16] = { 0 }, sw[16] = { 0 };
+			for (int i = 0; i < n; i++) {
+				int bj = 0;
+				uint32_t bd = UINT32_MAX;
+				for (int j = 0; j < k; j++) {
+					uint32_t d = qdist(pts[i].r - (int) (cr[j] + 0.5), pts[i].g - (int) (cg[j] + 0.5),
+					                   pts[i].b - (int) (cb[j] + 0.5));
+					if (d < bd) { bd = d; bj = j; }
+				}
+				sw[bj] += pts[i].w;
+				sr[bj] += pts[i].w * pts[i].r;
+				sg[bj] += pts[i].w * pts[i].g;
+				sb[bj] += pts[i].w * pts[i].b;
+			}
+			for (int j = 0; j < k; j++)
+				if (sw[j] > 0) {
+					cr[j] = sr[j] / sw[j];
+					cg[j] = sg[j] / sw[j];
+					cb[j] = sb[j] / sw[j];
+				}
+		}
+	}
+
+	for (int j = 0; j < 16; j++)
+		clut[j] = 0x8000;
+	for (int j = 0; j < k; j++) {
+		int r = (int) (cr[j] + 0.5), g = (int) (cg[j] + 0.5), b = (int) (cb[j] + 0.5);
+		uint16_t c = (uint16_t) ((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10));
+		clut[j] = c ? c : 0x8000;
+	}
+	memset(map, 0, 256);
+	for (int i = 0; i < n; i++) {
+		int bj = 0;
+		uint32_t bd = UINT32_MAX;
+		for (int j = 0; j < k; j++) {
+			uint32_t d = qdist(pts[i].r - (int) (cr[j] + 0.5), pts[i].g - (int) (cg[j] + 0.5),
+			                   pts[i].b - (int) (cb[j] + 0.5));
+			if (d < bd) { bd = d; bj = j; }
+		}
+		map[idx[i]] = (uint8_t) bj;
+	}
+}
+
+/* The QTX4 file: the pages of `pages` (8bpp indices) re-coded per tile with
+   that tile's own 16 colours. */
+static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
+                       const int page_h[], const uint8_t palette[768], const char *path)
+{
+	int ncl = num_miptex;
+	int cl_rows = (ncl + QTEX4_CLUTS_PER_ROW - 1) / QTEX4_CLUTS_PER_ROW;
+	int cl_w = 16 * (ncl < QTEX4_CLUTS_PER_ROW ? ncl : QTEX4_CLUTS_PER_ROW);
+	uint16_t  *clut = xcalloc((size_t) (cl_w * cl_rows) + 16, 2);
+	uint8_t   *nib  = xcalloc(QTEX_PAGES, PAGE_TEX * PAGE_TEX);
+	qtex4_tex *tab  = xcalloc((size_t) num_miptex + 1, sizeof *tab);
+	double err = 0, npx = 0;
+
+	for (int i = 0; i < num_miptex; i++) {
+		const tex_slot *s = &ts->slots[i];
+		if (!s->present)
+			continue;
+		const uint8_t *img = pages + (size_t) s->page * PAGE_TEX * PAGE_TEX;
+		uint32_t hist[256] = { 0 };
+		for (int y = 0; y < s->tile_h; y++)
+			for (int x = 0; x < s->tile_w; x++)
+				hist[img[(s->v0 + y) * PAGE_TEX + s->u0 + x]]++;
+		uint8_t  map[256];
+		uint16_t c16[16];
+		quantize16(hist, palette, map, c16);
+		uint8_t *n4 = nib + (size_t) s->page * PAGE_TEX * PAGE_TEX;
+		for (int y = 0; y < s->tile_h; y++)
+			for (int x = 0; x < s->tile_w; x++) {
+				int o = (s->v0 + y) * PAGE_TEX + s->u0 + x, pi = img[o];
+				n4[o] = map[pi];
+				uint16_t c = c16[map[pi]];
+				int dr = (palette[pi * 3] >> 3) - (c & 31);
+				int dg = (palette[pi * 3 + 1] >> 3) - ((c >> 5) & 31);
+				int db = (palette[pi * 3 + 2] >> 3) - ((c >> 10) & 31);
+				err += dr * dr + dg * dg + db * db;
+				npx++;
+			}
+		int cx = 16 * (i % QTEX4_CLUTS_PER_ROW), cy = i / QTEX4_CLUTS_PER_ROW;
+		memcpy(&clut[cy * cl_w + cx], c16, sizeof c16);
+		tab[i].clut  = gpu_clut(cx, QTEX4_CLUT_Y + cy);
+		tab[i].tpage = gpu_tpage4(QTEX4_PAGE_X0 + s->page * (PAGE_TEX / 4), 0);
+	}
+
+	FILE *f = fopen(path, "wb");
+	if (!f)
+		die("cannot write %s", path);
+	int nrects = (ncl ? 1 : 0) + ts->pages_used;
+	qtex4_header h;
+	memset(&h, 0, sizeof h);
+	memcpy(h.magic, QTEX4_MAGIC, 4);
+	h.num_rects = (uint32_t) nrects;
+	h.num_tex   = (uint32_t) num_miptex;
+	h.ofs_tex   = (uint32_t) (sizeof h + (size_t) nrects * sizeof(qtex_rect));
+	fwrite(&h, sizeof h, 1, f);
+
+	uint32_t ofs = h.ofs_tex + (uint32_t) num_miptex * (uint32_t) sizeof(qtex4_tex);
+	ofs = (ofs + 31u) & ~31u;
+	if (ncl) {
+		qtex_rect r = { 0, QTEX4_CLUT_Y, (uint16_t) cl_w, (uint16_t) cl_rows, ofs };
+		fwrite(&r, sizeof r, 1, f);
+		ofs += (uint32_t) (cl_w * cl_rows * 2);          /* 32 B per CLUT */
+	}
+	for (int p = 0; p < ts->pages_used; p++) {
+		qtex_rect r;
+		r.x = (uint16_t) (QTEX4_PAGE_X0 + p * (PAGE_TEX / 4));
+		r.y = 0;
+		r.w = PAGE_TEX / 4;
+		r.h = (uint16_t) page_h[p];
+		r.data_ofs = ofs;
+		fwrite(&r, sizeof r, 1, f);
+		ofs += (uint32_t) r.w * r.h * 2;                 /* 128 * h bytes */
+	}
+	fwrite(tab, sizeof *tab, (size_t) num_miptex, f);
+	long here = ftell(f);
+	static const uint8_t zero[32];
+	fwrite(zero, 1, (size_t) (((here + 31) & ~31L) - here), f);
+	if (ncl)
+		fwrite(clut, 2, (size_t) (cl_w * cl_rows), f);
+	for (int p = 0; p < ts->pages_used; p++) {
+		const uint8_t *n4 = nib + (size_t) p * PAGE_TEX * PAGE_TEX;
+		for (int y = 0; y < page_h[p]; y++)
+			for (int x = 0; x < PAGE_TEX; x += 4) {
+				const uint8_t *t = &n4[y * PAGE_TEX + x];
+				uint16_t w = (uint16_t) (t[0] | t[1] << 4 | t[2] << 8 | t[3] << 12);
+				fwrite(&w, 2, 1, f);
+			}
+	}
+	long total = ftell(f);
+	fclose(f);
+	printf("qcook: %s — 4bpp, %d CLUTs, file %ld B, rms error %.2f / 31 per channel\n",
+	       path, ncl, total, npx > 0 ? sqrt(err / npx / 3) : 0.0);
+	free(clut);
+	free(nib);
+	free(tab);
+}
+
+/* ------------------------------------------------------------- build -- */
+
 void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
-               const fidelity_t *fid, const char *out_path)
+               const fidelity_t *fid, const char *out_path, const char *out4_path)
 {
 	memset(ts, 0, sizeof *ts);
 	ts->slots = xcalloc((size_t) b->num_miptex, sizeof *ts->slots);
@@ -157,6 +421,9 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 		s->present = 1;
 		s->u0      = cx * 8;
 		s->v0      = cy * 8;
+		s->page    = page;
+		s->tile_w  = it->w;
+		s->tile_h  = it->h;
 		s->tpage   = gpu_tpage(px, py);
 		s->clut    = gpu_clut(QTEX_CLUT_X, QTEX_CLUT_Y);
 		/* GP0 E2h: texcoord = (texcoord & ~(mask * 8)) | ((offset & mask) * 8) */
@@ -219,6 +486,9 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 
 	printf("qcook: %s — %d tiles in %d pages, %u texel bytes, file %ld B\n",
 	       out_path, nitems, ts->pages_used, ts->bytes, total);
+
+	if (out4_path)
+		write_tex4(ts, b->num_miptex, pages, page_h, palette, out4_path);
 
 	free(pages);
 	free(items);

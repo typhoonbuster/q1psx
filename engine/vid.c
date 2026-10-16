@@ -59,6 +59,12 @@ void vid_set_bg(int r, int g, int b)
 		setRGB0(&buf[i].draw, r, g, b);
 }
 
+void vid_set_dither(int on)
+{
+	for (int i = 0; i < 2; i++)
+		buf[i].draw.dtd = on ? 1 : 0;
+}
+
 void *vid_alloc(int bytes)
 {
 	uint8_t *p = vid_frame.pkt;

@@ -63,6 +63,7 @@ typedef struct {
 	uint32_t warp_k16;       /* +176 record bound: no edge of a record whose
 	                                 nearest depth z - 1.5r >= k16 x 1.5r / 16
 	                                 can exceed it (porting-notes §19)       */
+	uint32_t slow_bytes;     /* +180 packet bytes the slow path wrote       */
 } r_state_t;
 
 extern r_state_t r_state;
@@ -80,9 +81,35 @@ void r_frame(void);
 /* Must be called after world_load(): binds the renderer to the new world. */
 void r_bind_world(void);
 
-/* The affine-error threshold of a fidelity level (0 low .. 3 ultra):
-   6, 4, 3, 2 px on screen. */
-void r_set_fidelity(int fid);
+/* Affine-warp control (docs/porting-notes.md §19.4). The subdivision's
+   threshold T (px on screen) is one value per frame, so every edge's split
+   decision stays the same on both sides whatever T a frame gets: no crack.
+     R_WARP_FIXED    T as chosen;
+     R_WARP_DYNAMIC  T rises for the next frames when a frame overruns its
+                     NTSC frame (CPU time or a missed vblank), and falls back
+                     to the chosen T once frames have room again;
+     R_WARP_BUDGET   the same against a triangle budget per frame (Quake II
+                     PS1's idea: the screen gets a fixed number of
+                     triangles, the near walls take what the rest leaves). */
+enum { R_WARP_FIXED, R_WARP_DYNAMIC, R_WARP_BUDGET, R_WARP_MODES };
+#define R_WARP_T_MAX 32       /* px: the dynamic modes stop raising T there */
+
+typedef struct {
+	int      mode;           /* R_WARP_*                                    */
+	int      t;              /* the chosen threshold, px                    */
+	int      budget;         /* R_WARP_BUDGET: triangles per frame          */
+	int      t_eff;          /* the threshold the next frame renders with   */
+	uint32_t tris;           /* the last frame's world triangles (estimate) */
+	int      calm;           /* frames in a row with room to spare          */
+} r_warp_t;
+
+extern r_warp_t r_warp;
+
+void r_set_warp(int mode, int t_px, int budget);
+
+/* After each frame: its CPU cycles (input to the end of the overlay) and
+   the vblanks it took. Adjusts T for the next frame in the dynamic modes. */
+void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl);
 
 /* asm entry point (engine/r_world.s) */
 void r_render(r_state_t *s);

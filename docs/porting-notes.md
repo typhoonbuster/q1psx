@@ -2084,9 +2084,99 @@ Release build (`PROFILE=0`); "1 vbl" means the frame fits one NTSC frame
   surfaces, whatever the kernel. At high it reaches ~500 output triangles
   per view, about 1 000 cycles each, CAREFUL included (888 k − 396 k for
   492 triangles on view 0).
-- **Open (a call to make):** how to reconcile the constant 60 fps target
-  with the warp threshold:
-  - fixed thresholds, accepting 30 fps in the heaviest views;
-  - higher thresholds;
-  - or a threshold that rises for the next frames when a frame overruns
-    and returns to the level's T when there is room.
+- **The call made (§19.4):** one threshold for every level, 8 px by
+  default, chosen in the menu, with three modes (fixed, dynamic, triangle
+  budget).
+
+### 19.4 The threshold in the menu, and three modes (2026-10-16)
+
+**Decision.** One threshold for every fidelity level, 8 px by default (already no marked warping at 6 px in low), chosen in
+the boot menu among 1, 2, 4, 6, 8, 10, 12, 14 and 16 px. Three modes,
+also in the menu:
+
+| Mode | What sets T for a frame |
+|---|---|
+| fixed | The chosen threshold. |
+| dynamic | The chosen threshold is a floor. A frame whose CPU time (input to the end of the overlay) exceeds 7/8 of an NTSC frame, or which missed a vblank, raises T by a quarter (at least 1 px) for the next frame. Each run of 4 frames below 3/4 of a frame lowers it by 1 px, back to the floor. Cap: 32 px. |
+| budget | Quake II PS1's idea, from MVG's video (§ Rendering and Optimizations, 5:55-7:58): near walls split their triangles, and the triangles off screen are clipped "to make room for new triangles". Here T rises and falls the same way against a triangle count per frame: 1000, 1500, 2000, 2500, 3000 or 4000. |
+
+**Why no cracks.**
+- T only changes between frames.
+- Every edge of a frame is judged with the same T, so both sides of a
+  shared edge still decide alike.
+- The record bound follows T: `k16 = round(16 √(560 / T))`, a table for
+  T = 1..32 in `render.c`.
+
+**Triangle count.**
+- `dr_slow_call` adds up the slow path's packet bytes (Δs6), 6 instructions
+  per slow polygon, stored once per frame in `r_state.slow_bytes`.
+- `r_frame` counts world bytes / 26 for the fast path (POLY_GT4: 52 bytes
+  for 2 triangles), plus slow bytes / 40 (POLY_GT3).
+
+**Measured, start at high, release build:**
+
+| Mode | Result |
+|---|---|
+| Fixed 8 px | 11 of 12 views in one vblank. View 0 takes 650 k; the others ≤ 475 k. Over the 128 spawn views of the 32 maps: 122 in one vblank (101 at 3 px), mean 247 k, worst e3m4 v0 at 737 k (1 159 k at 3 px). |
+| Dynamic | View 0 settles at T = 32 px, at 489 k: one vblank. The others stay at 8 px. |
+| Budget | View 0 makes ~1 560 triangles at 8 px. The 2000 budget leaves it there; 1500 or less raises T. |
+
+**Bench.** `T=<px>` (default 8) and `TEX4=1` for `scripts/bench.sh`.
+- It always renders in the fixed mode.
+- The display-list references are now `t8hi` (high, 8 px).
+- The C reference gives the same lists at 8 px (`R_SLOW_C = 1`).
+
+## §20 — 4-bit textures and dithering in the menu (2026-10-16)
+
+**The question.** Dithering would let 4-bit textures (16 colours) look
+acceptable, and they lighten the GPU:
+- half the VRAM bytes per texel;
+- twice the texels per texture-cache line (the GPU's 2 KB cache).
+
+The aim: a visual comparison, and both settings
+selectable.
+
+**Cook (`qcook --tex4`).**
+- **File:** next to each QTX3, a QTX4 (`formats/qtex.h`; disc
+  `<MAP>_<N>.TX4`).
+- **Layout:** the same tiles at the same texel positions in the same
+  pages. The world file's UVs and texture windows stay valid, so the
+  `.wld` is unchanged.
+- **Colours:** each texture gets its own 16, quantized as follows:
+  - weighted median cut on the palette colours its tile uses;
+  - then 12 Lloyd iterations;
+  - in a 3:4:2 weighted RGB metric;
+  - cut to 5 bits like the 8bpp CLUT.
+- **VRAM:**
+  - pages at x = 320 + 64 p, y = 0;
+  - one 16-entry CLUT per miptex at (16 (i mod 60), 480 + i / 60);
+  - the debug font stays at x ≥ 960.
+- **Engine side.** The loader uploads the rects and patches each `qw_tex`
+  CLUT / tpage word with the file's table.
+- **Disc:** +8.4 MB (130 MB); start at high: 168 KB against 328 KB.
+- **Cook time:** unchanged (0.5 s for 32 maps × 4 levels in parallel).
+
+**Comparison** (start at high, 8 px):
+- the 12 bench views rendered by `pktview`, with `PKTVIEW_DITHER=0` for
+  dithering off;
+- images kept out of the repository: they are drawn from Quake's data.
+
+| Measure | Result |
+|---|---|
+| Quantization error (cook) | 0.35 levels of 31 per channel, RMS |
+| Pixels that differ | ~1 % per view; mean deviation 0.04 levels |
+| Worst spot | View 10's multicoloured texture loses a few yellow and purple specks |
+| CPU cost | Identical; the display lists differ only in CLUT / tpage words |
+
+Quake's textures each use one or two 16-shade ramps of the palette, so 16
+colours per texture nearly cover them.
+
+**Not measured.** The GPU-side gain: PCSX-Redux does not time the GPU,
+so this needs real hardware.
+
+**Menu.**
+- **Textures 8 / 4 bit:** applied on load. Circle reloads the map in
+  place if the setting changed.
+- **Dithering on / off:** GP0(E1h) bit 9 through the draw environment,
+  from the next frame. Off, the GPU truncates the modulated colour to
+  5 bits per channel, so gradients band.

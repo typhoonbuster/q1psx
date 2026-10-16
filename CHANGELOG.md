@@ -896,3 +896,34 @@ followed by R0-R4.
       high 101, ultra 80 (all 128 before); the worst, e3m4's, goes from
       540 k to 842 k (low) … 1 517 k (ultra).
   - **Open:** reconciling 60 fps with the threshold (§19.3).
+- **Warp threshold in the menu, three modes** (2026-10-16). Details:
+  `docs/porting-notes.md` §19.4.
+  - One threshold for every fidelity level, 8 px by default, chosen in
+    the boot menu: 1, 2, 4, 6, 8, 10, 12, 14 or 16 px.
+  - **Modes:**
+    - **fixed**;
+    - **dynamic:** T rises when a frame overruns and comes back to the
+      chosen floor when frames have room again;
+    - **budget**, after Quake II PS1: T rises and falls against a triangle
+      count per frame, from 1000 to 4000.
+  - T only changes between frames, so there is still no crack.
+  - **Start at high, release:**
+    - fixed 8 px: 11 of 12 views in one vblank;
+    - dynamic: view 0 settles at 32 px within one vblank.
+  - **All 128 spawn views at high, fixed 8 px:** 122 in one vblank (101 at
+    3 px); worst e3m4 v0 737 k (1 159 k).
+  - **Bench:** `T=<px>`; reference `t8hi`. The C reference matches it.
+- **4-bit textures and dithering in the menu** (2026-10-16). Details:
+  `docs/porting-notes.md` §20.
+  - `qcook --tex4` writes a QTX4 next to each QTX3 (disc `<MAP>_<N>.TX4`).
+    The tiles stay in place; each texture gets its own 16 colours (median
+    cut, then Lloyd). The engine patches the CLUT / tpage words at load.
+  - **Comparison on start:**
+    - ~1 % of pixels differ from 8 bits, mean deviation 0.04 levels;
+    - only a few multicoloured textures lose specks of colour;
+    - CPU cost identical; the GPU gain needs real hardware.
+  - **Dithering on / off** in the menu (the draw environment's bit).
+  - **Tools:**
+    - `pktview` reads QTX4 and takes `PKTVIEW_DITHER=0`;
+    - `scripts/bench.sh` takes `TEX4=1`;
+    - the disc grows by 8.4 MB.

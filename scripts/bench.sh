@@ -3,8 +3,11 @@
 # Build the benchmark variant (CMake preset "bench" -> build-bench/) and run it
 # headless; print the "bench ..." lines.
 #
-# Usage:  [FID=0..3] [VIEWS=0|1] [BENCH_MAPS=0|1] [PROFILE=0|1] scripts/bench.sh [max-seconds]
+# Usage:  [FID=0..3] [T=px] [TEX4=0|1] [VIEWS=0|1] [BENCH_MAPS=0|1] [PROFILE=0|1]
+#         scripts/bench.sh [max-seconds]
 #         FID picks the fidelity level the bench loads (default 2, high).
+#         T is the affine-warp threshold, fixed (default 8 px, the game's).
+#         TEX4=1 loads the 4-bit textures.
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
@@ -24,13 +27,16 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SECS=${1:-60}
 FID=${FID:-2}
+T=${T:-8}
+TEX4=${TEX4:-0}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
-      -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_PROFILE="$PROFILE" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_PROFILE="$PROFILE" \
+      -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" >/dev/null
 
 LOG="$ROOT/build-bench/bench.log" \
@@ -46,5 +52,6 @@ grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 # output can be checked without a screen.
 make -s -C "$ROOT/tools/pktview"
 mkdir -p "$ROOT/build-bench/views"
+TEXEXT=tex; [ "$TEX4" = 1 ] && TEXEXT=tx4
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
-	"$ROOT/cooked/id1/start_$FIDNAME.tex" "$ROOT/build-bench/views/view" | sed 's/^/  /'
+	"$ROOT/cooked/id1/start_$FIDNAME.$TEXEXT" "$ROOT/build-bench/views/view" | sed 's/^/  /'
