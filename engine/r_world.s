@@ -177,8 +177,7 @@
 # (A corner the GTE saturated, |x| or |y| >= 1023, needs no test of its
 # own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
 # (t6: quad) = the corners' cache addresses; clobbers t0-t2, t7, t9, v0, v1
-# (reloaded with clut / tpage). Passes on with t0 = corner 0's colour, the
-# emit's first load (also in the branch slot that skipped CAREFUL).
+# (reloaded with clut / tpage).
 .macro CAREFUL quad, skip
 	lw      $t0, SP_SZ($t3)
 	lw      $t1, SP_SZ($t4)
@@ -216,15 +215,14 @@
 	subu    $t0, $t1, $t0                # H
 	mflo    $t9                          # 2 T2 zmin
 	addu    $v0, $v1, $t0                # W + H
-	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the skip path
-	mult    $v0, $t7                     #  reloads them) (W + H) x depth range
 	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
+	mult    $v0, $t7                     # (W + H) x depth range
 	beqz    $t0, \skip
+	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the skip path
+	mflo    $v0                          #  reloads them)
+	sltu    $v0, $t9, $v0
+	bnez    $v0, \skip
 	lw      $v0, SP_CLUT16($t8)
-	mflo    $t0
-	sltu    $t0, $t9, $t0
-	bnez    $t0, \skip
-	lw      $t0, SP_COL($t3)             # (the emit's first: c0)
 .endm
 
 	.section .bss.r_walk_spill, "aw", @nobits
@@ -803,11 +801,11 @@ dr_quad:                                 # (release: in the delay slot above)
 	addu    $t3, $t3, $t8
 	addu    $t4, $t4, $t8
 	addu    $t5, $t5, $t8
-	addu    $t6, $t6, $t8
 	beqz    $a2, dr_quad_emit
-	lw      $t0, SP_COL($t3)             # (c0, the emit's first)
+	addu    $t6, $t6, $t8
 	CAREFUL 1, dr_quad_skip
 dr_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
+	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
 	lw      $t3, SP_SXY($t3)             # xy0
 	lui     $t9, CODE_GT4 >> 16
@@ -859,11 +857,11 @@ dr_tri:                                  # t0 = the triangle's 3 vertex offsets
 	andi    $t5, $t5, 0xff
 	addu    $t3, $t3, $t8
 	addu    $t4, $t4, $t8
-	addu    $t5, $t5, $t8
 	beqz    $a2, dr_tri_emit
-	lw      $t0, SP_COL($t3)             # (c0, the emit's first)
+	addu    $t5, $t5, $t8
 	CAREFUL 0, dr_tri_skip
 dr_tri_emit:                             # POLY_GT3
+	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
 	lw      $t3, SP_SXY($t3)             # xy0
 	lui     $t9, CODE_GT3 >> 16
