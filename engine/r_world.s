@@ -416,39 +416,37 @@ r_render:
 	sw      $t1, 0($s6)                  # texture window off, first in the
 	sw      $t2, 4($s6)                  # bucket = drawn after the world (the
 	move    $fp, $s6                     # overlay and the next frame start
-	addiu   $s6, $s6, 8                  # unwrapped)
 
 	# ---- camera leaf ----------------------------------------------------
 	lw      $s1, RS_ROOT($s0)
-	nop
-fl_loop:
+	addiu   $s6, $s6, 8                  #  unwrapped)
 	andi    $t0, $s1, 1
+fl_loop:                                 # (t0 = s1 & 1: a leaf?)
 	bnez    $t0, fl_done
-	nop
-	jal     plane_dist
 	move    $a0, $s1
+	jal     plane_dist_1
+	lhu     $t0, N_PLANE3($a0)           # (plane_dist's first)
 	slti    $t0, $v0, 1                  # d <= 0 -> back child (Quake tie rule)
 	sll     $t0, $t0, 2
 	addu    $t0, $t0, $s1
 	lw      $s1, N_CHILD($t0)
 	b       fl_loop
-	nop
+	andi    $t0, $s1, 1
 fl_done:
 	addiu   $s1, $s1, -1                 # leaf pointer
 
 	lw      $t0, RS_VIEW_LEAF($s0)
 	lw      $t1, RS_FORCE_MARK($s0)
 	bne     $t0, $s1, do_mark
-	nop
+	move    $a0, $s1
 	beqz    $t1, mark_done
-	nop
+	lw      $s5, RS_VISFRAME($s0)        # (the walk's; mark_pvs sets it too)
 do_mark:
 	jal     mark_pvs
-	move    $a0, $s1
+	nop
 mark_done:
 
 	# ---- BSP walk -------------------------------------------------------
-	lw      $s5, RS_VISFRAME($s0)
 	lw      $s1, RS_ROOT($s0)
 	sw      $s0, SP_RSTATE($t8)          # (walk_done takes it back)
 	lw      $s0, SP_PLANES($t8)          # s0 = the plane table for the walk
@@ -904,6 +902,7 @@ dr_tri_emit:                             # POLY_GT3
 	addiu   $s6, $s6, 40
 dr_tri_next:
 	lw      $t0, POLY_SIZE($a3)          # the next one's (after the last: harmless)
+dr_tri_next_1:
 	bgtz    $at, dr_tri
 	addiu   $a3, $a3, POLY_SIZE
 dr_next:
@@ -978,8 +977,8 @@ dr_slow_call:
 	li      $t1, 4
 	beq     $t0, $t1, dr_quad_next
 	lw      $v1, SP_TPAGE16($t8)
-	b       dr_tri_next
-	nop
+	b       dr_tri_next_1
+	lw      $t0, POLY_SIZE($a3)          # (dr_tri_next's first)
 
 	# the transform of a record CAREFUL will not see: no SZ
 	XFORM   0, dr_xfn, dr_onen, dr_polys
@@ -1063,7 +1062,8 @@ walk_done:
 # Clobbers t0-t2, t5, v0.
 plane_dist:
 	lhu     $t0, N_PLANE3($a0)           # the node's plane, in the shared
-	lw      $t1, SP_PLANES($t8)          # table (dist in 1/8 units)
+plane_dist_1:                            # table (dist in 1/8 units; fl_loop
+	lw      $t1, SP_PLANES($t8)          # does the load in its call's slot)
 	sll     $t0, $t0, 2
 	addu    $t5, $t0, $t1
 	lbu     $t0, PN_TYPE($t5)
