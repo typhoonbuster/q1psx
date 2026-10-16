@@ -177,28 +177,29 @@
 # (A corner the GTE saturated, |x| or |y| >= 1023, needs no test of its
 # own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
 # (t6: quad) = the corners' cache addresses; clobbers t0-t2, t7, t9, v0, v1
-# (reloaded with clut / tpage).
+# (reloaded with clut / tpage). Passes on with t0 = corner 0's colour, the
+# emit's first load (also in the branch slot that skipped CAREFUL).
 .macro CAREFUL quad, skip
 	lw      $t0, SP_SZ($t3)
 	lw      $t1, SP_SZ($t4)
 	lw      $t2, SP_SZ($t5)
 .if \quad
 	lw      $t9, SP_SZ($t6)
-	lw      $v1, SP_T2($t8)
+	lw      $v1, SP_T4($t8)
 	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0, "sltiu $t7, $t0, 96"   # zmin, zmax
 .else
-	lw      $v1, SP_T2($t8)
+	lw      $v1, SP_T4($t8)
 	MINMAX3 $t0, $t1, $t2, $t7, "sltiu $t7, $t0, 96"
 .endif
 	bnez    $t7, \skip                   # a corner nearer than r_slow.c SZ_CLIP
 	subu    $t7, $t1, $t0                # depth range
-	mult    $v1, $t0                     # T2 zmin (LO holds it through the
-	lh      $t0, SP_SXY($t3)             # x       ranges: v1 takes W)
+	mult    $v1, $t0                     # 2 T2 zmin (LO holds it through the
+	lh      $t0, SP_SXY($t3)             # x          ranges: v1 takes W)
 	lh      $t1, SP_SXY($t4)
 	lh      $t2, SP_SXY($t5)
 .if \quad
 	lh      $t9, SP_SXY($t6)
-	MINMAX4 $t0, $t1, $t2, $t9, $v0, "lh $t2, SP_SXY+2($t5)"
+	MINMAX4D $t0, $t1, $t2, $t9, $v0, $v1, "lh $t2, SP_SXY+2($t5)"
 .else
 	MINMAX3 $t0, $t1, $t2, $v0
 .endif
@@ -213,17 +214,17 @@
 	MINMAX3 $t0, $t1, $t2, $v0
 .endif
 	subu    $t0, $t1, $t0                # H
-	mflo    $t9                          # T2 zmin
+	mflo    $t9                          # 2 T2 zmin
 	addu    $v0, $v1, $t0                # W + H
-	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
-	mult    $v0, $t7                     # (W + H) x depth range
-	beqz    $t0, \skip
-	sll     $t9, $t9, 1                  # 2 T2 zmin
 	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the skip path
-	mflo    $v0                          #  reloads them)
-	sltu    $v0, $t9, $v0
-	bnez    $v0, \skip
+	mult    $v0, $t7                     #  reloads them) (W + H) x depth range
+	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
+	beqz    $t0, \skip
 	lw      $v0, SP_CLUT16($t8)
+	mflo    $t0
+	sltu    $t0, $t9, $t0
+	bnez    $t0, \skip
+	lw      $t0, SP_COL($t3)             # (the emit's first: c0)
 .endm
 
 	.section .bss.r_walk_spill, "aw", @nobits
@@ -328,6 +329,8 @@ r_render:
 	lw      $t4, RS_WARP_K16($s0)
 	sw      $t3, SP_VERTPOOL($t8)
 	sw      $t2, SP_T2($t8)
+	sll     $t2, $t2, 1
+	sw      $t2, SP_T4($t8)
 	sw      $t4, SP_K16($t8)
 	or      $t1, $t1, $fp
 	lui     $t2, 0xE200
@@ -800,11 +803,11 @@ dr_quad:                                 # (release: in the delay slot above)
 	addu    $t3, $t3, $t8
 	addu    $t4, $t4, $t8
 	addu    $t5, $t5, $t8
-	beqz    $a2, dr_quad_emit
 	addu    $t6, $t6, $t8
+	beqz    $a2, dr_quad_emit
+	lw      $t0, SP_COL($t3)             # (c0, the emit's first)
 	CAREFUL 1, dr_quad_skip
 dr_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
-	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
 	lw      $t3, SP_SXY($t3)             # xy0
 	lui     $t9, CODE_GT4 >> 16
@@ -856,11 +859,11 @@ dr_tri:                                  # t0 = the triangle's 3 vertex offsets
 	andi    $t5, $t5, 0xff
 	addu    $t3, $t3, $t8
 	addu    $t4, $t4, $t8
-	beqz    $a2, dr_tri_emit
 	addu    $t5, $t5, $t8
+	beqz    $a2, dr_tri_emit
+	lw      $t0, SP_COL($t3)             # (c0, the emit's first)
 	CAREFUL 0, dr_tri_skip
 dr_tri_emit:                             # POLY_GT3
-	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
 	lw      $t3, SP_SXY($t3)             # xy0
 	lui     $t9, CODE_GT3 >> 16
