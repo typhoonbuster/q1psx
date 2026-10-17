@@ -10,6 +10,7 @@
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
+#include "vid.h"
 #include "world.h"
 
 player_t pl;
@@ -241,7 +242,7 @@ static void particles_tick(void)
 
 /* ----------------------------------------------------------- projectiles -- */
 
-enum { PJ_FREE, PJ_SPIKE, PJ_SSPIKE, PJ_GRENADE, PJ_ROCKET, PJ_EXPLOSION, PJ_BEAM };
+enum { PJ_FREE, PJ_SPIKE, PJ_SSPIKE, PJ_GRENADE, PJ_ROCKET, PJ_EXPLOSION, PJ_BEAM, PJ_BUBBLE, PJ_BUBBLER };
 
 #define MAX_PROJ 48
 
@@ -374,6 +375,92 @@ static void proj_move(proj_t *p)
 	}
 }
 
+/* ------------------------------------------------------------------ bubbles -- */
+
+/* misc.qc: a bubble (progs/s_bubble.spr) rising at 15 units/s, MOVETYPE_NOCLIP
+   (no collision, its touch never runs); every half second (bubble_bob) a
+   random drift, at the 4th think it turns to frame 1 (bubble_split: the
+   split copy keeps the place, the original goes, its water level never
+   being set for a noclip entity), at the 20th it goes. frame = the sprite
+   frame, grav_acc = cnt, frame_tick = the next think, end = the sub-unit
+   carry */
+static void bubble_spawn(const int32_t org[3], const int32_t vel[3], int frame, int cnt)
+{
+	proj_t *b = proj_new(PJ_BUBBLE);
+	if (!b)
+		return;
+	for (int k = 0; k < 3; k++) {
+		b->org[k] = org[k];
+		b->vel[k] = vel[k];
+	}
+	b->leaf       = leaf_at(b->org);
+	b->frame      = frame;
+	b->grav_acc   = cnt;
+	b->frame_tick = game_tick_count + TICKS(50);
+}
+
+static void bubble_tick(proj_t *p)
+{
+	if (game_tick_count >= p->frame_tick) {           /* bubble_bob */
+		p->frame_tick = game_tick_count + TICKS(50);
+		if (++p->grav_acc == 4) {                     /* bubble_split */
+			p->frame    = 1;
+			p->grav_acc = 10;
+		}
+		if (p->grav_acc == 20) {
+			p->type = PJ_FREE;
+			return;
+		}
+		int32_t rnd1 = p->vel[0] - 10 + (int32_t) (q_rand() % 20);
+		int32_t rnd2 = p->vel[1] - 10 + (int32_t) (q_rand() % 20);
+		int32_t rnd3 = p->vel[2] + 10 + (int32_t) (q_rand() % 10);
+		if (rnd1 > 10)  rnd1 = 5;
+		if (rnd1 < -10) rnd1 = -5;
+		if (rnd2 > 10)  rnd2 = 5;
+		if (rnd2 < -10) rnd2 = -5;
+		if (rnd3 < 10)  rnd3 = 15;
+		if (rnd3 > 30)  rnd3 = 25;
+		p->vel[0] = rnd1;
+		p->vel[1] = rnd2;
+		p->vel[2] = rnd3;
+	}
+	for (int k = 0; k < 3; k++) {                     /* SV_Physics_Noclip */
+		p->end[k] += p->vel[k] * SUB;
+		p->org[k] += p->end[k] / GAME_HZ;
+		p->end[k] -= p->end[k] / GAME_HZ * GAME_HZ;
+	}
+	p->leaf = leaf_at(p->org);
+}
+
+/* player.qc DeathBubbles: a spawner at the player, one bubble every 0.1 s
+   24 units over the player while the player's eyes are under water, roll
+   bubbles in all; grav_acc counts them */
+static void death_bubbles(int num_bubbles)
+{
+	proj_t *b = proj_new(PJ_BUBBLER);
+	if (!b)
+		return;
+	b->roll       = num_bubbles;
+	b->grav_acc   = 0;
+	b->frame_tick = game_tick_count + TICKS(10);
+}
+
+static void bubbler_tick(proj_t *p)
+{
+	if (game_tick_count < p->frame_tick)
+		return;
+	if (pl.pm.waterlevel != 3) {
+		p->type = PJ_FREE;
+		return;
+	}
+	int32_t org[3] = { pl.pm.pos[0], pl.pm.pos[1], pl.pm.pos[2] + 24 * SUB };
+	static const int32_t up[3] = { 0, 0, 15 };
+	bubble_spawn(org, up, 0, 0);
+	p->frame_tick = game_tick_count + TICKS(10);
+	if (++p->grav_acc >= p->roll)
+		p->type = PJ_FREE;
+}
+
 static void projs_tick(void)
 {
 	int top = 0;
@@ -395,6 +482,12 @@ static void projs_tick(void)
 		case PJ_BEAM:
 			if (game_tick_count >= p->die)
 				p->type = PJ_FREE;
+			break;
+		case PJ_BUBBLE:
+			bubble_tick(p);
+			break;
+		case PJ_BUBBLER:
+			bubbler_tick(p);
 			break;
 		case PJ_GRENADE:
 			if (game_tick_count >= p->die) {          /* GrenadeExplode */
@@ -424,14 +517,19 @@ static void projs_tick(void)
 
 /* ---------------------------------------------------------------- damage -- */
 
-/* PlayerDie: GibPlayer below -40, else DeathSound */
+/* PlayerDie: GibPlayer below -40, else DeathSound (under water: bubbles and
+   the drowning death) */
 static void player_die(void)
 {
-	if (pl.health < -40)
+	if (pl.health < -40) {
 		snd_start(ENT_PLAYER, CHAN_VOICE, (q_rand() & 0x7fff) < 0x4000 ? S_GIB : S_UDEATH,
 		          pl.pm.pos, 255, ATTN_NONE);
-	else
+	} else if (pl.pm.waterlevel == 3) {
+		death_bubbles(20);
+		snd_start(ENT_PLAYER, CHAN_VOICE, S_H2ODEATH, pl.pm.pos, 255, ATTN_NONE);
+	} else {
 		snd_start(ENT_PLAYER, CHAN_VOICE, S_DEATH1 + rand_rint(4) - 1, pl.pm.pos, 255, ATTN_NONE);
+	}
 	pl.dead       = 1;
 	pl.death_tick = game_tick_count;
 	pl.weaponframe = 0;
@@ -485,10 +583,22 @@ static void t_damage(int damage, const int32_t inflictor[3])
 		return;
 	}
 	/* player_pain -> player_pain1 -> PainSound: not while the weapon
-	   animates; one every half second (the water, slime and lava variants
-	   come with swimming) */
+	   animates; the water, slime and lava pains every time (the drowning
+	   is paced by WaterMove, the burns by their dmgtime); the rest one
+	   every half second */
 	if (pl.weaponframe)
 		return;
+	if (pl.pm.watertype == QW_CONTENTS_WATER && pl.pm.waterlevel == 3) {
+		death_bubbles(1);
+		snd_start(ENT_PLAYER, CHAN_VOICE, (q_rand() & 0x7fff) > 0x4000 ? S_DROWN1 : S_DROWN2,
+		          pl.pm.pos, 255, ATTN_NORM);
+		return;
+	}
+	if (pl.pm.watertype == QW_CONTENTS_SLIME || pl.pm.watertype == QW_CONTENTS_LAVA) {
+		snd_start(ENT_PLAYER, CHAN_VOICE, (q_rand() & 0x7fff) > 0x4000 ? S_LBURN1 : S_LBURN2,
+		          pl.pm.pos, 255, ATTN_NORM);
+		return;
+	}
 	if (pl.pain_finished > game_tick_count)
 		return;
 	pl.pain_finished = game_tick_count + TICKS(50);
@@ -777,6 +887,13 @@ static void w_fire_lightning(void)
 		w_set_current(w_best_weapon());
 		return;
 	}
+	if (pl.pm.waterlevel > 1) {                       /* explode if under water */
+		int cells = pl.ammo[AMMO_CELLS];
+		pl.ammo[AMMO_CELLS] = 0;
+		w_set_current(w_best_weapon());
+		t_radius_damage(pl.pm.pos, 35 * cells, 1);
+		return;
+	}
 	int32_t f[3], r[3], u[3], org[3], end[3];
 	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
 	if (pl.t_width < game_tick_count) {
@@ -947,6 +1064,8 @@ void game_spawn(void)
 	pl.punch = pl.dmg_time = pl.dmg_roll = pl.dmg_pitch = 0;
 	pl.pain_until  = 0;
 	pl.pain_finished = pl.t_width = pl.jump_flag = 0;
+	pl.air_finished = game_tick_count + TICKS(1200);  /* PutClientInServer: 12 s of air */
+	pl.dmgtime = pl.dmg = pl.inwater = pl.swim_flag = 0;
 	pl.dead        = 0;
 	pl.viewheight  = PM_EYE_HEIGHT * SUB;
 	pl.weapon_switch_tick = game_tick_count - TICKS(200);
@@ -955,6 +1074,76 @@ void game_spawn(void)
 	proj_top = 0;
 	particles_clear();
 	dl_clear();
+}
+
+/* client.qc WaterMove: 12 s of air, then the drowning (2, 4, .. 10 a
+   second); the lava's and slime's burns; the sounds in and out (the drag
+   on the velocity is pmove_step's) */
+static void player_water(void)
+{
+	int now = game_tick_count, wl = pl.pm.waterlevel, wt = pl.pm.watertype;
+	if (pl.pm.noclip || pl.health < 0)
+		return;
+	if (wl != 3) {
+		if (pl.air_finished < now)
+			snd_start(ENT_PLAYER, CHAN_VOICE, S_GASP2, pl.pm.pos, 255, ATTN_NORM);
+		else if (pl.air_finished < now + TICKS(900))
+			snd_start(ENT_PLAYER, CHAN_VOICE, S_GASP1, pl.pm.pos, 255, ATTN_NORM);
+		pl.air_finished = now + TICKS(1200);
+		pl.dmg = 2;
+	} else if (pl.air_finished < now) {               /* drown! */
+		if (pl.pain_finished < now) {
+			pl.dmg += 2;
+			if (pl.dmg > 15)
+				pl.dmg = 10;
+			t_damage(pl.dmg, 0);
+			pl.pain_finished = now + TICKS(100);
+		}
+	}
+	if (!wl) {
+		if (pl.inwater) {                             /* leave water */
+			snd_start(ENT_PLAYER, CHAN_BODY, S_OUTWATER, pl.pm.pos, 255, ATTN_NORM);
+			pl.inwater = 0;
+		}
+		return;
+	}
+	if (wt == QW_CONTENTS_LAVA) {
+		if (pl.dmgtime < now) {                       /* (no envirosuit yet) */
+			pl.dmgtime = now + TICKS(20);
+			t_damage(10 * wl, 0);
+		}
+	} else if (wt == QW_CONTENTS_SLIME) {
+		if (pl.dmgtime < now) {
+			pl.dmgtime = now + TICKS(100);
+			t_damage(4 * wl, 0);
+		}
+	}
+	if (!pl.inwater) {                                /* enter water */
+		snd_start(ENT_PLAYER, CHAN_BODY, wt == QW_CONTENTS_LAVA ? S_INLAVA : wt == QW_CONTENTS_SLIME ? S_SLIMBRN2 : S_INH2O,
+		          pl.pm.pos, 255, ATTN_NORM);
+		pl.inwater = 1;
+		pl.dmgtime = 0;
+	}
+}
+
+/* client.qc CheckWaterJump: at the surface, a wall 24 units ahead at the
+   waist and nothing at the eyes is a ledge: the push away from the wall
+   (movedir) and the jump out go through pmove_step this tick */
+static void check_water_jump(pmove_cmd_t *pc)
+{
+	int32_t sy = r_sin(pl.pm.yaw), cy = r_cos(pl.pm.yaw);
+	int32_t start[3] = { pl.pm.pos[0], pl.pm.pos[1], pl.pm.pos[2] + 8 * SUB };
+	int32_t end[3]   = { start[0] + 24 * SUB * cy / 4096, start[1] + 24 * SUB * sy / 4096, start[2] };
+	trace_t tr;
+	clip_trace(0, start, end, &tr);
+	if (tr.fraction < Q_FIX_ONE) {                    /* solid at waist */
+		start[2] = end[2] = start[2] + (PM_MAXS_Z - 8) * SUB;
+		pl.pm.movedir[0] = -50 * tr.plane_n[0] / 4096;
+		pl.pm.movedir[1] = -50 * tr.plane_n[1] / 4096;
+		clip_trace(0, start, end, &tr);
+		if (tr.fraction >= Q_FIX_ONE)                 /* open at eye level */
+			pc->waterjump = 1;
+	}
 }
 
 void game_tick(const game_cmd_t *cmd)
@@ -974,17 +1163,36 @@ void game_tick(const game_cmd_t *cmd)
 		pc.up   = 0;
 		pc.jump = cmd->jump;
 		pc.walk = cmd->walk;
+		pc.waterjump = 0;
 		if (cmd->centre)
 			pl.pm.pitch = 0;
-		if (pc.jump && pl.pm.onground)              /* PlayerJump */
-			snd_start(ENT_PLAYER, CHAN_BODY, S_PLYRJMP8, pl.pm.pos, 255, ATTN_NORM);
-		pl.jump_flag = pl.pm.vel[2];                /* PlayerPreThink */
+		/* PlayerPreThink: WaterMove, CheckWaterJump, PlayerJump's sounds (the
+		   velocities they set go through pmove_step, in Quake's order) */
+		player_water();
+		if (pl.dead)
+			goto dead;
+		if (pl.pm.waterlevel == 2)
+			check_water_jump(&pc);
+		if (pc.jump && !pc.waterjump && !pl.pm.waterjump) {
+			if (pl.pm.waterlevel >= 2) {
+				if (pl.swim_flag < game_tick_count) {   /* the swimming sound */
+					pl.swim_flag = game_tick_count + TICKS(100);
+					snd_start(ENT_PLAYER, CHAN_BODY, (q_rand() & 0x7fff) < 0x4000 ? S_WATER1 : S_WATER2,
+					          pl.pm.pos, 255, ATTN_NORM);
+				}
+			} else if (pl.pm.onground && pl.pm.jumpreleased) {
+				snd_start(ENT_PLAYER, CHAN_BODY, S_PLYRJMP8, pl.pm.pos, 255, ATTN_NORM);
+			}
+		}
+		pl.jump_flag = pl.pm.vel[2];
 		pmove_step(&pl.pm, &pc);
 		w_weapon_frame(cmd);
 		anim_tick();
-		/* PlayerPostThink: landed */
+		/* PlayerPostThink: landed (in the water: the splash) */
 		if (pl.jump_flag < -300 && pl.pm.onground && pl.health > 0) {
-			if (pl.jump_flag < -650) {
+			if (pl.pm.watertype == QW_CONTENTS_WATER) {
+				snd_start(ENT_PLAYER, CHAN_BODY, S_H2OJUMP, pl.pm.pos, 255, ATTN_NORM);
+			} else if (pl.jump_flag < -650) {
 				t_damage(5, 0);
 				snd_start(ENT_PLAYER, CHAN_VOICE, S_LAND2, pl.pm.pos, 255, ATTN_NORM);
 			} else {
@@ -992,6 +1200,7 @@ void game_tick(const game_cmd_t *cmd)
 			}
 			pl.jump_flag = 0;
 		}
+	dead:;
 	}
 	projs_tick();
 	particles_tick();
@@ -1127,6 +1336,11 @@ void game_render(void)
 		case PJ_EXPLOSION:
 			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_EXPLOD], p->frame, p->org, 0, 0, 0, 128));
 			break;
+		case PJ_BUBBLE:
+			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_BUBBLE], p->frame, p->org, 0, 0, 0, light));
+			break;
+		case PJ_BUBBLER:
+			break;
 		case PJ_BEAM: {
 			/* CL_UpdateTEnts: a bolt every 60 units (the cooked bolt is
 			   twice Quake's 30), each rolled at random */
@@ -1154,6 +1368,23 @@ void game_render(void)
 	for (int i = part_active; i; i = particles[i - 1].next) {   /* (R_DrawParticles' order) */
 		const particle_t *p = &particles[i - 1];
 		rl_add_particle(p->leaf, p->org, p->colour);
+	}
+}
+
+/* V_SetContentsColor: cshift_water, cshift_slime (solid too), cshift_lava
+   by the view point's contents, a 50 % blend (Quake's 128 / 255 for the
+   water; the slime's and lava's 150 are shown at 50 % too) */
+void game_view_tint(void)
+{
+	if (!r_state.view_leaf)
+		return;
+	const qw_leaf *l = (const qw_leaf *) (r_state.view_leaf | 0x80000000u);
+	switch (l->contents) {
+	case QW_CONTENTS_WATER: vid_tint(130, 80, 50); break;
+	case QW_CONTENTS_SOLID:
+	case QW_CONTENTS_SLIME: vid_tint(0, 25, 5);    break;
+	case QW_CONTENTS_LAVA:  vid_tint(255, 80, 0);  break;
+	default: break;
 	}
 }
 

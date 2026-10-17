@@ -64,6 +64,11 @@ typedef struct {
 	int      pain_finished;    /* tick: no pain sound before (PainSound)     */
 	int      t_width;          /* tick: the next lightning hit sound         */
 	int      jump_flag;        /* this tick's starting z velocity (landing)  */
+	int      air_finished;     /* tick: the air runs out (WaterMove)         */
+	int      dmgtime;          /* tick: the next lava / slime burn           */
+	int      dmg;              /* the drowning damage, 2 .. 15               */
+	int      inwater;          /* FL_INWATER: the entry sound played         */
+	int      swim_flag;        /* tick: the next swim sound                  */
 	int      muzzleflash;      /* EF_MUZZLEFLASH set this tick (a dlight)    */
 	int      dead, death_tick;
 	int      viewheight;       /* 1/R_POS_SUB units above the box origin     */
@@ -87,6 +92,10 @@ extern int      game_tick_count;
 void game_init(void);                          /* once at boot                */
 void game_spawn(void);                         /* at the map's spawn, all given */
 void game_tick(const game_cmd_t *cmd);         /* one 60 Hz tick              */
+
+/* after r_frame: V_SetContentsColor, the view's leaf's water / slime / lava
+   over the view (vid_tint) */
+void game_view_tint(void);
 
 /* the camera for this frame (1/R_POS_SUB units, binary degrees) */
 void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll);

@@ -153,7 +153,7 @@ static void player_cmd(game_cmd_t *cmd, int ticks)
 		if (pad.held & PAD_LEFT)  cmd->side = -PM_AXIS;
 		if (!sel) {
 			cmd->fire = (pad.held & (PAD_R2 | PAD_SQUARE)) != 0;
-			cmd->jump = (pad.pressed & (PAD_L2 | PAD_CROSS)) != 0;
+			cmd->jump = (pad.held & (PAD_L2 | PAD_CROSS)) != 0;   /* held: the swim up (PlayerJump) */
 			cmd->weapon_next = (pad.pressed & PAD_R1) != 0;
 			cmd->weapon_prev = (pad.pressed & PAD_L1) != 0;
 			cmd->walk   = (pad.held & PAD_TRIANGLE) != 0;
@@ -177,7 +177,7 @@ static void player_cmd(game_cmd_t *cmd, int ticks)
 		}
 		if (!sel) {
 			cmd->fire = (pad.held & (PAD_R2 | PAD_SQUARE)) != 0;
-			cmd->jump = (pad.pressed & (PAD_L2 | PAD_CROSS)) != 0;
+			cmd->jump = (pad.held & (PAD_L2 | PAD_CROSS)) != 0;   /* held: the swim up (PlayerJump) */
 			cmd->weapon_next = (pad.pressed & PAD_R1) != 0;
 			cmd->weapon_prev = (pad.pressed & PAD_L1) != 0;
 			cmd->centre = (pad.pressed & PAD_CIRCLE) != 0;
@@ -203,7 +203,7 @@ static void player_update(void)
 	player_cmd(&cmd, ticks);
 	for (int i = 0; i < ticks; i++) {
 		game_tick(&cmd);
-		cmd.jump = cmd.weapon_next = cmd.weapon_prev = cmd.centre = 0;   /* edges: first tick only */
+		cmd.weapon_next = cmd.weapon_prev = cmd.centre = 0;   /* edges: first tick only (jump is held) */
 		cmd.weapon_group = -1;
 	}
 	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
@@ -380,6 +380,7 @@ static void run_frame(int interactive, int dump)
 	frame_work();
 	if (game_active) {
 		uint32_t t1 = prof_now();
+		game_view_tint();                   /* the contents' colour over the view */
 		PLAY_STEP("hud");
 		hud_draw();
 		uint32_t t2 = prof_now();
@@ -707,13 +708,30 @@ static void bench_pmove_diff(void)
 	uint32_t    cyc_asm = 0, cyc_c = 0;
 	memset(&a, 0, sizeof a);
 	memset(&cmd, 0, sizeof cmd);
+	int water_runs = 0;
 	for (int t = 0; t < TICKS; t++) {
 		int phase = t % 300;
 		if (phase == 0) {
 			rng_point(a.pos, 1);
+			if ((t / 300) & 1) {                        /* every other run starts in the water */
+				int32_t p[3];
+				for (int tries = 0; tries < 400; tries++) {
+					rng_point(p, 0);
+					if (clip_contents_c(0, p) <= QW_CONTENTS_WATER && clip_contents_c(1, p) == QW_CONTENTS_EMPTY) {
+						memcpy(a.pos, p, sizeof p);
+						water_runs++;
+						break;
+					}
+				}
+			}
 			a.vel[0] = a.vel[1] = a.vel[2] = 0;
 			a.noclip = 0;
+			a.waterjump = 0;
 		}
+		if (phase == 150)
+			cmd.waterjump = 1;                          /* CheckWaterJump's push, once a run */
+		else
+			cmd.waterjump = 0;
 		a.noclip = phase >= 250 && phase < 280;
 		if (t % 30 == 0) {
 			cmd.fwd  = rng_axis();
@@ -722,7 +740,11 @@ static void bench_pmove_diff(void)
 			cmd.walk = (rng() & 7) == 0;
 			a.pitch  = rng_pm(1000);
 		}
-		cmd.jump = (rng() & 31) == 0;
+		cmd.jump = (rng() & 7) == 0 || (phase >= 200 && phase < 230);   /* held for a while: the swim up */
+		if (phase == 150) {
+			a.movedir[0] = rng_pm(50);
+			a.movedir[1] = rng_pm(50);
+		}
 		a.yaw += rng_pm(48);
 		c = a;
 		pmove_t before = a;
@@ -735,16 +757,16 @@ static void bench_pmove_diff(void)
 		cyc_c   += prof_cycles(t1, t2);
 		if (memcmp(&a, &c, sizeof a)) {
 			if (bad++ < 8)
-				printf("pmdiff MISMATCH tick %d noclip %d cmd %d %d %d %d %d\n"
-				       "  asm: pos %d %d %d vel %d %d %d g %d acc %d %d %d %d\n"
-				       "  c:   pos %d %d %d vel %d %d %d g %d acc %d %d %d %d\n",
-				       t, c.noclip, cmd.fwd, cmd.side, cmd.up, cmd.jump, cmd.walk,
+				printf("pmdiff MISMATCH tick %d noclip %d cmd %d %d %d %d %d wj %d\n"
+				       "  asm: pos %d %d %d vel %d %d %d g %d acc %d %d %d %d w %d %d %d %d\n"
+				       "  c:   pos %d %d %d vel %d %d %d g %d acc %d %d %d %d w %d %d %d %d\n",
+				       t, c.noclip, cmd.fwd, cmd.side, cmd.up, cmd.jump, cmd.walk, cmd.waterjump,
 				       (int) a.pos[0], (int) a.pos[1], (int) a.pos[2], (int) a.vel[0], (int) a.vel[1],
 				       (int) a.vel[2], a.onground, (int) a.pos_acc[0], (int) a.pos_acc[1],
-				       (int) a.pos_acc[2], (int) a.grav_acc,
+				       (int) a.pos_acc[2], (int) a.grav_acc, a.waterlevel, a.watertype, a.waterjump, a.jumpreleased,
 				       (int) c.pos[0], (int) c.pos[1], (int) c.pos[2], (int) c.vel[0], (int) c.vel[1],
 				       (int) c.vel[2], c.onground, (int) c.pos_acc[0], (int) c.pos_acc[1],
-				       (int) c.pos_acc[2], (int) c.grav_acc);
+				       (int) c.pos_acc[2], (int) c.grav_acc, c.waterlevel, c.watertype, c.waterjump, c.jumpreleased);
 			if (bad == 1) {
 				/* replay the tick and dump the scratchpad the asm works in
 				   (p_defs.inc has the map) */
@@ -759,8 +781,8 @@ static void bench_pmove_diff(void)
 			a = c;
 		}
 	}
-	printf("pmdiff ticks %d mismatches %d; cycles/tick asm %u c %u\n", TICKS, bad,
-	       (unsigned) (cyc_asm / TICKS), (unsigned) (cyc_c / TICKS));
+	printf("pmdiff ticks %d mismatches %d; cycles/tick asm %u c %u; runs started in water %d\n", TICKS, bad,
+	       (unsigned) (cyc_asm / TICKS), (unsigned) (cyc_c / TICKS), water_runs);
 
 	/* the same without clip hulls (every trace returns at once): the cost of
 	   pmove itself, without its traces */
@@ -914,8 +936,51 @@ static void bench_game(void)
 			}
 		}
 	}
-	game_active = 0;
 	hud_set_style(HUD_ORIGINAL);
+	/* the water: the player put in it (a point of the map in water, as the
+	   physics diff finds them), swimming forward with the jump held a while,
+	   the level and type logged per tick; a frame under the surface (the tint,
+	   the gun) and one at it */
+	{
+		int32_t p[3];
+		int found = 0;
+		for (int tries = 0; tries < 40000 && !found; tries++) {     /* water first, lava or slime failing that */
+			rng_point(p, 0);
+			int32_t eye[3]  = { p[0], p[1], p[2] + PM_EYE_HEIGHT * CLIP_SUB };
+			int32_t feet[3] = { p[0], p[1], p[2] + (PM_MINS_Z + 1) * CLIP_SUB };
+			int c = clip_contents_c(0, eye);                /* the eyes under: the tint; the feet too */
+			found = (c == QW_CONTENTS_WATER || (tries >= 20000 && c <= QW_CONTENTS_WATER)) &&
+			        clip_contents_c(0, feet) == c && clip_contents_c(1, p) == QW_CONTENTS_EMPTY;
+		}
+		if (found) {
+			game_spawn();
+			memcpy(pl.pm.pos, p, sizeof p);
+			pl.pm.pitch = ANG_TURN * 20 / 360;                /* looking down: swims down */
+			game_cmd_t cmd;
+			memset(&cmd, 0, sizeof cmd);
+			cmd.weapon_group = -1;
+			cmd.fwd = PM_AXIS;
+			for (int t = 0; t < 180; t++) {
+				cmd.jump = t >= 60 && t < 120;
+				game_tick(&cmd);
+				if (t % 10 == 0)
+					printf("water tick %d level %d type %d wj %d pos %d %d %d vel %d %d %d air %d\n", t,
+					       pl.pm.waterlevel, pl.pm.watertype, pl.pm.waterjump, (int) pl.pm.pos[0], (int) pl.pm.pos[1],
+					       (int) pl.pm.pos[2], (int) pl.pm.vel[0], (int) pl.pm.vel[1], (int) pl.pm.vel[2],
+					       pl.air_finished - game_tick_count);
+				if (t == 5 || t == 150) {
+					game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+					for (int i = 0; i < 2; i++)
+						run_frame(0, 0);
+					printf("D %s\n", t == 5 ? "gwater" : "gwater2");
+					run_frame(0, BENCH_DUMP);
+				}
+			}
+		} else {
+			printf("water: no point in water found on this map\n");
+		}
+	}
+	game_active = 0;
 	pad_read();                                       /* the interrupt-driven poll, seen once */
 	printf("pad poll: %s type %d held %04x sticks %d %d %d %d\n", pad.connected ? "connected" : "absent",
 	       pad.type, pad.held, pad.lx, pad.ly, pad.rx, pad.ry);

@@ -46,6 +46,7 @@ enum {
 	QGM_V_LIGHT,                 /* the 8 view models: weapon 0..7               */
 	QGM_SPIKE, QGM_S_SPIKE, QGM_GRENADE, QGM_MISSILE, QGM_BOLT,
 	QGM_S_EXPLOD,                /* the explosion sprite, 6 frames               */
+	QGM_S_BUBBLE,                /* the air bubble sprite, 2 frames              */
 	QGM_COUNT
 };
 

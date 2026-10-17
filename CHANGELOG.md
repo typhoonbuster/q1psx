@@ -1064,6 +1064,16 @@ followed by R0-R4.
   60-550 k cycles a frame on the bookkeeping alone. The bench has a
   hash-only mode (`HASHONLY=1`) and a `DLIGHT_C=1` build for the
   C-versus-asm check.
+- **The water** (2026-10-17). Details: `docs/porting-notes.md` §27. Quake's swimming in
+  `pmove_step` (SV_CheckWater, SV_WaterMove, SV_WaterJump, PlayerPreThink's
+  drag, PlayerJump held with FL_JUMPRELEASED; the C reference and the asm,
+  0 mismatches over 6 000 ticks with runs started in the water), the game's
+  WaterMove (air, drowning, lava and slime burns, the sounds in and out),
+  CheckWaterJump, the swim and splash sounds, the water pains and death,
+  the lightning's discharge, the bubbles (a new sprite in GAME.DAT: recook
+  it), the view's tint by the contents (a semi-transparent flat). The
+  jump moved to Quake's place in the tick (after the acceleration) and is
+  now a held button: the walk scenario's frames changed.
 - **Levels hanging at 99 % on DuckStation** (2026-10-17: on DuckStation, not on PCSX-Redux). Details:
   `docs/porting-notes.md` §26. Reproduced headless (DuckStation from a
   private home with its console and TTY log, the all-maps bench with the

@@ -34,6 +34,9 @@
 
 .set QW_CONTENTS_EMPTY, -1
 .set QW_CONTENTS_SOLID, -2
+.set QW_CONTENTS_WATER, -3
+.set QW_CONTENTS_SLIME, -4
+.set QW_CONTENTS_LAVA,  -5
 
 # ---- constants (engine/clip.c) ------------------------------------------------
 .set CLIP_SUB,       8
@@ -54,13 +57,14 @@
 .set PS_SFM,     0x03C     #   split fraction,
 .set PS_SF2,     0x040     #   sub-sweep f2
 
-# ---- pmove_t (56 B) / pmove_cmd_t (20 B) --------------------------------------
-.set PMT_SIZE,      56
+# ---- pmove_t (80 B) / pmove_cmd_t (24 B) --------------------------------------
+.set PMT_SIZE,      80
 .set CMD_FWD,        0
 .set CMD_SIDE,       4
 .set CMD_UP,         8
-.set CMD_JUMP,      12
+.set CMD_JUMP,      12     # held
 .set CMD_WALK,      16
+.set CMD_WATERJUMP, 20     # this tick: the game's CheckWaterJump found the ledge
 
 # ---- scratchpad, pmove.s ------------------------------------------------------
 # pmove_step copies the pmove_t here (same layout) and back at the end.
@@ -72,22 +76,30 @@
 .set PM_NOCLIP,   0x074
 .set PM_POSACC,   0x078     # int32[3]
 .set PM_GRAVACC,  0x084
-.set PS_TRB,      0x090     # trace_t for every pmove trace (44 B)
-.set PS_SY,       0x0BC     # sin / cos of the yaw
-.set PS_CY,       0x0C0
-.set PS_WISH,     0x0C4     # wishdir[3]
-.set PS_MOVE,     0x0D0     # this tick's displacement[3]
-.set PS_FLATPOS,  0x0DC     # position / velocity before the flat slide
-.set PS_FLATVEL,  0x0E8
-.set PS_AFTER,    0x0F4     # position / velocity after it
-.set PS_FOUTVEL,  0x100
-.set PS_TO,       0x10C     # end point of a vertical trace[3]
-.set PS_SVEL,     0x118     # slide_move: vel[3]
-.set PS_PRIMAL,   0x124     #   primal velocity[3]
-.set PS_CUR,      0x130     #   current position[3]
-.set PS_REM,      0x13C     #   full-tick displacement[3]
-.set PS_DISP,     0x148     #   this bump's displacement[3]
-.set PS_END,      0x154     #   its end point[3]
-.set PS_NEWVEL,   0x160     #   clipped velocity candidate[3]
-.set PS_DIR,      0x16C     #   crease direction[3]
-.set PS_PLANES,   0x178     #   planes hit: 5 x 8 B (int16 n[3] + pad)
+.set PM_WATERLEVEL, 0x088   # the water (pmove.h): 0..3
+.set PM_WATERTYPE, 0x08C    # QW_CONTENTS_* at the feet
+.set PM_WATERJUMP, 0x090    # ticks of FL_WATERJUMP left
+.set PM_JUMPREL,  0x094     # FL_JUMPRELEASED
+.set PM_MOVEDIR,  0x098     # int32[2]: the water jump's push
+.set PS_TRB,      0x0A0     # trace_t for every pmove trace (44 B)
+.set PS_SY,       0x0CC     # sin / cos of the yaw
+.set PS_CY,       0x0D0
+.set PS_WISH,     0x0D4     # wishdir[3]
+.set PS_MOVE,     0x0E0     # this tick's displacement[3]
+.set PS_FLATPOS,  0x0EC     # position / velocity before the flat slide
+.set PS_FLATVEL,  0x0F8
+.set PS_AFTER,    0x104     # position / velocity after it
+.set PS_FOUTVEL,  0x110
+.set PS_TO,       0x11C     # end point of a vertical trace[3]
+.set PS_SVEL,     0x128     # slide_move: vel[3]
+.set PS_PRIMAL,   0x134     #   primal velocity[3]
+.set PS_CUR,      0x140     #   current position[3]
+.set PS_REM,      0x14C     #   full-tick displacement[3]
+.set PS_DISP,     0x158     #   this bump's displacement[3]
+.set PS_END,      0x164     #   its end point[3]
+.set PS_NEWVEL,   0x170     #   clipped velocity candidate[3]
+.set PS_DIR,      0x17C     #   crease direction[3]
+.set PS_PLANES,   0x188     #   planes hit: 5 x 8 B (int16 n[3] + pad)
+.set PS_FWD3,     0x1B0     # water_move: the view's forward with its pitch[3]
+.set PS_WV,       0x1BC     #   wishvel[3], x64
+.set PS_PT,       0x1C8     # check_water's point[3]

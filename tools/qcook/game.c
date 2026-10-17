@@ -422,6 +422,7 @@ static const model_spec MODELS[] = {
 	{ "progs/missile.mdl",  QGM_MISSILE,  0, 0, 4, { 1, 1, 1 } },
 	{ "progs/bolt2.mdl",    QGM_BOLT,     0, 1, 4, { 2, 1, 1 } },
 	{ "progs/s_explod.spr", QGM_S_EXPLOD, 0, 1, 1, { 1, 1, 1 } },
+	{ "progs/s_bubble.spr", QGM_S_BUBBLE, 0, 1, 1, { 1, 1, 1 } },
 };
 #define NUM_MODELS (int) (sizeof MODELS / sizeof MODELS[0])
 

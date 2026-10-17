@@ -34,6 +34,13 @@
 #define STOP_V         2       /* kill sub-2 u/s creep after a clip            */
 #define NOCLIP_SPEED   4       /* units/frame in free flight (x4 unless walking) */
 
+#define PM_WATERJUMP_TICKS 120 /* FL_WATERJUMP's teleport_time: 2 s             */
+#define PM_WATERJUMP_UP    225 /* CheckWaterJump's velocity_z                   */
+#define PM_SINK             60 /* SV_WaterMove: the drift to the bottom, units/s */
+#define PM_WATER_SCALE   61167 /* 1 - 4/60 (sv_friction, a tick), 0.16          */
+/* PlayerPreThink's drag, 1 - 0.8 x waterlevel / 60, 0.16 */
+static const int32_t water_drag[4] = { 65536, 64662, 63788, 62914 };
+
 /* floor(sqrt(v)), bit by bit: no division, exact */
 static int32_t isqrt32(uint32_t v)
 {
@@ -304,6 +311,78 @@ static void accelerate(pmove_t *pm, const int32_t wishdir[3], int32_t cap, int32
 		pm->vel[k] += (wishdir[k] * accel) >> Q_FIX_SHIFT;
 }
 
+/* --------------------------------------------------------------------- water */
+
+/* SV_CheckWater: the contents at the feet (mins_z + 1), then the waist, then
+   the eyes; water, slime and lava count (Quake's `cont <= CONTENTS_WATER`,
+   the sky too). 1 when in water at all. */
+static int check_water(pmove_t *pm)
+{
+	int32_t p[3] = { pm->pos[0], pm->pos[1], pm->pos[2] + (PM_MINS_Z + 1) * CLIP_SUB };
+	pm->waterlevel = 0;
+	pm->watertype  = QW_CONTENTS_EMPTY;
+	int c = clip_contents(0, p);
+	if (c > QW_CONTENTS_WATER)
+		return 0;
+	pm->watertype  = c;
+	pm->waterlevel = 1;
+	p[2] = pm->pos[2] + (PM_MINS_Z + PM_MAXS_Z) / 2 * CLIP_SUB;
+	if (clip_contents(0, p) > QW_CONTENTS_WATER)
+		return 1;
+	pm->waterlevel = 2;
+	p[2] = pm->pos[2] + PM_EYE_HEIGHT * CLIP_SUB;
+	if (clip_contents(0, p) <= QW_CONTENTS_WATER)
+		pm->waterlevel = 3;
+	return 1;
+}
+
+/* SV_WaterMove: the wish along the view, its pitch too (fwd3), the stick's
+   full deflection sv_maxspeed; sinking at 60 units/s when idle; |wishvel|
+   capped at sv_maxspeed, then x 0.7; the friction 1 - 4/60 on the whole
+   velocity (Quake scales it by newspeed / speed, which is that); then
+   the speed gained toward the wish, 10 x wishspeed / 60 a tick, never past
+   wishspeed less the speed. wishvel is kept x64 (1/64 units/s). */
+static void water_move(pmove_t *pm, const pmove_cmd_t *cmd, const int32_t fwd3[3], const int32_t right[3])
+{
+	int32_t wv[3];
+	for (int k = 0; k < 3; k++)
+		wv[k] = ((fwd3[k] * cmd->fwd + right[k] * cmd->side) * PM_MAXSPEED) >> 13;   /* x4096 x128 -> x64 */
+	if (!cmd->fwd && !cmd->side && !cmd->up)
+		wv[2] -= PM_SINK * 64;
+	else
+		wv[2] += cmd->up * 64;
+	int32_t len = isqrt32((uint32_t) dot_ii(wv, wv));   /* |wishvel| x64 */
+	int32_t wishspeed = len > PM_MAXSPEED * 64 ? PM_MAXSPEED * 64 : len;
+	wishspeed = wishspeed * 7 / 10;
+
+	for (int k = 0; k < 3; k++)
+		pm->vel[k] = pm->vel[k] * PM_WATER_SCALE / 65536;
+	int32_t newspeed = isqrt32((uint32_t) dot_ii(pm->vel, pm->vel));
+
+	if (!wishspeed)
+		return;
+	int32_t addspeed = wishspeed - newspeed * 64;
+	if (addspeed <= 0)
+		return;
+	int32_t accel = PM_ACCEL * wishspeed / PM_HZ;
+	if (accel > addspeed)
+		accel = addspeed;
+	for (int k = 0; k < 3; k++)
+		pm->vel[k] += ((wv[k] << 12) / len * accel) >> 18;   /* the wish normalized x4096 */
+}
+
+/* SV_WaterJump: CheckWaterJump's push drives the horizontal velocity while
+   FL_WATERJUMP holds: up to 2 s, or until out of the water */
+static void water_jump(pmove_t *pm)
+{
+	if (pm->waterjump <= 1 || !pm->waterlevel)
+		pm->waterjump = 0;
+	else
+		pm->waterjump--;
+	pm->vel[0] = pm->movedir[0];
+	pm->vel[1] = pm->movedir[1];
+}
+
 /* ----------------------------------------------------------------- step-up */
 
 static int32_t horiz_dist2(const int32_t a[3], const int32_t b[3])
@@ -349,23 +428,49 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 		wishspeed = (cmd->walk ? PM_MAXSPEED / 2 : PM_MAXSPEED) * amount >> 7;
 	}
 
-	/* jump */
-	if (cmd->jump && pm->onground) {
-		pm->vel[2] = PM_JUMPSPEED;
-		pm->onground = 0;
-	}
-
-	/* friction on the ground, then acceleration */
-	if (pm->onground) {
-		ground_friction(pm);
+	/* ---- SV_ClientThink: the intent on the velocity (the water level is
+	   the last tick's, as Quake's think runs before its physics) ---- */
+	if (pm->waterjump) {
+		water_jump(pm);
+	} else if (pm->waterlevel >= 2) {
+		int32_t sp = r_sin(pm->pitch), cp = r_cos(pm->pitch);
+		int32_t fwd3[3] = { (cp * cy) >> 12, (cp * sy) >> 12, -sp };
+		water_move(pm, cmd, fwd3, right);
+	} else if (pm->onground) {
+		ground_friction(pm);                     /* friction on the ground, then acceleration */
 		accelerate(pm, wishdir, wishspeed, wishspeed);
 	} else {
 		int32_t cap = wishspeed > 30 ? 30 : wishspeed;
 		accelerate(pm, wishdir, cap, wishspeed);
 	}
 
-	/* gravity */
-	if (!pm->onground) {
+	/* ---- PlayerPreThink (client.qc): WaterMove's drag, CheckWaterJump's
+	   push (the game found the ledge), PlayerJump ---- */
+	if (pm->waterlevel && !pm->waterjump)
+		for (int k = 0; k < 3; k++)
+			pm->vel[k] = pm->vel[k] * water_drag[pm->waterlevel] / 65536;
+	if (cmd->waterjump) {
+		pm->waterjump    = PM_WATERJUMP_TICKS;
+		pm->vel[2]       = PM_WATERJUMP_UP;
+		pm->jumpreleased = 0;
+	}
+	if (cmd->jump) {
+		if (!pm->waterjump) {
+			if (pm->waterlevel >= 2) {
+				pm->vel[2] = pm->watertype == QW_CONTENTS_WATER ? 100 : pm->watertype == QW_CONTENTS_SLIME ? 80 : 50;
+			} else if (pm->onground && pm->jumpreleased) {
+				pm->jumpreleased = 0;
+				pm->onground     = 0;            /* don't stairwalk */
+				pm->vel[2]      += PM_JUMPSPEED;
+			}
+		}
+	} else {
+		pm->jumpreleased = 1;
+	}
+
+	/* ---- SV_Physics_Client: the water, gravity out of it, the move ---- */
+	int inwater = check_water(pm);
+	if (!pm->onground && !inwater && !pm->waterjump) {
 		pm->grav_acc += PM_GRAVITY;
 		pm->vel[2] -= pm->grav_acc / PM_HZ;
 		pm->grav_acc %= PM_HZ;
@@ -396,9 +501,10 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 #ifdef PM_DEBUG
 	printf(" flat: blocked %d pos %d %d %d c%d\n", blocked, pm->pos[0], pm->pos[1], pm->pos[2], clip_contents(1, pm->pos));
 #endif
-	/* step-up: if a wall stopped us and we're grounded, retry over an
-	   18-unit lip (Quake's SV_WalkMove) */
-	if ((blocked & 2) && pm->onground) {
+	/* step-up: if a wall stopped us and we're grounded (or in the water:
+	   SV_WalkMove, never while jumping out of it), retry over an 18-unit
+	   lip */
+	if ((blocked & 2) && (pm->onground || pm->waterlevel) && !pm->waterjump) {
 		pm->pos[0] = flat_pos[0];
 		pm->pos[1] = flat_pos[1];
 		pm->pos[2] = flat_pos[2];

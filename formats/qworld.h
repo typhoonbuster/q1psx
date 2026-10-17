@@ -219,6 +219,10 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
 
 #define QW_CONTENTS_EMPTY  (-1)
 #define QW_CONTENTS_SOLID  (-2)
+#define QW_CONTENTS_WATER  (-3)
+#define QW_CONTENTS_SLIME  (-4)
+#define QW_CONTENTS_LAVA   (-5)
+#define QW_CONTENTS_SKY    (-6)
 
 /* The face stream is followed by at least this many bytes of padding so the
    renderer's 3-at-a-time vertex loads never run off the end. */

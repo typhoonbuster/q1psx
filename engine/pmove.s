@@ -3,9 +3,11 @@
 # Port of engine/pmove.c, which is the specification: same algorithm, same
 # integer operations, bit-identical results (the bench build links both and
 # compares them tick by tick). Quake's player physics at a fixed 60 Hz tick:
-# categorize (on the ground?), wish direction, jump, friction, acceleration,
-# gravity, speed cap, then SV_FlyMove's slide (slide_move) and
-# SV_WalkMove's step-up over ledges of 18 units.
+# categorize (on the ground?), wish direction, then SV_ClientThink's intent
+# (SV_WaterJump / SV_WaterMove / friction and acceleration), PlayerPreThink's
+# drag, water jump and PlayerJump, SV_CheckWater, gravity, speed cap, then
+# SV_FlyMove's slide (slide_move) and SV_WalkMove's step-up over ledges of
+# 18 units.
 #
 #   pmove_step(a0 = pmove_t *, a1 = const pmove_cmd_t *)
 #
@@ -36,6 +38,13 @@
 .set STOP_V,           2
 .set NOCLIP_SPEED,     4
 .set PM_AXIS,        128     # full stick deflection (pmove.h)
+.set PM_MINS_Z,      -24     # the box: SV_CheckWater's feet / waist / eyes
+.set PM_MAXS_Z,       32
+.set PM_EYE_HEIGHT,   22
+.set PM_WATERJUMP_TICKS, 120 # FL_WATERJUMP's 2 s
+.set PM_WATERJUMP_UP, 225
+.set PM_SINK,         60     # SV_WaterMove's drift to the bottom, units/s
+.set PM_WATER_SCALE, 61167   # 1 - 4/60, 0.16
 
 # VCOPY d, s / VZERO d: int32[3] at scratchpad offsets. VCOPY clobbers t0-t2.
 .macro VCOPY d, s
@@ -94,7 +103,7 @@
 	nop
 .endm
 
-# PMCOPY to, tb, from, fb: the 14 words of a pmove_t from from(fb) to
+# PMCOPY to, tb, from, fb: the 20 words of a pmove_t from from(fb) to
 # to(tb), unrolled. Clobbers t0-t6.
 .macro PMCOPY to, tb, from, fb
 	lw      $t0,  \from+0(\fb)
@@ -125,7 +134,25 @@
 	sw      $t4, \to+44(\tb)
 	sw      $t5, \to+48(\tb)
 	sw      $t6, \to+52(\tb)
+	lw      $t0, \from+56(\fb)
+	lw      $t1, \from+60(\fb)
+	lw      $t2, \from+64(\fb)
+	lw      $t3, \from+68(\fb)
+	lw      $t4, \from+72(\fb)
+	lw      $t5, \from+76(\fb)
+	sw      $t0, \to+56(\tb)
+	sw      $t1, \to+60(\tb)
+	sw      $t2, \to+64(\tb)
+	sw      $t3, \to+68(\tb)
+	sw      $t4, \to+72(\tb)
+	sw      $t5, \to+76(\tb)
 .endm
+
+# the drag of PlayerPreThink's WaterMove by water level: 1 - 0.8 wl / 60, 0.16
+	.section .rodata.pm_water_drag, "a", @progbits
+	.align  2
+pm_water_drag:
+	.word   65536, 64662, 63788, 62914
 
 	.section .text.pmove_step, "ax", @progbits
 	.global pmove_step
@@ -304,34 +331,125 @@ ps_walk:
 	mflo    $s2
 	sra     $s2, $s2, 7                  # / PM_AXIS
 
-2:	lw      $t0, CMD_JUMP($s1)           # jump
-	lw      $t1, PM_ONGROUND($s7)
-	beqz    $t0, 3f
-	li      $t2, PM_JUMPSPEED
-	beqz    $t1, 3f
+2:	# ---- SV_ClientThink: the intent on the velocity (the water level is
+	# the last tick's, as Quake's think runs before its physics) ----------
+	lw      $t0, PM_WATERJUMP($s7)
+	lw      $t1, PM_WATERLEVEL($s7)
+	bnez    $t0, 3f                      # FL_WATERJUMP: SV_WaterJump
+	slti    $t1, $t1, 2
+	beqz    $t1, 4f                      # waterlevel >= 2: SV_WaterMove
+	lw      $t0, PM_ONGROUND($s7)        # friction on the ground, then accel
 	nop
-	sw      $t2, PM_VEL+8($s7)
-	sw      $zero, PM_ONGROUND($s7)
-
-3:	lw      $t0, PM_ONGROUND($s7)        # friction on the ground, then accel
-	nop
-	beqz    $t0, 4f
+	beqz    $t0, 5f
 	move    $a0, $s2                     # cap = wishspeed
 	jal     friction
 	nop
-	b       5f
+	b       6f
 	move    $a0, $s2
-4:	slti    $t1, $s2, 31                 # air: cap = min(wishspeed, 30)
-	bnez    $t1, 5f
+5:	slti    $t1, $s2, 31                 # air: cap = min(wishspeed, 30)
+	bnez    $t1, 6f
 	nop
 	li      $a0, 30
-5:	jal     accelerate
+6:	jal     accelerate
 	move    $a1, $s2                     # rate = wishspeed
+	b       7f
+	nop
+3:	jal     water_jump
+	nop
+	b       7f
+	nop
+4:	jal     water_move
+	nop
 
-	lw      $t0, PM_ONGROUND($s7)        # gravity
-	lw      $t1, PM_GRAVACC($s7)
+7:	# ---- PlayerPreThink (client.qc): WaterMove's drag, CheckWaterJump's
+	# push (the game found the ledge), PlayerJump ------------------------
+	lw      $t0, PM_WATERLEVEL($s7)
+	lw      $t1, PM_WATERJUMP($s7)
+	beqz    $t0, 8f
+	sll     $t0, $t0, 2
+	bnez    $t1, 8f
+	lui     $t2, %hi(pm_water_drag)
+	addu    $t2, $t2, $t0
+	lw      $t2, %lo(pm_water_drag)($t2)   # the drag of this level, 0.16
+	lw      $t0, PM_VEL+0($s7)
+	lw      $t1, PM_VEL+4($s7)
+	mult    $t0, $t2
+	lw      $t3, PM_VEL+8($s7)
+	li      $t4, 65536
+	mflo    $t0
+	nop
+	nop
+	div     $zero, $t0, $t4              # vel x drag / 65536 (truncating, as the C's /)
+	mflo    $t0
+	nop
+	nop
+	mult    $t1, $t2
+	sw      $t0, PM_VEL+0($s7)
+	mflo    $t1
+	nop
+	nop
+	div     $zero, $t1, $t4
+	mflo    $t1
+	nop
+	nop
+	mult    $t3, $t2
+	sw      $t1, PM_VEL+4($s7)
+	mflo    $t3
+	nop
+	nop
+	div     $zero, $t3, $t4
+	mflo    $t3
+	sw      $t3, PM_VEL+8($s7)
+8:	lw      $t0, CMD_WATERJUMP($s1)      # CheckWaterJump found the ledge
+	nop
+	beqz    $t0, 9f
+	li      $t1, PM_WATERJUMP_TICKS
+	li      $t2, PM_WATERJUMP_UP
+	sw      $t1, PM_WATERJUMP($s7)
+	sw      $t2, PM_VEL+8($s7)
+	sw      $zero, PM_JUMPREL($s7)
+9:	lw      $t0, CMD_JUMP($s1)           # PlayerJump (held)
+	lw      $t1, PM_WATERJUMP($s7)
+	beqz    $t0, 13f
+	lw      $t2, PM_WATERLEVEL($s7)
+	bnez    $t1, 14f                     # FL_WATERJUMP: nothing
+	slti    $t2, $t2, 2
+	bnez    $t2, 11f                     # under the water: a kick up by its type
+	lw      $t3, PM_WATERTYPE($s7)
+	li      $t4, QW_CONTENTS_WATER
+	li      $t5, 100
+	beq     $t3, $t4, 10f
+	li      $t4, QW_CONTENTS_SLIME
+	li      $t5, 80
+	beq     $t3, $t4, 10f
+	nop
+	li      $t5, 50
+10:	b       14f
+	sw      $t5, PM_VEL+8($s7)
+11:	lw      $t0, PM_ONGROUND($s7)        # on the ground, the button released since
+	lw      $t1, PM_JUMPREL($s7)
+	beqz    $t0, 14f
+	nop
+	beqz    $t1, 14f
+	lw      $t2, PM_VEL+8($s7)
+	sw      $zero, PM_JUMPREL($s7)
+	sw      $zero, PM_ONGROUND($s7)      # don't stairwalk
+	addiu   $t2, $t2, PM_JUMPSPEED
+	b       14f
+	sw      $t2, PM_VEL+8($s7)
+13:	li      $t0, 1
+	sw      $t0, PM_JUMPREL($s7)
+14:
+	# ---- SV_Physics_Client: the water, gravity out of it, the move ------
+	jal     check_water
+	nop
+	lw      $t0, PM_ONGROUND($s7)        # gravity: not on the ground, not in
+	lw      $t6, PM_WATERJUMP($s7)       # the water, not jumping out of it
 	bnez    $t0, 6f
+	lw      $t1, PM_GRAVACC($s7)
+	bnez    $v0, 6f
 	li      $t2, PM_HZ
+	bnez    $t6, 6f
 	addiu   $t1, $t1, PM_GRAVITY
 	div     $zero, $t1, $t2
 	lw      $t3, PM_VEL+8($s7)
@@ -401,13 +519,18 @@ ps_walk:
 	VCOPY   PS_AFTER, PM_POS
 	VCOPY   PS_FOUTVEL, PM_VEL
 
-	# step-up: a wall stopped us on the ground -> retry over an 18-unit lip
+	# step-up: a wall stopped us on the ground (or in the water, never while
+	# jumping out of it: SV_WalkMove) -> retry over an 18-unit lip
 	andi    $t0, $v1, 2
 	beqz    $t0, ps_cat
 	nop
 	lw      $t1, PM_ONGROUND($s7)
-	nop
+	lw      $t2, PM_WATERLEVEL($s7)
+	lw      $t3, PM_WATERJUMP($s7)
+	or      $t1, $t1, $t2
 	beqz    $t1, ps_cat
+	nop
+	bnez    $t3, ps_cat
 	nop
 	VCOPY   PM_POS, PS_FLATPOS
 	VCOPY   PM_VEL, PS_FLATVEL
@@ -498,6 +621,250 @@ ps_out:
 	lw      $s7, 32($sp)
 	jr      $ra
 	addiu   $sp, $sp, 40
+
+# =============================================================================
+# check_water: SV_CheckWater. The contents at the feet (mins_z + 1), then the
+# waist, then the eyes (hull 0); water, slime, lava and the sky count
+# (cont <= CONTENTS_WATER). PM_WATERLEVEL 0..3, PM_WATERTYPE the feet's;
+# v0 = 1 when in water at all.
+check_water:
+	addiu   $sp, $sp, -8
+	sw      $ra, 0($sp)
+	lw      $t0, PM_POS+0($s7)
+	lw      $t1, PM_POS+4($s7)
+	lw      $t2, PM_POS+8($s7)
+	sw      $t0, PS_PT+0($s7)
+	sw      $t1, PS_PT+4($s7)
+	addiu   $t2, $t2, (PM_MINS_Z + 1) * CLIP_SUB
+	sw      $t2, PS_PT+8($s7)
+	sw      $zero, PM_WATERLEVEL($s7)
+	li      $t3, QW_CONTENTS_EMPTY
+	sw      $t3, PM_WATERTYPE($s7)
+	move    $a0, $zero
+	jal     clip_contents
+	addiu   $a1, $s7, PS_PT
+	slti    $t0, $v0, QW_CONTENTS_WATER + 1   # cont <= CONTENTS_WATER?
+	beqz    $t0, 9f
+	li      $t1, 1
+	sw      $v0, PM_WATERTYPE($s7)
+	sw      $t1, PM_WATERLEVEL($s7)
+	lw      $t2, PM_POS+8($s7)
+	move    $a0, $zero
+	addiu   $t2, $t2, (PM_MINS_Z + PM_MAXS_Z) / 2 * CLIP_SUB
+	jal     clip_contents
+	sw      $t2, PS_PT+8($s7)
+	slti    $t0, $v0, QW_CONTENTS_WATER + 1
+	beqz    $t0, 8f
+	li      $t1, 2
+	sw      $t1, PM_WATERLEVEL($s7)
+	lw      $t2, PM_POS+8($s7)
+	move    $a0, $zero
+	addiu   $t2, $t2, PM_EYE_HEIGHT * CLIP_SUB
+	jal     clip_contents
+	sw      $t2, PS_PT+8($s7)
+	slti    $t0, $v0, QW_CONTENTS_WATER + 1
+	beqz    $t0, 8f
+	li      $t1, 3
+	sw      $t1, PM_WATERLEVEL($s7)
+8:	li      $v0, 1
+	b       10f
+	nop
+9:	move    $v0, $zero
+10:	lw      $ra, 0($sp)
+	nop
+	jr      $ra
+	addiu   $sp, $sp, 8
+
+# =============================================================================
+# water_move: SV_WaterMove. The wish along the view, its pitch too (the
+# forward (cp cy, cp sy, -sp) and right (sy, -cy, 0) vectors x4096), the
+# stick's full deflection sv_maxspeed: wishvel x64 = ((fwd3 f + right s) x
+# 320) >> 13; sinking at 60 units/s when idle; |wishvel| capped at 320 x 64
+# then x 0.7; the friction 1 - 4/60 on the whole velocity (truncating);
+# then the speed gained toward the wish, 10 x wishspeed / 60 a tick, never
+# past wishspeed less the speed, along the wish normalized x4096.
+# s2 = len, s3 = wishspeed, s4 = accel, s5 = cursor, s6 = the pitch's sine.
+water_move:
+	addiu   $sp, $sp, -8
+	sw      $ra, 0($sp)
+	lw      $a0, PM_PITCH($s7)
+	jal     r_sin
+	nop
+	sll     $s6, $v0, 16
+	sra     $s6, $s6, 16                 # sp
+	lw      $a0, PM_PITCH($s7)
+	jal     r_cos
+	nop
+	sll     $v0, $v0, 16
+	sra     $v0, $v0, 16                 # cp
+	lw      $t2, PS_CY($s7)
+	lw      $t3, PS_SY($s7)
+	mult    $v0, $t2
+	mflo    $t0
+	sra     $t0, $t0, 12                 # fwd3 x = cp cy >> 12
+	nop
+	mult    $v0, $t3
+	sw      $t0, PS_FWD3+0($s7)
+	mflo    $t1
+	sra     $t1, $t1, 12                 # fwd3 y = cp sy >> 12
+	subu    $t4, $zero, $s6              # fwd3 z = -sp
+	sw      $t1, PS_FWD3+4($s7)
+	sw      $t4, PS_FWD3+8($s7)
+	# wishvel x64: ((fwd3 f + right s) x 320) >> 13 per axis
+	lw      $t5, CMD_FWD($s1)
+	lw      $t6, CMD_SIDE($s1)
+	li      $t7, PM_MAXSPEED
+	mult    $t0, $t5                     # x: fwd3x f + sy s
+	mflo    $t0
+	nop
+	nop
+	mult    $t3, $t6
+	mflo    $t1
+	addu    $t0, $t0, $t1
+	nop
+	mult    $t0, $t7
+	mflo    $t0
+	sra     $t0, $t0, 13
+	sw      $t0, PS_WV+0($s7)
+	lw      $t0, PS_FWD3+4($s7)
+	subu    $t1, $zero, $t2              # right y = -cy
+	mult    $t0, $t5                     # y: fwd3y f - cy s
+	mflo    $t0
+	nop
+	nop
+	mult    $t1, $t6
+	mflo    $t1
+	addu    $t0, $t0, $t1
+	nop
+	mult    $t0, $t7
+	mflo    $t0
+	sra     $t0, $t0, 13
+	sw      $t0, PS_WV+4($s7)
+	mult    $t4, $t5                     # z: fwd3z f (right z = 0)
+	mflo    $t0
+	nop
+	nop
+	mult    $t0, $t7
+	lw      $t1, CMD_UP($s1)
+	mflo    $t0
+	sra     $t0, $t0, 13
+	or      $t3, $t5, $t6
+	or      $t3, $t3, $t1
+	bnez    $t3, 1f                      # idle: sink
+	sll     $t1, $t1, 6                  # (upmove x64)
+	li      $t1, -PM_SINK * 64
+1:	addu    $t0, $t0, $t1
+	sw      $t0, PS_WV+8($s7)
+	addiu   $t9, $s7, PS_WV
+	DOT_II  $a0, $t9, $t9
+	jal     isqrt32
+	nop
+	move    $s2, $v0                     # len = |wishvel| x64
+	li      $t0, PM_MAXSPEED * 64
+	slt     $t1, $t0, $v0
+	beqz    $t1, 2f
+	move    $s3, $v0
+	move    $s3, $t0                     # capped at sv_maxspeed
+2:	li      $t0, 7
+	mult    $s3, $t0
+	li      $t1, 10
+	mflo    $s3
+	nop
+	nop
+	div     $zero, $s3, $t1
+	mflo    $s3                          # wishspeed = x 0.7
+	# the water friction on the whole velocity: vel x 61167 / 65536, truncating
+	li      $t2, PM_WATER_SCALE
+	li      $t4, 65536
+	lw      $t0, PM_VEL+0($s7)
+	lw      $t1, PM_VEL+4($s7)
+	mult    $t0, $t2
+	lw      $t3, PM_VEL+8($s7)
+	mflo    $t0
+	nop
+	nop
+	div     $zero, $t0, $t4
+	mflo    $t0
+	nop
+	nop
+	mult    $t1, $t2
+	sw      $t0, PM_VEL+0($s7)
+	mflo    $t1
+	nop
+	nop
+	div     $zero, $t1, $t4
+	mflo    $t1
+	nop
+	nop
+	mult    $t3, $t2
+	sw      $t1, PM_VEL+4($s7)
+	mflo    $t3
+	nop
+	nop
+	div     $zero, $t3, $t4
+	mflo    $t3
+	sw      $t3, PM_VEL+8($s7)
+	addiu   $t9, $s7, PM_VEL
+	DOT_II  $a0, $t9, $t9
+	jal     isqrt32
+	nop
+	beqz    $s3, 9f                      # no wish
+	sll     $v0, $v0, 6                  # newspeed x64
+	subu    $t0, $s3, $v0                # addspeed = wishspeed - newspeed
+	blez    $t0, 9f
+	li      $t1, PM_ACCEL
+	mult    $s3, $t1
+	li      $t2, PM_HZ
+	mflo    $s4
+	nop
+	nop
+	div     $zero, $s4, $t2
+	mflo    $s4                          # accel = 10 wishspeed / 60
+	slt     $t1, $t0, $s4
+	beqz    $t1, 3f
+	nop
+	move    $s4, $t0                     # min(accel, addspeed)
+3:	addiu   $s5, $s7, PS_WV              # vel += ((wv << 12) / len x accel) >> 18
+	li      $s6, 3
+4:	lw      $t0, 0($s5)
+	nop
+	sll     $t0, $t0, 12
+	div     $zero, $t0, $s2
+	mflo    $t0                          # the wish normalized x4096
+	nop
+	nop
+	mult    $t0, $s4
+	lw      $t1, PM_VEL-PS_WV($s5)
+	mflo    $t0
+	sra     $t0, $t0, 18
+	addu    $t1, $t1, $t0
+	sw      $t1, PM_VEL-PS_WV($s5)
+	addiu   $s6, $s6, -1
+	bnez    $s6, 4b
+	addiu   $s5, $s5, 4
+9:	lw      $ra, 0($sp)
+	nop
+	jr      $ra
+	addiu   $sp, $sp, 8
+
+# =============================================================================
+# water_jump: SV_WaterJump. CheckWaterJump's push drives the horizontal
+# velocity while FL_WATERJUMP holds: up to 2 s, or until out of the water.
+water_jump:
+	lw      $t0, PM_WATERJUMP($s7)
+	lw      $t1, PM_WATERLEVEL($s7)
+	slti    $t2, $t0, 2                  # <= 1: over
+	bnez    $t2, 1f
+	addiu   $t0, $t0, -1
+	bnez    $t1, 2f
+	nop
+1:	move    $t0, $zero
+2:	sw      $t0, PM_WATERJUMP($s7)
+	lw      $t0, PM_MOVEDIR+0($s7)
+	lw      $t1, PM_MOVEDIR+4($s7)
+	sw      $t0, PM_VEL+0($s7)
+	jr      $ra
+	sw      $t1, PM_VEL+4($s7)
 
 # =============================================================================
 # categorize: trace 2 units down; on a walkable floor set onground, settle

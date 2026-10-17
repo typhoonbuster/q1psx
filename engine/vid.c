@@ -66,6 +66,24 @@ void *vid_ovl_alloc(int bytes)
 	return p;
 }
 
+/* a semi-transparent flat over the viewport, B/2 + F/2 (the GPU's blend
+   mode 0, set by a DR_TPAGE for it): the water's, slime's and lava's tints */
+void vid_tint(int r, int g, int b)
+{
+	DR_TPAGE *tp = vid_ovl_alloc(sizeof *tp);
+	if (!tp)
+		return;
+	setDrawTPage(tp, 0, 0, getTPage(0, 0, 0, 0));
+	TILE *t = vid_ovl_alloc(sizeof *t);
+	if (!t)
+		return;
+	setTile(t);
+	setSemiTrans(t, 1);
+	setXY0(t, 0, 0);
+	setWH(t, VID_W, viewport_rows);
+	setRGB0(t, r, g, b);
+}
+
 void vid_ovl_append(void *head, void *tail)
 {
 	if (ovl_tail)

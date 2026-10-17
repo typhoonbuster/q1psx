@@ -3085,3 +3085,86 @@ proves; the rest of this section is the kind of thing DuckStation
 catches and PCSX-Redux does not, so the play bench runs there before a
 disc goes to the machine (TESTING.md 9.z).
 
+## §27 — The water (2026-10-17)
+
+Next: the water's mechanics, then the progression mechanics (§28,
+to come). Ported line by line from id's code, in the engine's split:
+the server's physics (sv_user.c, sv_phys.c) in `pmove_step`, the QC's
+decisions (client.qc, player.qc, misc.qc) in the game.
+
+### 27.1 The physics (engine/pmove.c, the reference; engine/pmove.s)
+
+`pmove_step` now runs Quake's order within the tick: categorize, the
+wish; **SV_ClientThink** — `SV_WaterJump` while FL_WATERJUMP holds
+(the push's `movedir` drives the horizontal velocity, the flag up to
+2 s or until out of the water), else `SV_WaterMove` at water level 2
+or 3 (the wish along the view with its pitch, the stick's full
+deflection sv_maxspeed, sinking at 60 units/s when idle, |wishvel|
+capped at 320 then x 0.7, the friction 1 − 4/60 on the whole velocity,
+then 10 x wishspeed / 60 a tick toward the wish, never past wishspeed
+less the speed), else the ground's friction and acceleration or the
+air's; **PlayerPreThink** — WaterMove's drag `1 − 0.8 x level / 60`,
+CheckWaterJump's push (`cmd.waterjump`, the game found the ledge:
+FL_WATERJUMP for 2 s, velocity_z 225), PlayerJump (held: in the water
+a kick of 100 / 80 / 50 by its kind every tick, on the ground +270
+once per press, FL_JUMPRELEASED stopping the pogo); **SV_Physics_Client**
+— `SV_CheckWater` (the contents at the feet, the waist, the eyes, hull
+0), gravity only out of the water and not jumping out of it, the move,
+the step-up allowed in the water too (SV_WalkMove's rule). The jump
+moved after the friction and acceleration, as Quake's PreThink runs
+after its think: the jump tick now gets the ground's acceleration.
+Fixed point: wishvel x64, the drag and the friction as 0.16 factors
+truncating toward zero (a drift of one unit a second does come to a
+stop, which a rounded factor would not give), the normalized wish
+x4096. pmove_t grew to 80 bytes (level, type, the water jump's ticks,
+FL_JUMPRELEASED, movedir), the cmd's jump is held, its `waterjump` is
+the tick's push.
+
+The asm port (engine/pmove.s): `check_water`, `water_move`,
+`water_jump`, the drag table `pm_water_drag`, the PreThink block; the
+scratchpad map moved up by 16 bytes for the larger copy. The bench's
+pmove diff starts every other run in the water (7 of 20 on start) and
+pushes a water jump and a held jump into each: 6 000 ticks, 0
+mismatches (`VIEWS=0 scripts/bench.sh`).
+
+### 27.2 The game (engine/game.c)
+
+`player_water` (client.qc WaterMove): 12 s of air, the gasps, the
+drowning 2, 4, .. up to 15 then 10 a second through `pain_finished`,
+the lava's 10 x level every 0.2 s and the slime's 4 x level every
+second (no envirosuit yet), the sounds in (inh2o, inlava, slimbrn2)
+and out (outwater); `check_water_jump` (CheckWaterJump: at level 2, a
+wall 24 units ahead at the waist and nothing at the eyes; `movedir` =
+−50 x the wall's normal); the swim sound (water1 / water2) once a
+second while the jump is held under water, the jump sound only when
+the ground jump will happen; the splash (h2ojump) on landing in the
+water; the pains (player.qc PainSound: drown1 / drown2 with a bubble
+when the eyes are under, lburn1 / lburn2 in slime and lava, every
+time, the drowning being paced by WaterMove); the death (h2odeath and
+20 bubbles when the eyes are under, unless gibbed); the lightning's
+discharge (W_FireLightning: the cells to 0, a radius damage of 35 x
+cells on the player). The bubbles (misc.qc) are effects: a sprite
+(progs/s_bubble.spr, 2 frames, now in GAME.DAT) rising at 15 units/s,
+MOVETYPE_NOCLIP, every half second the random drift and the count
+(frame 1 at the 4th think — bubble_split's copy keeps the place, the
+original goes, a noclip entity's water level never being set — gone
+at the 20th); `death_bubbles` a spawner at the player, one every 0.1 s
+while the eyes are under. The view: `game_view_tint` →
+`vid_tint` (V_SetContentsColor): a semi-transparent flat over the
+viewport at the overlay chain's start, B/2 + F/2 (the GPU's mode 0:
+Quake's 128/255 for the water; the slime's and lava's 150/255 shown at
+50 % too), water (130, 80, 50), slime and solid (0, 25, 5), lava
+(255, 80, 0). Not done: the underwater warp of the screen (Quake's
+sine ripple of the view, a GPU-side effect to design), the envirosuit,
+the damage and bonus flashes (V_ParseDamage's red, the pickups'), the
+water surfaces' turbulent texture.
+
+### 27.3 Checking
+
+The physics diff (27.1). The game bench's `water tick` lines (the
+level, the type, the water jump's ticks, the position, the velocity,
+the air left per 10 ticks: a swim forward with the jump held from tick
+60 to 120 at a point of start's water) and two frames, `gwater` under
+the surface (the tint, the gun) and `gwater2`. The walk scenario's
+frames (`gwalk*`) changed with the jump's place in the tick.
+

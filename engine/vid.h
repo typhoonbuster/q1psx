@@ -64,6 +64,7 @@ void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */
    smaller), before the overlay bucket's other packets (the debug text). */
 void *vid_ovl_alloc(int bytes);                /* NULL when the arena is full */
 void  vid_ovl_append(void *head, void *tail);  /* a ready chain (terminated) at its end */
+void  vid_tint(int r, int g, int b);           /* a 50 % blend of a colour over the viewport */
 
 /* The HUD's packets keep across frames (hud.c): the last VID_HUD_BYTES of
    each buffer's arena, past what vid_alloc hands out. A buffer's block is
