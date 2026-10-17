@@ -1,18 +1,22 @@
 /*
  * pktview — render a q1psx display-list dump to PNG images (host tool).
  *
- *   pktview <bench.log> <textures.tex|.tx4> <out-prefix>
+ *   pktview <bench.log> <textures.tex|.tx4> <out-prefix> [game.dat]
  *
- * The bench build prints, for one frame per viewpoint, "D view <n>" followed
- * by the frame's packets in GPU draw order ("P <hex words>") and "E".
- * pktview rebuilds VRAM from the QTX3 or QTX4 texture file (CLUTs + pages) and
- * rasterises the textured polygons the way the PS1 GPU does — affine texture
- * mapping in screen space, no depth buffer, painter's order — into
- * <out-prefix><n>.png (320x240). It is how the renderer's output is checked
- * without a screen; it does not emulate GPU timing.
+ * The bench build prints, for one frame per scenario, "D <name>" (the views'
+ * names are "view <n>"), "V <rows>" (the 3D viewport's height) and the
+ * frame's packets in GPU draw order ("P <hex words>"), then "E". pktview
+ * rebuilds VRAM from the QTX3 or QTX4 texture file (CLUTs + pages), and from
+ * the game data's images (GAME.DAT: models' skins, the HUD) when given, and
+ * rasterises the packets the way the PS1 GPU does — affine texture mapping
+ * in screen space, no depth buffer, painter's order — into
+ * <out-prefix><name>.png (320x240, "view 0" -> view0.png). It is how the
+ * renderer's output is checked without a screen; it does not emulate GPU
+ * timing.
  *
- * Supported: POLY_FT3 / POLY_FT4 (raw or blended), flat/gouraud polygons
- * drawn as flat. Everything else (sprites, debug font) is skipped.
+ * Supported: polygons (flat / Gouraud, textured or not), sprites (SPRT),
+ * tiles (TILE), the texture page (DR_TPAGE), texture window (E2) and draw
+ * area (E3 / E4) commands. The debug font is skipped.
  *
  * PKTVIEW_BG=r,g,b sets the clear colour (default black). A colour no
  * texture produces (e.g. 255,0,255) makes every pixel no polygon covers
@@ -26,6 +30,7 @@
 #include <string.h>
 
 #include "../../formats/qtex.h"
+#include "../../formats/qgame.h"
 
 #define W 320
 #define H 240
@@ -33,6 +38,7 @@
 static uint16_t vram[512][1024];
 static uint8_t  fb[H][W][3];
 static uint8_t  bg[3];          /* clear colour (PKTVIEW_BG) */
+static int      clip_x0, clip_y0, clip_x1 = W - 1, clip_y1 = H - 1;   /* the draw area */
 
 /* ------------------------------------------------------------------ png -- */
 
@@ -151,6 +157,33 @@ static void load_tex(const char *path)
 	free(d);
 }
 
+/* the game data's images: its CLUT row and pages */
+static void load_game(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) { fprintf(stderr, "pktview: cannot open %s\n", path); exit(1); }
+	fseek(f, 0, SEEK_END);
+	long len = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	uint8_t *d = malloc((size_t) len);
+	if (fread(d, 1, (size_t) len, f) != (size_t) len) { fprintf(stderr, "pktview: short read\n"); exit(1); }
+	fclose(f);
+	qg_header h;
+	if ((size_t) len < sizeof h || memcmp(d, QGAME_MAGIC, 4)) {
+		fprintf(stderr, "pktview: %s is not a QGM1 file\n", path);
+		exit(1);
+	}
+	memcpy(&h, d, sizeof h);
+	for (uint32_t i = 0; i < h.num_rects; i++) {
+		qtex_rect r;
+		memcpy(&r, d + h.ofs_rects + i * sizeof r, sizeof r);
+		const uint16_t *px = (const uint16_t *) (d + r.data_ofs);
+		for (int y = 0; y < r.h; y++)
+			memcpy(&vram[r.y + y][r.x], px + y * r.w, r.w * 2u);
+	}
+	free(d);
+}
+
 /* --------------------------------------------------------------- raster -- */
 
 typedef struct { int x, y; int u, v; int r, g, b; } vtx;
@@ -221,10 +254,10 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 		polys_huge++;
 		return;
 	}
-	if (minx < 0) minx = 0;
-	if (miny < 0) miny = 0;
-	if (maxx > W - 1) maxx = W - 1;
-	if (maxy > H - 1) maxy = H - 1;
+	if (minx < clip_x0) minx = clip_x0;
+	if (miny < clip_y0) miny = clip_y0;
+	if (maxx > clip_x1) maxx = clip_x1;
+	if (maxy > clip_y1) maxy = clip_y1;
 
 	for (int y = miny; y <= maxy; y++)
 		for (int x = minx; x <= maxx; x++) {
@@ -280,12 +313,98 @@ static vtx mkv(uint32_t xy, uint32_t uv, uint32_t rgb)
 	return v;
 }
 
+static int cur_tpage;   /* DR_TPAGE: the page sprites and tiles use */
+
+/* one pixel, dithered and cut to 5 bits like the GPU */
+static void put_pixel(int x, int y, const uint8_t col_in[3])
+{
+	if (x < clip_x0 || x > clip_x1 || y < clip_y0 || y > clip_y1)
+		return;
+	uint8_t col[3];
+	for (int k = 0; k < 3; k++) {
+		int d = col_in[k] + (dither_on ? dither[y & 3][x & 3] : 0);
+		d = d < 0 ? 0 : d > 255 ? 255 : d;
+		col[k] = (uint8_t) (d & 0xf8);
+	}
+	memcpy(fb[y][x], col, 3);
+}
+
+/* a sprite: xy, uv | clut, [wh]; textured from the current page, modulated
+   by its colour unless raw */
+static void sprite(const uint32_t *w, int n, int sw, int sh, int raw)
+{
+	if (n < (sw ? 3 : 4))
+		return;
+	int x0 = (int16_t) (w[1] & 0xffff), y0 = (int16_t) (w[1] >> 16);
+	int u0 = (int) (w[2] & 255), v0 = (int) ((w[2] >> 8) & 255), clut = (int) (w[2] >> 16);
+	if (!sw) { sw = (int) (w[3] & 0xffff); sh = (int) (w[3] >> 16); }
+	int rgb[3] = { (int) (w[0] & 255), (int) ((w[0] >> 8) & 255), (int) ((w[0] >> 16) & 255) };
+	for (int y = 0; y < sh; y++)
+		for (int x = 0; x < sw; x++) {
+			uint8_t col[3];
+			int op;
+			texel(cur_tpage, clut, u0 + x, v0 + y, col, &op);
+			if (!op)
+				continue;
+			if (raw) {
+				if (x0 + x >= clip_x0 && x0 + x <= clip_x1 && y0 + y >= clip_y0 && y0 + y <= clip_y1)
+					memcpy(fb[y0 + y][x0 + x], col, 3);
+				continue;
+			}
+			for (int k = 0; k < 3; k++) {
+				int m = col[k] * rgb[k] >> 7;
+				col[k] = (uint8_t) (m > 255 ? 255 : m);
+			}
+			put_pixel(x0 + x, y0 + y, col);
+		}
+	polys_drawn++;
+}
+
+/* a tile: a flat rectangle */
+static void tile(const uint32_t *w, int n, int tw, int th)
+{
+	if (n < (tw ? 2 : 3))
+		return;
+	int x0 = (int16_t) (w[1] & 0xffff), y0 = (int16_t) (w[1] >> 16);
+	if (!tw) { tw = (int) (w[2] & 0xffff); th = (int) (w[2] >> 16); }
+	uint8_t col[3] = { (uint8_t) (w[0] & 255), (uint8_t) ((w[0] >> 8) & 255), (uint8_t) ((w[0] >> 16) & 255) };
+	for (int y = 0; y < th; y++)
+		for (int x = 0; x < tw; x++)
+			if (x0 + x >= clip_x0 && x0 + x <= clip_x1 && y0 + y >= clip_y0 && y0 + y <= clip_y1)
+				memcpy(fb[y0 + y][x0 + x], col, 3);
+	polys_drawn++;
+}
+
 static void packet(const uint32_t *w, int n)
 {
 	uint32_t code = w[0] >> 24;
 
-	if (code == 0xe2) {                  /* texture window */
-		twin = w[0] & 0xfffff;
+	if ((code & 0xf8) == 0xe0) {         /* environment commands, one per word */
+		for (int i = 0; i < n; i++) {
+			uint32_t c = w[i] >> 24;
+			if (c == 0xe2) {             /* texture window */
+				twin = w[i] & 0xfffff;
+			} else if (c == 0xe1) {      /* draw mode: the texture page */
+				cur_tpage = (int) (w[i] & 0x1ff);
+			} else if (c == 0xe3) {      /* draw area, top left */
+				clip_x0 = (int) (w[i] & 1023);
+				clip_y0 = (int) ((w[i] >> 10) & 511) % H;   /* (the second buffer: y 240..479) */
+			} else if (c == 0xe4) {      /* draw area, bottom right */
+				clip_x1 = (int) (w[i] & 1023);
+				clip_y1 = (int) ((w[i] >> 10) & 511) % H;
+				if (clip_x1 > W - 1) clip_x1 = W - 1;
+				if (clip_y1 > H - 1) clip_y1 = H - 1;
+			}
+		}
+		return;
+	}
+	if ((code & 0xe0) == 0x60) {         /* rectangles: 011 ss t a r */
+		int size = (code >> 3) & 3, tex = code & 4, raw = code & 1;
+		int fixed = size == 1 ? 1 : size == 2 ? 8 : size == 3 ? 16 : 0;
+		if (tex)
+			sprite(w, n, fixed, fixed, raw);
+		else
+			tile(w, n, fixed, fixed);
 		return;
 	}
 
@@ -319,12 +438,14 @@ static void packet(const uint32_t *w, int n)
 
 int main(int argc, char **argv)
 {
-	if (argc != 4) {
-		fprintf(stderr, "usage: pktview <bench.log> <textures.tex> <out-prefix>\n");
+	if (argc != 4 && argc != 5) {
+		fprintf(stderr, "usage: pktview <bench.log> <textures.tex> <out-prefix> [game.dat]\n");
 		return 2;
 	}
 	crc_init();
 	load_tex(argv[2]);
+	if (argc == 5)
+		load_game(argv[4]);
 	const char *dis = getenv("PKTVIEW_DITHER");
 	if (dis && dis[0] == '0')
 		dither_on = 0;
@@ -340,16 +461,31 @@ int main(int argc, char **argv)
 	if (!log) { fprintf(stderr, "pktview: cannot open %s\n", argv[1]); return 1; }
 
 	static char line[1 << 16];
-	int view = -1;
+	static char name[64];
+	int view = 0;
 	while (fgets(line, sizeof line, log)) {
-		if (!strncmp(line, "D view ", 7)) {
-			view = atoi(line + 7);
+		if (!strncmp(line, "D ", 2)) {
+			/* the frame's name, without spaces ("view 0" -> "view0") */
+			int k = 0;
+			for (const char *p = line + 2; *p && *p != '\n' && k < 63; p++)
+				if (*p != ' ')
+					name[k++] = *p;
+			name[k] = 0;
+			view = 1;
 			for (int y = 0; y < H; y++)
 				for (int x = 0; x < W; x++)
 					memcpy(fb[y][x], bg, 3);
 			polys_drawn = polys_huge = 0;
 			twin = 0;
-		} else if (view >= 0 && line[0] == 'P' && line[1] == ' ') {
+			cur_tpage = 0;
+			clip_x0 = clip_y0 = 0;
+			clip_x1 = W - 1;
+			clip_y1 = H - 1;
+		} else if (view && !strncmp(line, "V ", 2)) {
+			int rows = atoi(line + 2);        /* the 3D viewport: the draw area */
+			if (rows > 0 && rows <= H)
+				clip_y1 = rows - 1;
+		} else if (view && line[0] == 'P' && line[1] == ' ') {
 			uint32_t w[16];
 			int n = 0;
 			char *s = line + 1;
@@ -361,13 +497,13 @@ int main(int argc, char **argv)
 				s = e;
 			}
 			packet(w, n);
-		} else if (view >= 0 && line[0] == 'E') {
+		} else if (view && line[0] == 'E') {
 			char path[512];
-			snprintf(path, sizeof path, "%s%d.png", argv[3], view);
+			snprintf(path, sizeof path, "%s%s.png", argv[3], name);
 			write_png(path);
-			printf("pktview: %s — %d polygons (%d too large for the GPU)\n",
+			printf("pktview: %s — %d primitives (%d too large for the GPU)\n",
 			       path, polys_drawn, polys_huge);
-			view = -1;
+			view = 0;
 		}
 	}
 	fclose(log);

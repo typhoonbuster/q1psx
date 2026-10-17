@@ -31,7 +31,6 @@
    player stuck at the top). Instead every plane distance is interpolated
    from the sweep's start at a 16-bit fraction f of the whole sweep:
    t(f) = ds + (dd * f >> 16), ds = n.start - dist, dd = n.(end - start). */
-#define PLANE(cn) ((const qw_plane *) ((const int32_t *) world.planes + (cn)->plane3))
 #define F_SHIFT   16
 #define F_ONE     (1 << F_SHIFT)
 #define MAX_SPLIT QW_MAX_SPLIT   /* pending splits <= clip tree depth (cook-checked) */
@@ -71,26 +70,57 @@ static int32_t split_frac(int32_t num, int32_t den)
 static const int32_t *tr_start;
 static int32_t        tr_delta[3];
 
-static int hull_contents(int num, const int32_t p[3])
+/* A node of the hull being traced: hulls 1 and 2 are clipnodes (num = the
+   index, < 0 = contents); hull 0, the point hull, is the world's own BSP
+   (num = the node's address, a child leaf becomes its contents). The
+   planes come from the one table either way. */
+typedef intptr_t hnum;
+
+static const qw_plane *plane_of(int hull, hnum num)
+{
+	uint32_t p3 = hull ? world.clipnodes[num].plane3 : ((const qw_node *) num)->plane3;
+	return (const qw_plane *) ((const int32_t *) world.planes + p3);
+}
+
+static hnum child_of(int hull, hnum num, int side)
+{
+	if (hull)
+		return world.clipnodes[num].child[side];
+	uintptr_t c = ((const qw_node *) num)->child[side];
+	if (c & 1)
+		return ((const qw_leaf *) (c - 1))->contents;
+	return (hnum) c;
+}
+
+static hnum root_of(int hull)
+{
+	if (hull)
+		return hull == 2 ? world.hull2_root : world.hull1_root;
+#ifdef __mips__
+	return (hnum) ((uintptr_t) world.root & 0x00ffffffu);   /* KUSEG, like its children */
+#else
+	return (hnum) world.root;
+#endif
+}
+
+static int hull_contents(int hull, hnum num, const int32_t p[3])
 {
 	while (num >= 0) {
-		const qw_clipnode *cn = &world.clipnodes[num];
-		const qw_plane    *pl = PLANE(cn);
-		num = cn->child[dot_n(pl, p) - pl->dist < 0 ? 1 : 0];
+		const qw_plane *pl = plane_of(hull, num);
+		num = child_of(hull, num, dot_n(pl, p) - pl->dist < 0 ? 1 : 0);
 	}
-	return num;
+	return (int) num;
 }
 
 /* hull_contents() of the sweep's point at fraction f */
-static int hull_contents_at(int num, int32_t f)
+static int hull_contents_at(int hull, hnum num, int32_t f)
 {
 	while (num >= 0) {
-		const qw_clipnode *cn = &world.clipnodes[num];
-		const qw_plane    *pl = PLANE(cn);
+		const qw_plane *pl = plane_of(hull, num);
 		int32_t t = dist_at(dot_n(pl, tr_start) - pl->dist, dot_n(pl, tr_delta), f);
-		num = cn->child[t < 0 ? 1 : 0];
+		num = child_of(hull, num, t < 0 ? 1 : 0);
 	}
-	return num;
+	return (int) num;
 }
 
 /* endpos = the sweep's point at fraction f, each axis rounded toward the
@@ -120,20 +150,20 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 	for (int i = 0; i < 3; i++)
 		tr->endpos[i] = end[i];
 
-	if (!world.clipnodes) {
+	if (!world.clipnodes || !world.root) {
 		tr->allsolid = 0;
 		tr->inopen = 1;
 		return tr->fraction;
 	}
 
-	int root = hull == 2 ? world.hull2_root : world.hull1_root;
+	hnum root = root_of(hull);
 	tr_start = start;
 	for (int i = 0; i < 3; i++)
 		tr_delta[i] = end[i] - start[i];
 
-	struct { int32_t num, side, f1, fm, f2; } split[MAX_SPLIT];
+	struct { hnum num; int32_t side, f1, fm, f2; } split[MAX_SPLIT];
 	int     nsplit = 0;
-	int     num = root;
+	hnum    num = root;
 	int32_t f1 = 0, f2 = F_ONE;
 
 	for (;;) {
@@ -152,11 +182,11 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 
 			/* the near side of the innermost split was open: its far side */
 			nsplit--;
-			const qw_clipnode *cn   = &world.clipnodes[split[nsplit].num];
-			int                side = split[nsplit].side;
-			int32_t            fm   = split[nsplit].fm;
-			if (hull_contents_at(cn->child[side ^ 1], fm) != QW_CONTENTS_SOLID) {
-				num = cn->child[side ^ 1];
+			hnum    sn   = split[nsplit].num;
+			int     side = split[nsplit].side;
+			int32_t fm   = split[nsplit].fm;
+			if (hull_contents_at(hull, child_of(hull, sn, side ^ 1), fm) != QW_CONTENTS_SOLID) {
+				num = child_of(hull, sn, side ^ 1);
 				f1  = fm;
 				f2  = split[nsplit].f2;
 				continue;
@@ -165,7 +195,7 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 				break;                       /* never got out of solid */
 
 			/* the far side is solid: this split point is the impact */
-			const qw_plane *pl = PLANE(cn);
+			const qw_plane *pl = plane_of(hull, sn);
 			if (!side) {
 				for (int i = 0; i < 3; i++) tr->plane_n[i] = pl->n[i];
 				tr->plane_d = pl->dist;
@@ -179,7 +209,7 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 			   time like Quake; the sweep's start is the last resort */
 			int32_t step = (uint32_t) (split[nsplit].f2 - split[nsplit].f1) / 10 + 1;
 			set_endpos(tr, fm);
-			for (int guard = 0; hull_contents(root, tr->endpos) == QW_CONTENTS_SOLID; guard++) {
+			for (int guard = 0; hull_contents(hull, root, tr->endpos) == QW_CONTENTS_SOLID; guard++) {
 				fm = guard < 16 && fm > step ? fm - step : 0;
 				set_endpos(tr, fm);
 				if (!fm)
@@ -189,19 +219,18 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 			break;
 		}
 
-		const qw_clipnode *cn = &world.clipnodes[num];
-		const qw_plane    *pl = PLANE(cn);
+		const qw_plane *pl = plane_of(hull, num);
 		int32_t ds = dot_n(pl, start) - pl->dist;
 		int32_t dd = dot_n(pl, tr_delta);
 		int32_t t1 = dist_at(ds, dd, f1);
 		int32_t t2 = dist_at(ds, dd, f2);
 
 		if (t1 >= 0 && t2 >= 0) {
-			num = cn->child[0];
+			num = child_of(hull, num, 0);
 			continue;
 		}
 		if (t1 < 0 && t2 < 0) {
-			num = cn->child[1];
+			num = child_of(hull, num, 1);
 			continue;
 		}
 
@@ -220,7 +249,7 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 		split[nsplit].fm   = fm;
 		split[nsplit].f2   = f2;
 		nsplit++;
-		num = cn->child[side];
+		num = child_of(hull, num, side);
 		f2  = fm;
 	}
 	return tr->fraction;
@@ -228,7 +257,7 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 
 int clip_contents(int hull, const int32_t p[3])
 {
-	if (!world.clipnodes)
+	if (!world.clipnodes || !world.root)
 		return QW_CONTENTS_EMPTY;
-	return hull_contents(hull == 2 ? world.hull2_root : world.hull1_root, p);
+	return hull_contents(hull, root_of(hull), p);
 }

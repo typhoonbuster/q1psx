@@ -19,7 +19,9 @@
 #define VID_W 320
 #define VID_H 240
 
-/* Ordering table buckets: the highest index is drawn first. */
+/* Ordering table buckets: the highest index is drawn first. The world's
+   bucket holds the whole scene in the painter's order the BSP walk gives
+   (models and particles included, engine/rlist.h). */
 #define VID_OT_LEN     8
 #define OT_SKY         7
 #define OT_WORLD       4
@@ -49,9 +51,19 @@ extern vid_stats_t vid_stats;
 void  vid_init(void);
 void  vid_set_bg(int r, int g, int b);
 void  vid_set_dither(int on);                  /* GP0(E1h) bit 9, from the next frame */
+void  vid_set_viewport(int rows);              /* the 3D view's draw area: 240 rows, or
+                                                  192 above the original status bar;
+                                                  from the next frame */
+int   vid_viewport_rows(void);
 void *vid_alloc(int bytes);                    /* NULL when the arena is full */
 void  vid_link(int bucket, void *packet);
 void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */
+
+/* The overlay chain: 2D packets drawn in the order they are added, over the
+   whole screen (the chain opens with a DR_AREA when the viewport is
+   smaller), before the overlay bucket's other packets (the debug text). */
+void *vid_ovl_alloc(int bytes);                /* NULL when the arena is full */
+
 void  vid_flip(void);
 void  vid_dump(int hash_only);                  /* display list -> stdout (P lines,
                                                    then its hash; or the hash only) */

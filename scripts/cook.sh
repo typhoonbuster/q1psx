@@ -17,6 +17,8 @@
 #   cooked/id1/<map>_<fidelity>.tex   QTX3 texture pages  -> disc <MAP>_<N>.TEX
 #   cooked/id1/<map>_<fidelity>.tx4   QTX4, same in 4bpp  -> disc <MAP>_<N>.TX4
 #   cooked/id1/<map>_<fidelity>.wld   QWV2 world          -> disc <MAP>_<N>.WLD
+# and once, the game data (weapon models, projectiles, HUD; formats/qgame.h):
+#   cooked/id1/game.dat               QGM1                -> disc GAME.DAT
 # Jobs run in parallel; each one's log is shown only if it fails.
 
 set -euo pipefail
@@ -45,9 +47,11 @@ make -s -C tools/qcook
 # start clean: the disc carries every cooked file, so a map cooked earlier
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
-rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld
+rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/game.dat
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
+tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game.dat > "$LOGS/game.log" 2>&1 \
+	|| { echo "cook FAILED: game data"; cat "$LOGS/game.log"; exit 1; }
 
 cook_one() {   # map fidelity
 	local pak=$QUAKE_PAK0

@@ -4,8 +4,10 @@
 #include <psxgte.h>
 #include <inline_c.h>
 
+#include "gdata.h"
 #include "prof.h"
 #include "render.h"
+#include "rlist.h"
 #include "vid.h"
 #include "world.h"
 
@@ -37,6 +39,10 @@ _Static_assert(offsetof(r_state_t, planes)       == 168, "r_state layout");
 _Static_assert(offsetof(r_state_t, warp_t2)      == 172, "r_state layout");
 _Static_assert(offsetof(r_state_t, warp_k16)     == 176, "r_state layout");
 _Static_assert(offsetof(r_state_t, slow_bytes)   == 180, "r_state layout");
+_Static_assert(offsetof(r_state_t, items)        == 184, "r_state layout");
+_Static_assert(offsetof(r_state_t, viewmodel)    == 196, "r_state layout");
+_Static_assert(offsetof(r_state_t, vh2)          == 204, "r_state layout");
+_Static_assert(offsetof(qw_leaf, light)          == 27,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, marks)          == 16,  "qw_leaf layout");
@@ -87,6 +93,31 @@ int16_t r_sin(int a)
 int16_t r_cos(int a)
 {
 	return r_sin(a + 1024);
+}
+
+/* atan2 in binary degrees: an octant reduction, then a 65-entry table of
+   atan(t) for t = 0..1 with linear interpolation (worst error ~1 bdeg) */
+int r_atan2(int32_t y, int32_t x)
+{
+	static const uint16_t atab[65] = {   /* atan(i / 64) in binary degrees */
+		  0,  10,  20,  31,  41,  51,  61,  71,  81,  91, 101, 111, 121, 131, 140, 150,
+		160, 169, 179, 188, 197, 207, 216, 225, 234, 243, 252, 260, 269, 277, 286, 294,
+		302, 310, 318, 326, 334, 342, 349, 357, 364, 371, 379, 386, 393, 399, 406, 413,
+		419, 426, 432, 439, 445, 451, 457, 463, 469, 474, 480, 486, 491, 496, 502, 507,
+		512,
+	};
+	if (!x && !y)
+		return 0;
+	int32_t ax = x < 0 ? -x : x, ay = y < 0 ? -y : y;
+	int32_t num = ay < ax ? ay : ax, den = ay < ax ? ax : ay;
+	while (den > 0x7fff) { num >>= 1; den >>= 1; }
+	int32_t t = den ? (num << 12) / den : 0;           /* 0..4096 */
+	int32_t i = t >> 6, f = t & 63;
+	int32_t a = atab[i] + (((int32_t) atab[i + 1 < 65 ? i + 1 : 64] - atab[i]) * f >> 6);
+	if (ay >= ax) a = 1024 - a;                        /* octant */
+	if (x < 0) a = 2048 - a;
+	if (y < 0) a = -a;
+	return a & 4095;
 }
 
 /* ------------------------------------------------------------------ warp -- */
@@ -161,14 +192,31 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl)
 
 /* ------------------------------------------------------------------ view -- */
 
+static int viewport_rows = VID_H;
+
+void r_set_viewport(int rows)
+{
+	viewport_rows = rows;
+	gte_SetGeomOffset(VID_W / 2, rows / 2);
+	r_state.ofy = rows / 2;
+	r_state.vh2 = rows;
+}
+
+int r_viewport_rows(void)
+{
+	return viewport_rows;
+}
+
 void r_init(void)
 {
 	build_sintab();
 	InitGeom();
-	gte_SetGeomOffset(VID_W / 2, VID_H / 2);
 	gte_SetGeomScreen(R_SCREEN_H);
 	memset(&r_state, 0, sizeof r_state);
 	r_state.sz_fast = R_SZ_FAST;
+	r_state.items   = (uint32_t) r_items;
+	r_state.lists   = (uint32_t) r_lists;
+	r_set_viewport(VID_H);
 }
 
 void r_bind_world(void)
@@ -183,6 +231,7 @@ void r_bind_world(void)
 	r_state.vertpool      = (uint32_t) world.verts;
 	r_state.nodes         = (uint32_t) world.nodes;
 	r_state.planes        = (uint32_t) world.planes;
+	r_state.rgb           = (uint32_t) gdata.rgb;
 	r_state.framecount    = 1;
 	r_state.visframe      = 1;
 	r_state.view_leaf     = 0;
@@ -190,16 +239,19 @@ void r_bind_world(void)
 	bound = 1;
 }
 
-void r_set_view(const int32_t pos[3], int yaw, int pitch)
+void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 {
 	int32_t sy = r_sin(yaw), cy = r_cos(yaw), sp = r_sin(pitch), cp = r_cos(pitch);
+	int32_t sr = r_sin(roll), cr = r_cos(roll);
 
-	/* rows: right (sy,-cy,0), down = -up (-sp*cy,-sp*sy,-cp), forward
-	   (cp*cy,cp*sy,-sp); x4096 * 1.5 */
+	/* rows: right, down = -up, forward of Quake's AngleVectors (pitch, yaw,
+	   roll); x4096 * 1.5. Without roll: right (sy,-cy,0), down
+	   (-sp*cy,-sp*sy,-cp), forward (cp*cy,cp*sy,-sp). */
+	int32_t sp_cy = (sp * cy) >> 12, sp_sy = (sp * sy) >> 12;
 	int32_t m[3][3] = {
-		{  sy,             -cy,             0   },
-		{ -(sp * cy) >> 12, -(sp * sy) >> 12, -cp },
-		{  (cp * cy) >> 12,  (cp * sy) >> 12, -sp },
+		{ (-sr * sp_cy >> 12) + (cr * sy >> 12), (-sr * sp_sy >> 12) - (cr * cy >> 12), -sr * cp >> 12 },
+		{ -((cr * sp_cy >> 12) + (sr * sy >> 12)), -((cr * sp_sy >> 12) - (sr * cy >> 12)), -(cr * cp >> 12) },
+		{ (cp * cy) >> 12,  (cp * sy) >> 12, -sp },
 	};
 	int16_t r[9];
 	for (int i = 0; i < 9; i++)

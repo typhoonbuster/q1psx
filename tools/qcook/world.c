@@ -839,6 +839,10 @@ static void tj_repair(const bsp_t *b)
 	free(tj_head);
 }
 
+/* each face's vertex light, summed over its cooked vertices (the leaf light) */
+static uint32_t *face_lsum;
+static uint32_t *face_lcnt;
+
 /* Add a face's (repaired) pieces to record r (flushed whenever it fills
    up): UVs from the cell's corner, light from the face's lightmap. */
 static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t *r)
@@ -874,6 +878,8 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 			uv[k][0] = (p->pl.v[k].s - p->s_off) * s->rep_w / m->w;
 			uv[k][1] = (p->pl.v[k].t - p->t_off) * s->rep_h / m->h;
 			light[k] = face_light_at(&fl, p->pl.v[k].s, p->pl.v[k].t);
+			face_lsum[f] += light[k];
+			face_lcnt[f]++;
 		}
 		rec_add_piece(o, r, &p->pl, (const double (*)[2]) uv, light, s, f);
 	}
@@ -979,6 +985,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	/* every drawn face cut into pieces, T-junctions repaired */
 	pc_first = xmalloc((size_t) b->num_faces * sizeof *pc_first);
 	pc_count = xmalloc((size_t) b->num_faces * sizeof *pc_count);
+	face_lsum = xcalloc((size_t) b->num_faces, sizeof *face_lsum);
+	face_lcnt = xcalloc((size_t) b->num_faces, sizeof *face_lcnt);
 	for (int f = 0; f < b->num_faces; f++) {   /* the world model's faces only */
 		pc_count[f] = 0;
 		if (f >= wm->firstface && f < wm->firstface + wm->numfaces)
@@ -1171,8 +1179,28 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	free(pair_next);
 	nodes[b->num_nodes].faces[0] = (uint32_t) o.stream.len;   /* sentinel: end of the stream */
 
-	/* leaves */
+	/* leaves. Their light (models in the leaf are lit with it): the average
+	   vertex light of the leaf's faces; a leaf without lit faces (open air)
+	   takes its nearest ancestor's subtree average. */
 	qw_leaf *leaves = xcalloc((size_t) b->num_leaves, sizeof *leaves);
+	uint32_t *lsum = xcalloc((size_t) b->num_leaves, 4), *lcnt = xcalloc((size_t) b->num_leaves, 4);
+	uint32_t *nsum = xcalloc((size_t) b->num_nodes, 4), *ncnt = xcalloc((size_t) b->num_nodes, 4);
+	for (int i = 0; i < b->num_leaves; i++) {
+		const bsp_leaf *bl = &b->leaves[i];
+		for (int m = 0; m < bl->nummarks; m++) {
+			int f = b->marks[bl->firstmark + m];
+			if (f >= 0 && f < b->num_faces && face_lcnt[f]) {
+				lsum[i] += face_lsum[f] / face_lcnt[f];
+				lcnt[i]++;
+			}
+		}
+	}
+	for (int i = b->num_nodes - 1; i >= 0; i--)        /* children have higher indices */
+		for (int c = 0; c < 2; c++) {
+			int ch = b->nodes[i].child[c];
+			if (ch >= 0) { nsum[i] += nsum[ch]; ncnt[i] += ncnt[ch]; }
+			else         { nsum[i] += lsum[-1 - ch]; ncnt[i] += lcnt[-1 - ch]; }
+		}
 	for (int i = 0; i < b->num_leaves; i++) {
 		const bsp_leaf *bl = &b->leaves[i];
 		qw_leaf *l = &leaves[i];
@@ -1183,8 +1211,15 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		             : (uint16_t) (leaf_parent[i] * QW_NODE_WORDS);
 		l->vis       = bl->visofs >= 0 && (uint32_t) bl->visofs < b->vis_len
 		             ? (uint32_t) bl->visofs : QW_NONE;
-		l->contents  = (int16_t) bl->contents;
+		l->contents  = (int8_t) bl->contents;
+		uint32_t sum = lsum[i], cnt = lcnt[i];
+		for (uint32_t n = leaf_parent[i]; !cnt && n != QW_NONE; n = node_parent[n]) {
+			sum = nsum[n];
+			cnt = ncnt[n];
+		}
+		l->light = (uint8_t) (cnt ? sum / cnt : 128);
 	}
+	free(lsum); free(lcnt); free(nsum); free(ncnt);
 
 	/* bench views: spawn x4 yaws, then the 3 leaves that see the most faces */
 	qw_view views[16];

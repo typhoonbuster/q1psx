@@ -3,7 +3,7 @@
 # Build the benchmark variant (CMake preset "bench" -> build-bench/) and run it
 # headless; print the "bench ..." lines.
 #
-# Usage:  [FID=0..3] [T=px] [TEX4=0|1] [VIEWS=0|1] [BENCH_MAPS=0|1] [PROFILE=0|1]
+# Usage:  [FID=0..3] [T=px] [TEX4=0|1] [VIEWS=0|1] [BENCH_MAPS=0|1] [BENCH_GAME=0|1] [PROFILE=0|1]
 #         scripts/bench.sh [max-seconds]
 #         FID picks the fidelity level the bench loads (default 2, high).
 #         T is the affine-warp threshold, fixed (default 8 px, the game's).
@@ -31,11 +31,12 @@ T=${T:-8}
 TEX4=${TEX4:-0}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
+BENCH_GAME=${BENCH_GAME:-0}
 PROFILE=${PROFILE:-1}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
-      -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_PROFILE="$PROFILE" \
+      -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" >/dev/null
 
@@ -48,10 +49,12 @@ grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISM
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 [ "$VIEWS" = 0 ] || [ "$BENCH_MAPS" = 1 ] && exit 0
 
-# Render the dumped display lists to PNG (build-bench/views/view<N>.png) so the
-# output can be checked without a screen.
+# Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
+# output can be checked without a screen (the game's dumps need GAME.DAT's
+# images too).
 make -s -C "$ROOT/tools/pktview"
 mkdir -p "$ROOT/build-bench/views"
 TEXEXT=tex; [ "$TEX4" = 1 ] && TEXEXT=tx4
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
-	"$ROOT/cooked/id1/start_$FIDNAME.$TEXEXT" "$ROOT/build-bench/views/view" | sed 's/^/  /'
+	"$ROOT/cooked/id1/start_$FIDNAME.$TEXEXT" "$ROOT/build-bench/views/" \
+	"$ROOT/cooked/id1/game.dat" | sed 's/^/  /'

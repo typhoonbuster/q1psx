@@ -4,6 +4,7 @@
  *   qcook map   --pak <pak0.pak> --map maps/start.bsp [--fidelity high]
  *               --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld>
  *   qcook check <file.wld>
+ *   qcook game  --pak <pak0.pak> --out <game.dat>     (tools/qcook/game.c)
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
  * writes the two files the engine loads for that map + fidelity level.
@@ -75,7 +76,7 @@ const fidelity_t *fidelity_find(const char *name)
 
 /* ------------------------------------------------------------------- pak -- */
 
-static uint8_t *read_file(const char *path, long *len)
+uint8_t *read_file(const char *path, long *len)
 {
 	FILE *f = fopen(path, "rb");
 	if (!f)
@@ -91,8 +92,8 @@ static uint8_t *read_file(const char *path, long *len)
 }
 
 /* Find `name` in a PACK file (case-insensitive: Steam paks are upper case). */
-static const uint8_t *pak_find(const uint8_t *pak, long pak_len, const char *name,
-                               uint32_t *len)
+const uint8_t *pak_find(const uint8_t *pak, long pak_len, const char *name,
+                        uint32_t *len)
 {
 	if (pak_len < 12 || memcmp(pak, "PACK", 4))
 		die("not a PACK file");
@@ -353,11 +354,14 @@ int main(int argc, char **argv)
 		return cmd_map(argc, argv);
 	if (argc == 3 && !strcmp(argv[1], "check"))
 		return world_check(argv[2]);
+	if (argc >= 2 && !strcmp(argv[1], "game"))
+		return cmd_game(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"
 	        "  qcook map --pak <pak> --map <maps/x.bsp> [--fidelity low|medium|high|ultra]\n"
 	        "            --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld>\n"
-	        "  qcook check <file.wld>\n");
+	        "  qcook check <file.wld>\n"
+	        "  qcook game --pak <pak0.pak> --out <game.dat>\n");
 	return 2;
 }

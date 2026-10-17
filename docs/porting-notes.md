@@ -2373,3 +2373,179 @@ e1m7 v0 (577 k).
 - **The `release` preset** (no profiling) is another ~3 % faster than the
   default build, whose overlay counters cost a few instructions per node,
   record and face block.
+
+## §22 — Controls, weapons and the HUD (2026-10-17)
+
+**The goal.** The real controls, every weapon, and the HUD in two
+versions: Quake's original (with the viewport revisited, since that bar takes
+part of the screen) and one in the style of Quake II on the PlayStation. No
+dynamic lights for now.
+
+**Decisions** (asked in one batch, answered 2026-10-17):
+
+| Question | Answer |
+|---|---|
+| Control mapping | Scheme B: R2 fire, L2 jump, R1 / L1 next / previous weapon, Cross jump, Square fire, Triangle walk, Circle level the view; d-pad = a weapon group (up shotguns and axe, right nailguns, down launchers, left lightning). START the debug overlay, SELECT + START the map menu, SELECT + Cross noclip, SELECT + Square respawn. Digital pads: d-pad walk / turn, L1 / R1 strafe, L2 / R2 look, Square fire, Cross jump, Circle / Triangle next / previous weapon. |
+| Where the weapons' logic lives | Native C, permanently: a transcription of weapons.qc, player.qc and combat.qc in fixed point. The QuakeC VM of Phase 7 will run monsters and map entities and route the player's weapon functions here. |
+| Skins in VRAM | 8 bits (the exact palette) at half resolution. |
+| Inventory at the spawn | Everything, with full ammo (Quake's impulse 9), until items exist. |
+
+### 22.1 The game data: `GAME.DAT` (formats/qgame.h, tools/qcook/game.c)
+
+One file, cooked once from the pak and loaded at boot, holds what every map
+needs: the 8 view models, the projectiles (spike, super spike, grenade,
+missile, the lightning bolt), the explosion sprite and 112 HUD pictures.
+
+- **Models are face records.** A Quake MDL's triangles are cut into records
+  in the world's own format (qw_record, indices, light bytes, triangles with
+  a uv word per corner), so the renderer draws them with its record loop and
+  nothing else. Every frame is a vertex pool in vertex units (world x 4),
+  with the vertex's light-normal index in the pool entry's spare byte. A
+  vertex shared by two records is duplicated: records gather adjacent
+  triangles (a 24-triangle window, the one sharing the most vertices
+  first), which keeps the pools at about 1.4 x the model's vertex count.
+- **View models are written nearest-first** as seen from the eye at the
+  model origin, the painter's order the record loop's prepend gives.
+- **Skins at half resolution**: 2 x 2 texels averaged, then the nearest
+  palette colour. The screen never shows a weapon larger than that. The
+  lightning bolt is cooked twice as long (one bolt per 60 units instead of
+  30: half the instances).
+- **Sprites** are models with one record (a quad in the view plane) per
+  frame and a flag to draw only the frame's record.
+- **VRAM.** The maps keep texture pages 0..5 (start at ultra needs all
+  six; qtex.h QTEX_MAP_PAGES), the game data takes pages 6..9, packed by a
+  skyline packer (243 K of 262 K texels), plus its own 256-colour CLUT at
+  (0, 504) with index 255 transparent (the pictures' transparent colour).
+- **Light tables.** 16 tables of 162 bytes: a vertex's brightness factor by
+  its normal for a model yawed by k x 22.5 degrees, from Quake's fixed light
+  direction (-x in the world); facing it lights a vertex up to 1.5 x.
+- **Size:** 332 KB on the disc, 77 KB of geometry in a 160 KB game arena
+  (engine/mem.c), 1.2 KB of tables.
+
+### 22.2 The world format: QWV8
+
+A leaf's `contents` becomes a byte, and the byte freed holds the leaf's
+light: the average vertex light of its faces, or, for a leaf without lit
+faces (open air), the average of the nearest ancestor's subtree. Models in
+a leaf are lit with it; the view model with the eye's leaf (at least 24,
+"always some light on the gun", as r_main.c).
+
+### 22.3 Entities in the renderer (engine/rlist.c, engine/r_world.s)
+
+- **The render list.** Per frame, C builds items (16 bytes: a particle, or
+  a model entity of 64 bytes with its GTE matrix, frame pool, record range,
+  skin, light table and light) and chains them per BSP leaf: the leaf's
+  `vis` pointer carries a list id in its top byte (the pointer is KUSEG,
+  its top byte was free; mark_pvs masks it). Nothing per leaf costs RAM.
+- **Painter's order.** The walk draws a leaf's list when it visits the leaf
+  (`draw_ents`), after the faces behind it and before the faces in front of
+  it: prepended at that point, the items end up between them. A particle is
+  one TILE_1 projected with the view matrix; a model goes through
+  `draw_model`: the texture run in progress is closed, its GTE matrix,
+  pool, skin and face-stamp word are set, its light bytes are written
+  (`light_recs`: normal index -> table -> x light >> 7), then the record
+  loop runs on its records. The loop is a macro now (`RECLOOP`), instanced
+  for the world's face blocks and for a model, so one code path draws
+  both. Afterwards the view matrix and the world's pointers come back.
+- **The view model** is prepended first of all (before the walk), so it is
+  drawn last, on top, like Quake's depth hack. It draws through the fast
+  path only (its polygons are small and never behind the camera): the
+  thresholds that send polygons to the careful test and the slow path are
+  parked during its draw. With the slow path it cost 100 k cycles more.
+- **Cost.** The leaf hook adds 0.2 % to a frame; the view model about 35-45
+  k cycles (180 triangles, 150 vertices, their lighting); a particle about
+  40 cycles.
+
+### 22.4 Hull 0: the point hull on the render BSP (engine/clip.s)
+
+Projectiles and shots trace a point. Quake's hull 0 is the world's own BSP;
+the clip section only had hulls 1 and 2 (6-byte clipnodes). Rather than
+cook hull 0 as clipnodes (6 bytes per node), the trace walks the render
+nodes: 36-byte nodes, pointer children (bit 0: a leaf, whose contents byte
+is read), the same plane table. `clip_trace` and `clip_contents` take hull
+0; the loop is a macro instanced for both kinds of node (CT_LOOP). The C
+reference does the same, and the bench's `clipdiff` now traces hull 0 too:
+0 mismatches.
+
+### 22.5 The game (engine/game.c)
+
+A 60 Hz port of the player's side of the game code, in the engine's units
+(positions 1/8 unit, velocities units per second, angles binary degrees,
+times in ticks):
+
+- **Weapons** (weapons.qc): the axe (a 64-unit trace, sparks on a wall),
+  shotguns (6 pellets at 0.04 spread, 14 at 0.14 x 0.08; 2 shells; one
+  shell fires as the shotgun), nailguns (nails from alternate sides every
+  0.1 s while held, super nails), the grenade launcher (bounce, 1.5
+  overbounce, rests on a floor, 2.5 s fuse), the rocket launcher, the
+  lightning gun (a 600-unit trace, a bolt every 0.1 s while held, 1 cell
+  each). The attack rates, punch angles, ammo use, weapon selection
+  (W_ChangeWeapon, the cycles, W_BestWeapon when empty) are Quake's.
+- **The weapon animations** (player.qc): the frame chains at 0.1 s
+  (shotgun 1-6, axe 1-4 or 5-8 with the hit on the third, nailgun 1-8 and
+  lightning 1-4 looping while the button is held and firing each step,
+  launchers 1-6).
+- **Projectiles** (sv_phys.c SV_Physics_Toss): hull-0 traces each tick,
+  gravity for grenades with an exact 1/60 carry, the sky swallows them,
+  nails leave sparks (TE_SPIKE), rockets and grenades T_RadiusDamage 120
+  and an explosion (the sprite's 6 frames at 0.1 s, 48 particles instead
+  of 1024).
+- **Damage** (combat.qc): only the player can be hurt for now (by its own
+  explosions, at half damage: rocket jumps work). Armor absorbs its percent
+  (green 30, yellow 60, red 80), the face shows pain for 0.2 s, the view
+  kicks (V_ParseDamage: 0.6 degree per point of damage, over 0.5 s), the
+  momentum is dir x damage x 8. At 0 health the view drops to the floor;
+  fire respawns after a second.
+- **Particles** (r_part.c): a pool of 256, Quake's types and colour ramps
+  (fire, explode, explode2, slowgrav), velocities in 1/8 unit per tick x
+  256. Rocket and grenade trails spawn one particle per tick (Quake: one
+  per 3 units, far too many here). A particle keeps the leaf it was spawned
+  in: no per-particle BSP lookup.
+- **The view** (view.c): the bob (cl_bob 0.02, a 0.6 s cycle, clamped -7..4
+  units), the lean when strafing (2 degrees at 200 u/s), the punch angle
+  decaying 10 degrees per second, the damage kick. The weapon follows the
+  view with the bob's forward 0.4 and vertical parts and Quake's viewsize
+  fudge (2 units with the status bar).
+- **The lightning beam** (cl_tent.c): bolts every 60 units along the
+  trace, each rolled at random, for 0.2 s after the last shot.
+- **Not done:** sounds (Phase 9), dynamic lights (muzzle flash, rocket
+  light, explosion light: by choice), water (the lightning's discharge, the
+  player's swimming), monsters and items (Phase 8).
+
+### 22.6 The HUD (engine/hud.c)
+
+Both styles draw with gfx.wad's pictures into the overlay chain (vid.c): a
+list of 2D packets drawn in order, first of the overlay bucket, opened by a
+DR_AREA that restores the whole screen when the 3D viewport is smaller. A
+DR_TPAGE goes out when the picture's page changes (the pictures sit in two
+pages), then one SPRT per picture.
+
+- **Original** (sbar.c): the inventory bar at rows 192-215 (the owned
+  weapons, the selected one lit, the four ammo counts in the small yellow
+  digits, keys, powerups, runes) and the status bar at 216-239 (armor,
+  face, health, ammo, red digits when low; the score bar when dead). The 3D
+  viewport is the 192 rows above (Quake's viewsize 100): the GTE's centre
+  moves to (160, 96), the GPU's draw area ends at row 192. The frustum and
+  record culling keep the 240-row planes (conservative: what lies in the
+  48 rows under the bar is still processed, the GPU clips it); making them
+  exact would cost every node 4 instructions in both modes or a second copy
+  of the walk.
+- **Q2 PSX style**: the whole screen, the face and health at the bottom
+  left, armor next to them, the ammo and its icon at the bottom right, keys
+  and powerups at the top left, the weapon row at the top right for 2 s
+  after a change.
+
+### 22.7 Checking it without a screen
+
+`BENCH_GAME=1 scripts/bench.sh` runs the game at start's spawn: each weapon
+selected, fired for 0.4 s, then a frame dumped (view model, projectiles,
+effects, HUD), plus one frame per HUD style; `pktview` renders them
+(build-bench/views/g*.png) from the map's and GAME.DAT's images, with
+sprites, tiles, DR_TPAGE and the draw area supported now; the dump carries
+the viewport's height (`V <rows>`). The dumps' hashes under the interpreter
+equal the dynarec's.
+
+**Cost** (start's spawn view, high, 8 px, profile build): 617 k cycles
+without the game, 650-680 k with the view model and the HUD; the lightning
+beam's frame 795 k (10 bolts of 26 triangles plus their sparks). The
+dynamic warp mode keeps such frames in one vblank.

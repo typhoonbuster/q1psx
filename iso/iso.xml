@@ -24,6 +24,7 @@
 			<file name="SYSTEM.CNF" type="data" source="${PROJECT_SOURCE_DIR}/iso/system.cnf" />
 			<file name="Q1PSX.EXE"  type="data" source="q1psx.exe" />
 			<file name="HELLO.TXT"  type="data" source="${PROJECT_SOURCE_DIR}/iso/hello.txt" />
+			@GAME_ENTRY@
 			@PAK0_ENTRY@
 			<!-- in a subdirectory: the BIOS only reads the root directory's first
 			     sector, and SYSTEM.CNF must stay in it -->

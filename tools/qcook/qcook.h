@@ -4,6 +4,7 @@
  *   qcook.c   command line, pak access, BSP lump parsing
  *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX3 output
  *   world.c   face splitting, face records, nodes/leaves/PVS, QWV2 output
+ *   game.c    models, sprites, HUD pictures -> QGM1 (formats/qgame.h)
  *
  * See docs/architecture.md §6-§7 and formats/qworld.h / formats/qtex.h.
  */
@@ -19,6 +20,16 @@
 void  die(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
 void *xmalloc(size_t n);
 void *xcalloc(size_t n, size_t size);
+
+/* ------------------------------------------------------------------- pak -- */
+
+uint8_t       *read_file(const char *path, long *len);
+const uint8_t *pak_find(const uint8_t *pak, long pak_len, const char *name, uint32_t *len);
+
+/* ----------------------------------------------------------------- game -- */
+
+/* `qcook game`: models, sprites and HUD pictures -> one QGM1 file (game.c) */
+int cmd_game(int argc, char **argv);
 
 /* ------------------------------------------------------------- fidelity -- */
 

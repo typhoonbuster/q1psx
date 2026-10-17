@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWV7" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWV8" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -36,7 +36,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV7"
+#define QWORLD_MAGIC "QWV8"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
@@ -61,7 +61,7 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV7"                                  */
+	char     magic[4];             /* "QWV8"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
@@ -125,7 +125,10 @@ typedef struct {
 	uint32_t marks;        /* +16 disk: index into marks[]; RAM: ptr           */
 	uint32_t vis;          /* +20 disk: offset into vis or QW_NONE; RAM: ptr/0 */
 	uint16_t parent;       /* +24 word offset of the parent node               */
-	int16_t  contents;     /* +26 Quake CONTENTS_*                             */
+	int8_t   contents;     /* +26 Quake CONTENTS_*                             */
+	uint8_t  light;        /* +27 the light of the leaf's faces, averaged
+	                              (empty leaves: their surroundings'); models
+	                              in the leaf are lit with it (128 = as is)   */
 } qw_leaf;                 /* 28 bytes */
 
 /* where a node's face block on `side` ends (nodes is an array with its

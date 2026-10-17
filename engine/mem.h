@@ -9,8 +9,11 @@
  *                 give a transient top-of-arena area (e.g. texture pixels on
  *                 their way to VRAM).
  *
- * The packet arenas live in vid.c; the game arena (QuakeC) arrives in
- * Phase 7 and will take part of the level arena's current size.
+ *   game arena    the game data every map needs (the weapon and projectile
+ *                 models' geometry: engine/gdata.c), filled once at boot.
+ *
+ * The packet arenas live in vid.c; the QuakeC arena (Phase 7) will take
+ * part of the level arena's current size.
  */
 
 #ifndef Q1PSX_MEM_H
@@ -19,11 +22,15 @@
 #include <stdint.h>
 
 #define MEM_LEVEL_BYTES (1152 * 1024)
+#define MEM_GAME_BYTES  (160 * 1024)
 
 void     mem_level_reset(void);
 void    *mem_level_alloc(uint32_t bytes);      /* 16-byte aligned; NULL if full */
 uint32_t mem_level_mark(void);
 void     mem_level_release(uint32_t mark);
 uint32_t mem_level_used(void);
+
+void    *mem_game_alloc(uint32_t bytes);       /* 16-byte aligned; NULL if full */
+uint32_t mem_game_used(void);
 
 #endif

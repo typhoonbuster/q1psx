@@ -11,7 +11,9 @@
  *   framebuffers   (0,0)-(319,479)
  *   CLUT           (0,480), 256 entries (Quake palette)
  *   texture pages  x = 320, 448, 576, 704, 832 (128 halfwords = 256 8bpp
- *                  texels each), y = 0 and 256 -> 10 pages
+ *                  texels each), y = 0 and 256 -> 10 pages: 0..5 for the
+ *                  map, 6..9 for the game data (models' skins, HUD;
+ *                  formats/qgame.h, its CLUT at (0,504))
  *   debug font     x >= 960
  *
  * Little-endian; host and R3000 agree, no swapping.
@@ -35,6 +37,9 @@
 #define QTEX_PAGE_COLS  5    /* page columns at x = 320 + 128 * i   */
 #define QTEX_PAGE_ROWS  2    /* page rows at y = 0, 256             */
 #define QTEX_PAGES     (QTEX_PAGE_COLS * QTEX_PAGE_ROWS)
+#define QTEX_MAP_PAGES  6    /* pages 0..5 hold a map's textures (start
+                                at ultra needs all six); 6..9 hold the
+                                game data (formats/qgame.h)           */
 
 typedef struct {
 	char     magic[4];       /* "QTX3"                                  */

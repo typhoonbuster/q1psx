@@ -37,10 +37,11 @@ _Static_assert(__builtin_offsetof(trace_t, plane_n)  == 32, "p_defs.inc TR_PLANE
 _Static_assert(__builtin_offsetof(trace_t, plane_d)  == 40, "p_defs.inc TR_PLANE_D");
 _Static_assert(sizeof(trace_t) == 44, "p_defs.inc TR_SIZE");
 
-/* hull 1 = player size, 2 = large. Returns tr->fraction. Does nothing (and
-   reports a free move) when the world has no clip hulls. The PS1 build links
-   the asm port (engine/clip.s): positions must fit int16 there, i.e. stay
-   within +-4095 world units (Quake's own map limit). */
+/* hull 0 = a point (projectiles, shots: the world's own BSP), 1 = player
+   size, 2 = large. Returns tr->fraction. Does nothing (and reports a free
+   move) when the world has no clip hulls. The PS1 build links the asm port
+   (engine/clip.s): positions must fit int16 there, i.e. stay within +-4095
+   world units (Quake's own map limit). */
 q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
 
 /* Quake CONTENTS_* of hull `hull` at p. */

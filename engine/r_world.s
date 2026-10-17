@@ -306,6 +306,375 @@
 	lw      $v0, SP_CLUT16($t8)
 .endm
 
+# RECLOOP p, exit: the record loop, labels prefixed by p, leaving for `exit`
+# when the block is done or the arena is full. Instantiated for the world's
+# face blocks (dr, back to the walk) and for a model's records (de,
+# draw_model). The comment above describes it.
+.macro RECLOOP p, exit
+\p\()_records:
+.if R_PROFILE
+	sw      $t9, SP_T0($t8)
+	lw      $v0, SP_CLUT16($t8)
+.endif
+	bnez    $t0, \exit                    # packet arena full: nothing more
+	move    $t2, $zero
+\p\()_cull:
+	addu    $a0, $a0, $t2                # culled record (t2 = its size): next
+\p\()_rec:
+	lw      $t0, SP_FVBASE($t8)          # (kept through the unstamped run)
+\p\()_rec_1:
+.if R_PROFILE
+	beq     $a0, $a1, \p\()_done
+.else
+	beq     $a0, $a1, \exit
+.endif
+	lhu     $t1, R_FACE_ID($a0)          # (at the block end: a harmless read)
+	lhu     $t2, R_SIZE($a0)
+	addu    $t1, $t1, $t0                # (face_id: a byte offset, world.c)
+	lhu     $t1, 0($t1)
+	addu    $a0, $a0, $t2                # a0 = next record
+	bne     $t1, $s4, \p\()_rec_1           # not stamped this frame: next
+	sw      $a0, SP_NEXTREC($t8)
+	subu    $a0, $a0, $t2                # stamped: back to it
+
+	# bounding-sphere frustum test (view space x6; r in vertex units, view
+	# radius 1.5 r): left/right planes have |n| = sqrt2 -> 2.125 r, top/bottom
+	# |n| = 5 -> 8 r. All conservative.
+	# VZ0 is loaded from a sign-extended halfword, not with lwc2: the upper
+	# half of the word at +16 is not part of it, and PCSX-Redux does not
+	# drop those bits the way the 16-bit hardware register does.
+	lh      $t9, R_SC+4($a0)
+	lwc2    C2_VXY0, R_SC+0($a0)
+	lhu     $t3, R_SR($a0)
+	mtc2    $t9, C2_VZ0
+	lhu     $a3, R_TEX($a0)
+	lw      $t9, SP_K16($t8)
+	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
+	srl     $t7, $t3, 1                  # (while the GTE works; t2 keeps the
+	addu    $t7, $t7, $t3                #  record's size for \p\()_cull) rho = 1.5 r
+	mult    $t9, $t7                     # k16 rho, for a2 bit 2 below
+	lw      $at, SP_LASTTEX($t8)
+	mfc2    $t0, C2_IR1                  # x
+	mfc2    $t1, C2_IR2                  # y
+	mfc2    $t4, C2_IR3                  # z
+	sll     $t5, $t3, 1
+	srl     $t6, $t3, 3
+	addu    $t5, $t5, $t6                # 2.125 r
+	subu    $t6, $t4, $t0                # right: z - x
+	addu    $t6, $t6, $t5
+	bltz    $t6, \p\()_cull
+	addu    $t6, $t4, $t0                # left: z + x
+	addu    $t6, $t6, $t5
+	bltz    $t6, \p\()_cull
+	sll     $t5, $t3, 3                  # 8 r
+	sll     $t6, $t4, 1
+	addu    $t6, $t6, $t4                # 3z
+	sll     $t0, $t1, 2                  # 4y
+	subu    $t9, $t6, $t0                # bottom: 3z - 4y
+	addu    $t9, $t9, $t5
+	bltz    $t9, \p\()_cull
+	addu    $t9, $t6, $t0                # top: 3z + 4y
+	addu    $t9, $t9, $t5
+	bltz    $t9, \p\()_cull
+	sll     $t5, $t3, 1                  # delay: 2r
+	subu    $t6, $t4, $t7                # nearest depth z - rho
+	lw      $t7, SP_SZFAST($t8)
+	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
+	slt     $a2, $t5, $t7                # a2 bit 0: may come too near
+	sltu    $t0, $s7, $s6                # room for the whole record?
+	bnez    $t0, \p\()_full
+	sll     $t6, $t6, 4
+	# a2 bit 2: an affine error above the threshold is possible: (z - rho)
+	# x 16 < k16 x rho (render.c, warp_k16). It also covers an edge over
+	# the subdivision's 500 px span: k16 >= 67 (T <= 32) puts the bound at
+	# z < 7.8 r, beyond the 6 r where a record's edges can reach 500 px.
+	mflo    $t9
+	slt     $t9, $t6, $t9
+	sll     $t9, $t9, 2
+	or      $a2, $a2, $t9
+
+	lbu     $t2, R_NVERTS($a0)
+	beq     $at, $a3, \p\()_tex_done        # same texture as the last record
+	lhu     $t0, R_POLYS($a0)            # (the light bytes' offset, below)
+	bltz    $at, \p\()_tex_load             # first of the frame: no run to close
+	lw      $t5, SP_TEXBASE($t8)
+	lw      $t6, SP_TWIN($t8)            # close the last texture's run: its
+	lui     $t9, 0x0100                  # window command, prepended after its
+	or      $t9, $t9, $fp                # polygons, comes first in the bucket
+	sw      $t9, 0($s6)                  # (one per run, not per record: the
+	sw      $t6, 4($s6)                  # run's polygons all draw after it)
+	move    $fp, $s6
+	addiu   $s6, $s6, 8
+\p\()_tex_load:
+	sll     $t6, $a3, 3                  # fetch its words (8 B entry)
+	sw      $a3, SP_LASTTEX($t8)
+	addu    $t6, $t6, $t5
+	lw      $t9, 4($t6)                  # its texture-window command
+	lw      $v0, 0($t6)                  # clut | tpage << 16
+	sw      $t9, SP_TWIN($t8)
+	lui     $t5, 0xffff
+	and     $v1, $v0, $t5                # tpage << 16, ORed into uv1
+	sll     $v0, $v0, 16                 # clut  << 16, ORed into uv0
+	sw      $v0, SP_CLUT16($t8)          # (the slow path's copies)
+	sw      $v1, SP_TPAGE16($t8)
+\p\()_tex_done:
+.if R_PROFILE
+	lw      $t1, SP_RECORDS($t8)
+	lw      $t9, SP_VERTS($t8)
+	addiu   $t1, $t1, 1
+	addu    $t9, $t9, $t2
+	sw      $t1, SP_RECORDS($t8)
+	sw      $t9, SP_VERTS($t8)
+.endif
+	addiu   $t1, $t2, 3                  # light bytes: polys - ((nv + 3) & ~3)
+	andi    $t1, $t1, 0xfc
+	addu    $t0, $t0, $a0
+	subu    $at, $t0, $t1
+	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
+	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
+	move    $t4, $t8                     # cache cursor
+	beqz    $a2, \p\()_xfn                  # nothing near or warping: no SZ (only
+	addiu   $t5, $t2, -2                 # CAREFUL and \p\()_nz read it). Vertices
+	XFORM   1, \p\()_xf, \p\()_one, \p\()_xf_done #  left - 2: RTPT while 3+
+\p\()_xf_done:                              # (a2 != 0 here)
+	move    $t4, $t8
+	andi    $t0, $a2, 4                  # big or warping: careful regardless
+	bnez    $t0, \p\()_polys
+	move    $t5, $t2
+	move    $a2, $zero                   # exact check: any real vertex near?
+\p\()_nz:
+	lw      $t0, SP_SZ($t4)
+	addiu   $t5, $t5, -1
+	sltu    $t0, $t0, $t7
+	or      $a2, $a2, $t0
+	bgtz    $t5, \p\()_nz
+	addiu   $t4, $t4, 4
+
+\p\()_polys:
+	lhu     $t0, R_POLYS($a0)
+\p\()_polys_1:
+	lbu     $at, R_NQUADS($a0)
+.if R_PROFILE
+	lw      $t1, SP_POLYS($t8)
+	addu    $a3, $a0, $t0                # first polygon
+	lbu     $t0, R_NTRIS($a0)
+	addu    $t1, $t1, $at
+	addu    $t1, $t1, $t0
+	beqz    $at, \p\()_tris
+	sw      $t1, SP_POLYS($t8)
+.else
+	addu    $a3, $a0, $t0                # first polygon
+	beqz    $at, \p\()_tris
+.endif
+\p\()_quad:                                 # (release: in the delay slot above)
+	lw      $t0, 0($a3)                  # 4 vertex offsets
+	addiu   $at, $at, -1                 # (count down)
+	andi    $t3, $t0, 0xff
+	srl     $t4, $t0, 8
+	andi    $t4, $t4, 0xff
+	srl     $t5, $t0, 16
+	andi    $t5, $t5, 0xff
+	srl     $t6, $t0, 24
+	addu    $t3, $t3, $t8
+	addu    $t4, $t4, $t8
+	addu    $t5, $t5, $t8
+	beqz    $a2, \p\()_quad_emit
+	addu    $t6, $t6, $t8
+	CAREFUL 1, \p\()_quad_skip
+\p\()_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
+	lw      $t0, SP_COL($t3)             # c0
+	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
+	lw      $t3, SP_SXY($t3)             # xy0
+	lui     $t9, CODE_GT4 >> 16
+	lw      $t2, SP_COL($t4)             # c1
+	lw      $t4, SP_SXY($t4)             # xy1
+	or      $t0, $t0, $t9                # code | c0
+	sw      $t0, 4($s6)
+	sw      $t3, 8($s6)
+	andi    $t0, $t1, 0xffff
+	or      $t0, $t0, $v0                # uv0 | clut
+	sw      $t0, 12($s6)
+	sw      $t2, 16($s6)
+	sw      $t4, 20($s6)
+	srl     $t1, $t1, 16
+	or      $t1, $t1, $v1                # uv1 | tpage
+	sw      $t1, 24($s6)
+	lw      $t0, SP_COL($t5)             # c2
+	lw      $t1, SP_SXY($t5)             # xy2
+	lw      $t2, 8($a3)                  # uv2 | uv3 << 16
+	sw      $t0, 28($s6)
+	sw      $t1, 32($s6)
+	andi    $t0, $t2, 0xffff
+	sw      $t0, 36($s6)
+	lw      $t0, SP_COL($t6)             # c3
+	lw      $t1, SP_SXY($t6)             # xy3
+	srl     $t2, $t2, 16
+	sw      $t0, 40($s6)
+	sw      $t1, 44($s6)
+	sw      $t2, 48($s6)
+	lui     $t9, 0x0c00
+	or      $t9, $t9, $fp                # tag: 12 words, link to previous head
+	sw      $t9, 0($s6)
+	move    $fp, $s6                     # new bucket head
+	addiu   $s6, $s6, 52
+\p\()_quad_next:
+	bgtz    $at, \p\()_quad
+	addiu   $a3, $a3, POLY_SIZE
+
+\p\()_tris:
+	lbu     $at, R_NTRIS($a0)
+	lw      $t0, 0($a3)                  # (none: a harmless read)
+	beqz    $at, \p\()_next
+\p\()_tri:                                  # t0 = the triangle's 3 vertex offsets
+	addiu   $at, $at, -1                 # (count down; the delay slot above)
+	andi    $t3, $t0, 0xff
+	srl     $t4, $t0, 8
+	andi    $t4, $t4, 0xff
+	srl     $t5, $t0, 16
+	andi    $t5, $t5, 0xff
+	addu    $t3, $t3, $t8
+	addu    $t4, $t4, $t8
+	beqz    $a2, \p\()_tri_emit
+	addu    $t5, $t5, $t8
+	CAREFUL 0, \p\()_tri_skip
+\p\()_tri_emit:                             # POLY_GT3
+	lw      $t0, SP_COL($t3)             # c0
+	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
+	lw      $t3, SP_SXY($t3)             # xy0
+	lui     $t9, CODE_GT3 >> 16
+	lw      $t2, SP_COL($t4)             # c1
+	lw      $t4, SP_SXY($t4)             # xy1
+	or      $t0, $t0, $t9
+	sw      $t0, 4($s6)
+	sw      $t3, 8($s6)
+	andi    $t0, $t1, 0xffff
+	or      $t0, $t0, $v0                # uv0 | clut
+	sw      $t0, 12($s6)
+	sw      $t2, 16($s6)
+	sw      $t4, 20($s6)
+	srl     $t1, $t1, 16
+	or      $t1, $t1, $v1                # uv1 | tpage
+	sw      $t1, 24($s6)
+	lw      $t0, SP_COL($t5)             # c2
+	lw      $t1, SP_SXY($t5)             # xy2
+	lw      $t2, 8($a3)                  # uv2 | pad (0, see qw_tri)
+	sw      $t0, 28($s6)
+	sw      $t1, 32($s6)
+	sw      $t2, 36($s6)
+	lui     $t9, 0x0900
+	or      $t9, $t9, $fp                # tag: 9 words
+	sw      $t9, 0($s6)
+	move    $fp, $s6
+	addiu   $s6, $s6, 40
+\p\()_tri_next:
+	lw      $t0, POLY_SIZE($a3)          # the next one's (after the last: harmless)
+\p\()_tri_next_1:
+	bgtz    $at, \p\()_tri
+	addiu   $a3, $a3, POLY_SIZE
+\p\()_next:
+	lw      $a0, SP_NEXTREC($t8)
+	b       \p\()_rec_1
+	lw      $t0, SP_FVBASE($t8)          # (\p\()_rec's)
+
+# Near polygon: hand it to the slow path (engine/r_slow.c) — near clip,
+# subdivision, exact projection. t0 = 4 (quad) or 3 (triangle).
+\p\()_quad_skip:
+	b       \p\()_slow_call
+	li      $t0, 4
+\p\()_tri_skip:
+	li      $t0, 3
+\p\()_slow_call:
+	sw      $at, SP_SAVE+0($t8)
+	sw      $a0, SP_SAVE+4($t8)
+	sw      $a1, SP_SAVE+8($t8)
+	sw      $a2, SP_SAVE+12($t8)
+	sw      $a3, SP_SAVE+16($t8)
+	sw      $t0, SP_SAVE+32($t8)
+	sw      $s6, SP_SAVE+20($t8)         # (the slow path's bytes, below)
+.if R_PROFILE
+	lw      $t1, SP_SKIPPED($t8)         # polygons sent to the slow path
+	lhu     $t2, TIMER2($t8)
+	addiu   $t1, $t1, 1
+	sw      $t1, SP_SKIPPED($t8)
+	sw      $t2, SP_SAVE+36($t8)         # slow-path start time
+.endif
+.if R_SLOW_C
+	lw      $t9, SP_RSTATE($t8)          # (s0 holds the plane table)
+	move    $a1, $a0                     # record
+	sw      $s6, RS_PKT($t9)             # the C side emits through r_state
+	sw      $fp, RS_OT_HEAD($t9)
+	move    $a2, $a3                     # polygon
+	move    $a3, $t0                     # 4 or 3
+	move    $a0, $t9                     # r_state
+	jal     r_slow
+	addiu   $sp, $sp, -16                # o32 argument area
+	addiu   $sp, $sp, 16
+	lui     $t8, 0x1f80
+	lw      $t9, SP_RSTATE($t8)
+	nop
+	lw      $s6, RS_PKT($t9)
+	lw      $fp, RS_OT_HEAD($t9)
+.else
+	move    $a1, $a3                     # polygon
+	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3
+	move    $a2, $t0
+.endif
+.if R_PROFILE
+	lhu     $t0, TIMER2($t8)
+	lw      $t1, SP_SAVE+36($t8)
+	lw      $t2, SP_TSLOW($t8)
+	subu    $t0, $t0, $t1
+	andi    $t0, $t0, 0xffff
+	addu    $t2, $t2, $t0
+	sw      $t2, SP_TSLOW($t8)
+.endif
+	lw      $t1, SP_SAVE+20($t8)         # bytes it wrote, for the warp
+	lw      $t2, SP_SLOWB($t8)           # control's triangle count
+	lw      $at, SP_SAVE+0($t8)
+	subu    $t1, $s6, $t1
+	addu    $t2, $t2, $t1
+	sw      $t2, SP_SLOWB($t8)
+	lw      $a0, SP_SAVE+4($t8)
+	lw      $a1, SP_SAVE+8($t8)
+	lw      $a2, SP_SAVE+12($t8)
+	lw      $a3, SP_SAVE+16($t8)
+	lw      $t0, SP_SAVE+32($t8)
+	lw      $v0, SP_CLUT16($t8)          # (the careful test used them)
+	li      $t1, 4
+	beq     $t0, $t1, \p\()_quad_next
+	lw      $v1, SP_TPAGE16($t8)
+	b       \p\()_tri_next_1
+	lw      $t0, POLY_SIZE($a3)          # (\p\()_tri_next's first)
+
+	# the transform of a record CAREFUL will not see: no SZ
+	XFORM   0, \p\()_xfn, \p\()_onen, \p\()_polys
+	b       \p\()_polys_1
+	lhu     $t0, R_POLYS($a0)            # (\p\()_polys's first)
+
+\p\()_full:
+	li      $t0, 1
+.if R_PROFILE
+	sw      $t0, SP_FULL($t8)
+	lw      $t0, SP_SKIPPED($t8)
+	nop
+	addiu   $t0, $t0, 1
+	sw      $t0, SP_SKIPPED($t8)
+\p\()_done:
+	lhu     $t0, TIMER2($t8)
+	lw      $t9, SP_T0($t8)
+	lw      $t1, SP_TBLOCK($t8)
+	subu    $t0, $t0, $t9
+	andi    $t0, $t0, 0xffff
+	addu    $t1, $t1, $t0
+	b       \exit
+	sw      $t1, SP_TBLOCK($t8)
+.else
+	b       \exit
+	sw      $t0, SP_FULL($t8)
+.endif
+
+.endm
+
 	.section .bss.r_walk_spill, "aw", @nobits
 	.align  4
 r_walk_spill:                            # walk stack overflow (see walk_spill)
@@ -416,10 +785,23 @@ r_render:
 	sw      $t1, 0($s6)                  # texture window off, first in the
 	sw      $t2, 4($s6)                  # bucket = drawn after the world (the
 	move    $fp, $s6                     # overlay and the next frame start
+	addiu   $s6, $s6, 8                  #  unwrapped)
 
+	# ---- the view model: prepended first, so drawn last, on top -----------
+	lw      $a0, RS_VIEWMODEL($s0)
+	lw      $t0, RS_OFY($s0)
+	lw      $t1, RS_VH2($s0)
+	sw      $s0, SP_RSTATE($t8)          # (draw_model, walk_done take it back)
+	sh      $s4, SP_STAMP($t8)           # (a model's records' face stamp)
+	sw      $t0, SP_OFY($t8)
+	beqz    $a0, 1f
+	sw      $t1, SP_VH2($t8)
+	jal     draw_model
+	nop
+1:
 	# ---- camera leaf ----------------------------------------------------
 	lw      $s1, RS_ROOT($s0)
-	addiu   $s6, $s6, 8                  #  unwrapped)
+	nop
 	andi    $t0, $s1, 1
 fl_loop:                                 # (t0 = s1 & 1: a leaf?)
 	bnez    $t0, fl_done
@@ -448,7 +830,6 @@ mark_done:
 
 	# ---- BSP walk -------------------------------------------------------
 	lw      $s1, RS_ROOT($s0)
-	sw      $s0, SP_RSTATE($t8)          # (walk_done takes it back)
 	lw      $s0, SP_PLANES($t8)          # s0 = the plane table for the walk
 	li      $s2, 0xf                     # all four frustum planes active
 	addiu   $s3, $t8, 4                  # walk stack = scratchpad + 4
@@ -588,7 +969,8 @@ walk_leaf:                               # a0 = the leaf (s1 - 1)
 	FRUSTUM pop
 wl_marks:
 	lw      $t3, SP_FVBASE($t8)
-	beqz    $a3, pop
+	lw      $t9, L_VIS($a0)              # (the leaf's render list: its top byte)
+	beqz    $a3, wl_ents
 	addu    $a3, $a3, $a2                # end of the marks
 	lhu     $t0, 0($a2)
 wl_mark:                                 # (marks are byte offsets: world.c)
@@ -597,10 +979,17 @@ wl_mark:                                 # (marks are byte offsets: world.c)
 	sh      $s4, 0($t0)                  # face_visframe[mark] = framecount
 	bne     $a2, $a3, wl_mark
 	lhu     $t0, 0($a2)                  # (next; one past the last: harmless)
+wl_ents:
+	srl     $t9, $t9, 24
+	bnez    $t9, draw_ents               # models / particles in this leaf:
+	addiu   $s3, $s3, -4                 # drawn here, in the painter's order
+	b       pop_1
+	lw      $t0, SP_STACK($s3)           # (pop_1's first)
 
 pop:
 	addiu   $s3, $s3, -4
 	lw      $t0, SP_STACK($s3)           # (see wn_push; empty: the word at +0)
+pop_1:                                   # (t0 loaded; draw_ents, wl_ents come here)
 	beq     $s3, $t8, walk_refill        # empty (the refill resets s3)
 	srl     $s2, $t0, 28                 # clip flags
 	srl     $t3, $t0, 24
@@ -645,367 +1034,7 @@ pop:
 # command of the run it closes included) and walk_done's; the slow path
 # emits a triangle only while s6 <= s7, so it ends at most 40 bytes over.
 # Clobbers at, v0, a0-a3, t0-t7, t9; back to `walk` when done.
-draw_records:
-.if R_PROFILE
-	sw      $t9, SP_T0($t8)
-	lw      $v0, SP_CLUT16($t8)
-.endif
-	bnez    $t0, walk                    # packet arena full: nothing more
-	move    $t2, $zero
-dr_cull:
-	addu    $a0, $a0, $t2                # culled record (t2 = its size): next
-dr_rec:
-	lw      $t0, SP_FVBASE($t8)          # (kept through the unstamped run)
-dr_rec_1:
-.if R_PROFILE
-	beq     $a0, $a1, dr_done
-.else
-	beq     $a0, $a1, walk
-.endif
-	lhu     $t1, R_FACE_ID($a0)          # (at the block end: a harmless read)
-	lhu     $t2, R_SIZE($a0)
-	addu    $t1, $t1, $t0                # (face_id: a byte offset, world.c)
-	lhu     $t1, 0($t1)
-	addu    $a0, $a0, $t2                # a0 = next record
-	bne     $t1, $s4, dr_rec_1           # not stamped this frame: next
-	sw      $a0, SP_NEXTREC($t8)
-	subu    $a0, $a0, $t2                # stamped: back to it
-
-	# bounding-sphere frustum test (view space x6; r in vertex units, view
-	# radius 1.5 r): left/right planes have |n| = sqrt2 -> 2.125 r, top/bottom
-	# |n| = 5 -> 8 r. All conservative.
-	# VZ0 is loaded from a sign-extended halfword, not with lwc2: the upper
-	# half of the word at +16 is not part of it, and PCSX-Redux does not
-	# drop those bits the way the 16-bit hardware register does.
-	lh      $t9, R_SC+4($a0)
-	lwc2    C2_VXY0, R_SC+0($a0)
-	lhu     $t3, R_SR($a0)
-	mtc2    $t9, C2_VZ0
-	lhu     $a3, R_TEX($a0)
-	lw      $t9, SP_K16($t8)
-	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
-	srl     $t7, $t3, 1                  # (while the GTE works; t2 keeps the
-	addu    $t7, $t7, $t3                #  record's size for dr_cull) rho = 1.5 r
-	mult    $t9, $t7                     # k16 rho, for a2 bit 2 below
-	lw      $at, SP_LASTTEX($t8)
-	mfc2    $t0, C2_IR1                  # x
-	mfc2    $t1, C2_IR2                  # y
-	mfc2    $t4, C2_IR3                  # z
-	sll     $t5, $t3, 1
-	srl     $t6, $t3, 3
-	addu    $t5, $t5, $t6                # 2.125 r
-	subu    $t6, $t4, $t0                # right: z - x
-	addu    $t6, $t6, $t5
-	bltz    $t6, dr_cull
-	addu    $t6, $t4, $t0                # left: z + x
-	addu    $t6, $t6, $t5
-	bltz    $t6, dr_cull
-	sll     $t5, $t3, 3                  # 8 r
-	sll     $t6, $t4, 1
-	addu    $t6, $t6, $t4                # 3z
-	sll     $t0, $t1, 2                  # 4y
-	subu    $t9, $t6, $t0                # bottom: 3z - 4y
-	addu    $t9, $t9, $t5
-	bltz    $t9, dr_cull
-	addu    $t9, $t6, $t0                # top: 3z + 4y
-	addu    $t9, $t9, $t5
-	bltz    $t9, dr_cull
-	sll     $t5, $t3, 1                  # delay: 2r
-	subu    $t6, $t4, $t7                # nearest depth z - rho
-	lw      $t7, SP_SZFAST($t8)
-	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
-	slt     $a2, $t5, $t7                # a2 bit 0: may come too near
-	sltu    $t0, $s7, $s6                # room for the whole record?
-	bnez    $t0, dr_full
-	sll     $t6, $t6, 4
-	# a2 bit 2: an affine error above the threshold is possible: (z - rho)
-	# x 16 < k16 x rho (render.c, warp_k16). It also covers an edge over
-	# the subdivision's 500 px span: k16 >= 67 (T <= 32) puts the bound at
-	# z < 7.8 r, beyond the 6 r where a record's edges can reach 500 px.
-	mflo    $t9
-	slt     $t9, $t6, $t9
-	sll     $t9, $t9, 2
-	or      $a2, $a2, $t9
-
-	lbu     $t2, R_NVERTS($a0)
-	beq     $at, $a3, dr_tex_done        # same texture as the last record
-	lhu     $t0, R_POLYS($a0)            # (the light bytes' offset, below)
-	bltz    $at, dr_tex_load             # first of the frame: no run to close
-	lw      $t5, SP_TEXBASE($t8)
-	lw      $t6, SP_TWIN($t8)            # close the last texture's run: its
-	lui     $t9, 0x0100                  # window command, prepended after its
-	or      $t9, $t9, $fp                # polygons, comes first in the bucket
-	sw      $t9, 0($s6)                  # (one per run, not per record: the
-	sw      $t6, 4($s6)                  # run's polygons all draw after it)
-	move    $fp, $s6
-	addiu   $s6, $s6, 8
-dr_tex_load:
-	sll     $t6, $a3, 3                  # fetch its words (8 B entry)
-	sw      $a3, SP_LASTTEX($t8)
-	addu    $t6, $t6, $t5
-	lw      $t9, 4($t6)                  # its texture-window command
-	lw      $v0, 0($t6)                  # clut | tpage << 16
-	sw      $t9, SP_TWIN($t8)
-	lui     $t5, 0xffff
-	and     $v1, $v0, $t5                # tpage << 16, ORed into uv1
-	sll     $v0, $v0, 16                 # clut  << 16, ORed into uv0
-	sw      $v0, SP_CLUT16($t8)          # (the slow path's copies)
-	sw      $v1, SP_TPAGE16($t8)
-dr_tex_done:
-.if R_PROFILE
-	lw      $t1, SP_RECORDS($t8)
-	lw      $t9, SP_VERTS($t8)
-	addiu   $t1, $t1, 1
-	addu    $t9, $t9, $t2
-	sw      $t1, SP_RECORDS($t8)
-	sw      $t9, SP_VERTS($t8)
-.endif
-	addiu   $t1, $t2, 3                  # light bytes: polys - ((nv + 3) & ~3)
-	andi    $t1, $t1, 0xfc
-	addu    $t0, $t0, $a0
-	subu    $at, $t0, $t1
-	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
-	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
-	move    $t4, $t8                     # cache cursor
-	beqz    $a2, dr_xfn                  # nothing near or warping: no SZ (only
-	addiu   $t5, $t2, -2                 # CAREFUL and dr_nz read it). Vertices
-	XFORM   1, dr_xf, dr_one, dr_xf_done #  left - 2: RTPT while 3+
-dr_xf_done:                              # (a2 != 0 here)
-	move    $t4, $t8
-	andi    $t0, $a2, 4                  # big or warping: careful regardless
-	bnez    $t0, dr_polys
-	move    $t5, $t2
-	move    $a2, $zero                   # exact check: any real vertex near?
-dr_nz:
-	lw      $t0, SP_SZ($t4)
-	addiu   $t5, $t5, -1
-	sltu    $t0, $t0, $t7
-	or      $a2, $a2, $t0
-	bgtz    $t5, dr_nz
-	addiu   $t4, $t4, 4
-
-dr_polys:
-	lhu     $t0, R_POLYS($a0)
-dr_polys_1:
-	lbu     $at, R_NQUADS($a0)
-.if R_PROFILE
-	lw      $t1, SP_POLYS($t8)
-	addu    $a3, $a0, $t0                # first polygon
-	lbu     $t0, R_NTRIS($a0)
-	addu    $t1, $t1, $at
-	addu    $t1, $t1, $t0
-	beqz    $at, dr_tris
-	sw      $t1, SP_POLYS($t8)
-.else
-	addu    $a3, $a0, $t0                # first polygon
-	beqz    $at, dr_tris
-.endif
-dr_quad:                                 # (release: in the delay slot above)
-	lw      $t0, 0($a3)                  # 4 vertex offsets
-	addiu   $at, $at, -1                 # (count down)
-	andi    $t3, $t0, 0xff
-	srl     $t4, $t0, 8
-	andi    $t4, $t4, 0xff
-	srl     $t5, $t0, 16
-	andi    $t5, $t5, 0xff
-	srl     $t6, $t0, 24
-	addu    $t3, $t3, $t8
-	addu    $t4, $t4, $t8
-	addu    $t5, $t5, $t8
-	beqz    $a2, dr_quad_emit
-	addu    $t6, $t6, $t8
-	CAREFUL 1, dr_quad_skip
-dr_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
-	lw      $t0, SP_COL($t3)             # c0
-	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
-	lw      $t3, SP_SXY($t3)             # xy0
-	lui     $t9, CODE_GT4 >> 16
-	lw      $t2, SP_COL($t4)             # c1
-	lw      $t4, SP_SXY($t4)             # xy1
-	or      $t0, $t0, $t9                # code | c0
-	sw      $t0, 4($s6)
-	sw      $t3, 8($s6)
-	andi    $t0, $t1, 0xffff
-	or      $t0, $t0, $v0                # uv0 | clut
-	sw      $t0, 12($s6)
-	sw      $t2, 16($s6)
-	sw      $t4, 20($s6)
-	srl     $t1, $t1, 16
-	or      $t1, $t1, $v1                # uv1 | tpage
-	sw      $t1, 24($s6)
-	lw      $t0, SP_COL($t5)             # c2
-	lw      $t1, SP_SXY($t5)             # xy2
-	lw      $t2, 8($a3)                  # uv2 | uv3 << 16
-	sw      $t0, 28($s6)
-	sw      $t1, 32($s6)
-	andi    $t0, $t2, 0xffff
-	sw      $t0, 36($s6)
-	lw      $t0, SP_COL($t6)             # c3
-	lw      $t1, SP_SXY($t6)             # xy3
-	srl     $t2, $t2, 16
-	sw      $t0, 40($s6)
-	sw      $t1, 44($s6)
-	sw      $t2, 48($s6)
-	lui     $t9, 0x0c00
-	or      $t9, $t9, $fp                # tag: 12 words, link to previous head
-	sw      $t9, 0($s6)
-	move    $fp, $s6                     # new bucket head
-	addiu   $s6, $s6, 52
-dr_quad_next:
-	bgtz    $at, dr_quad
-	addiu   $a3, $a3, POLY_SIZE
-
-dr_tris:
-	lbu     $at, R_NTRIS($a0)
-	lw      $t0, 0($a3)                  # (none: a harmless read)
-	beqz    $at, dr_next
-dr_tri:                                  # t0 = the triangle's 3 vertex offsets
-	addiu   $at, $at, -1                 # (count down; the delay slot above)
-	andi    $t3, $t0, 0xff
-	srl     $t4, $t0, 8
-	andi    $t4, $t4, 0xff
-	srl     $t5, $t0, 16
-	andi    $t5, $t5, 0xff
-	addu    $t3, $t3, $t8
-	addu    $t4, $t4, $t8
-	beqz    $a2, dr_tri_emit
-	addu    $t5, $t5, $t8
-	CAREFUL 0, dr_tri_skip
-dr_tri_emit:                             # POLY_GT3
-	lw      $t0, SP_COL($t3)             # c0
-	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
-	lw      $t3, SP_SXY($t3)             # xy0
-	lui     $t9, CODE_GT3 >> 16
-	lw      $t2, SP_COL($t4)             # c1
-	lw      $t4, SP_SXY($t4)             # xy1
-	or      $t0, $t0, $t9
-	sw      $t0, 4($s6)
-	sw      $t3, 8($s6)
-	andi    $t0, $t1, 0xffff
-	or      $t0, $t0, $v0                # uv0 | clut
-	sw      $t0, 12($s6)
-	sw      $t2, 16($s6)
-	sw      $t4, 20($s6)
-	srl     $t1, $t1, 16
-	or      $t1, $t1, $v1                # uv1 | tpage
-	sw      $t1, 24($s6)
-	lw      $t0, SP_COL($t5)             # c2
-	lw      $t1, SP_SXY($t5)             # xy2
-	lw      $t2, 8($a3)                  # uv2 | pad (0, see qw_tri)
-	sw      $t0, 28($s6)
-	sw      $t1, 32($s6)
-	sw      $t2, 36($s6)
-	lui     $t9, 0x0900
-	or      $t9, $t9, $fp                # tag: 9 words
-	sw      $t9, 0($s6)
-	move    $fp, $s6
-	addiu   $s6, $s6, 40
-dr_tri_next:
-	lw      $t0, POLY_SIZE($a3)          # the next one's (after the last: harmless)
-dr_tri_next_1:
-	bgtz    $at, dr_tri
-	addiu   $a3, $a3, POLY_SIZE
-dr_next:
-	lw      $a0, SP_NEXTREC($t8)
-	b       dr_rec_1
-	lw      $t0, SP_FVBASE($t8)          # (dr_rec's)
-
-# Near polygon: hand it to the slow path (engine/r_slow.c) — near clip,
-# subdivision, exact projection. t0 = 4 (quad) or 3 (triangle).
-dr_quad_skip:
-	b       dr_slow_call
-	li      $t0, 4
-dr_tri_skip:
-	li      $t0, 3
-dr_slow_call:
-	sw      $at, SP_SAVE+0($t8)
-	sw      $a0, SP_SAVE+4($t8)
-	sw      $a1, SP_SAVE+8($t8)
-	sw      $a2, SP_SAVE+12($t8)
-	sw      $a3, SP_SAVE+16($t8)
-	sw      $t0, SP_SAVE+32($t8)
-	sw      $s6, SP_SAVE+20($t8)         # (the slow path's bytes, below)
-.if R_PROFILE
-	lw      $t1, SP_SKIPPED($t8)         # polygons sent to the slow path
-	lhu     $t2, TIMER2($t8)
-	addiu   $t1, $t1, 1
-	sw      $t1, SP_SKIPPED($t8)
-	sw      $t2, SP_SAVE+36($t8)         # slow-path start time
-.endif
-.if R_SLOW_C
-	lw      $t9, SP_RSTATE($t8)          # (s0 holds the plane table)
-	move    $a1, $a0                     # record
-	sw      $s6, RS_PKT($t9)             # the C side emits through r_state
-	sw      $fp, RS_OT_HEAD($t9)
-	move    $a2, $a3                     # polygon
-	move    $a3, $t0                     # 4 or 3
-	move    $a0, $t9                     # r_state
-	jal     r_slow
-	addiu   $sp, $sp, -16                # o32 argument area
-	addiu   $sp, $sp, 16
-	lui     $t8, 0x1f80
-	lw      $t9, SP_RSTATE($t8)
-	nop
-	lw      $s6, RS_PKT($t9)
-	lw      $fp, RS_OT_HEAD($t9)
-.else
-	move    $a1, $a3                     # polygon
-	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3
-	move    $a2, $t0
-.endif
-.if R_PROFILE
-	lhu     $t0, TIMER2($t8)
-	lw      $t1, SP_SAVE+36($t8)
-	lw      $t2, SP_TSLOW($t8)
-	subu    $t0, $t0, $t1
-	andi    $t0, $t0, 0xffff
-	addu    $t2, $t2, $t0
-	sw      $t2, SP_TSLOW($t8)
-.endif
-	lw      $t1, SP_SAVE+20($t8)         # bytes it wrote, for the warp
-	lw      $t2, SP_SLOWB($t8)           # control's triangle count
-	lw      $at, SP_SAVE+0($t8)
-	subu    $t1, $s6, $t1
-	addu    $t2, $t2, $t1
-	sw      $t2, SP_SLOWB($t8)
-	lw      $a0, SP_SAVE+4($t8)
-	lw      $a1, SP_SAVE+8($t8)
-	lw      $a2, SP_SAVE+12($t8)
-	lw      $a3, SP_SAVE+16($t8)
-	lw      $t0, SP_SAVE+32($t8)
-	lw      $v0, SP_CLUT16($t8)          # (the careful test used them)
-	li      $t1, 4
-	beq     $t0, $t1, dr_quad_next
-	lw      $v1, SP_TPAGE16($t8)
-	b       dr_tri_next_1
-	lw      $t0, POLY_SIZE($a3)          # (dr_tri_next's first)
-
-	# the transform of a record CAREFUL will not see: no SZ
-	XFORM   0, dr_xfn, dr_onen, dr_polys
-	b       dr_polys_1
-	lhu     $t0, R_POLYS($a0)            # (dr_polys's first)
-
-dr_full:
-	li      $t0, 1
-.if R_PROFILE
-	sw      $t0, SP_FULL($t8)
-	lw      $t0, SP_SKIPPED($t8)
-	nop
-	addiu   $t0, $t0, 1
-	sw      $t0, SP_SKIPPED($t8)
-dr_done:
-	lhu     $t0, TIMER2($t8)
-	lw      $t9, SP_T0($t8)
-	lw      $t1, SP_TBLOCK($t8)
-	subu    $t0, $t0, $t9
-	andi    $t0, $t0, 0xffff
-	addu    $t1, $t1, $t0
-	b       walk
-	sw      $t1, SP_TBLOCK($t8)
-.else
-	b       walk
-	sw      $t0, SP_FULL($t8)
-.endif
+	RECLOOP dr, walk
 
 walk_done:
 	lw      $t0, SP_LASTTEX($t8)
@@ -1090,6 +1119,225 @@ pd_general:
 	subu    $v0, $v0, $t1
 
 # -----------------------------------------------------------------------------
+# close_run: end the texture run in progress, if any: its window command
+# goes out after its polygons (so before them in the bucket) and
+# SP_LASTTEX becomes -1, so the next record reloads its texture.
+# Clobbers t6, t9.
+close_run:
+	lw      $t9, SP_LASTTEX($t8)
+	lw      $t6, SP_TWIN($t8)
+	bltz    $t9, 1f
+	li      $t9, -1
+	lui     $t9, 0x0100
+	or      $t9, $t9, $fp
+	sw      $t9, 0($s6)
+	sw      $t6, 4($s6)
+	move    $fp, $s6
+	addiu   $s6, $s6, 8
+	li      $t9, -1
+1:	jr      $ra
+	sw      $t9, SP_LASTTEX($t8)
+
+# -----------------------------------------------------------------------------
+# light_recs: the light bytes of the records a1 .. a2 (a model's, pool t4)
+# for this draw: each vertex's normal through the table a3 (its factor x128)
+# times the light t1 (<= 170, so the byte never overflows); a3 = 0: the
+# light itself, flat. Keeps a0, a2, a3, t1, t4, t5; clobbers a1, t0, t6,
+# t7, v0, v1.
+light_recs:
+lr_rec:
+	beq     $a1, $a2, lr_done
+	lbu     $t6, R_NVERTS($a1)           # (at the end: a harmless read)
+	lhu     $t7, R_POLYS($a1)
+	lhu     $t0, R_SIZE($a1)
+	addiu   $v0, $t6, 3
+	andi    $v0, $v0, 0xfc
+	addu    $t7, $t7, $a1
+	addiu   $v1, $a1, R_VERTS            # the indices
+	subu    $t7, $t7, $v0                # the light bytes
+	beqz    $a3, lr_flat
+	addu    $a1, $a1, $t0                # (the next record)
+lr_v:
+	lhu     $t0, 0($v1)
+	addiu   $v1, $v1, 2
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t4
+	lbu     $t0, 6($t0)                  # the normal index
+	addiu   $t6, $t6, -1
+	addu    $t0, $t0, $a3
+	lbu     $t0, 0($t0)                  # its factor
+	addiu   $t7, $t7, 1
+	mult    $t0, $t1
+	mflo    $t0
+	srl     $t0, $t0, 7
+	bnez    $t6, lr_v
+	sb      $t0, -1($t7)
+	b       lr_rec
+	nop
+lr_flat:
+	sb      $t1, 0($t7)
+	addiu   $t6, $t6, -1
+	bnez    $t6, lr_flat
+	addiu   $t7, $t7, 1
+	b       lr_rec
+	nop
+lr_done:
+	jr      $ra
+	nop
+
+# -----------------------------------------------------------------------------
+# draw_model: a0 = an r_ent_t (rlist.h). Its records go through the record
+# loop (RECLOOP de) with its own GTE matrix, vertex pool, skin and light;
+# the texture run in progress is closed before, the model's own after, and
+# the view matrix and the world's pointers are back on return. Needs the
+# walk's s4, s6 / s7 / fp, t8 and SP_RSTATE; clobbers at, v0, v1, a0-a3,
+# t0-t7, t9.
+draw_model:
+	sw      $ra, SP_DMRA($t8)
+	jal     close_run
+	nop
+	lw      $t0, RE_ROT+0($a0)
+	lw      $t1, RE_ROT+4($a0)
+	lw      $t2, RE_ROT+8($a0)
+	lw      $t3, RE_ROT+12($a0)
+	lh      $t4, RE_ROT+16($a0)
+	ctc2    $t0, C2_R11R12
+	ctc2    $t1, C2_R13R21
+	ctc2    $t2, C2_R22R23
+	ctc2    $t3, C2_R31R32
+	ctc2    $t4, C2_R33
+	lw      $t0, RE_TR+0($a0)
+	lw      $t1, RE_TR+4($a0)
+	lw      $t2, RE_TR+8($a0)
+	lw      $t5, RE_POOL($a0)
+	lw      $t6, RE_TEX($a0)
+	ctc2    $t0, C2_TRX
+	ctc2    $t1, C2_TRY
+	ctc2    $t2, C2_TRZ
+	addiu   $t7, $t8, SP_STAMP
+	sw      $t5, SP_VERTPOOL($t8)
+	sw      $t6, SP_TEXBASE($t8)
+	sw      $t7, SP_FVBASE($t8)          # (records' face_id 0 -> the stamp)
+	lw      $a1, RE_RECS($a0)
+	lw      $a2, RE_RECS_END($a0)
+	lw      $a3, RE_DOTS($a0)
+	lw      $t1, RE_LIGHT($a0)
+	jal     light_recs
+	move    $t4, $t5
+	lw      $t2, RE_FLAGS($a0)
+	lw      $t3, SP_SZFAST($t8)
+	andi    $t2, $t2, 1                  # RE_FAST: nothing is near (no SZ is
+	beqz    $t2, 1f                      # below -2^31), nothing warps (k16 rho
+	lw      $t4, SP_K16($t8)             # = -32768 rho is under any z - rho)
+	lui     $t6, 0x8000
+	li      $t7, -32768
+	sw      $t6, SP_SZFAST($t8)
+	sw      $t7, SP_K16($t8)
+1:	sw      $t3, SP_DMSZ($t8)            # (back after the model)
+	sw      $t4, SP_DMK16($t8)
+.if R_PROFILE
+	lhu     $t9, TIMER2($t8)             # (the record loop's start time)
+.endif
+	lw      $t0, SP_FULL($t8)
+	lw      $a1, RE_RECS_END($a0)
+	lw      $a0, RE_RECS($a0)
+	RECLOOP de, dm_exit
+dm_exit:
+	jal     close_run
+	nop
+	lw      $t0, SP_RSTATE($t8)          # the view's GTE matrix again, and
+	lw      $t3, SP_DMSZ($t8)            # the world's pointers and thresholds
+	lw      $t4, SP_DMK16($t8)
+	sw      $t3, SP_SZFAST($t8)
+	sw      $t4, SP_K16($t8)
+	lw      $t1, RS_ROT+0($t0)
+	lw      $t2, RS_ROT+4($t0)
+	lw      $t3, RS_ROT+8($t0)
+	lw      $t4, RS_ROT+12($t0)
+	lh      $t5, RS_ROT+16($t0)
+	ctc2    $t1, C2_R11R12
+	ctc2    $t2, C2_R13R21
+	ctc2    $t3, C2_R22R23
+	ctc2    $t4, C2_R31R32
+	ctc2    $t5, C2_R33
+	lw      $t1, RS_TR+0($t0)
+	lw      $t2, RS_TR+4($t0)
+	lw      $t3, RS_TR+8($t0)
+	lw      $t4, RS_VERTPOOL($t0)
+	lw      $t5, RS_TEXTURES($t0)
+	lw      $t6, RS_FVBASE($t0)
+	ctc2    $t1, C2_TRX
+	ctc2    $t2, C2_TRY
+	ctc2    $t3, C2_TRZ
+	sw      $t4, SP_VERTPOOL($t8)
+	sw      $t5, SP_TEXBASE($t8)
+	sw      $t6, SP_FVBASE($t8)
+	lw      $ra, SP_DMRA($t8)
+	nop
+	jr      $ra
+	nop
+
+# -----------------------------------------------------------------------------
+# draw_ents: the render list of the leaf the walk just visited (t9 = its
+# list id): particles as one TILE_1 each, projected with the view matrix,
+# models through draw_model. Prepended here, between the faces behind the
+# leaf and those in front of it. Back to pop_1 (s3 already moved).
+draw_ents:
+	lw      $t0, SP_RSTATE($t8)
+	sll     $t9, $t9, 1
+	lw      $t1, RS_LISTS($t0)
+	nop
+	addu    $t1, $t1, $t9
+	lhu     $t9, 0($t1)                  # the first item + 1
+	nop
+ei_item:
+	beqz    $t9, pop_1
+	lw      $t0, SP_STACK($s3)           # (pop_1's first)
+	lw      $t0, SP_RSTATE($t8)
+	addiu   $t9, $t9, -1
+	sll     $t9, $t9, 4
+	lw      $t1, RS_ITEMS($t0)
+	lw      $t2, RS_RGB($t0)
+	addu    $t9, $t9, $t1                # the item
+	lbu     $t3, RI_TYPE($t9)
+	lhu     $t1, RI_NEXT($t9)
+	lw      $a0, RI_ENT($t9)
+	sw      $t1, SP_NEXTITEM($t8)
+	bnez    $t3, ei_model
+	lwc2    C2_VXY0, RI_X($t9)
+	lh      $t3, RI_Z($t9)               # a particle
+	lbu     $t4, RI_COLOUR($t9)
+	mtc2    $t3, C2_VZ0
+	sll     $t4, $t4, 2
+	addu    $t4, $t4, $t2
+	RTPS
+	lw      $t4, 0($t4)                  # its colour word
+	sltu    $t0, $s7, $s6
+	bnez    $t0, ei_next                 # (the arena is full)
+	lui     $t6, 0x6800                  # TILE_1
+	mfc2    $t3, C2_SZ3
+	or      $t4, $t4, $t6
+	sltiu   $t3, $t3, 96                 # too near or behind: none
+	bnez    $t3, ei_next
+	mfc2    $t5, C2_SXY2
+	lui     $t6, 0x0200                  # tag: 2 words
+	or      $t6, $t6, $fp
+	sw      $t6, 0($s6)
+	sw      $t4, 4($s6)
+	sw      $t5, 8($s6)
+	move    $fp, $s6
+	addiu   $s6, $s6, 12
+ei_next:
+	lhu     $t9, SP_NEXTITEM($t8)
+	b       ei_item
+	nop
+ei_model:
+	jal     draw_model
+	nop
+	b       ei_next
+	nop
+
+# -----------------------------------------------------------------------------
 # mark_pvs: a0 = new camera leaf. visframe++, then walk the leaf's
 # RLE-compressed PVS row (a zero byte is followed by a count of zero bytes;
 # no row = everything visible: one 0xff byte, read again for every byte) and
@@ -1109,9 +1357,11 @@ mark_pvs:
 	sw      $t9, SP_T0($t8)
 .endif
 	lw      $s5, RS_VISFRAME($s0)
-	lw      $a1, L_VIS($a0)              # compressed row, or 0
-	addiu   $s5, $s5, 1
+	lw      $a1, L_VIS($a0)              # compressed row, or 0 (KUSEG: the top
+	addiu   $s5, $s5, 1                  # byte is the leaf's render list)
 	sw      $s5, RS_VISFRAME($s0)
+	sll     $a1, $a1, 8
+	srl     $a1, $a1, 8
 	lw      $a2, RS_ROWBYTES($s0)
 	lw      $a3, RS_LEAVES($s0)
 	lw      $t5, RS_VIS_LASTMASK($s0)

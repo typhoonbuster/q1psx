@@ -73,7 +73,7 @@ static void project(sv_t *p)
 	/* past the near plane only: x, y may be far off screen, so divide each
 	   (|x| H < 2^31); subdivision culls or splits what lies outside */
 	p->sx = 160 + p->x * R_SCREEN_H / p->z;
-	p->sy = 120 + p->y * R_SCREEN_H / p->z;
+	p->sy = r_state.ofy + p->y * R_SCREEN_H / p->z;
 }
 
 /* Clip-path vertex order: crossings are always interpolated from the same

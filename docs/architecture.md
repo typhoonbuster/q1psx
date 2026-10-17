@@ -106,12 +106,12 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | Stack | 16 KB | |
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
-| Level arena | ~700 KB | world render data + clip hulls + PVS + entities |
-| Game arena | ~500 KB | progs.dat (must be slimmed at cook time) + edicts |
-| Free / models | rest | MDL meshes, Phase 8 |
+| Level arena | 1152 KB | world render data + clip hulls + PVS (the biggest map 696 KB) |
+| Game arena | 160 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 77 KB), filled once at boot |
+| QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
-The level arena is a bump allocator that is reset on map load; the game arena
-likewise. There is no general-purpose heap at runtime.
+The level arena is a bump allocator that is reset on map load. There is no
+general-purpose heap at runtime.
 
 ### Scratchpad (1 KB) — owned by the renderer during `r_frame`
 
@@ -123,7 +123,7 @@ As built (R6.2; the authoritative map is `engine/r_defs.inc`):
 | `0x100` | 168 B | per record vertex: `SXY` (42 words) |
 | `0x1A8` | 168 B | per record vertex: `SZ` |
 | `0x250` | 168 B | per record vertex: grey colour word |
-| `0x300` | 256 B | camera, table pointers, texture cache, counters, slow-path state |
+| `0x300` | 256 B | camera, table pointers, texture cache, counters, slow-path state, the model draw's saved state and the viewport (`SP_DMRA` .. `SP_DMK16`) |
 
 The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 `QW_MAX_REC_PKT` (2048) bytes of packets.
@@ -131,11 +131,17 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 ### VRAM (1024 × 512 halfwords)
 
 - Framebuffers: 320 × 240 at (0, 0) and (0, 240).
-- Textures: everything at x ≥ 320 (704 × 512 halfwords ≈ 700 KB of 8bpp).
-  - Tiles are shelf-packed, not on a fixed grid.
+- Textures: 10 pages of 256 × 256 8bpp texels at x ≥ 320. A map uses pages
+  0..5 (the first row and the first page of the second: start at ultra
+  needs all six); pages 6..9 (x ≥ 448 on the second row) hold the game
+  data's images: the weapons' skins at half resolution, the projectiles',
+  the explosion sprite, the HUD's pictures (formats/qgame.h).
+  - Tiles are packed, not on a fixed grid.
   - A tile never straddles a texture-page boundary (u ≤ 255 from the page
     base, v inside one 256-line half).
-- CLUT: Quake's palette, one 256-entry row. A debug font lives in a corner.
+- CLUT: Quake's palette, one 256-entry row at (0, 480); the game data's own
+  copy with index 255 transparent at (0, 504). A debug font lives in a
+  corner (x ≥ 960).
 - 4-bit textures (menu option, `<MAP>_<N>.TX4`, `docs/porting-notes.md`
   §20): the same tiles at the same texel positions, pages at x = 320 + 64 p
   on the first half (y = 0), and one 16-entry CLUT per texture from
@@ -226,6 +232,10 @@ scratchpad for the duration of `r_frame`. Its GTE matrices:
    - One packet-space test per record.
    - One texture-window command per run of same-texture records
      (`docs/porting-notes.md` §16.1).
+   - **Entities** (`engine/rlist.h`, `docs/porting-notes.md` §22.3): a
+     leaf's render list (particles, model entities) is drawn when the walk
+     visits the leaf, with the same record loop; the view model first of
+     all, on top.
 5. **Slow path** (polygons whose affine error may exceed the fidelity
    level's threshold, or that come too near; `docs/porting-notes.md` §19):
    - a per-polygon conservative test (`CAREFUL`) in the record loop keeps
@@ -237,7 +247,11 @@ scratchpad for the duration of `r_frame`. Its GTE matrices:
      from its two ends alone (crack-free).
 
    Same asm, separate routine (`engine/r_slow.s`, spec `engine/r_slow.c`).
-6. Sky and liquids come later (R3.4) as their own passes.
+6. The HUD and the debug text go to the overlay bucket, after the world:
+   the overlay chain (`vid.c`) draws 2D packets in order over the whole
+   screen, whatever the 3D viewport (240 rows, or 192 above the original
+   status bar).
+7. Sky and liquids come later (R3.4) as their own passes.
 
 ABI with C: asm entry points follow the MIPS o32 convention. They preserve
 `$s0-$s8`, `$gp`, `$sp`, and use the stack slots PSn00bSDK requires when they

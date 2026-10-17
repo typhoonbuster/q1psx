@@ -16,6 +16,8 @@ typedef struct {
 static vid_buffer_t buf[2];
 static int          back;          /* buffer the CPU is building into */
 static uint32_t     last_vbl;
+static int          viewport_rows = VID_H;
+static uint32_t    *ovl_head, *ovl_tail;   /* this frame's overlay chain */
 
 vid_frame_t vid_frame;
 vid_stats_t vid_stats;
@@ -27,6 +29,41 @@ static void begin_buffer(int i)
 	vid_frame.pkt     = buf[i].arena;
 	vid_frame.end     = buf[i].arena + VID_ARENA_BYTES;
 	vid_frame.dropped = 0;
+	ovl_head = ovl_tail = NULL;
+	if (viewport_rows < VID_H) {         /* the overlay draws over the whole screen */
+		DR_AREA *a = vid_ovl_alloc(sizeof *a);
+		if (a) {
+			RECT r = { 0, (int16_t) (i * VID_H), VID_W, VID_H };
+			setDrawArea(a, &r);
+		}
+	}
+}
+
+void vid_set_viewport(int rows)
+{
+	viewport_rows = rows;
+	for (int i = 0; i < 2; i++)
+		buf[i].draw.clip.h = (int16_t) rows;
+}
+
+int vid_viewport_rows(void)
+{
+	return viewport_rows;
+}
+
+void *vid_ovl_alloc(int bytes)
+{
+	uint32_t *p = vid_alloc(bytes);
+	if (!p)
+		return NULL;
+	setlen(p, (bytes - 4) / 4);
+	termPrim(p);
+	if (ovl_tail)
+		setaddr(ovl_tail, p);
+	else
+		ovl_head = p;
+	ovl_tail = p;
+	return p;
 }
 
 void vid_init(void)
@@ -96,6 +133,8 @@ void vid_flip(void)
 {
 	vid_buffer_t *drawn = &buf[back];
 
+	if (ovl_head)                        /* the overlay chain, first in its bucket */
+		addPrims(&vid_frame.ot[OT_OVERLAY], ovl_head, ovl_tail);
 	vid_stats.pkt_bytes = (uint32_t) (vid_frame.pkt - drawn->arena);
 	vid_stats.dropped   = vid_frame.dropped;
 
@@ -125,6 +164,12 @@ void vid_flip(void)
 void vid_dump(int hash_only)
 {
 	const uint32_t *ot = vid_frame.ot;
+	if (ovl_head) {                      /* (as vid_flip will) */
+		addPrims(&vid_frame.ot[OT_OVERLAY], ovl_head, ovl_tail);
+		ovl_head = ovl_tail = NULL;
+	}
+	if (!hash_only)
+		printf("V %d\n", viewport_rows);
 	uint32_t at = (uint32_t) &ot[VID_OT_LEN - 1];
 	uint32_t hash = 2166136261u, words = 0;   /* FNV-1a over the payloads */
 

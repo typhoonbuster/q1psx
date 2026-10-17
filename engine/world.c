@@ -197,7 +197,9 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 	for (uint32_t i = 0; i < h->num_leaves; i++) {
 		qw_leaf *l = &world.leaves[i];
 		l->marks    = (uint32_t) &world.marks[l->marks];
-		l->vis      = l->vis == QW_NONE ? 0 : REL(vis, l->vis);
+		l->vis      = l->vis == QW_NONE ? 0 : REL(vis, l->vis) & 0x00ffffffu;   /* KUSEG: the top
+		                                                                        byte holds the leaf's
+		                                                                        render list (rlist.h) */
 		l->visframe = 0;
 	}
 

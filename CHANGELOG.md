@@ -958,3 +958,39 @@ followed by R0-R4.
   - **Tools:** with `BENCH_MAPS=1`, the bench prints each spawn view's
     display-list hash and `scripts/dlcheck.sh` compares them; `vid_dump`
     can print the hash alone.
+- **Controls, weapons and the HUD** (2026-10-17). Details:
+  `docs/porting-notes.md` §22.
+  - **Game data:** `qcook game` cooks the 8 view models, the projectiles,
+    the explosion sprite and 112 HUD pictures into `GAME.DAT` (formats/
+    qgame.h): models become face records in the world's format, one vertex
+    pool per frame, skins at half resolution in VRAM pages 6..9 (maps keep
+    0..5). QWV8: a leaf's light byte (models are lit with their leaf's).
+  - **Renderer:** a render list per BSP leaf (`engine/rlist.c`), drawn by
+    the walk in the painter's order; particles as tiles, models through
+    the record loop (now the `RECLOOP` macro) with their own GTE matrix and
+    per-vertex light from the normal tables; the view model first, on top,
+    through the fast path only. The 3D viewport can be 192 rows (the GTE's
+    centre and the GPU's draw area follow); the overlay chain draws 2D
+    packets in order over the whole screen.
+  - **Hull 0** (the point hull) traces the render BSP: `clip_trace` /
+    `clip_contents` in asm and C, `clipdiff` 0 mismatches.
+  - **The game** (`engine/game.c`, native C, permanent): every weapon
+    (weapons.qc), the weapon animations (player.qc), projectiles with
+    hull-0 traces, grenades that bounce, explosions (sprite + particles),
+    the lightning beam, T_Damage / T_RadiusDamage on the player (rocket
+    jumps), death and respawn, the view's bob, lean, punch and damage
+    kicks. Everything is given at the spawn (no items yet). No sounds, no
+    dynamic lights, no water.
+  - **HUD** (`engine/hud.c`): Quake's status and inventory bars over a
+    192-row view, or a full-screen Quake II PSX-style layout; chosen in
+    the menu.
+  - **Controls, scheme B:** R2 / Square fire, L2 / Cross jump, R1 / L1
+    next / previous weapon, Triangle walk, Circle level the view, d-pad
+    weapon groups; START the overlay, SELECT + START the menu, SELECT +
+    Cross noclip, SELECT + Square respawn; a digital-pad mapping too.
+  - **Tools:** `BENCH_GAME=1 scripts/bench.sh` fires every weapon and
+    dumps a frame per weapon and per HUD; `pktview` renders sprites, tiles,
+    DR_TPAGE, the draw area and GAME.DAT's images, and takes the frame's
+    name and viewport from the dump.
+  - **Cost:** start's spawn view 617 k → 650-680 k cycles with the view
+    model and the HUD; 795 k while the lightning gun fires.

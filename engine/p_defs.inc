@@ -14,10 +14,16 @@
 .set TR_SIZE,       44
 
 # ---- world_t: the clip-hull fields --------------------------------------------
+.set W_ROOT,         8     # the render BSP's root: hull 0, the point hull
 .set W_PLANES,      76
 .set W_CLIPNODES,   80
 .set W_HULL1,       84
 .set W_HULL2,       88
+
+# ---- qw_node / qw_leaf (hull 0 walks the render BSP; engine/r_defs.inc) ------
+.set N_PLANE3,      14     # plane index x 3 = word offset in the table
+.set N_CHILD,       20     # child[2]: pointers (KUSEG), bit 0 = a leaf
+.set L_CONTENTS,    26     # int8 Quake CONTENTS_*
 
 # ---- qw_plane (12 B) / qw_clipnode (8 B) --------------------------------------
 .set PL_N,           0     # int16 n[3] x4096: lwc2 VXY0 at +0, VZ0 at +4

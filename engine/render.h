@@ -65,16 +65,27 @@ typedef struct {
 	                                 nearest depth z - 1.5r >= k16 x 1.5r / 16
 	                                 can exceed it (porting-notes §19)       */
 	uint32_t slow_bytes;     /* +180 packet bytes the slow path wrote       */
+	uint32_t items;          /* +184 r_item_t *: the render list (rlist.h)   */
+	uint32_t lists;          /* +188 uint16_t[256]: a leaf's list -> item + 1 */
+	uint32_t rgb;            /* +192 uint32_t[256]: palette colour words     */
+	uint32_t viewmodel;      /* +196 r_ent_t * drawn first (on top), or 0    */
+	int32_t  ofy;            /* +200 the viewport's vertical centre (120, 96) */
+	int32_t  vh2;            /* +204 the viewport's height (240, 192)         */
 } r_state_t;
 
 extern r_state_t r_state;
 
 void r_init(void);
 
+/* The 3D viewport: the whole screen (240 rows) or the rows above the
+   original status bar (192). Sets the GTE's projection centre. */
+void r_set_viewport(int rows);
+int  r_viewport_rows(void);
+
 /* Camera for the next r_frame(): position in 1/R_POS_SUB world units (the
    player physics' own resolution), angles in binary degrees. */
 #define R_POS_SUB 8
-void r_set_view(const int32_t pos[3], int yaw, int pitch);
+void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll);
 
 /* Render the world into the current frame's packet arena (asm). */
 void r_frame(void);
@@ -120,5 +131,6 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv);
 
 int16_t r_sin(int a);   /* binary degrees -> x4096 */
 int16_t r_cos(int a);
+int     r_atan2(int32_t y, int32_t x);   /* -> binary degrees, 0..4095 */
 
 #endif

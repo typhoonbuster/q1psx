@@ -69,11 +69,13 @@ option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
 set(Q1PSX_BENCH_FID 2 CACHE STRING "Fidelity level the bench loads (0 low .. 3 ultra)")
 set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics checks only")
 set(Q1PSX_BENCH_MAPS 0 CACHE STRING "1: bench every map on the disc (spawn views) instead")
+set(Q1PSX_BENCH_GAME 0 CACHE STRING "1: bench the game instead: every weapon fired, both HUDs")
 set(Q1PSX_BENCH_T 8 CACHE STRING "Affine-warp threshold the bench renders with (px)")
 set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
+		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4})
 	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
 	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
@@ -102,9 +104,10 @@ endif()
 
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h + qworld.h). Every
 # cooked map ships at every fidelity level: <MAP>_<N>.TEX / .TX4 / .WLD with
-# N = 0..3 for low/medium/high/ultra (.TX4: the 4-bit textures). The cook
-# re-runs whenever the cooker or a format header changes, so the disc never
-# carries stale data.
+# N = 0..3 for low/medium/high/ultra (.TX4: the 4-bit textures), plus the
+# game data GAME.DAT (formats/qgame.h: weapon models, projectiles, the HUD).
+# The cook re-runs whenever the cooker or a format header changes, so the
+# disc never carries stale data.
 if(_pak0_path AND EXISTS "${_pak0_path}")
 	file(GLOB _qcook_deps CONFIGURE_DEPENDS
 		${PROJECT_SOURCE_DIR}/tools/qcook/*.c
@@ -126,6 +129,10 @@ if(_pak0_path AND EXISTS "${_pak0_path}")
 endif()
 
 set(COOKED_ENTRIES "")
+set(GAME_ENTRY "")
+if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/game.dat")
+	set(GAME_ENTRY "<file name=\"GAME.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/game.dat\" />")
+endif()
 set(_maps "")
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tex
@@ -159,5 +166,5 @@ psn00bsdk_add_cd_image(
 	iso        # target
 	q1psx      # -> q1psx.bin + q1psx.cue
 	${PROJECT_SOURCE_DIR}/iso/iso.xml
-	DEPENDS q1psx ${_cooked_stamp} ${_cooked}   # (a manual cook too)
+	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${PROJECT_SOURCE_DIR}/cooked/id1/game.dat   # (a manual cook too)
 )

@@ -381,8 +381,8 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 	}
 	qsort(items, (size_t) nitems, sizeof *items, by_area);
 
-	/* First fit over QTEX_PAGES pages of 256x256 texels, on a grid of 8x8
-	   cells. A wrapped axis must start at a multiple of its own size (the
+	/* First fit over the map's QTEX_MAP_PAGES pages of 256x256 texels, on a
+	   grid of 8x8 cells. A wrapped axis must start at a multiple of its own size (the
 	   texture window ORs its offset into the low bits). */
 	uint8_t *pages = xcalloc(QTEX_PAGES, PAGE_TEX * PAGE_TEX);
 	static uint8_t cell[QTEX_PAGES][CELLS][CELLS];   /* 1 = taken */
@@ -395,7 +395,7 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 		int cw = (it->w + 7) / 8, ch = (it->h + 7) / 8;
 		int ax = s->win_x ? cw : 1, ay = s->win_y ? ch : 1;   /* alignment, cells */
 		int page = -1, cx = 0, cy = 0;
-		for (int p = 0; p < QTEX_PAGES && page < 0; p++)
+		for (int p = 0; p < QTEX_MAP_PAGES && page < 0; p++)
 			for (int y = 0; y + ch <= CELLS && page < 0; y += ay)
 				for (int x = 0; x + cw <= CELLS && page < 0; x += ax) {
 					int ok = 1;
@@ -410,7 +410,7 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 				}
 		if (page < 0)
 			die("textures do not fit in %d VRAM pages at fidelity %s",
-			    QTEX_PAGES, fid->name);
+			    QTEX_MAP_PAGES, fid->name);
 		for (int yy = 0; yy < ch; yy++)
 			for (int xx = 0; xx < cw; xx++)
 				cell[page][cy + yy][cx + xx] = 1;

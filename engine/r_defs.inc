@@ -37,6 +37,29 @@
 .set RS_WARP_T2,      172
 .set RS_WARP_K16,     176
 .set RS_SLOW_BYTES,   180
+.set RS_ITEMS,        184
+.set RS_LISTS,        188
+.set RS_RGB,          192
+.set RS_VIEWMODEL,    196
+.set RS_OFY,          200
+.set RS_VH2,          204
+
+# ---- the render list (engine/rlist.h): r_item_t (16 B), r_ent_t (64 B) -----
+.set RI_NEXT,     0     # next item of the list + 1, 0 ends
+.set RI_TYPE,     2     # 0 particle, 1 model
+.set RI_COLOUR,   3
+.set RI_X,        4     # particle: x | y << 16 (lwc2 VXY0), z at +8 (lh)
+.set RI_Z,        8
+.set RI_ENT,     12     # model: the r_ent_t
+.set RE_ROT,      0     # GTE rotation, 5 words
+.set RE_TR,      20     # 3 words
+.set RE_POOL,    32
+.set RE_RECS,    36
+.set RE_RECS_END, 40
+.set RE_TEX,     44
+.set RE_DOTS,    48     # light table (162 bytes) or 0: flat
+.set RE_LIGHT,   52
+.set RE_FLAGS,   56     # 1: the fast path only (no near test, no warp bound)
 
 # ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4
@@ -101,6 +124,14 @@
 .set SP_PLB,      0x374   # slow path: polygon index list B (12 bytes)
 .set SP_SV,       0x380   # slow path: s0-s5 kept across it (6 words)
 .set SP_RSTATE,   0x398   # r_render's r_state (s0 holds the plane table during the walk)
+.set SP_DMRA,     0x39c   # draw_model: its return address
+.set SP_NEXTITEM, 0x3a0   # draw_ents: the next item of the list + 1
+.set SP_STAMP,    0x3a4   # the frame count as a halfword: a model's records'
+                          # face stamp (their face_id is 0: SP_FVBASE points here)
+.set SP_OFY,      0x3a8   # the viewport's vertical centre (sp_proj)
+.set SP_VH2,      0x3ac   # its height
+.set SP_DMSZ,     0x3b0   # draw_model: the world's SP_SZFAST and SP_K16, kept
+.set SP_DMK16,    0x3b4   # across a model drawn through the fast path only
 .set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table

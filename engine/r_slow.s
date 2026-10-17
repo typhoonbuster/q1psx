@@ -795,7 +795,7 @@ sp_lerp_1:
 # -----------------------------------------------------------------------------
 # sp_proj: fill pool entry t0 (an index; at sp_proj_2, its address) from its
 # view entry (VIEW_OFS): z clamped to the near plane, sx = OFX + x H / z,
-# sy = OFY + y H / z (x H in shifts: H = 160), z T2, uv word. Clobbers at,
+# sy = OFY + y H / z (x H in shifts: H = 160; OFY: SP_OFY), z T2, uv word. Clobbers at,
 # t0-t5. Keeps t6, t7, a*, s*.
 sp_proj:
 	sll     $t0, $t0, 5
@@ -821,6 +821,7 @@ sp_proj_2:
 	sw      $t4, PV_Z($t0)
 	lw      $t1, PV_U($t0)
 	lw      $t2, PV_V($t0)
+	lw      $t5, SP_OFY($t8)             # (the viewport's centre: sy below)
 	addiu   $t1, $t1, 128
 	srl     $t1, $t1, 8
 	addiu   $t2, $t2, 128
@@ -832,7 +833,7 @@ sp_proj_2:
 	andi    $t2, $t2, 0xffff
 	div     $zero, $t3, $t4              # y H / z
 	mflo    $t3
-	addiu   $t3, $t3, 120                # sy
+	addu    $t3, $t3, $t5                # sy
 	sll     $t3, $t3, 16
 	or      $t2, $t2, $t3
 	jr      $ra
