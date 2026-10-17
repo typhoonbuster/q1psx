@@ -798,7 +798,7 @@ sp_lerp_1:
 # -----------------------------------------------------------------------------
 # sp_proj: fill pool entry t0 (an index; at sp_proj_2, its address) from its
 # view entry (VIEW_OFS): z clamped to the near plane, sx = OFX + x H / z,
-# sy = OFY + y H / z (H: SP_HPROJ; OFY: SP_OFY), z T2, uv word. Clobbers at,
+# sy = OFY + y H / z (H = 5 << SP_HSHIFT; OFY: SP_OFY), z T2, uv word. Clobbers at,
 # t0-t5. Keeps t6, t7, a*, s*.
 sp_proj:
 	sll     $t0, $t0, 5
@@ -812,24 +812,26 @@ sp_proj_2:
 	lw      $t3, VIEW_OFS+4($t0)         # y
 	move    $t4, $s0                     # (the lerp's rounding; s0 = SP_ZNEAR)
 1:	mult    $t5, $t4                     # z T2 (T2 as rs: the short multiply)
-	lw      $t1, SP_HPROJ($t8)
-	lw      $at, PV_U($t0)
+	lw      $t1, SP_HSHIFT($t8)
+	sll     $at, $t2, 2
+	addu    $t2, $t2, $at                # x H = 5 x << shift
 	mflo    $t5
+	sllv    $t2, $t2, $t1
+	sll     $at, $t3, 2
+	addu    $t3, $t3, $at                # y H
+	sllv    $t3, $t3, $t1
 	sw      $t5, PV_ZT($t0)
 	sw      $t4, PV_Z($t0)
-	mult    $t2, $t1                     # x H (the uv word in the shadows)
+	div     $zero, $t2, $t4              # x H / z (while it divides: the uv word)
+	lw      $t1, PV_U($t0)
 	lw      $t5, PV_V($t0)
-	addiu   $at, $at, 128
-	mflo    $t2
-	srl     $at, $at, 8
+	addiu   $t1, $t1, 128
+	srl     $t1, $t1, 8
 	addiu   $t5, $t5, 128
-	mult    $t3, $t1                     # y H
 	andi    $t5, $t5, 0xff00
-	or      $at, $at, $t5
-	mflo    $t3
-	sw      $at, PV_UVW($t0)
+	or      $t1, $t1, $t5
+	sw      $t1, PV_UVW($t0)
 	lw      $t5, SP_OFY($t8)             # (the viewport's centre: sy below)
-	div     $zero, $t2, $t4              # x H / z
 	mflo    $t2
 	addiu   $t2, $t2, 160                # sx
 	andi    $t2, $t2, 0xffff

@@ -45,7 +45,7 @@ typedef struct {
 	uint32_t dots;       /* +48 light table (QG_NORMALS bytes) or 0: flat        */
 	uint32_t light;      /* +52 the leaf's light, 0..170 (x1.5 stays in a byte)  */
 	uint32_t flags;      /* +56 RE_VIEW: the view model: no warp subdivision (its
-	                             polygons are small), the near clip at 8 units */
+	                             polygons are small), the near clip at 5 units */
 	uint32_t pad;
 } r_ent_t;               /* 64 bytes */
 

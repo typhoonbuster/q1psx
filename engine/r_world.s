@@ -250,30 +250,47 @@
 3:
 .endm
 
-# CAREFUL skip: a conservative test, per polygon of a record the sphere
-# flags, before the subdivision's exact one (engine/r_slow.c): every corner
-# at SZ >= SP_SZCLIP (96), W + H <= 500 px for the bbox and (W + H) x
-# (zmax - zmin) <= 2 T2 zmin. Then no edge splits (|dx| + |dy| <= W + H, |dz| <= the range,
+# CAREFUL quad, skip, var: a conservative test, per polygon of a record the
+# sphere flags, before the subdivision's exact one (engine/r_slow.c): every
+# corner at SZ >= 96 (var = 1: SP_SZCLIP, a model's own bound, one more
+# load), W + H <= 500 px for the bbox and (W + H) x (zmax - zmin) <= 2 T2
+# zmin. Then no edge splits (|dx| + |dy| <= W + H, |dz| <= the range,
 # za + zb >= 2 zmin) and the polygon goes out as is; otherwise to `skip`.
 # (A corner the GTE saturated, |x| or |y| >= 1023, needs no test of its
 # own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
 # (t6: quad) = the corners' cache addresses; clobbers t0-t2, t7, t9, v0, v1
 # (reloaded with clut / tpage).
-.macro CAREFUL quad, skip
+.macro CAREFUL quad, skip, var
 	lw      $t0, SP_SZ($t3)
 	lw      $t1, SP_SZ($t4)
 	lw      $t2, SP_SZ($t5)
+.if \var
+	lw      $v1, SP_SZCLIP($t8)
+.else
+	lw      $v1, SP_T4($t8)
+.endif
 .if \quad
 	lw      $t9, SP_SZ($t6)
-	lw      $v1, SP_SZCLIP($t8)
+.if \var
 	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0, "slt $t7, $t0, $v1"   # zmin, zmax
 .else
-	lw      $v1, SP_SZCLIP($t8)
-	MINMAX3 $t0, $t1, $t2, $t7, "slt $t7, $t0, $v1"
+	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0, "sltiu $t7, $t0, 96"
 .endif
-	bnez    $t7, \skip                   # a corner nearer than SP_SZCLIP
+.else
+.if \var
+	MINMAX3 $t0, $t1, $t2, $t7, "slt $t7, $t0, $v1"
+.else
+	MINMAX3 $t0, $t1, $t2, $t7, "sltiu $t7, $t0, 96"
+.endif
+.endif
+.if \var
+	bnez    $t7, \skip                   # a corner nearer than the bound
 	lw      $v1, SP_T4($t8)
 	subu    $t7, $t1, $t0                # depth range
+.else
+	bnez    $t7, \skip
+	subu    $t7, $t1, $t0                # depth range
+.endif
 	mult    $v1, $t0                     # 2 T2 zmin (LO holds it through the
 	lh      $t0, SP_SXY($t3)             # x          ranges: v1 takes W)
 	lh      $t1, SP_SXY($t4)
@@ -307,11 +324,12 @@
 	lw      $v0, SP_CLUT16($t8)
 .endm
 
-# RECLOOP p, exit: the record loop, labels prefixed by p, leaving for `exit`
-# when the block is done or the arena is full. Instantiated for the world's
-# face blocks (dr, back to the walk) and for a model's records (de,
-# draw_model). The comment above describes it.
-.macro RECLOOP p, exit
+# RECLOOP p, exit, var: the record loop, labels prefixed by p, leaving for
+# `exit` when the block is done or the arena is full. Instantiated for the
+# world's face blocks (dr, back to the walk; var = 0: the careful test's
+# near bound is 96) and for a model's records (de, draw_model; var = 1: the
+# bound is SP_SZCLIP, the view model's 31). The comment above describes it.
+.macro RECLOOP p, exit, var
 \p\()_records:
 .if R_PROFILE
 	sw      $t9, SP_T0($t8)
@@ -481,7 +499,7 @@
 	addu    $t5, $t5, $t8
 	beqz    $a2, \p\()_quad_emit
 	addu    $t6, $t6, $t8
-	CAREFUL 1, \p\()_quad_skip
+	CAREFUL 1, \p\()_quad_skip, \var
 \p\()_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -537,7 +555,7 @@
 	addu    $t4, $t4, $t8
 	beqz    $a2, \p\()_tri_emit
 	addu    $t5, $t5, $t8
-	CAREFUL 0, \p\()_tri_skip
+	CAREFUL 0, \p\()_tri_skip, \var
 \p\()_tri_emit:                             # POLY_GT3
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -744,8 +762,8 @@ r_render:
 	sw      $t4, SP_SZCLIP($t8)          # (= 96 = R_SZ_FAST: r_slow.c SZ_CLIP)
 	li      $t4, 48
 	sw      $t4, SP_ZNEAR($t8)           # (8 world units: r_slow.c ZNEAR)
-	li      $t4, 160
-	sw      $t4, SP_HPROJ($t8)           # (the GTE's H: render.c R_SCREEN_H)
+	li      $t4, 5
+	sw      $t4, SP_HSHIFT($t8)          # (the GTE's H, 160 = 5 << 5: render.c R_SCREEN_H)
 	andi    $t0, $t0, 0xffff
 	sll     $t1, $t1, 16
 	or      $t0, $t0, $t1
@@ -1040,7 +1058,7 @@ pop_1:                                   # (t0 loaded; draw_ents, wl_ents come h
 # command of the run it closes included) and walk_done's; the slow path
 # emits a triangle only while s6 <= s7, so it ends at most 40 bytes over.
 # Clobbers at, v0, a0-a3, t0-t7, t9; back to `walk` when done.
-	RECLOOP dr, walk
+	RECLOOP dr, walk, 0
 
 walk_done:
 	lw      $t0, SP_LASTTEX($t8)
@@ -1245,8 +1263,9 @@ draw_model:
 	li      $t3, 40
 	sw      $t7, SP_K16($t8)
 	sw      $t6, SP_T4($t8)
-	sw      $t3, SP_HPROJ($t8)
 	ctc2    $t3, C2_H
+	li      $t3, 3
+	sw      $t3, SP_HSHIFT($t8)          # (H = 5 << 3)
 1:
 .if R_PROFILE
 	lhu     $t9, TIMER2($t8)             # (the record loop's start time)
@@ -1254,7 +1273,7 @@ draw_model:
 	lw      $t0, SP_FULL($t8)
 	lw      $a1, RE_RECS_END($a0)
 	lw      $a0, RE_RECS($a0)
-	RECLOOP de, dm_exit
+	RECLOOP de, dm_exit, 1
 dm_exit:
 	jal     close_run
 	nop
@@ -1267,8 +1286,9 @@ dm_exit:
 	li      $t7, 48
 	sw      $t7, SP_ZNEAR($t8)
 	li      $t7, 160
-	sw      $t7, SP_HPROJ($t8)
 	ctc2    $t7, C2_H
+	li      $t7, 5
+	sw      $t7, SP_HSHIFT($t8)
 	sw      $t3, SP_SZFAST($t8)
 	sw      $t4, SP_K16($t8)
 	sw      $t6, SP_T2($t8)

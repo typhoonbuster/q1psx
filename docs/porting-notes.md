@@ -2464,11 +2464,14 @@ a leaf are lit with it; the view model with the eye's leaf (at least 24,
   them. The cook drops a view model's triangles that are never seen:
   behind 3 units in every frame, or back-facing (by the vertex normals) in
   every frame — 25-40 % of them.
-- **Cost.** The leaf hook adds 0.2 % to a frame; the view model 65-120 k
-  cycles on start's spawn view (its fast-path triangles plus the clipped
-  ones, 700 cycles each through the slow path: the super shotgun's pumped
-  frames have 80 of them); a particle about 40 cycles. A lean near clip
-  for the view model (no subdivision machinery) would cut that by half.
+- **Cost.** The entity hooks add 0.37 % to the world's bench total (4 340 k
+  → 4 356 k over the 12 views: the leaf hook, the prologue's stores, the
+  careful test's variable bound in the model instance only — the world's
+  instance keeps its immediate); the view model 65-120 k cycles on start's
+  spawn view (its fast-path triangles plus the clipped ones, 700 cycles
+  each through the slow path: the super shotgun's pumped frames have 80 of
+  them); a particle about 40 cycles. A lean near clip for the view model
+  (no subdivision machinery) would cut that by half.
 
 ### 22.4 Hull 0: the point hull on the render BSP (engine/clip.s)
 
@@ -2566,4 +2569,8 @@ bolts of 26 triangles plus their sparks). The dynamic warp mode keeps such
 frames in one vblank. The bench also walks 48 ticks with the stick a
 little off axis, logging the bob, roll and the gun's offset (the "walk"
 lines) and dumping frames (`gwalk*.png`): the bob is Quake's (−2.5 .. +4
-units at 320 u/s), the roll 0.4 degree at that stick angle.
+units at 320 u/s), the roll 0.4 degree at that stick angle. The game
+scenario's 15 frames hash the same under the dynarec and the interpreter
+(the interpreter's console doubles characters in the `P` lines, so only
+the `H` lines compare; `pktview` then reports oversized primitives from the
+garbled lines, which are not in the frames).

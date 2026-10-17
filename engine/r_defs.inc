@@ -135,8 +135,9 @@
                           # model: SP_ZNEAR + 1, its rear is right behind the eye)
 .set SP_ZNEAR,    0x3b4   # the slow path's near plane, SZ units (48 = 8 world
                           # units; the view model: 30, Quake's 5 for it)
-.set SP_HPROJ,    0x3b8   # the GTE's H (160; the view model: 40 with its x, y
-                          # rows x4, so the GTE's divide holds down to SZ 20)
+.set SP_HSHIFT,   0x3b8   # the GTE's H as a shift of 5x: 5 (H = 160; the view
+                          # model: 3, H = 40, with its x, y rows x4, so the
+                          # GTE's divide holds down to SZ 20)
 .set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table
