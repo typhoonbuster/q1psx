@@ -889,6 +889,7 @@ static void bench_maps(void)
 			ents_debug = 1;                     /* (the models drawn, by name) */
 			run_frame(0, Q1PSX_BENCH_MAP[0] ? 1 : 2);   /* one map: its frames in full */
 			ents_debug = 0;
+			run_frame(0, 0);                    /* (the cycles of a frame without the prints) */
 			printf("ents view %s: %d models drawn of %d, %d in the PVS, %d leaves in front, items %d\n",
 			       names[v & 3], ents_stat[0], ents_stat[3], ents_stat[1], ents_stat[2], rl_num_items());
 		}

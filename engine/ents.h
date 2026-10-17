@@ -46,7 +46,7 @@ struct edict_s {
 	uint8_t  vismask;        /* which of them the PVS stamp vis_stamp sees     */
 	uint8_t  pad;
 	uint16_t vis_stamp;
-	uint16_t leaves[ENT_MAX_LEAVES];
+	const qw_leaf *leaves[ENT_MAX_LEAVES];
 	int32_t  origin[3];      /* 1/CLIP_SUB units                               */
 	int32_t  mins[3], maxs[3];       /* the model's box, local                  */
 	int32_t  absmin[3], absmax[3];   /* in the world                            */
@@ -70,9 +70,11 @@ struct edict_s {
 
 extern edict_t *edicts;      /* the pool, in spawn order */
 extern int      num_edicts;
+#ifdef Q1PSX_BENCH
 extern int      ents_stat[4];   /* the last frame: models drawn, PVS-visible,
-                                   leaves in view, drawable (the bench) */
-extern int      ents_debug;     /* the bench: print each model drawn */
+                                   leaves in view, drawable */
+extern int      ents_debug;     /* print each model drawn */
+#endif
 
 /* after world_load (the pool in the level arena) */
 void ents_load(void);

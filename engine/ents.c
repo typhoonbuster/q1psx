@@ -15,6 +15,10 @@ int      num_edicts;
 static int max_edicts;
 static uint16_t draw_list[CLIP_MAX_BMODELS + 64];   /* the edicts with a model drawn */
 static int      num_draw;
+static uint16_t vis_list[CLIP_MAX_BMODELS + 64];    /* those the PVS stamp vis_list_stamp sees */
+static int      num_vis;
+static uint16_t vis_list_stamp;
+static int      ents_relink;    /* a box moved or spawned: the visible list is stale */
 
 #define ENT_SPARE 64         /* edicts beyond the map's, for what spawns during play */
 
@@ -25,7 +29,12 @@ static void ent_link(edict_t *e)
 		e->absmin[k] = e->origin[k] + e->mins[k];
 		e->absmax[k] = e->origin[k] + e->maxs[k];
 	}
-	e->num_leaves = (uint8_t) world_box_leaves(e->absmin, e->absmax, e->leaves, ENT_MAX_LEAVES);
+	uint16_t idx[ENT_MAX_LEAVES];
+	e->num_leaves = (uint8_t) world_box_leaves(e->absmin, e->absmax, idx, ENT_MAX_LEAVES);
+	for (int k = 0; k < e->num_leaves; k++)
+		e->leaves[k] = &world.leaves[idx[k]];
+	e->vis_stamp = 0xffff;                  /* (its visible set: found again) */
+	ents_relink = 1;
 }
 
 /* setmodel(): the brush model's box */
@@ -175,59 +184,80 @@ static int leaf_in_front(const qw_leaf *l, int32_t *depth)
 	return 1;
 }
 
+#ifdef Q1PSX_BENCH
 int ents_stat[4];   /* the last frame: models drawn, PVS-visible, leaves in view, candidates */
 int ents_debug;     /* the bench: print each model drawn this frame */
+#define STAT(i)   (ents_stat[i]++)
+#else
+#define STAT(i)   ((void) 0)
+#endif
+
+/* The drawable models the PVS sees: found again when the stamp changes
+   (the camera's leaf) or a box moved, each with the bits of its leaves
+   the PVS sees. */
+static void ents_visible(uint16_t vis)
+{
+	num_vis = 0;
+	for (int i = 0; i < num_draw; i++) {
+		edict_t *e = &edicts[draw_list[i]];
+		e->vis_stamp = vis;
+		e->vismask   = 0;
+		for (int j = 0; j < e->num_leaves; j++)
+			if (e->leaves[j]->visframe == vis)
+				e->vismask |= (uint8_t) (1 << j);
+		if (e->vismask)
+			vis_list[num_vis++] = draw_list[i];
+	}
+	vis_list_stamp = vis;
+	ents_relink    = 0;
+}
 
 void ents_render(void)
 {
 	if (!edicts)
 		return;
 	uint16_t vis = (uint16_t) r_state.visframe;
+#ifdef Q1PSX_BENCH
 	ents_stat[0] = ents_stat[1] = ents_stat[2] = 0;
 	ents_stat[3] = num_draw;
-	for (int i = 0; i < num_draw; i++) {
-		edict_t *e = &edicts[draw_list[i]];
-		/* the leaves of its box the PVS sees: found again when the stamp
-		   changes (the camera's leaf), a bit each meanwhile */
-		if (e->vis_stamp != vis) {
-			e->vis_stamp = vis;
-			e->vismask   = 0;
-			for (int j = 0; j < e->num_leaves; j++)
-				if (world.leaves[e->leaves[j]].visframe == vis)
-					e->vismask |= (uint8_t) (1 << j);
-		}
-		if (!e->vismask)
-			continue;
-		ents_stat[1]++;
-		/* among them, the one in front of the eye nearest it: drawn there,
-		   over what the walk draws after it (a single one: as it is) */
+#endif
+	if (vis_list_stamp != vis || ents_relink)
+		ents_visible(vis);
+	for (int i = 0; i < num_vis; i++) {
+		edict_t *e = &edicts[vis_list[i]];
+		STAT(1);
+		/* among the leaves the PVS sees, the one in front of the eye
+		   nearest it: drawn there, over what the walk draws after it (a
+		   single one: as it is) */
 		const qw_leaf *best = 0;
 		int32_t bestz = 0;
-		if (!(e->vismask & (e->vismask - 1))) {
-			for (int j = 0; j < e->num_leaves; j++)
-				if (e->vismask & (1 << j))
-					best = &world.leaves[e->leaves[j]];
-			ents_stat[2]++;
+		unsigned mask = e->vismask;
+		if (!(mask & (mask - 1))) {
+			int j = 0;
+			while (!(mask & 1)) { mask >>= 1; j++; }
+			best = e->leaves[j];
+			STAT(2);
 		} else {
-			for (int j = 0; j < e->num_leaves; j++) {
-				const qw_leaf *l = &world.leaves[e->leaves[j]];
+			for (int j = 0; mask; j++, mask >>= 1) {
 				int32_t z;
-				if (!(e->vismask & (1 << j)) || !leaf_in_front(l, &z))
+				if (!(mask & 1) || !leaf_in_front(e->leaves[j], &z))
 					continue;
-				ents_stat[2]++;
+				STAT(2);
 				if (!best || z < bestz) {
-					best  = l;
+					best  = e->leaves[j];
 					bestz = z;
 				}
 			}
 		}
 		if (!best)
 			continue;
-		ents_stat[0]++;
+		STAT(0);
+#ifdef Q1PSX_BENCH
 		if (ents_debug)
 			printf("  bm *%d leaf %d (vis %u / %u, c %d %d %d, list %08x) mask %02x of %d leaves\n",
 			       e->model, (int) (best - world.leaves), best->visframe, vis, best->c[0], best->c[1],
 			       best->c[2], (unsigned) best->vis, e->vismask, e->num_leaves);
+#endif
 		rl_add_model(best, rl_bmodel(&world.bmodels[e->model], e->origin));
 	}
 }

@@ -112,12 +112,20 @@ r_ent_t *rl_bmodel(const qw_bmodel *bm, const int32_t org[3])
 	if (n_ents >= RL_MAX_ENTS)
 		return 0;
 	r_ent_t *e = &r_ents[n_ents++];
+	const uint32_t *vr = (const uint32_t *) r_state.rot;   /* unrotated: the view's rotation */
+	uint32_t       *er = (uint32_t *) e->rot;
+	er[0] = vr[0]; er[1] = vr[1]; er[2] = vr[2]; er[3] = vr[3]; er[4] = vr[4];
 	int16_t o[4];
 	for (int k = 0; k < 3; k++)
 		o[k] = (int16_t) (org[k] * QW_VSCALE / R_POS_SUB);
 	o[3] = 0;
-	memcpy(e->rot, r_state.rot, sizeof e->rot);   /* unrotated: the view's rotation */
-	rl_ent_matrix(e, 0, o);                       /* (the translation only) */
+	if (!(org[0] | org[1] | org[2])) {            /* in place: the view's translation */
+		e->tr[0] = r_state.tr[0];
+		e->tr[1] = r_state.tr[1];
+		e->tr[2] = r_state.tr[2];
+	} else {
+		rl_ent_matrix(e, 0, o);                   /* (the translation only) */
+	}
 	e->pool     = (uint32_t) world.verts;
 	e->recs     = bm->root;
 	e->recs_end = 0;

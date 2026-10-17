@@ -3317,10 +3317,13 @@ where the map put them until the next stages move them.
 - Costs (PCSX-Redux): a trace 1 825 → 2 646 cycles, a physics tick
   7 744 → 9 818 (the box test over START's 15 solid models on every
   trace: the swept box in registers, the models' world boxes
-  precomputed); the entities' stage at START's spawn 5.0 k → 5.8 k in
-  the game bench (the models' visible leaves cached per PVS stamp, a
-  single visible leaf taken as is, the depth only otherwise), 0.7 k in
-  the world views; e1m1's door view 9.3 k with 5 models drawn — to be
-  measured part by part. Next: Quake's area nodes (SV_CreateAreaNode)
-  with the movers' relinking, so a trace only tests the models of its
-  cells.
+  precomputed); the entities' stage: measured part by part on e1m1's
+  door view (5 models drawn of 31), 10.3 k at first — the scan of every
+  drawable edict 1.6 k, the leaf choice 4.1 k, the render-list entries
+  4.3 k — then the list of the models the PVS sees kept per stamp (the
+  scan goes), the leaves as pointers (no index multiply), a single
+  visible leaf taken as is, the depth only otherwise, and a static
+  model's matrix copied from the view's (no GTE call): 5.8 k on that
+  view, +0.15 k at START's spawn in the game bench (5.04 k → 5.19 k).
+  Next: Quake's area nodes (SV_CreateAreaNode) with the movers'
+  relinking, so a trace only tests the models of its cells.

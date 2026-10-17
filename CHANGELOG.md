@@ -1135,6 +1135,7 @@ followed by R0-R4.
   place; DuckStation's play bench over the 32 maps clean (0 GP0 errors,
   0 invalid reads). Costs: a trace 1 825 → 2 646 cycles and a physics tick 7 744 →
   9 818 on START (the box test over its solid models: Quake's area
-  nodes come with the movers), the entities' stage +0.7 k at START's
-  spawn (the models' leaf choice), 9.3 k on e1m1's door view (5 models
-  drawn: to be measured part by part).
+  nodes come with the movers), the entities' stage +0.15 k at START's
+  spawn and 5.8 k on e1m1's door view with 5 models drawn (the visible
+  models listed per PVS stamp, the leaves as pointers, a static model's
+  matrix copied from the view's).
