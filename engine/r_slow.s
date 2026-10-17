@@ -59,8 +59,8 @@
 .set PV_GC,   24
 .set PV_UVW,  28
 
-.set SZ_CLIP, 96       # SZ below this: the GTE's projection is off (r_slow.c)
-.set ZNEAR,   48       # near clip plane, 8 world units
+# (SZ_CLIP, 96 in r_slow.c: SP_SZCLIP here; the view model lowers it)
+# (ZNEAR, the near clip plane: SP_ZNEAR, 48 = 8 world units for the world)
 .set SPAN,    500      # split edges with |dx| + |dy| above this (r_slow.c)
 .set KOFS,    8192     # midpoint rounding offset (r_slow.c rdiv)
 .set POOL_N,  512      # pool entries (9-bit indices)
@@ -129,9 +129,10 @@ sp_ctab:                                 # children by split mask (1..7)
 .endm
 
 # CORNER k: pool entry k from the record's vertex cache, for corner k of the
-# polygon at a1 (t7 = T2, t9 = 2045): SXY, z, z T2, u and v (x 256), the
-# packet uv word, the grey colour word; bit k of s1 set when the GTE could
-# not project it (SZ < SZ_CLIP, or x / y saturated: outside -1023..1022).
+# polygon at a1 (t7 = T2, t9 = 2045, s2 = SP_SZCLIP): SXY, z, z T2, u and v
+# (x 256), the packet uv word, the grey colour word; bit k of s1 set when the
+# GTE could not project it (SZ < SP_SZCLIP, or x / y saturated: outside
+# -1023..1022).
 # Its key stays that of a corner: entries 0..2 are never midpoints (their
 # key word is never written), the caller clears entry 3's. Clobbers t0-t5.
 .macro CORNER k
@@ -159,7 +160,7 @@ sp_ctab:                                 # children by split mask (1..7)
 	addiu   $t1, $t1, 1023
 	sltu    $t1, $t9, $t1                # 1: y off range
 	or      $t0, $t0, $t1
-	sltiu   $t2, $t5, SZ_CLIP            # 1: too near
+	slt     $t2, $t5, $s2                # 1: too near (SP_SZCLIP)
 	or      $t2, $t2, $t0
 .if \k
 	sll     $t2, $t2, \k
@@ -217,6 +218,7 @@ slow_poly:
 	sw      $s4, SP_SV+16($t8)
 	sw      $s5, SP_SV+20($t8)
 	lw      $t7, SP_T2($t8)              # T2
+	lw      $s2, SP_SZCLIP($t8)          # (CORNER's near bound)
 	lui     $v1, %hi(r_slow_pool)
 	addiu   $v1, $v1, %lo(r_slow_pool)   # v1 = pool, for the whole call
 
@@ -257,6 +259,7 @@ sp_tri0:                                 # a triangle: (0, 1, 2)
 	# x, y, z (entries 0..5) sit at VIEW_OFS from it.
 sp_clip:
 	lw      $t9, SP_VERTPOOL($t8)
+	lw      $s0, SP_ZNEAR($t8)           # (s0 = the near plane through the clip)
 	move    $t2, $v1                     # pool[j]
 	move    $t6, $zero                   # j: corner (PS1 order)
 	move    $s3, $zero                   # behind count
@@ -283,7 +286,7 @@ sp_clip:
 	mfc2    $t5, C2_MAC3                 # else the view z
 2:	sw      $t4, VIEW_OFS-32+4($t2)      # view y
 	sw      $t5, VIEW_OFS-32+8($t2)      # view z
-	slti    $t3, $t5, ZNEAR
+	slt     $t3, $t5, $s0
 	bne     $t6, $a2, 1b
 	addu    $s3, $s3, $t3
 	beq     $s3, $a2, sp_done            # all behind the near plane
@@ -301,7 +304,7 @@ sp_clip:
 	beqz    $s3, sp_project
 	addiu   $a0, $t8, SP_PLA             # a0 = the list to fan
 
-	# Sutherland-Hodgman against z >= ZNEAR: SP_PLA -> SP_PLB, crossings
+	# Sutherland-Hodgman against z >= SP_ZNEAR (s0): SP_PLA -> SP_PLB, crossings
 	# appended to the pool (sc_cross)
 	addiu   $a1, $t8, SP_PLB             # output cursor
 	lbu     $t2, 0($a0)                  # a = ring[0]
@@ -310,7 +313,7 @@ sp_clip:
 	addu    $t4, $t4, $v1                # pool[a]
 	lw      $t0, VIEW_OFS+8($t4)         # za
 	move    $s5, $a0                     # cursor
-	addiu   $t0, $t0, -ZNEAR             # da
+	subu    $t0, $t0, $s0                # da
 sc_edge:                                 # a: t2 index, t4 entry, t0 da
 	lbu     $t3, 1($s5)                  # b
 	addiu   $s5, $s5, 1
@@ -320,7 +323,7 @@ sc_edge:                                 # a: t2 index, t4 entry, t0 da
 	bltz    $t0, 5f                      # a behind the plane: dropped
 	sb      $t2, 0($a1)                  # (else kept)
 	addiu   $a1, $a1, 1
-5:	addiu   $t1, $t1, -ZNEAR             # db
+5:	subu    $t1, $t1, $s0                # db
 	xor     $at, $t0, $t1
 	bltz    $at, sc_cross                # the ends on both sides: a crossing
 	move    $t7, $t4                     # (from a, if a is behind)
@@ -733,14 +736,14 @@ sp_lerp_1:
 	sw      $zero, PV_KEY($t0)           # not a midpoint
 	subu    $s3, $s3, $at
 	mflo    $t2                          # t
-	lw      $s0, VIEW_OFS+4($t7)         # view y
+	lw      $t4, VIEW_OFS+4($t7)         # view y
 	addiu   $s4, $s4, 1
 	mult    $s3, $t2                     # x
 	lw      $s3, VIEW_OFS+4($t9)
 	nop
 	nop
 	mflo    $v0
-	subu    $s3, $s3, $s0
+	subu    $s3, $s3, $t4
 	sra     $v0, $v0, 14
 	mult    $s3, $t2                     # y
 	addu    $v0, $v0, $at
@@ -751,12 +754,12 @@ sp_lerp_1:
 	subu    $s3, $s3, $at
 	sra     $v0, $v0, 14
 	mult    $s3, $t2                     # z
-	addu    $v0, $v0, $s0
+	addu    $v0, $v0, $t4
 	sw      $v0, VIEW_OFS+4($t0)         # y
-	lw      $s0, PV_U($t7)               # u
+	lw      $t4, PV_U($t7)               # u
 	lw      $s3, PV_U($t9)
 	mflo    $v0
-	subu    $s3, $s3, $s0
+	subu    $s3, $s3, $t4
 	sra     $v0, $v0, 14
 	mult    $s3, $t2                     # u
 	addu    $v0, $v0, $at
@@ -767,14 +770,14 @@ sp_lerp_1:
 	subu    $s3, $s3, $at
 	sra     $v0, $v0, 14
 	mult    $s3, $t2                     # v
-	addu    $v0, $v0, $s0
+	addu    $v0, $v0, $t4
 	sw      $v0, PV_U($t0)               # u
-	lw      $s0, PV_GC($t7)              # light: the grey's low byte
+	lw      $t4, PV_GC($t7)              # light: the grey's low byte
 	lw      $s3, PV_GC($t9)
 	mflo    $v0
-	andi    $s0, $s0, 0xff
+	andi    $t4, $t4, 0xff
 	andi    $s3, $s3, 0xff
-	subu    $s3, $s3, $s0
+	subu    $s3, $s3, $t4
 	sra     $v0, $v0, 14
 	mult    $s3, $t2                     # light
 	addu    $v0, $v0, $at
@@ -783,7 +786,7 @@ sp_lerp_1:
 	nop
 	mflo    $v0
 	sra     $v0, $v0, 14
-	addu    $v0, $v0, $s0                # light
+	addu    $v0, $v0, $t4                # light
 	sll     $at, $v0, 8                  # grey c -> 0x00cccccc
 	or      $v0, $v0, $at
 	sll     $at, $v0, 8
@@ -795,7 +798,7 @@ sp_lerp_1:
 # -----------------------------------------------------------------------------
 # sp_proj: fill pool entry t0 (an index; at sp_proj_2, its address) from its
 # view entry (VIEW_OFS): z clamped to the near plane, sx = OFX + x H / z,
-# sy = OFY + y H / z (x H in shifts: H = 160; OFY: SP_OFY), z T2, uv word. Clobbers at,
+# sy = OFY + y H / z (H: SP_HPROJ; OFY: SP_OFY), z T2, uv word. Clobbers at,
 # t0-t5. Keeps t6, t7, a*, s*.
 sp_proj:
 	sll     $t0, $t0, 5
@@ -804,30 +807,29 @@ sp_proj_2:
 	lw      $t4, VIEW_OFS+8($t0)         # z
 	lw      $t5, SP_T2($t8)
 	lw      $t2, VIEW_OFS+0($t0)         # x
-	slti    $t1, $t4, ZNEAR
+	slt     $t1, $t4, $s0
 	beqz    $t1, 1f
 	lw      $t3, VIEW_OFS+4($t0)         # y
-	li      $t4, ZNEAR                   # (the lerp's rounding)
+	move    $t4, $s0                     # (the lerp's rounding; s0 = SP_ZNEAR)
 1:	mult    $t5, $t4                     # z T2 (T2 as rs: the short multiply)
-	sll     $t1, $t2, 7                  # x H = x 128 + x 32
-	sll     $t2, $t2, 5
-	addu    $t2, $t2, $t1
+	lw      $t1, SP_HPROJ($t8)
+	lw      $at, PV_U($t0)
 	mflo    $t5
-	sll     $t1, $t3, 7                  # y H
-	sll     $t3, $t3, 5
-	div     $zero, $t2, $t4              # x H / z (while it divides: y H, z,
-	addu    $t3, $t3, $t1                #  the uv word)
 	sw      $t5, PV_ZT($t0)
 	sw      $t4, PV_Z($t0)
-	lw      $t1, PV_U($t0)
-	lw      $t2, PV_V($t0)
+	mult    $t2, $t1                     # x H (the uv word in the shadows)
+	lw      $t5, PV_V($t0)
+	addiu   $at, $at, 128
+	mflo    $t2
+	srl     $at, $at, 8
+	addiu   $t5, $t5, 128
+	mult    $t3, $t1                     # y H
+	andi    $t5, $t5, 0xff00
+	or      $at, $at, $t5
+	mflo    $t3
+	sw      $at, PV_UVW($t0)
 	lw      $t5, SP_OFY($t8)             # (the viewport's centre: sy below)
-	addiu   $t1, $t1, 128
-	srl     $t1, $t1, 8
-	addiu   $t2, $t2, 128
-	andi    $t2, $t2, 0xff00
-	or      $t1, $t1, $t2
-	sw      $t1, PV_UVW($t0)
+	div     $zero, $t2, $t4              # x H / z
 	mflo    $t2
 	addiu   $t2, $t2, 160                # sx
 	andi    $t2, $t2, 0xffff

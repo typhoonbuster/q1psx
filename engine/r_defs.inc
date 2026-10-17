@@ -59,7 +59,7 @@
 .set RE_TEX,     44
 .set RE_DOTS,    48     # light table (162 bytes) or 0: flat
 .set RE_LIGHT,   52
-.set RE_FLAGS,   56     # 1: the fast path only (no near test, no warp bound)
+.set RE_FLAGS,   56     # 1 (RE_VIEW): no warp bound, the near clip at ZNEAR + 1
 
 # ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4
@@ -130,8 +130,13 @@
                           # face stamp (their face_id is 0: SP_FVBASE points here)
 .set SP_OFY,      0x3a8   # the viewport's vertical centre (sp_proj)
 .set SP_VH2,      0x3ac   # its height
-.set SP_DMSZ,     0x3b0   # draw_model: the world's SP_SZFAST and SP_K16, kept
-.set SP_DMK16,    0x3b4   # across a model drawn through the fast path only
+.set SP_SZCLIP,   0x3b0   # SZ below which a polygon's corner sends it to the
+                          # slow path's clip (96, r_slow.c SZ_CLIP; the view
+                          # model: SP_ZNEAR + 1, its rear is right behind the eye)
+.set SP_ZNEAR,    0x3b4   # the slow path's near plane, SZ units (48 = 8 world
+                          # units; the view model: 30, Quake's 5 for it)
+.set SP_HPROJ,    0x3b8   # the GTE's H (160; the view model: 40 with its x, y
+                          # rows x4, so the GTE's divide holds down to SZ 20)
 .set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table

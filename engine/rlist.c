@@ -110,6 +110,17 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
 	return e;
 }
 
+void rl_view_model(r_ent_t *e)
+{
+	if (!e)
+		return;
+	for (int i = 0; i < 6; i++)
+		e->rot[i] = (int16_t) (e->rot[i] * 4);
+	e->tr[0] *= 4;
+	e->tr[1] *= 4;
+	e->flags = RE_VIEW;
+}
+
 static int leaf_list(qw_leaf *leaf)
 {
 	int id = (int) (leaf->vis >> 24);

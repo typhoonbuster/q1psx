@@ -992,5 +992,14 @@ followed by R0-R4.
     dumps a frame per weapon and per HUD; `pktview` renders sprites, tiles,
     DR_TPAGE, the draw area and GAME.DAT's images, and takes the frame's
     name and viewport from the dump.
-  - **Cost:** start's spawn view 617 k → 650-680 k cycles with the view
-    model and the HUD; 795 k while the lightning gun fires.
+  - **Cost:** start's spawn view 617 k → 680-735 k cycles with the view
+    model and the HUD; 815 k while the lightning gun fires.
+- **The weapon while moving** (2026-10-17: a swaying gait Quake
+  never had). The view model's matrix was built from the previous frame's
+  camera (the render list came before `r_set_view`), so the weapon lagged a
+  frame behind while moving. Fixed; the bob and roll are Quake's (view.c,
+  verified tick by tick in the bench's walk). The view model is now clipped
+  at 5 units like Quake's (its pumped-back frames put most of it behind the
+  eye) through the slow path without subdivision, projected with H = 40 and
+  x4 rows so the GTE's divide holds; the cook drops its never-seen
+  triangles. `sp_lerp` no longer clobbers the near plane's register.

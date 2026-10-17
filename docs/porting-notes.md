@@ -2448,13 +2448,27 @@ a leaf are lit with it; the view model with the eye's leaf (at least 24,
   for the world's face blocks and for a model, so one code path draws
   both. Afterwards the view matrix and the world's pointers come back.
 - **The view model** is prepended first of all (before the walk), so it is
-  drawn last, on top, like Quake's depth hack. It draws through the fast
-  path only (its polygons are small and never behind the camera): the
-  thresholds that send polygons to the careful test and the slow path are
-  parked during its draw. With the slow path it cost 100 k cycles more.
-- **Cost.** The leaf hook adds 0.2 % to a frame; the view model about 35-45
-  k cycles (180 triangles, 150 vertices, their lighting); a particle about
-  40 cycles.
+  drawn last, on top, like Quake's depth hack. Its matrix comes from the
+  frame's own view (`r_set_view` before `game_render`: computed from the
+  previous frame's, the weapon lagged a frame behind the camera while
+  moving — the "swaying gait" seen on 2026-10-17). It is drawn
+  without the warp subdivision (its triangles are small) but with the near
+  clip: Quake clips the view model at 5 units (ALIAS_Z_CLIP_PLANE), and the
+  weapons' animations pull them back to the eye (the super shotgun's pump
+  leaves most of its vertices behind 5 units), so during its draw the slow
+  path's near plane is 5 units, the careful test sends polygons there from
+  5.2 units, nothing warps. The GTE's divide only holds down to SZ = H / 2
+  (13 units at H = 160): the view model is projected with H = 40 and its
+  matrix's x and y rows times 4 (the same screen coordinates, down to 3.3
+  units), its records' spheres are cooked huge so the 4 x does not cull
+  them. The cook drops a view model's triangles that are never seen:
+  behind 3 units in every frame, or back-facing (by the vertex normals) in
+  every frame — 25-40 % of them.
+- **Cost.** The leaf hook adds 0.2 % to a frame; the view model 65-120 k
+  cycles on start's spawn view (its fast-path triangles plus the clipped
+  ones, 700 cycles each through the slow path: the super shotgun's pumped
+  frames have 80 of them); a particle about 40 cycles. A lean near clip
+  for the view model (no subdivision machinery) would cut that by half.
 
 ### 22.4 Hull 0: the point hull on the render BSP (engine/clip.s)
 
@@ -2546,6 +2560,10 @@ the viewport's height (`V <rows>`). The dumps' hashes under the interpreter
 equal the dynarec's.
 
 **Cost** (start's spawn view, high, 8 px, profile build): 617 k cycles
-without the game, 650-680 k with the view model and the HUD; the lightning
-beam's frame 795 k (10 bolts of 26 triangles plus their sparks). The
-dynamic warp mode keeps such frames in one vblank.
+without the game, 680-735 k with the view model and the HUD (the super
+shotgun's pump frames the worst); the lightning beam's frame 815 k (10
+bolts of 26 triangles plus their sparks). The dynamic warp mode keeps such
+frames in one vblank. The bench also walks 48 ticks with the stick a
+little off axis, logging the bob, roll and the gun's offset (the "walk"
+lines) and dumping frames (`gwalk*.png`): the bob is Quake's (−2.5 .. +4
+units at 320 u/s), the roll 0.4 degree at that stick angle.

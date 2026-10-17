@@ -971,8 +971,7 @@ void game_render(void)
 		if (light < 24) light = 24;                   /* always some light on the gun */
 		r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
 		                      pl.pm.yaw, -pl.pm.pitch, 0, light);
-		if (e)
-			e->flags = RE_FAST;          /* small polygons, always in front: no slow path */
+		rl_view_model(e);                /* no subdivision; clipped at 5 units, like Quake */
 		r_state.viewmodel = (uint32_t) e;
 	}
 

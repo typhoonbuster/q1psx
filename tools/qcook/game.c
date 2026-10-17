@@ -449,6 +449,8 @@ static void mdl_vertex(const mdl_t *m, int f, int vi, const double extra[3], int
 }
 
 /* flush record r: header + indices (global slots) + light bytes + tris */
+static int view_records;   /* a view model's: their sphere never culls them */
+
 static void mrec_flush(gbuf *geo, mrec *r, const mdl_t *m, const double extra[3], int *nrec)
 {
 	if (!r->nt)
@@ -486,6 +488,10 @@ static void mrec_flush(gbuf *geo, mrec *r, const mdl_t *m, const double extra[3]
 			if (d > rad) rad = d;
 		}
 	h.sr = (uint16_t) ceil(rad + 1);
+	if (view_records)
+		h.sr = 4000;    /* the renderer scales a view model's x and y by 4 for
+		                   the GTE's divide: a sphere this big is never culled
+		                   and always takes the exact near test */
 	gput(geo, &h, sizeof h);
 
 	uint16_t idx[QW_MAX_VERTS + 3] = { 0 };
@@ -525,6 +531,44 @@ static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 	out->tex.tpage  = page_tpage(im->page);
 	out->tex.window = 0xE2000000u;
 
+	/* A view model is only ever seen from the eye, at its origin, along +x
+	   (its angles are the view's): a triangle behind the near plane in every
+	   frame (x < 3 units: the renderer clips it at 5, the bob moves the model
+	   by 1.6 at most) is never drawn, nor is one whose vertex normals all
+	   point away from the eye in every frame (back-facing, with a margin
+	   for the smoothed normals near a silhouette). Both are dropped. */
+	uint8_t *keep = xmalloc((size_t) m->ntris);
+	int dropped_near = 0, dropped_back = 0;
+	for (int t = 0; t < m->ntris; t++) {
+		keep[t] = 1;
+		if (!sp->view)
+			continue;
+		int behind = 1, back = 1;
+		for (int f = 0; f < m->nframes && (behind || back); f++) {
+			double c[3] = { 0, 0, 0 }, n[3] = { 0, 0, 0 };
+			for (int k = 1; k < 4; k++) {
+				int16_t v[3];
+				int vi = m->tris[t][k];
+				mdl_vertex(m, f, vi, sp->scale, v);
+				if (v[0] >= 3 * QW_VSCALE)
+					behind = 0;
+				int ni = m->frames[f][vi].n;
+				if (ni >= QG_NORMALS) ni = 0;
+				for (int a = 0; a < 3; a++) {
+					c[a] += v[a] / 3.0;
+					n[a] += anorms[ni][a] / 3.0;
+				}
+			}
+			double cl = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+			double nl = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+			double dot = cl > 0 && nl > 0 ? (n[0] * c[0] + n[1] * c[1] + n[2] * c[2]) / (cl * nl) : 0;
+			if (dot < 0.3)                      /* facing the eye, or near the silhouette */
+				back = 0;
+		}
+		if (behind) { keep[t] = 0; dropped_near++; }
+		else if (back) { keep[t] = 0; dropped_back++; }
+	}
+
 	/* triangle order: a view model nearest-first (seen from the origin, the
 	   eye), by frame 0; else as in the file */
 	tri_order *ord = xmalloc((size_t) m->ntris * sizeof *ord);
@@ -547,8 +591,14 @@ static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 	enum { WINDOW = 24 };
 	uint8_t *done = xcalloc((size_t) m->ntris, 1);
 	size_t rec_start = geo->len;
+	view_records = sp->view;
 	nslots = 0;
-	int nrec = 0, left = m->ntris, scan = 0;
+	int nrec = 0, left = 0, scan = 0;
+	for (int t = 0; t < m->ntris; t++) {
+		done[t] = !keep[t];
+		left += keep[t];
+	}
+	free(keep);
 	mrec r;
 	memset(&r, 0, sizeof r);
 	while (left) {
@@ -620,8 +670,8 @@ static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 		}
 	out->radius = (uint16_t) (rad > 65000 ? 65000 : ceil(rad));
 	out->flags  = (uint16_t) (sp->flat ? QGF_FLAT : 0);
-	printf("qcook: %-20s %3d frames %4d tris -> %3d records, %4d slots (%d verts), skin %dx%d, %u B\n",
-	       sp->file, m->nframes, m->ntris, nrec, nslots, m->nverts, im->w, im->h,
+	printf("qcook: %-20s %3d frames %4d tris (%d behind the eye, %d back-facing dropped) -> %3d records, %4d slots (%d verts), skin %dx%d, %u B\n",
+	       sp->file, m->nframes, m->ntris, dropped_near, dropped_back, nrec, nslots, m->nverts, im->w, im->h,
 	       (unsigned) (geo->len - rec_start));
 }
 

@@ -252,8 +252,8 @@
 
 # CAREFUL skip: a conservative test, per polygon of a record the sphere
 # flags, before the subdivision's exact one (engine/r_slow.c): every corner
-# at SZ >= 96, W + H <= 500 px for the bbox and (W + H) x (zmax - zmin) <=
-# 2 T2 zmin. Then no edge splits (|dx| + |dy| <= W + H, |dz| <= the range,
+# at SZ >= SP_SZCLIP (96), W + H <= 500 px for the bbox and (W + H) x
+# (zmax - zmin) <= 2 T2 zmin. Then no edge splits (|dx| + |dy| <= W + H, |dz| <= the range,
 # za + zb >= 2 zmin) and the polygon goes out as is; otherwise to `skip`.
 # (A corner the GTE saturated, |x| or |y| >= 1023, needs no test of its
 # own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
@@ -265,13 +265,14 @@
 	lw      $t2, SP_SZ($t5)
 .if \quad
 	lw      $t9, SP_SZ($t6)
-	lw      $v1, SP_T4($t8)
-	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0, "sltiu $t7, $t0, 96"   # zmin, zmax
+	lw      $v1, SP_SZCLIP($t8)
+	MINMAX4D $t0, $t1, $t2, $t9, $t7, $v0, "slt $t7, $t0, $v1"   # zmin, zmax
 .else
-	lw      $v1, SP_T4($t8)
-	MINMAX3 $t0, $t1, $t2, $t7, "sltiu $t7, $t0, 96"
+	lw      $v1, SP_SZCLIP($t8)
+	MINMAX3 $t0, $t1, $t2, $t7, "slt $t7, $t0, $v1"
 .endif
-	bnez    $t7, \skip                   # a corner nearer than r_slow.c SZ_CLIP
+	bnez    $t7, \skip                   # a corner nearer than SP_SZCLIP
+	lw      $v1, SP_T4($t8)
 	subu    $t7, $t1, $t0                # depth range
 	mult    $v1, $t0                     # 2 T2 zmin (LO holds it through the
 	lh      $t0, SP_SXY($t3)             # x          ranges: v1 takes W)
@@ -740,6 +741,11 @@ r_render:
 	sw      $t2, SP_CAM+8($t8)
 	sw      $t3, SP_FVBASE($t8)
 	sw      $t4, SP_SZFAST($t8)
+	sw      $t4, SP_SZCLIP($t8)          # (= 96 = R_SZ_FAST: r_slow.c SZ_CLIP)
+	li      $t4, 48
+	sw      $t4, SP_ZNEAR($t8)           # (8 world units: r_slow.c ZNEAR)
+	li      $t4, 160
+	sw      $t4, SP_HPROJ($t8)           # (the GTE's H: render.c R_SCREEN_H)
 	andi    $t0, $t0, 0xffff
 	sll     $t1, $t1, 16
 	or      $t0, $t0, $t1
@@ -1225,16 +1231,23 @@ draw_model:
 	jal     light_recs
 	move    $t4, $t5
 	lw      $t2, RE_FLAGS($a0)
-	lw      $t3, SP_SZFAST($t8)
-	andi    $t2, $t2, 1                  # RE_FAST: nothing is near (no SZ is
-	beqz    $t2, 1f                      # below -2^31), nothing warps (k16 rho
-	lw      $t4, SP_K16($t8)             # = -32768 rho is under any z - rho)
-	lui     $t6, 0x8000
 	li      $t7, -32768
-	sw      $t6, SP_SZFAST($t8)
+	andi    $t2, $t2, 1                  # RE_VIEW: the view model. Nothing
+	beqz    $t2, 1f                      # warps (k16 rho = -32768 rho is under
+	li      $t3, 31                      # any z - rho; T2 huge: no edge splits);
+	li      $t6, 0x7fff                  # its rear is behind the eye: the slow
+	sw      $t3, SP_SZFAST($t8)          # path clips at 5 world units (SZ 30,
+	sw      $t3, SP_SZCLIP($t8)          # Quake's ALIAS_Z_CLIP_PLANE). The GTE's
+	li      $t3, 30                      # divide holds down to SZ = H / 2: H is
+	sw      $t6, SP_T2($t8)              # 40 here, the matrix's x and y rows
+	sll     $t6, $t6, 1                  # are x4 (rlist.c), so the same screen
+	sw      $t3, SP_ZNEAR($t8)           # coordinates come out down to SZ 20
+	li      $t3, 40
 	sw      $t7, SP_K16($t8)
-1:	sw      $t3, SP_DMSZ($t8)            # (back after the model)
-	sw      $t4, SP_DMK16($t8)
+	sw      $t6, SP_T4($t8)
+	sw      $t3, SP_HPROJ($t8)
+	ctc2    $t3, C2_H
+1:
 .if R_PROFILE
 	lhu     $t9, TIMER2($t8)             # (the record loop's start time)
 .endif
@@ -1246,10 +1259,21 @@ dm_exit:
 	jal     close_run
 	nop
 	lw      $t0, SP_RSTATE($t8)          # the view's GTE matrix again, and
-	lw      $t3, SP_DMSZ($t8)            # the world's pointers and thresholds
-	lw      $t4, SP_DMK16($t8)
+	li      $t7, 96                      # the world's pointers and thresholds
+	lw      $t3, RS_SZ_FAST($t0)
+	lw      $t4, RS_WARP_K16($t0)
+	lw      $t6, RS_WARP_T2($t0)
+	sw      $t7, SP_SZCLIP($t8)
+	li      $t7, 48
+	sw      $t7, SP_ZNEAR($t8)
+	li      $t7, 160
+	sw      $t7, SP_HPROJ($t8)
+	ctc2    $t7, C2_H
 	sw      $t3, SP_SZFAST($t8)
 	sw      $t4, SP_K16($t8)
+	sw      $t6, SP_T2($t8)
+	sll     $t6, $t6, 1
+	sw      $t6, SP_T4($t8)
 	lw      $t1, RS_ROT+0($t0)
 	lw      $t2, RS_ROT+4($t0)
 	lw      $t3, RS_ROT+8($t0)

@@ -283,9 +283,10 @@ static void frame_work(void)
 {
 	if (!world_ok)
 		return;
-	if (game_active)
-		game_render();                  /* the render list, the view model */
 	r_set_view(cam.pos, cam.yaw, cam.pitch, cam.roll);
+	if (game_active)
+		game_render();                  /* the render list, the view model: their
+		                                   matrices come from this frame's view */
 	r_frame();
 	if (game_active)
 		game_render_done();
@@ -813,6 +814,34 @@ static void bench_game(void)
 		run_frame(0, 1);
 		for (int i = 0; i < 90; i++)                    /* the effects die down */
 			game_tick(&cmd);
+	}
+	/* a walk: forward with the stick a little off axis, the view's bob
+	   and roll and the gun's offset from the eye logged per tick, a frame
+	   dumped every 6 ticks (the weapon's motion while moving) */
+	{
+		static char wn[8][8];
+		game_spawn();
+		pl.pm.pitch = 0;
+		game_cmd_t cmd;
+		memset(&cmd, 0, sizeof cmd);
+		cmd.weapon_group = -1;
+		cmd.fwd  = PM_AXIS;
+		cmd.side = 20;
+		for (int t = 0; t < 48; t++) {
+			game_tick(&cmd);
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			int32_t f[3], r[3], u[3];
+			(void) f; (void) r; (void) u;
+			printf("walk tick %d vel %d %d %d pos %d %d %d cam %d %d %d yaw %d pitch %d roll %d\n",
+			       t, (int) pl.pm.vel[0], (int) pl.pm.vel[1], (int) pl.pm.vel[2],
+			       (int) pl.pm.pos[0], (int) pl.pm.pos[1], (int) pl.pm.pos[2],
+			       (int) cam.pos[0], (int) cam.pos[1], (int) cam.pos[2], cam.yaw, cam.pitch, cam.roll);
+			if (t >= 18 && t % 6 == 0 && (t - 18) / 6 < 8) {
+				snprintf(wn[(t - 18) / 6], sizeof wn[0], "gwalk%d", (t - 18) / 6);
+				printf("D %s\n", wn[(t - 18) / 6]);
+				run_frame(0, 1);
+			}
+		}
 	}
 	game_active = 0;
 	hud_set_style(HUD_ORIGINAL);

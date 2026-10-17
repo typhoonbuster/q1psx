@@ -44,12 +44,12 @@ typedef struct {
 	uint32_t tex;        /* +44 qw_tex entry: the skin                           */
 	uint32_t dots;       /* +48 light table (QG_NORMALS bytes) or 0: flat        */
 	uint32_t light;      /* +52 the leaf's light, 0..170 (x1.5 stays in a byte)  */
-	uint32_t flags;      /* +56 RE_FAST: the fast path only (the view model: its
-	                             polygons are small, never behind the camera) */
+	uint32_t flags;      /* +56 RE_VIEW: the view model: no warp subdivision (its
+	                             polygons are small), the near clip at 8 units */
 	uint32_t pad;
 } r_ent_t;               /* 64 bytes */
 
-#define RE_FAST 1
+#define RE_VIEW 1
 
 _Static_assert(sizeof(r_item_t) == 16, "r_defs.inc RI_*");
 _Static_assert(sizeof(r_ent_t) == 64, "r_defs.inc RE_*");
@@ -66,6 +66,10 @@ void rl_begin(void);
    whole model, or with QGF_SPRITE the frame's own record. */
 r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, int pitch,
                   int roll, int light);
+
+/* the view model: its x and y (screen) rows and translation x4, the
+   renderer's H / 4 (RE_VIEW: the GTE then projects down to 5 units) */
+void rl_view_model(r_ent_t *e);
 
 /* chain an entity / a particle into a leaf's list (nothing if the leaf is
    NULL or the item pool is full) */
