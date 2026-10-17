@@ -2,8 +2,10 @@
  * q1psx — loaded world (formats/qworld.h + qtex.h).
  *
  * world_load() uploads the map's texture pages to VRAM (the QTX3 / QTX4 file
- * is only transient), then loads the QWV2 world into the level arena and rewrites its
- * link fields into absolute pointers for the asm renderer.
+ * is only transient), then loads the QWVA world into the level arena and
+ * rewrites its link fields into absolute pointers for the asm renderer: the
+ * nodes' children and face blocks, the leaves' marks and PVS rows, the
+ * brush models' roots.
  */
 
 #ifndef Q1PSX_WORLD_H
@@ -39,6 +41,16 @@ typedef struct {
 	int            tex4;            /* the 4-bit textures are loaded  */
 	uint32_t       vis_leaves;      /* PVS rows: leaves 1..vis_leaves  */
 	const uint8_t *ambient;         /* [num_leaves][2]: water, sky levels */
+	qw_bmodel     *bmodels;         /* [num_bmodels]: 0 = the world (unused);
+	                                   roots are KUSEG node pointers (bit 0:
+	                                   a leaf), like the nodes' children     */
+	uint32_t       num_bmodels;
+	const qw_ent  *ents;            /* [num_ents]: the cooked entity lump   */
+	uint32_t       num_ents;
+	const char    *strings;         /* the entities' strings (offsets)      */
+	uint32_t       worldtype;       /* 0 medieval, 1 metal, 2 base          */
+	const char    *title;           /* the map's name (worldspawn message)  */
+	uint32_t       max_bm_depth;
 } world_t;
 
 #ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */
@@ -71,6 +83,16 @@ int world_load(int map, int fidelity, int tex4, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);
+
+/* The leaves (indices) a box touches, solid ones left out, up to `max` of
+   them (Quake's SV_FindTouchedLeafs); the box in 1/QW_CLIP_SUB units. */
+int world_box_leaves(const int32_t mins[3], const int32_t maxs[3], uint16_t *out, int max);
+
+/* an entity's string (its offset in the pool; 0 = "") */
+static inline const char *world_string(uint32_t ofs)
+{
+	return world.strings + ofs;
+}
 
 /* a texture rectangle (formats/qtex.h) into VRAM, through a zero-padded
    copy when LoadImage's DMA would send bytes past its data (world.c) */

@@ -3168,3 +3168,159 @@ the air left per 10 ticks: a swim forward with the jump held from tick
 the surface (the tint, the gun) and `gwater2`. The walk scenario's
 frames (`gwalk*`) changed with the jump's place in the tick.
 
+
+## §28 — The map's entities, stage 1: brush models and the entity table (2026-10-17)
+
+The order chosen for the progression mechanics (native C
+line by line from id's QC, the QuakeC VM dropped): first the cook's brush
+models and entity table, then triggers, teleporters, changelevel, then
+doors, buttons, plats, trains, then items. This stage: every brush model
+cooked and drawn, the solid ones clipping the player, the entities
+spawned into edicts from a cooked table. Doors, plats and buttons stand
+where the map put them until the next stages move them.
+
+### 28.1 The cook: QWVA (formats/qworld.h, tools/qcook/world.c, ents.c, sound.c)
+
+- **Brush models.** Quake's submodels `*1..` (doors, plats, buttons,
+  walls, triggers) have their own BSP trees in the same node array; the
+  cook only cut and emitted model 0's faces. Now every model's faces are
+  cut into pieces (T-junctions repaired within a model: a door's edges
+  only take its own vertices, it moves), every model's tree is marked
+  (`reach[node] = model + 1`) and its nodes' face blocks are emitted like
+  the world's, per node side, into the one face stream — with `face_id`
+  0 (the renderer's stamp for a model's records) and no leaf pairs: a
+  brush model has no visibility slot, the game decides when it is drawn.
+  `qw_bmodel` (40 bytes): the bounds in the physics' units spread by a
+  unit (Mod_LoadSubmodels), the hull-0 root (a node index, the loader
+  makes it a KUSEG pointer like the children), the hull 1 / 2 clipnode
+  roots (the clip section always held all clipnodes), the subtree's
+  depth (<= `QW_MAX_BM_DEPTH` 60: the renderer's own stack) and record
+  count. Episode 1's maps: 27 to 106 brush models, 146 (e1m1) to 395
+  (e1m3) records, depths <= 18. The texture cook packed the world
+  model's textures only (a door whose texture the world does not use
+  had no faces at all, found by the e1m1 door view's A / B): it packs
+  every drawn model's now — the triggers' brushes excepted
+  (`ents_drawn_models`: no faces cooked, no textures packed for a
+  `trigger_*` model, Quake never shows them). e1m1 at high: 66 tiles in
+  5 pages, 276 brush model records.
+- **The entity table.** The lump is parsed once (`ents.c`, keys and
+  values kept as strings; sound.c and the player start use the same
+  parse) and cooked into `qw_ent` records (56 bytes): the class as an
+  enum (`QE_*`, 86 classnames; an unknown one keeps its name), the keys
+  the id1 maps use (the 24 keys of the 2 paks: spawnflags, model "*N",
+  origin in 1/8 units, `angle` and `mangle` in whole degrees as given
+  (-1 / -2 for SetMovedir), speed, wait and delay x100, lip, height,
+  dmg, health, count, sounds, style) and the strings (target,
+  targetname, killtarget, message with Quake's "\n", map, classname) as
+  offsets into a deduplicated pool. Left out: worldspawn (its worldtype
+  and message go to the header), info_null, lights without a targetname
+  (removed at spawn by Quake), the ambient_* sounds (the bank places
+  them), the coop and deathmatch starts. 113 to 364 entities a map, 0.3
+  to 1.5 KB of strings.
+- **The sounds.** The bank adds what the spawn functions precache
+  (doors.qc, plats.qc, buttons.qc, triggers.qc, items.qc, misc.qc): by
+  class, `sounds` (with the QC's defaults: secret doors 3, plats 2,
+  secrets 1) and worldtype (the keys' and key doors' sounds, the latter
+  only for doors with a key flag: the QC precaches them for every door).
+  The budget's second and third passes when the loops' halving is not
+  enough: the sounds above 11 kHz, then the non-core sounds (items,
+  doors) biggest first — e1m1 ends at 507 KB with 22 halved.
+
+### 28.2 The engine
+
+- **Edicts (engine/ents.c, ents.h).** A pool in the level arena (the
+  map's entities + 64), spawned from the table at the load: the brush
+  entities get the model's box (`setmodel`), SOLID_BSP ones go to the
+  traces' table (`clip_bmodels`, in spawn order like Quake's area
+  lists), illusionaries are drawn and not solid, triggers get their box
+  and stay unseen (InitTrigger), point entities their origin; monsters
+  wait for 8.1, episode gates for the serverflags. `SV_LinkEdict` finds
+  the leaves a box touches (`world_box_leaves`, Quake's
+  SV_FindTouchedLeafs, solid leaves left out, 8 kept).
+- **Collision (engine/clip.c, clip.s).** `clip_trace` is SV_Move now:
+  the world's hull from `ct_core`, then every listed brush model whose
+  box the swept box reaches (SV_MoveBounds: the hull's box around the
+  sweep, a unit wider), traced in its own space (the hull of the mover's
+  size: the point hull walks the model's render nodes) into a scratch
+  trace, its end point put back, and taken when it is hit first or the
+  sweep starts inside it (SV_ClipToLinks, the startsolid kept). The
+  trace's new `ent` (the pad halfword after the normal) names what was
+  hit: the next stages' groundentity. `clip_contents` stays the world's
+  (Quake's SV_PointContents). The asm mirrors the C: the old body became
+  `ct_core` (returning through a scratchpad word, its loops' `bal`s take
+  ra), the wrapper keeps the call's arguments and the loop's state in
+  the scratchpad past pmove's words (0x1D4-0x24C).
+- **Rendering (engine/rlist.c, r_world.s draw_bmodel).** A brush model
+  is a render-list entity (`RE_BMODEL`, the r_ent_t grown to 80 bytes
+  with the model-space camera): the view's rotation, the model's origin
+  as the translation, the map's pool and texture table, the records'
+  cooked light kept (no `light_recs`). Drawn, `draw_bmodel` walks the
+  model's subtree like the world walk, front to back from the
+  model-space camera (SP_CAM and the colour matrix's first row swapped
+  for it, the world's kept in `bm_area`): the frustum test on the
+  nodes' boxes with the model's matrix, each node's face block on the
+  camera's side through draw_model's record loop (entered at
+  `de_records`; `dm_exit` tests `SP_BMWALK` and comes back to the walk),
+  no PVS. So the node sides sort a model's own faces and cull its back
+  ones, as the world's. Its own 64-word stack in RAM; the walk's s1 / s2
+  (dead at a leaf) and gp (set before every world block) serve.
+- **Where in the painter's order.** The walk draws a leaf's list when
+  it visits the leaf, so a model is drawn over everything the walk
+  visits after that leaf (the faces of the ancestors it is in front of,
+  the farther subtrees) and under what it visited before. `ents_render`
+  attaches the model to the leaf of its box that is visible (the PVS
+  stamp, the visible set cached per stamp), in front of the eye (its
+  box's depth along the view's forward row) and nearest: right whenever
+  the model's volume lies in that leaf;
+  a model spanning a drawn face's plane can come out over it (a lift's
+  shaft, a long bridge) — the price of no span sorting, to be looked at
+  with the movers. One frame of latency when the camera changes leaf
+  (the PVS stamps are the last frame's), none in place.
+- **Not done here, for the next stages:** the dynamic lights do not
+  reach brush models (the walk's light hook is the world instance's),
+  the brush models' ambient hums (a brush entity's hum needs the brush
+  centre: the bank skips them still), the entities' sounds at spawn.
+
+### 28.3 Checking and cost
+
+- The cook's `check:` per map (the brush model table, the roots, the
+  entities' strings and classes); 32 maps x 4 levels recooked.
+- `VIEWS=0 scripts/bench.sh`: `clipdiff traces 4000 (623 hit, 1962 start
+  in solid) mismatches 0`, `pmdiff ticks 6000 mismatches 0` — the asm and
+  the C agree with START's 15 solid brush models in every trace.
+- The door view (`E1M1.v12.png`): the double door in
+  its frame, lit as cooked, sorted against the room; 5 models drawn of
+  e1m1's 31, 77 records in the frame against 52 without them. The
+  cooked views 4-11 of a map other than START (the leaves with the most
+  faces, the near-geometry views) can sit inside geometry: use `VIEW=`.
+- `scripts/bench.sh 300`: the 12 world views pixel-identical to the
+  references, and the game's frames too: no brush model is in START's
+  bench views (its 15 drawn ones are elsewhere in the hall); the water
+  frames' references were the renders before pktview blended tiles, they
+  are refreshed. `MAP=E1M1 BENCH_MAPS=1 scripts/bench.sh 300` renders
+  e1m1's views (`E1M1.v*.png`): its doors and buttons in the big rooms
+  (views 4-9) — the spawn's PVS sees none.
+- DuckStation's play bench (§26.1, the recipe in the scratchpad's
+  `run_ds.sh`): the 32 maps load and play their 30 frames with the
+  entities spawned (up to 312 edicts and 52 solid brush models a map),
+  0 GP0 errors, 0 invalid reads, 11 music tracks.
+- `MAP=E1M1 VIEW=400,576,40,180,0 BENCH_MAPS=1 scripts/bench.sh 300`
+  renders a view 168 units in front of e1m1's first double door
+  (`E1M1.v12.png`), `NOENTS=1` the same without the entities: the A / B
+  of the brush models' drawing. (The view goes to the build as five
+  definitions: its first form, one quoted string parsed by `sscanf`,
+  came out as yaw 40 on the PS1 — PSn00bSDK's `sscanf` does not take
+  "%d %d %d %d %d" — and the camera looked the other way: an evening
+  spent proving the walk right. Host-side checks of a cooked world are
+  in the scratchpad's `wldvis.py` / `wldwalk.py`: the brush models a
+  view's PVS sees, the walk's visited leaves.)
+- Costs (PCSX-Redux): a trace 1 825 → 2 646 cycles, a physics tick
+  7 744 → 9 818 (the box test over START's 15 solid models on every
+  trace: the swept box in registers, the models' world boxes
+  precomputed); the entities' stage at START's spawn 5.0 k → 5.8 k in
+  the game bench (the models' visible leaves cached per PVS stamp, a
+  single visible leaf taken as is, the depth only otherwise), 0.7 k in
+  the world views; e1m1's door view 9.3 k with 5 models drawn — to be
+  measured part by part. Next: Quake's area nodes (SV_CreateAreaNode)
+  with the movers' relinking, so a trace only tests the models of its
+  cells.

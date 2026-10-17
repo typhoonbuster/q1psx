@@ -100,8 +100,8 @@ void game_view_tint(void);
 /* the camera for this frame (1/R_POS_SUB units, binary degrees) */
 void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll);
 
-/* before r_frame(): the render list (projectiles, effects, particles) and
-   the view model; after it: rl_end() */
+/* between rl_begin() and r_frame(): the render list (projectiles, effects,
+   particles) and the view model; after the frame: the world's lights back */
 void game_render(void);
 void game_render_done(void);
 

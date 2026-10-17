@@ -250,6 +250,23 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		world.hull2_root = ch->hull2_root;
 	}
 
+	/* the brush models (their roots like the children: KUSEG, bit 0 for a
+	   leaf), the entities and their strings */
+	world.bmodels      = (qw_bmodel *) (f + h->ofs_bmodels);
+	world.num_bmodels  = h->num_bmodels;
+	for (uint32_t i = 1; i < h->num_bmodels; i++) {
+		uint32_t r = world.bmodels[i].root;
+		world.bmodels[i].root = ((r & 0x80000000u)
+		                      ? (uint32_t) &world.leaves[r & 0x7fffffffu] | 1u
+		                      : (uint32_t) &world.nodes[r]) & 0x00ffffffu;
+	}
+	world.ents         = (const qw_ent *) (f + h->ofs_ents);
+	world.num_ents     = h->num_ents;
+	world.strings      = (const char *) (f + h->ofs_strings);
+	world.worldtype    = h->worldtype;
+	world.title        = world.strings + h->title;
+	world.max_bm_depth = h->max_bm_depth;
+
 	world.face_visframe = mem_level_alloc(h->num_faces * 2);
 	if (!world.face_visframe)
 		return 0;
@@ -268,11 +285,60 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		}
 	}
 
-	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, arena %u KB\n",
+	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, %u brush models, "
+	       "%u entities, arena %u KB\n",
 	       name, h->num_nodes, h->num_leaves, h->num_records, h->num_pieces,
-	       mem_level_used() / 1024);
+	       h->num_bmodels ? h->num_bmodels - 1 : 0, h->num_ents, mem_level_used() / 1024);
 	load_step(load_total);
 	return 1;
+}
+
+/* the box (vertex units: centre c, half extents h) down the tree from a
+   KUSEG node or leaf pointer */
+static int box_leaves(uint32_t at, const int32_t c[3], const int32_t h[3], uint16_t *out,
+                      int n, int max)
+{
+	for (;;) {
+		if (at & 1) {
+			const qw_leaf *l = (const qw_leaf *) ((at & ~1u) | 0x80000000u);
+			if (l->contents != QW_CONTENTS_SOLID && n < max)
+				out[n++] = (uint16_t) (l - world.leaves);
+			return n;
+		}
+		const qw_node  *nd = (const qw_node *) (at | 0x80000000u);
+		const qw_plane *pl = (const qw_plane *) ((const int32_t *) world.planes + nd->plane3);
+		int32_t dist = pl->dist >> 1;    /* 1/8 units -> vertex units, x4096 */
+		int32_t d, ext;
+		if (pl->type < 3) {
+			d   = c[pl->type] * 4096 - dist;
+			ext = h[pl->type] * 4096;
+		} else {
+			d   = pl->n[0] * c[0] + pl->n[1] * c[1] + pl->n[2] * c[2] - dist;
+			ext = (pl->n[0] < 0 ? -pl->n[0] : pl->n[0]) * h[0] +
+			      (pl->n[1] < 0 ? -pl->n[1] : pl->n[1]) * h[1] +
+			      (pl->n[2] < 0 ? -pl->n[2] : pl->n[2]) * h[2];
+		}
+		if (d - ext > 0) {
+			at = nd->child[0];
+		} else if (d + ext < 0) {
+			at = nd->child[1];
+		} else {
+			n  = box_leaves(nd->child[0], c, h, out, n, max);
+			at = nd->child[1];
+		}
+	}
+}
+
+int world_box_leaves(const int32_t mins[3], const int32_t maxs[3], uint16_t *out, int max)
+{
+	int32_t c[3], h[3];
+	for (int k = 0; k < 3; k++) {
+		/* 1/8 units -> vertex units (x4): the box rounded outwards */
+		int32_t lo = mins[k] >> 1, hi = (maxs[k] + 1) >> 1;
+		c[k] = (lo + hi) >> 1;
+		h[k] = ((hi - lo) >> 1) + 1;
+	}
+	return box_leaves((uint32_t) world.root & 0x00ffffffu, c, h, out, 0, max);
 }
 
 const qw_leaf *world_point_leaf(const int32_t pos[3])

@@ -4,8 +4,10 @@
  * The sound set: Quake's always-precached list (world.qc worldspawn,
  * weapons.qc W_Precache, the menu's) with the groups the map cannot use left
  * out, the ambient sounds its entities spawn with (misc.qc ambientsound
- * calls, triggers.qc's teleporter hum) and the area ambients the BSP's leaf
- * levels can raise (snd_dma.c ambient_sfx: water1, wind2). Each WAV is read
+ * calls, triggers.qc's teleporter hum), the sounds its entities precache
+ * when they spawn (doors.qc, plats.qc, buttons.qc, triggers.qc, items.qc,
+ * misc.qc: by class, `sounds` and worldtype) and the area ambients the
+ * BSP's leaf levels can raise (snd_dma.c ambient_sfx: water1, wind2). Each WAV is read
  * as Quake's snd_mem.c GetWavinfo does (8 or 16 bits, mono; the cue point
  * and the LIST "mark" length give the loop) and encoded to SPU ADPCM.
  */
@@ -121,46 +123,81 @@ static const ambient_spec AMBIENTS[] = {
 	{ "trigger_teleport",            "ambience/hum1.wav",     0.5, 3 },
 };
 
-/* ------------------------------------------------------------- entities -- */
-
-typedef struct {
-	char   classname[64];
-	double origin[3];
-	int    have_origin;
-	int    spawnflags, sounds;
-} ent_t;
-
-/* the next entity of the lump at *pp; 0 at the end */
-static int ent_next(const char **pp, const char *end, ent_t *e)
-{
-	const char *p = *pp;
-	while (p < end && *p != '{') p++;
-	if (p >= end) return 0;
-	p++;
-	memset(e, 0, sizeof *e);
-	while (p < end && *p != '}') {
-		char key[64], val[256];
-		int i;
-		while (p < end && *p != '"' && *p != '}') p++;
-		if (p >= end || *p == '}') break;
-		for (i = 0, p++; p < end && *p != '"' && i < 63; i++) key[i] = *p++;
-		key[i] = 0;
-		if (p < end) p++;
-		while (p < end && *p != '"' && *p != '}') p++;
-		if (p >= end || *p == '}') break;
-		for (i = 0, p++; p < end && *p != '"' && i < 255; i++) val[i] = *p++;
-		val[i] = 0;
-		if (p < end) p++;
-		if (!strcmp(key, "classname")) snprintf(e->classname, sizeof e->classname, "%s", val);
-		else if (!strcmp(key, "origin"))
-			e->have_origin = sscanf(val, "%lf %lf %lf", &e->origin[0], &e->origin[1], &e->origin[2]) == 3;
-		else if (!strcmp(key, "spawnflags")) e->spawnflags = atoi(val);
-		else if (!strcmp(key, "sounds")) e->sounds = atoi(val);
-	}
-	if (p < end) p++;
-	*pp = p;
-	return 1;
-}
+/* The sounds the entities precache when they spawn (their spawn functions
+   in doors.qc, plats.qc, buttons.qc, triggers.qc, items.qc, misc.qc): by
+   class, the `sounds` key (-1: any) and worldtype (-1: any). A door's
+   key sounds (noise3 / noise4) only when it has a key flag: the QC
+   precaches them for every door, the bank keeps its SPU RAM. misc/null.wav
+   is not banked: an absent sound plays nothing. */
+#define ANY (-1)
+typedef struct { const char *classname; int sounds, worldtype; const char *sound; } ent_sound_spec;
+static const ent_sound_spec ENT_SOUNDS[] = {
+	{ "func_door",        1, ANY, "doors/drclos4.wav" },
+	{ "func_door",        1, ANY, "doors/doormv1.wav" },
+	{ "func_door",        2, ANY, "doors/hydro1.wav" },
+	{ "func_door",        2, ANY, "doors/hydro2.wav" },
+	{ "func_door",        3, ANY, "doors/stndr1.wav" },
+	{ "func_door",        3, ANY, "doors/stndr2.wav" },
+	{ "func_door",        4, ANY, "doors/ddoor1.wav" },
+	{ "func_door",        4, ANY, "doors/ddoor2.wav" },
+	{ "func_door_secret", 1, ANY, "doors/latch2.wav" },
+	{ "func_door_secret", 1, ANY, "doors/winch2.wav" },
+	{ "func_door_secret", 1, ANY, "doors/drclos4.wav" },
+	{ "func_door_secret", 2, ANY, "doors/airdoor1.wav" },
+	{ "func_door_secret", 2, ANY, "doors/airdoor2.wav" },
+	{ "func_door_secret", 3, ANY, "doors/basesec1.wav" },   /* (sounds 0 -> 3) */
+	{ "func_door_secret", 3, ANY, "doors/basesec2.wav" },
+	{ "func_plat",        1, ANY, "plats/plat1.wav" },
+	{ "func_plat",        1, ANY, "plats/plat2.wav" },
+	{ "func_plat",        2, ANY, "plats/medplat1.wav" },   /* (sounds 0 -> 2) */
+	{ "func_plat",        2, ANY, "plats/medplat2.wav" },
+	{ "func_button",      0, ANY, "buttons/airbut1.wav" },
+	{ "func_button",      1, ANY, "buttons/switch21.wav" },
+	{ "func_button",      2, ANY, "buttons/switch02.wav" },
+	{ "func_button",      3, ANY, "buttons/switch04.wav" },
+	{ "func_train",       1, ANY, "plats/train2.wav" },
+	{ "func_train",       1, ANY, "plats/train1.wav" },
+	{ "trigger_multiple", 1, ANY, "misc/secret.wav" },
+	{ "trigger_multiple", 2, ANY, "misc/talk.wav" },
+	{ "trigger_multiple", 3, ANY, "misc/trigger1.wav" },
+	{ "trigger_once",     1, ANY, "misc/secret.wav" },
+	{ "trigger_once",     2, ANY, "misc/talk.wav" },
+	{ "trigger_once",     3, ANY, "misc/trigger1.wav" },
+	{ "trigger_secret",   1, ANY, "misc/secret.wav" },      /* (sounds 0 -> 1) */
+	{ "trigger_secret",   2, ANY, "misc/talk.wav" },
+	{ "trigger_push",     ANY, ANY, "ambience/windfly.wav" },
+	{ "item_health",      ANY, ANY, "items/health1.wav" },  /* (by spawnflags below) */
+	{ "item_key1",        ANY, 0, "misc/medkey.wav" },
+	{ "item_key1",        ANY, 1, "misc/runekey.wav" },
+	{ "item_key1",        ANY, 2, "misc/basekey.wav" },
+	{ "item_key2",        ANY, 0, "misc/medkey.wav" },
+	{ "item_key2",        ANY, 1, "misc/runekey.wav" },
+	{ "item_key2",        ANY, 2, "misc/basekey.wav" },
+	{ "item_sigil",       ANY, ANY, "misc/runekey.wav" },
+	{ "item_artifact_invulnerability", ANY, ANY, "items/protect.wav" },
+	{ "item_artifact_invulnerability", ANY, ANY, "items/protect2.wav" },
+	{ "item_artifact_invulnerability", ANY, ANY, "items/protect3.wav" },
+	{ "item_artifact_envirosuit", ANY, ANY, "items/suit.wav" },
+	{ "item_artifact_envirosuit", ANY, ANY, "items/suit2.wav" },
+	{ "item_artifact_invisibility", ANY, ANY, "items/inv1.wav" },
+	{ "item_artifact_invisibility", ANY, ANY, "items/inv2.wav" },
+	{ "item_artifact_invisibility", ANY, ANY, "items/inv3.wav" },
+	{ "item_artifact_super_damage", ANY, ANY, "items/damage.wav" },
+	{ "item_artifact_super_damage", ANY, ANY, "items/damage2.wav" },
+	{ "item_artifact_super_damage", ANY, ANY, "items/damage3.wav" },
+	{ "trap_spikeshooter", ANY, ANY, "weapons/spike2.wav" },
+	{ "misc_explobox",    ANY, ANY, "weapons/r_exp3.wav" },
+	{ "misc_explobox2",   ANY, ANY, "weapons/r_exp3.wav" },
+};
+static const char *const KEY_DOOR_SOUNDS[3][2] = {
+	{ "doors/medtry.wav", "doors/meduse.wav" },
+	{ "doors/runetry.wav", "doors/runeuse.wav" },
+	{ "doors/basetry.wav", "doors/baseuse.wav" },
+};
+#define DOOR_GOLD_KEY   8
+#define DOOR_SILVER_KEY 16
+#define H_ROTTEN 1
+#define H_MEGA   2
 
 /* ------------------------------------------------------------------ wav -- */
 
@@ -428,47 +465,98 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 		if (b->leaves[i].ambient[1]) have[SG_SKY] = 1;
 		if (b->leaves[i].ambient[0]) have[SG_WATER] = 1;
 	}
-	int cd_track = 0;
+	int cd_track = 0, worldtype = 0;
 	qs_static statics[QS_MAX_STATICS];
 	int nstatics = 0;
-	ent_t e;
-	const char *p = b->entities, *end = p + b->ent_len;
-	while (ent_next(&p, end, &e)) {
-		if (!strcmp(e.classname, "worldspawn")) cd_track = e.sounds;
-		if (!strncmp(e.classname, "item_", 5) || !strncmp(e.classname, "weapon_", 7)) have[SG_ITEMS] = 1;
-		if (!strcmp(e.classname, "trigger_teleport") || !strcmp(e.classname, "info_teleport_destination"))
+	ent_list ents;
+	ents_parse(b, &ents);
+	for (int i = 0; i < ents.num; i++) {
+		const ent_rec *e = &ents.ents[i];
+		const char *cls = e->classname;
+		if (!strcmp(cls, "worldspawn")) {
+			cd_track  = (int) ent_float(&ents, e, "sounds", 0);
+			worldtype = (int) ent_float(&ents, e, "worldtype", 0);
+		}
+	}
+	for (int i = 0; i < ents.num; i++) {
+		const ent_rec *e = &ents.ents[i];
+		const char *cls = e->classname;
+		int spawnflags = (int) ent_float(&ents, e, "spawnflags", 0);
+		int snd        = (int) ent_float(&ents, e, "sounds", 0);
+		double origin[3];
+		int have_origin = ent_vector(&ents, e, "origin", origin);
+		if (!strncmp(cls, "item_", 5) || !strncmp(cls, "weapon_", 7)) have[SG_ITEMS] = 1;
+		if (!strcmp(cls, "trigger_teleport") || !strcmp(cls, "info_teleport_destination"))
 			have[SG_TELE] = 1;
-		if (!strcmp(e.classname, "monster_boss")) have[SG_BOSS] = 1;
+		if (!strcmp(cls, "monster_boss")) have[SG_BOSS] = 1;
 		for (size_t k = 0; k < sizeof AMBIENTS / sizeof AMBIENTS[0]; k++) {
 			const ambient_spec *a = &AMBIENTS[k];
-			if (strcmp(e.classname, a->classname)) continue;
-			if (!strcmp(a->classname, "trigger_teleport") && (e.spawnflags & 1)) continue;   /* SILENT */
-			if (!e.have_origin) continue;          /* (a brush entity: no origin; its hum
-			                                           needs the brush centre: Phase 7) */
+			if (strcmp(cls, a->classname)) continue;
+			if (!strcmp(a->classname, "trigger_teleport") && (spawnflags & 1)) continue;   /* SILENT */
+			if (!have_origin) continue;            /* (a brush entity: no origin; its hum
+			                                           needs the brush centre: the engine's
+			                                           entity spawn places it) */
 			if (nstatics >= QS_MAX_STATICS) die("too many static sounds");
 			qs_static *st = &statics[nstatics++];
-			for (int i = 0; i < 3; i++) st->origin[i] = (int32_t) lround(e.origin[i]);
+			for (int c = 0; c < 3; c++) st->origin[c] = (int32_t) lround(origin[c]);
 			st->sound  = (uint16_t) sound_add(a->sound, -1, pak, pak_len, pak0, pak0_len);
 			st->volume = (uint8_t) lround(a->vol * 255);
 			st->atten  = (uint8_t) lround(a->atten * 64);
 		}
+
+		/* the spawn functions' precaches: the QC's defaults for `sounds` */
+		int sn = snd;
+		if (!strcmp(cls, "func_door_secret") && !sn) sn = 3;
+		if (!strcmp(cls, "func_plat") && !sn) sn = 2;
+		if (!strcmp(cls, "trigger_secret") && !sn) sn = 1;
+		for (size_t k = 0; k < sizeof ENT_SOUNDS / sizeof ENT_SOUNDS[0]; k++) {
+			const ent_sound_spec *sp = &ENT_SOUNDS[k];
+			if (strcmp(cls, sp->classname)) continue;
+			if (sp->sounds != ANY && sp->sounds != sn) continue;
+			if (sp->worldtype != ANY && sp->worldtype != worldtype) continue;
+			const char *name = sp->sound;
+			if (!strcmp(cls, "item_health"))       /* items.qc: rotten, mega, or plain */
+				name = (spawnflags & H_ROTTEN) ? "items/r_item1.wav"
+				     : (spawnflags & H_MEGA) ? "items/r_item2.wav" : "items/health1.wav";
+			sound_add(name, SG_ITEMS, pak, pak_len, pak0, pak0_len);
+		}
+		if (!strcmp(cls, "func_door") && (spawnflags & (DOOR_GOLD_KEY | DOOR_SILVER_KEY)) &&
+		    worldtype >= 0 && worldtype <= 2)
+			for (int k = 0; k < 2; k++)
+				sound_add(KEY_DOOR_SOUNDS[worldtype][k], SG_ITEMS, pak, pak_len, pak0, pak0_len);
 	}
+	ents_free(&ents);
 	for (size_t k = 0; k < sizeof ALWAYS / sizeof ALWAYS[0]; k++)
 		if (have[ALWAYS[k].group])
 			sound_add(ALWAYS[k].name, ALWAYS[k].group, pak, pak_len, pak0, pak0_len);
 
-	/* the budget: halve the longest looping ambients until it fits */
+	/* the budget: halve the longest looping ambients until it fits; then
+	   the sounds above 11 kHz (the rest's rate); then, biggest first, the
+	   sounds outside the core set (items, doors, triggers: the rarer ones) */
 	size_t total = 0;
 	for (int i = 0; i < nsounds; i++) total += sound_bytes(&sounds[i]);
 	int halved = 0;
-	while (total > QS_SPU_BYTES) {
+	for (int pass = 0; total > QS_SPU_BYTES; ) {
 		int best = -1;
-		for (int i = 0; i < nsounds; i++)
-			if (sounds[i].wav.loopstart >= 0 && !sounds[i].halved &&
-			    (best < 0 || sounds[i].wav.n > sounds[best].wav.n))
+		for (int i = 0; i < nsounds; i++) {
+			const bank_sound *sn = &sounds[i];
+			if (sn->halved) continue;
+			int ok = pass == 0 ? sn->wav.loopstart >= 0
+			       : pass == 1 ? sn->wav.loopstart < 0 && sn->wav.rate > 11025
+			       : sn->wav.loopstart < 0 && sn->group != SG_CORE;
+			if (ok && (best < 0 || sn->wav.n > sounds[best].wav.n))
 				best = i;
-		if (best < 0)
+		}
+		if (best < 0 && pass < 2) {
+			pass++;
+			continue;
+		}
+		if (best < 0) {
+			for (int i = 0; i < nsounds; i++)
+				fprintf(stderr, "  %6zu B %5d Hz %s%s\n", sound_bytes(&sounds[i]), sounds[i].wav.rate,
+				        sounds[i].name, sounds[i].wav.loopstart >= 0 ? " (loop)" : "");
 			die("the sounds do not fit the SPU (%zu KB of %u KB)", total / 1024, QS_SPU_BYTES / 1024);
+		}
 		total -= sound_bytes(&sounds[best]);
 		wav_halve(&sounds[best].wav);
 		sounds[best].halved = 1;

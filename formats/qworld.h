@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWV8" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWVA" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -22,6 +22,13 @@
  *     into "face records" of <= 63 vertices.
  *   - A face record is drawn when its face_id was stamped this frame by a
  *     visible leaf's marksurfaces (Quake's visframe scheme).
+ *   - Brush models (Quake's submodels *1.., doors, plats, buttons, walls):
+ *     their faces are records on their own BSP nodes, in the same node
+ *     array and face stream, with face_id 0 (no visibility slot: the
+ *     renderer walks a model's subtree from its root when the game draws
+ *     it, with the model's own matrix, so the node sides sort its faces).
+ *     qw_bmodel gives the root, bounds and clip hull roots; the entities
+ *     (qw_ent, cooked from the entity lump) name their model by index.
  *
  * Pointers
  *   On disk, node/leaf link fields hold indices / byte offsets; the loader
@@ -36,7 +43,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV9"
+#define QWORLD_MAGIC "QWVA"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
@@ -49,6 +56,8 @@
                                   an end this far short of the real one  */
 #define QW_MAX_DEPTH  256      /* BSP depth the renderer's stack holds:
                                   63 words of scratchpad + 4 RAM blocks   */
+#define QW_MAX_BM_DEPTH 60     /* a brush model's subtree depth: the
+                                  renderer's own stack for it (64 words) */
 #define QW_NONE        0xffffffffu
 
 /* face record flags */
@@ -61,12 +70,13 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV9"                                  */
+	char     magic[4];             /* "QWVA"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
-	uint32_t num_faces;            /* Quake world-model faces (visframe ids)  */
-	uint32_t num_records;          /* face records in the stream              */
+	uint32_t num_faces;            /* the world's records (visframe ids)      */
+	uint32_t num_records;          /* face records in the stream, the brush
+	                                  models' included                        */
 	uint32_t num_pieces;           /* polygons (quads + tris), statistics     */
 	uint32_t num_views;            /* bench viewpoints                        */
 	uint32_t ofs_nodes, ofs_leaves, ofs_marks, ofs_vis, ofs_faces, ofs_views;
@@ -84,7 +94,94 @@ typedef struct {
 	uint32_t ofs_ambient;          /* uint8_t[num_leaves][2]: the leaf's water and
 	                                  sky ambient sound levels (Quake's
 	                                  ambient_level[AMBIENT_WATER / SKY])      */
+	uint32_t ofs_bmodels, num_bmodels;   /* qw_bmodel[num_bmodels]: Quake's models,
+	                                  0 = the world (its entry is unused)     */
+	uint32_t ofs_ents, num_ents;   /* qw_ent[num_ents]: the entity lump cooked */
+	uint32_t ofs_strings, len_strings;   /* the entities' strings, NUL-ended;
+	                                  offset 0 is "" (no string)              */
+	uint32_t worldtype;            /* worldspawn's: 0 medieval, 1 metal, 2 base */
+	uint32_t title;                /* string: worldspawn's message, the map's name */
+	uint32_t max_bm_depth;         /* deepest brush model subtree (<= QW_MAX_BM_DEPTH) */
 } qw_header;
+
+/* A brush model: Quake's submodel. Bounds in the physics' units, spread by
+   a unit like Mod_LoadSubmodels; the root is its hull-0 BSP (its nodes in
+   the node array; disk: index, bit31 = leaf; RAM: pointer, bit0 = leaf);
+   the clip hull roots index the clipnode table like the world's. */
+typedef struct {
+	int32_t  mins[3];      /* +0  1/QW_CLIP_SUB world units                    */
+	int32_t  maxs[3];      /* +12                                              */
+	uint32_t root;         /* +24 hull 0: node index (disk) / pointer (RAM)    */
+	int32_t  hull1;        /* +28 clipnode roots: player-sized, large          */
+	int32_t  hull2;        /* +32                                              */
+	uint16_t depth;        /* +36 its subtree's depth                          */
+	uint16_t num_records;  /* +38 face records in its nodes                    */
+} qw_bmodel;               /* 40 bytes */
+
+/* The entity classes the cook knows (tools/qcook/ents.c names them); an
+   unknown classname cooks as QE_UNKNOWN with its name kept. Lights without
+   a targetname, info_null, the ambient_* sounds (the sound bank has them),
+   worldspawn and the coop / deathmatch starts are left out. */
+enum {
+	QE_UNKNOWN,
+	QE_INFO_PLAYER_START, QE_INFO_PLAYER_START2, QE_INFO_TELEPORT_DESTINATION,
+	QE_INFO_INTERMISSION, QE_INFO_NOTNULL,
+	QE_FUNC_DOOR, QE_FUNC_DOOR_SECRET, QE_FUNC_BUTTON, QE_FUNC_PLAT, QE_FUNC_TRAIN,
+	QE_FUNC_WALL, QE_FUNC_ILLUSIONARY, QE_FUNC_EPISODEGATE, QE_FUNC_BOSSGATE,
+	QE_TRIGGER_ONCE, QE_TRIGGER_MULTIPLE, QE_TRIGGER_SECRET, QE_TRIGGER_RELAY,
+	QE_TRIGGER_COUNTER, QE_TRIGGER_TELEPORT, QE_TRIGGER_CHANGELEVEL, QE_TRIGGER_SETSKILL,
+	QE_TRIGGER_ONLYREGISTERED, QE_TRIGGER_PUSH, QE_TRIGGER_HURT, QE_TRIGGER_MONSTERJUMP,
+	QE_PATH_CORNER, QE_MISC_FIREBALL, QE_MISC_EXPLOBOX, QE_MISC_EXPLOBOX2,
+	QE_MISC_TELEPORTTRAIN, QE_TRAP_SPIKESHOOTER, QE_TRAP_SHOOTER, QE_AIR_BUBBLES,
+	QE_EVENT_LIGHTNING,
+	QE_LIGHT, QE_LIGHT_FLUORO, QE_LIGHT_FLUOROSPARK, QE_LIGHT_GLOBE,
+	QE_LIGHT_TORCH_SMALL_WALLTORCH, QE_LIGHT_FLAME_LARGE_YELLOW,
+	QE_LIGHT_FLAME_SMALL_YELLOW, QE_LIGHT_FLAME_SMALL_WHITE,
+	QE_ITEM_HEALTH, QE_ITEM_ARMOR1, QE_ITEM_ARMOR2, QE_ITEM_ARMORINV,
+	QE_ITEM_SHELLS, QE_ITEM_SPIKES, QE_ITEM_ROCKETS, QE_ITEM_CELLS,
+	QE_ITEM_KEY1, QE_ITEM_KEY2, QE_ITEM_SIGIL,
+	QE_ITEM_ARTIFACT_INVULNERABILITY, QE_ITEM_ARTIFACT_ENVIROSUIT,
+	QE_ITEM_ARTIFACT_INVISIBILITY, QE_ITEM_ARTIFACT_SUPER_DAMAGE, QE_ITEM_WEAPON,
+	QE_WEAPON_SUPERSHOTGUN, QE_WEAPON_NAILGUN, QE_WEAPON_SUPERNAILGUN,
+	QE_WEAPON_GRENADELAUNCHER, QE_WEAPON_ROCKETLAUNCHER, QE_WEAPON_LIGHTNING,
+	QE_MONSTER_ARMY, QE_MONSTER_DOG, QE_MONSTER_OGRE, QE_MONSTER_OGRE_MARKSMAN,
+	QE_MONSTER_KNIGHT, QE_MONSTER_ZOMBIE, QE_MONSTER_WIZARD, QE_MONSTER_DEMON1,
+	QE_MONSTER_SHAMBLER, QE_MONSTER_BOSS, QE_MONSTER_ENFORCER, QE_MONSTER_HELL_KNIGHT,
+	QE_MONSTER_SHALRATH, QE_MONSTER_TARBABY, QE_MONSTER_FISH, QE_MONSTER_OLDONE,
+	QE_COUNT
+};
+
+/* An entity, its keys as the id1 maps use them (the rest of the QC's fields
+   are set by the spawn functions). Strings are offsets into the string
+   section, 0 = not given. Angles are whole degrees as the map gives them
+   (`angle`: -1 up, -2 down for SetMovedir), times are hundredths of a
+   second, the origin is in the physics' units. */
+typedef struct {
+	uint8_t  class;        /* +0  QE_*                                         */
+	uint8_t  sounds;       /* +1                                               */
+	uint16_t spawnflags;   /* +2                                               */
+	int16_t  model;        /* +4  brush model index ("*N"), 0 = none           */
+	int16_t  angle;        /* +6  degrees; -1 up, -2 down; 0 when not given    */
+	int32_t  origin[3];    /* +8  1/QW_CLIP_SUB world units                    */
+	int16_t  mangle[3];    /* +20 degrees: pitch, yaw, roll                    */
+	int16_t  speed;        /* +26 world units per second                       */
+	int16_t  wait;         /* +28 x100 (-100 = -1: never)                      */
+	int16_t  delay;        /* +30 x100                                         */
+	int16_t  lip;          /* +32                                              */
+	int16_t  height;       /* +34                                              */
+	int16_t  dmg;          /* +36                                              */
+	int16_t  health;       /* +38                                              */
+	int16_t  count;        /* +40                                              */
+	int16_t  style;        /* +42                                              */
+	uint16_t target;       /* +44 strings                                      */
+	uint16_t targetname;   /* +46                                              */
+	uint16_t killtarget;   /* +48                                              */
+	uint16_t message;      /* +50                                              */
+	uint16_t map;          /* +52                                              */
+	uint16_t classname;    /* +54 (every entity keeps its name)                */
+} qw_ent;                  /* 56 bytes */
+
+_Static_assert(sizeof(qw_bmodel) == 40 && sizeof(qw_ent) == 56, "qworld.h: the cooked tables' sizes");
 
 /* One per Quake miptex (unused ones are zero). */
 typedef struct {

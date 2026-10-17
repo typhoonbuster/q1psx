@@ -189,6 +189,16 @@ out in the order the walker reads it.
 - **Face visibility**: Quake's visframe scheme. Marking a PVS leaf stamps its
   marksurfaces; the walker draws a face group only if it was stamped this
   frame.
+- **Brush models** (QWVA, 2026-10-17): Quake's submodels keep their own BSP
+  trees in the node array, their faces cooked on those nodes like the
+  world's (per side, `face_id` 0: no visibility slot). A `qw_bmodel` table
+  gives each one its root, bounds and clip hull roots; the game draws a
+  model by having the renderer walk its subtree from the model-space camera
+  (the same node-side sorting and backface selection as the world), and
+  lists the solid ones for the traces. **Entities** are cooked from the
+  lump into a `qw_ent` table (class enum, the id1 keys, strings in a pool);
+  the engine spawns them into edicts (`engine/ents.c`). See
+  `docs/porting-notes.md` §28.
 - **Face block** = header + local vertex list (≤ 88 `SVECTOR`s) + polygon list.
   Each polygon is:
   - 4 vertex indices (1 byte each);

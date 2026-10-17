@@ -9,9 +9,22 @@
 .set TR_INWATER,    12
 .set TR_FRACTION,   16
 .set TR_ENDPOS,     20     # int32[3]
-.set TR_PLANE_N,    32     # int16[3] + pad
+.set TR_PLANE_N,    32     # int16[3]
+.set TR_ENT,        38     # int16: the brush model hit (clip_bmodels index + 1), 0 the world
 .set TR_PLANE_D,    40
 .set TR_SIZE,       44
+
+# ---- clip_bmodel_t (16 B, engine/clip.h) / qw_bmodel (40 B, formats/qworld.h)
+.set CB_BM,          0     # the qw_bmodel
+.set CB_ORG,         4     # int32 origin[3], 1/8 units
+.set CB_ABSMIN,     16     # int32[3]: origin + the model's bounds
+.set CB_ABSMAX,     28
+.set CB_SIZE,       40
+.set BM_MINS,        0     # int32[3], 1/8 units, a unit spread
+.set BM_MAXS,       12
+.set BM_ROOT,       24     # hull 0: its render nodes' root (KUSEG pointer)
+.set BM_HULL1,      28     # clipnode roots
+.set BM_HULL2,      32
 
 # ---- world_t: the clip-hull fields --------------------------------------------
 .set W_ROOT,         8     # the render BSP's root: hull 0, the point hull
@@ -103,3 +116,18 @@
 .set PS_FWD3,     0x1B0     # water_move: the view's forward with its pitch[3]
 .set PS_WV,       0x1BC     #   wishvel[3], x64
 .set PS_PT,       0x1C8     # check_water's point[3]
+
+# ---- scratchpad, clip_trace's brush models (after pmove's words) --------------
+.set PS_HULL,     0x1D4     # the call's hull, start, end and trace_t
+.set PS_WSTART,   0x1D8
+.set PS_WEND,     0x1DC
+.set PS_WTR,      0x1E0
+.set PS_CORERA,   0x1E4     # ct_core's return address
+.set PS_BMI,      0x1E8     # the clip_bmodels entry being tried, and the end
+.set PS_BMEND,    0x1EC
+.set PS_BMIDX,    0x24C     # its index + 1 (the trace's ent)
+.set PS_BMIN,     0x1F0     # the swept box[3], a unit wider (SV_MoveBounds)
+.set PS_BMAX,     0x1FC
+.set PS_BSTART,   0x208     # the sweep in the model's space[3]
+.set PS_BEND,     0x214
+.set PS_BTRACE,   0x220     # its trace_t (44 B, to 0x24C)

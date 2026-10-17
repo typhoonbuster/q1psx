@@ -5,6 +5,9 @@
  *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX3 output
  *   world.c   face splitting, face records, nodes/leaves/PVS, QWV2 output
  *   game.c    models, sprites, HUD pictures -> QGM1 (formats/qgame.h)
+ *   ents.c    the entity lump: parsed for the world's entity table, the
+ *             sound bank and the player start
+ *   sound.c   the map's sound bank -> QSND (formats/qsound.h)
  *
  * See docs/architecture.md §6-§7 and formats/qworld.h / formats/qtex.h.
  */
@@ -20,6 +23,11 @@
 void  die(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
 void *xmalloc(size_t n);
 void *xcalloc(size_t n, size_t size);
+
+/* a growing byte buffer (the cooked files are assembled in one) */
+typedef struct { uint8_t *p; size_t len, cap; } buf_t;
+void buf_put(buf_t *b, const void *data, size_t n);
+void buf_align4(buf_t *b);
 
 /* ------------------------------------------------------------------- pak -- */
 
@@ -87,6 +95,33 @@ typedef struct {
 } bsp_t;
 
 void bsp_parse(bsp_t *b, const uint8_t *raw, uint32_t len);
+
+/* ------------------------------------------------------------- entities -- */
+
+typedef struct { char *key, *val; } ent_kv;
+typedef struct { int first_kv, num_kv; const char *classname; } ent_rec;
+typedef struct {
+	ent_rec *ents; int num, cap;
+	ent_kv  *kv;   int num_kv, cap_kv;
+} ent_list;
+
+void        ents_parse(const bsp_t *b, ent_list *l);
+void        ents_free(ent_list *l);
+const char *ent_value(const ent_list *l, const ent_rec *e, const char *key);   /* NULL if absent */
+double      ent_float(const ent_list *l, const ent_rec *e, const char *key, double def);
+int         ent_vector(const ent_list *l, const ent_rec *e, const char *key, double v[3]);
+int         ent_class(const char *classname);                             /* QE_* */
+
+/* the world's entity table (qw_ent[]) and string pool from the parsed lump;
+   worldspawn's worldtype and message (title); how many classnames the cook
+   does not know */
+void ents_cook(const ent_list *l, int num_models, buf_t *table, buf_t *strings,
+               uint32_t *worldtype, uint32_t *title, int *unknown);
+
+/* drawn[m] = 1 for the world and every brush model some entity other
+   than a trigger uses (a trigger's brushes are never drawn: no faces
+   cooked, no textures packed for them) */
+void ents_drawn_models(const bsp_t *b, uint8_t *drawn);
 
 /* ---------------------------------------------------------------- sound -- */
 

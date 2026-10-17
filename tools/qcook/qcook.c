@@ -47,6 +47,24 @@ void *xcalloc(size_t n, size_t size)
 	return p;
 }
 
+void buf_put(buf_t *b, const void *data, size_t n)
+{
+	if (b->len + n > b->cap) {
+		b->cap = (b->cap + n) * 2;
+		b->p = realloc(b->p, b->cap);
+		if (!b->p)
+			die("out of memory");
+	}
+	memcpy(b->p + b->len, data, n);
+	b->len += n;
+}
+
+void buf_align4(buf_t *b)
+{
+	static const uint8_t z[4];
+	buf_put(b, z, (4 - (b->len & 3)) & 3);
+}
+
 static uint32_t rd_u32(const uint8_t *p)
 {
 	return (uint32_t) p[0] | ((uint32_t) p[1] << 8) |

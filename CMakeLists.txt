@@ -80,12 +80,32 @@ set(Q1PSX_BENCH_T 8 CACHE STRING "Affine-warp threshold the bench renders with (
 set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
+set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
+set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map, dumped")
+set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
-		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY})
+		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
+		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS})
+	if(Q1PSX_BENCH_VIEW)
+		# five numbers: separate definitions (a quoted string with spaces does not
+		# survive the generator's command line)
+		string(REPLACE "," ";" _view_list "${Q1PSX_BENCH_VIEW}")
+		list(LENGTH _view_list _view_n)
+		if(NOT _view_n EQUAL 5)
+			message(FATAL_ERROR "Q1PSX_BENCH_VIEW needs x,y,z,yaw,pitch")
+		endif()
+		list(GET _view_list 0 _vx)
+		list(GET _view_list 1 _vy)
+		list(GET _view_list 2 _vz)
+		list(GET _view_list 3 _vyaw)
+		list(GET _view_list 4 _vpitch)
+		target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH_VIEW_SET=1 Q1PSX_BENCH_VX=${_vx}
+			Q1PSX_BENCH_VY=${_vy} Q1PSX_BENCH_VZ=${_vz} Q1PSX_BENCH_VYAW=${_vyaw} Q1PSX_BENCH_VPITCH=${_vpitch})
+	endif()
 	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
 	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
 		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c")

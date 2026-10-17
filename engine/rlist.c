@@ -107,6 +107,29 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
 	return e;
 }
 
+r_ent_t *rl_bmodel(const qw_bmodel *bm, const int32_t org[3])
+{
+	if (n_ents >= RL_MAX_ENTS)
+		return 0;
+	r_ent_t *e = &r_ents[n_ents++];
+	int16_t o[4];
+	for (int k = 0; k < 3; k++)
+		o[k] = (int16_t) (org[k] * QW_VSCALE / R_POS_SUB);
+	o[3] = 0;
+	memcpy(e->rot, r_state.rot, sizeof e->rot);   /* unrotated: the view's rotation */
+	rl_ent_matrix(e, 0, o);                       /* (the translation only) */
+	e->pool     = (uint32_t) world.verts;
+	e->recs     = bm->root;
+	e->recs_end = 0;
+	e->tex      = (uint32_t) world.textures;
+	e->dots     = 0;
+	e->light    = 0;
+	e->flags    = RE_BMODEL;
+	for (int k = 0; k < 3; k++)
+		e->cam[k] = r_state.cam[k] - o[k];
+	return e;
+}
+
 void rl_view_model(r_ent_t *e)
 {
 	if (!e)

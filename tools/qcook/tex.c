@@ -327,17 +327,25 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 	memset(ts, 0, sizeof *ts);
 	ts->slots = xcalloc((size_t) b->num_miptex, sizeof *ts->slots);
 
-	/* which miptex do world-model faces use? */
-	uint8_t *used = xcalloc((size_t) b->num_miptex, 1);
-	const bsp_model *wm = &b->models[0];
-	for (int f = wm->firstface; f < wm->firstface + wm->numfaces; f++) {
-		int ti = b->faces[f].texinfo;
-		if (ti >= 0 && ti < b->num_texinfo) {
-			int mt = b->texinfo[ti].miptex;
-			if (mt >= 0 && mt < b->num_miptex)
-				used[mt] = 1;
+	/* which miptex do the drawn models' faces use? (the world's and the
+	   brush models' but the triggers') */
+	uint8_t *used  = xcalloc((size_t) b->num_miptex, 1);
+	uint8_t *drawn = xcalloc((size_t) b->num_models, 1);
+	ents_drawn_models(b, drawn);
+	for (int m = 0; m < b->num_models; m++) {
+		if (!drawn[m])
+			continue;
+		const bsp_model *wm = &b->models[m];
+		for (int f = wm->firstface; f < wm->firstface + wm->numfaces; f++) {
+			int ti = f >= 0 && f < b->num_faces ? b->faces[f].texinfo : -1;
+			if (ti >= 0 && ti < b->num_texinfo) {
+				int mt = b->texinfo[ti].miptex;
+				if (mt >= 0 && mt < b->num_miptex)
+					used[mt] = 1;
+			}
 		}
 	}
+	free(drawn);
 
 	/* tile size per texture */
 	pack_item *items = xcalloc((size_t) b->num_miptex, sizeof *items);

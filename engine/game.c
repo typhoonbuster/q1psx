@@ -1263,7 +1263,6 @@ static const int weapon_model[W_COUNT] = { QGM_V_AXE, QGM_V_SHOT, QGM_V_SHOT2, Q
 
 void game_render(void)
 {
-	rl_begin();
 	r_state.viewmodel = 0;
 	if (!gdata.ok)
 		return;
@@ -1391,7 +1390,6 @@ void game_view_tint(void)
 void game_render_done(void)
 {
 	uint32_t t0 = prof_now();
-	rl_end();
 	dl_restore();                          /* the world's light bytes back */
 	prof_add(PROF_DLIGHT, t0, prof_now());
 }

@@ -19,6 +19,7 @@
 
 #include "bench.h"
 #include "cd.h"
+#include "ents.h"
 #include "game.h"
 #include "gdata.h"
 #include "hud.h"
@@ -273,6 +274,8 @@ static int load_level(int map, int fid)
 			printf("level: %s does not fit at %s, loaded at %s\n", world_map_name(map),
 			       fidelity_name[fid], fidelity_name[fidelity]);
 		r_bind_world();
+		ents_load();                            /* the map's entities */
+		ents_spawn();
 		snd_map_start();
 		music_play(snd_cd_track());
 	}
@@ -298,13 +301,20 @@ static void frame_work(void)
 	if (!world_ok)
 		return;
 	r_set_view(cam.pos, cam.yaw, cam.pitch, cam.roll);
-	if (game_active) {
-		uint32_t t0 = prof_now();
-		game_render();                  /* the render list, the view model: their
-		                                   matrices come from this frame's view */
-		prof_add(PROF_ENTS, t0, prof_now());   /* (the dlights' share counted apart) */
-	}
+	uint32_t t0 = prof_now();
+	rl_begin();                             /* the render list: the game's
+	                                           projectiles, effects and view
+	                                           model, the map's brush models;
+	                                           their matrices come from this
+	                                           frame's view */
+	if (game_active)
+		game_render();
+#if !defined(Q1PSX_BENCH_NOENTS) || !Q1PSX_BENCH_NOENTS
+	ents_render();
+#endif
+	prof_add(PROF_ENTS, t0, prof_now());    /* (the dlights' share counted apart) */
 	r_frame();
+	rl_end();
 	if (game_active)
 		game_render_done();
 }
@@ -813,10 +823,27 @@ static void bench_pmove_diff(void)
 /* Every map on the disc: load it (falling back to a lower fidelity when it
    does not fit the arena), then its four spawn views, briefly, each followed
    by its display list's hash (scripts/dlcheck.sh compares them). */
+#ifndef Q1PSX_BENCH_MAP
+#define Q1PSX_BENCH_MAP ""    /* a map name: the maps bench runs that one only (MAP=E1M1) */
+#endif
+#ifndef Q1PSX_BENCH_VIEW_SET
+#define Q1PSX_BENCH_VIEW_SET 0   /* 1: one more view of that map, Q1PSX_BENCH_VX .. VPITCH (VIEW=x,y,z,yaw,pitch) */
+#define Q1PSX_BENCH_VX 0
+#define Q1PSX_BENCH_VY 0
+#define Q1PSX_BENCH_VZ 0
+#define Q1PSX_BENCH_VYAW 0
+#define Q1PSX_BENCH_VPITCH 0
+#endif
+#ifndef Q1PSX_BENCH_NOENTS
+#define Q1PSX_BENCH_NOENTS 0  /* 1: the map's entities are not drawn (NOENTS=1: an A / B) */
+#endif
+
 static void bench_maps(void)
 {
 	static char names[4][16];
 	for (int m = 0; m < world_num_maps(); m++) {
+		if (Q1PSX_BENCH_MAP[0] && strcmp(world_map_name(m), Q1PSX_BENCH_MAP))
+			continue;
 		if (!load_level(m, Q1PSX_BENCH_FID)) {
 			printf("bench map %s FAILED to load\n", world_map_name(m));
 			continue;
@@ -834,17 +861,23 @@ static void bench_maps(void)
 			game_active = 0;
 			printf("bench play %s ok\n", world_map_name(m));
 		}
-		for (uint32_t v = 0; v < 4 && v < world.num_views; v++) {
-			const qw_view *vw = &world.views[v];
+		qw_view extra;                          /* VIEW=x,y,z,yaw,pitch: one more */
+		int have_extra = Q1PSX_BENCH_VIEW_SET;
+		extra.pos[0] = Q1PSX_BENCH_VX; extra.pos[1] = Q1PSX_BENCH_VY; extra.pos[2] = Q1PSX_BENCH_VZ;
+		extra.yaw = Q1PSX_BENCH_VYAW; extra.pitch = Q1PSX_BENCH_VPITCH;
+		uint32_t nviews = Q1PSX_BENCH_MAP[0] ? world.num_views : 4u;
+		if (nviews > world.num_views) nviews = world.num_views;
+		for (uint32_t v = 0; v < nviews + (uint32_t) have_extra; v++) {
+			const qw_view *vw = v < nviews ? &world.views[v] : &extra;   /* (one map: all of its views) */
 			cam.pos[0] = vw->pos[0] * CLIP_SUB;
 			cam.pos[1] = vw->pos[1] * CLIP_SUB;
 			cam.pos[2] = vw->pos[2] * CLIP_SUB;
 			cam.yaw    = vw->yaw * ANG_TURN / 360;
 			cam.pitch  = vw->pitch * ANG_TURN / 360;
 			cam.roll   = 0;
-			snprintf(names[v], sizeof names[v], "%s.v%u", world_map_name(m), v);
+			snprintf(names[v & 3], sizeof names[0], "%s.v%u", world_map_name(m), v);
 			bench_acc_t acc;
-			bench_reset(&acc, names[v]);
+			bench_reset(&acc, names[v & 3]);
 			for (int i = 0; i < 4; i++)
 				run_frame(0, 0);
 			for (int i = 0; i < 16; i++) {
@@ -852,8 +885,12 @@ static void bench_maps(void)
 				bench_add(&acc, vid_stats.vbl);
 			}
 			bench_print(&acc);
-			printf("D %s\n", names[v]);
-			run_frame(0, 2);
+			printf("D %s\n", names[v & 3]);
+			ents_debug = 1;                     /* (the models drawn, by name) */
+			run_frame(0, Q1PSX_BENCH_MAP[0] ? 1 : 2);   /* one map: its frames in full */
+			ents_debug = 0;
+			printf("ents view %s: %d models drawn of %d, %d in the PVS, %d leaves in front, items %d\n",
+			       names[v & 3], ents_stat[0], ents_stat[3], ents_stat[1], ents_stat[2], rl_num_items());
 		}
 	}
 }

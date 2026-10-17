@@ -715,6 +715,11 @@ dr_lit_back:                             # record, in view, is lit first
 	.align 2
 r_gp_saved:
 	.space 4
+	.section .bss.bm_area, "aw", @nobits
+	.align  2
+bm_area:                                 # draw_bmodel's stack and kept words
+	.space  BM_SIZE
+
 	.section .bss.r_walk_spill, "aw", @nobits
 	.align  4
 r_walk_spill:                            # walk stack overflow (see walk_spill)
@@ -1842,13 +1847,15 @@ draw_model:
 	sw      $t5, SP_VERTPOOL($t8)
 	sw      $t6, SP_TEXBASE($t8)
 	sw      $t7, SP_FVBASE($t8)          # (records' face_id 0 -> the stamp)
+	lw      $t2, RE_FLAGS($a0)
 	lw      $a1, RE_RECS($a0)
+	andi    $t3, $t2, 2                  # RE_BMODEL: a brush model: its
+	bnez    $t3, draw_bmodel             # subtree walked (below)
 	lw      $a2, RE_RECS_END($a0)
 	lw      $a3, RE_DOTS($a0)
 	lw      $t1, RE_LIGHT($a0)
 	jal     light_recs
 	move    $t4, $t5
-	lw      $t2, RE_FLAGS($a0)
 	li      $t7, -32768
 	andi    $t2, $t2, 1                  # RE_VIEW: the view model. Nothing
 	beqz    $t2, 1f                      # warps (k16 rho = -32768 rho is under
@@ -1875,6 +1882,11 @@ draw_model:
 	lw      $a0, RE_RECS($a0)
 	RECLOOP de, dm_exit, 1
 dm_exit:
+	lw      $t0, SP_BMWALK($t8)          # a brush model's block: on with
+	nop                                  # its walk
+	bnez    $t0, bm_block
+	nop
+dm_exit_1:
 	jal     close_run
 	nop
 	lw      $t0, SP_RSTATE($t8)          # the view's GTE matrix again, and
@@ -1920,6 +1932,155 @@ dm_exit:
 	nop
 	jr      $ra
 	nop
+
+# -----------------------------------------------------------------------------
+# draw_bmodel: a0 = an r_ent_t with RE_BMODEL: a brush model, from
+# draw_model once the model's GTE matrix, pool, texture table and face
+# stamp are set and the texture run closed. Its hull-0 subtree (RE_RECS =
+# the root) is walked like the world's BSP, front to back from the
+# model-space camera (RE_CAM, put in SP_CAM and the colour matrix's first
+# row for the plane tests; the world's kept in bm_area): each node's face
+# block on the camera's side goes through the record loop (RECLOOP de,
+# entered at de_records with the world walk's entry state; dm_exit comes
+# back to bm_block), after the frustum test on the node's box (the model's
+# matrix: the view's rotation, translated); no PVS (its leaves are not the
+# world's: nothing to do at one). The faces keep their cooked light. Its
+# own stack in RAM (bm_area, QW_MAX_BM_DEPTH entries: the cook bounds the
+# depth), the world walk's s3 kept around it; s1, s2 are the walk's dead
+# ones at a leaf, gp a block's (set again before each world block).
+draw_bmodel:
+	lui     $gp, %hi(bm_area)
+	addiu   $gp, $gp, %lo(bm_area)
+	sw      $s3, BM_S3($gp)
+	lw      $t0, SP_CAM+0($t8)           # the world's camera, kept
+	lw      $t1, SP_CAM+4($t8)
+	lw      $t2, SP_CAM+8($t8)
+	sw      $t0, BM_CAM+0($gp)
+	sw      $t1, BM_CAM+4($gp)
+	sw      $t2, BM_CAM+8($gp)
+	lw      $t0, RE_CAM+0($a0)           # the model-space camera: SP_CAM
+	lw      $t1, RE_CAM+4($a0)           # (axial planes) and the colour
+	lw      $t2, RE_CAM+8($a0)           # matrix's first row (general ones)
+	sw      $t0, SP_CAM+0($t8)
+	sw      $t1, SP_CAM+4($t8)
+	sw      $t2, SP_CAM+8($t8)
+	andi    $t0, $t0, 0xffff
+	sll     $t1, $t1, 16
+	or      $t0, $t0, $t1
+	ctc2    $t0, C2_LR1LR2
+	ctc2    $t2, C2_LR3LG1
+	lw      $s1, RE_RECS($a0)            # the root (KUSEG; bit 0: a leaf)
+	li      $s2, 0xf                     # all four frustum planes active
+	addiu   $s3, $gp, BM_STACK + 4       # the model's stack
+	la      $t0, bm_block
+	sw      $t0, SP_BMWALK($t8)
+bm_walk:
+	andi    $t0, $s1, 1
+bm_walk_t0:                              # (t0 = s1 & 1: a leaf?)
+	bnez    $t0, bm_pop                  # a leaf: nothing to draw there
+	nop
+	lh      $t1, N_C+4($s1)              # the frustum test's box (as the
+	lwc2    C2_VXY0, N_C+0($s1)          # world walk loads it)
+	lh      $t2, N_H+4($s1)
+	lwc2    C2_VXY1, N_H+0($s1)
+	mtc2    $t1, C2_VZ0
+	mtc2    $t2, C2_VZ1
+	beqz    $s2, bm_side_1               # fully inside the frustum already
+	lhu     $a2, N_PLANE3($s1)
+	FRUSTUM bm_pop, "sll $a2, $a2, 2", "addu $a2, $a2, $s0", "lw $a3, PN_DIST($a2)", "lbu $a0, PN_TYPE($a2)", "sra $a3, $a3, 1"
+	b       bm_side_2
+	addiu   $s3, $s3, 4
+bm_side_1:                               # the node's plane: d = n . cam - dist
+	addiu   $s3, $s3, 4                  # (x4096, vertex units)
+	sll     $a2, $a2, 2
+	addu    $a2, $a2, $s0
+	lw      $a3, PN_DIST($a2)
+	lbu     $a0, PN_TYPE($a2)
+	sra     $a3, $a3, 1
+bm_side_2:
+	sltiu   $t2, $a0, 3
+	beqz    $t2, bm_general
+	sll     $t0, $a0, 2
+	addu    $t0, $t0, $t8
+	lw      $v0, SP_CAM($t0)             # axial: cam[type] x4096
+	sll     $t4, $s2, 28
+	sll     $v0, $v0, 12
+	or      $t4, $t4, $s1
+	subu    $v0, $v0, $a3
+bm_push:                                 # the stack word: as the world's
+	slt     $t0, $v0, $zero              # (node | side x 4 << 24 | no faces
+	addiu   $t2, $v0, BACKFACE_EPS       # << 27 | clip flags << 28)
+	sltiu   $t2, $t2, 2 * BACKFACE_EPS + 1
+	sll     $t2, $t2, 1
+	or      $t2, $t2, $t0
+	sll     $t2, $t2, 26
+	or      $t3, $t2, $t4
+	sll     $t0, $t0, 2
+	addu    $t0, $t0, $s1
+	lw      $s1, N_CHILD($t0)            # near child first
+	b       bm_walk
+	sw      $t3, -4($s3)                 # push
+bm_general:
+	lwc2    C2_VXY0, PN_N+0($a2)
+	lh      $t2, PN_N+4($a2)
+	sll     $t4, $s2, 28
+	mtc2    $t2, C2_VZ0
+	or      $t4, $t4, $s1
+	nop                                  # (the GTE's two slots after mtc2)
+	MVMVA   0, 2, 0, 3, 0                # MAC1 = cam . n
+	mfc2    $v0, C2_MAC1                 # (waits for the GTE)
+	b       bm_push
+	subu    $v0, $v0, $a3
+bm_pop:
+	addiu   $s3, $s3, -4
+	addiu   $t1, $gp, BM_STACK
+	lw      $t0, 0($s3)                  # (empty: the word at BM_STACK)
+	beq     $s3, $t1, bm_done
+	srl     $s2, $t0, 28                 # clip flags
+	srl     $t3, $t0, 24
+	andi    $t4, $t3, 8                  # no faces
+	andi    $t3, $t3, 4                  # side * 4
+	sll     $t2, $t0, 8
+	srl     $t2, $t2, 8                  # node (KUSEG)
+	subu    $t5, $t2, $t3
+	lw      $s1, N_CHILD+4($t5)          # far child: walked after the faces
+	bnez    $t4, bm_walk
+	addu    $t5, $t2, $t3
+	lw      $a0, N_FACES($t5)            # block on the camera's side
+	sll     $t6, $t3, 3
+	addu    $t6, $t6, $t2
+	lw      $a1, N_FACES+4($t6)
+.if R_PROFILE
+	lhu     $t9, TIMER2($t8)
+	beq     $a0, $a1, bm_walk            # empty block
+	lw      $t0, SP_FULL($t8)
+.else
+	lw      $t0, SP_FULL($t8)
+	beq     $a0, $a1, bm_walk
+	lw      $v0, SP_CLUT16($t8)
+.endif
+	b       de_records                   # the record loop; dm_exit -> bm_block
+	nop
+bm_block:                                # a block drawn (or the arena full)
+	lw      $t0, SP_FULL($t8)
+	nop
+	beqz    $t0, bm_walk
+	nop
+bm_done:
+	sw      $zero, SP_BMWALK($t8)
+	lw      $s3, BM_S3($gp)              # the world walk's stack pointer
+	lw      $t0, BM_CAM+0($gp)           # and camera
+	lw      $t1, BM_CAM+4($gp)
+	lw      $t2, BM_CAM+8($gp)
+	sw      $t0, SP_CAM+0($t8)
+	sw      $t1, SP_CAM+4($t8)
+	sw      $t2, SP_CAM+8($t8)
+	andi    $t0, $t0, 0xffff
+	sll     $t1, $t1, 16
+	or      $t0, $t0, $t1
+	ctc2    $t0, C2_LR1LR2
+	b       dm_exit_1
+	ctc2    $t2, C2_LR3LG1
 
 # -----------------------------------------------------------------------------
 # draw_ents: the render list of the leaf the walk just visited (t9 = its

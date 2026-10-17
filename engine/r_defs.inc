@@ -61,7 +61,7 @@
 .set DL_SAVE_ENTRY,   52    # dlight.c: a saved record (the record, its vertex count, 44 bytes)
 .set DL_SAVE_MAX,     470
 
-# ---- the render list (engine/rlist.h): r_item_t (16 B), r_ent_t (64 B) -----
+# ---- the render list (engine/rlist.h): r_item_t (16 B), r_ent_t (80 B) -----
 .set RI_NEXT,     0     # next item of the list + 1, 0 ends
 .set RI_TYPE,     2     # 0 particle, 1 model
 .set RI_COLOUR,   3
@@ -76,7 +76,9 @@
 .set RE_TEX,     44
 .set RE_DOTS,    48     # light table (162 bytes) or 0: flat
 .set RE_LIGHT,   52
-.set RE_FLAGS,   56     # 1 (RE_VIEW): no warp bound, the near clip at ZNEAR + 1
+.set RE_FLAGS,   56     # 1 (RE_VIEW): no warp bound, the near clip at ZNEAR + 1;
+                        # 2 (RE_BMODEL): a brush model, its subtree walked (draw_bmodel)
+.set RE_CAM,     60     # RE_BMODEL: the camera in the model's space, vertex units
 
 # ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4
@@ -173,7 +175,9 @@
                           # face blocks go through dr_lights first
 .set SP_T2,       0x3e4   # r_state.warp_t2: 2 x the affine-error threshold
 .set SP_T4,       0x3e8   # 2 x warp_t2: CAREFUL's 2 T2 zmin as one product
-.set SP_K16,      0x3ec   # r_state.warp_k16, the record warp bound (free: 0x3f0 - 0x3fb)
+.set SP_K16,      0x3ec   # r_state.warp_k16, the record warp bound
+.set SP_BMWALK,   0x3f0   # draw_bmodel: where dm_exit goes on after a block
+                          # of the model's walk, 0 outside one (free: 0x3f4 - 0x3fb)
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
@@ -191,6 +195,12 @@
                           # word at +0), and the unit spilled to RAM
 .set WALK_RAM,    1024    # RAM behind it: depth <= 63 x 5 = 315 >= QW_MAX_DEPTH
 .set QW_MAX_DEPTH, 256    # formats/qworld.h: the deepest node chain
+.set QW_MAX_BM_DEPTH, 60  # formats/qworld.h: a brush model's subtree depth
+.set BM_S3,       0       # bm_area (draw_bmodel): the world walk's stack pointer,
+.set BM_CAM,      4       # its camera (3 words),
+.set BM_STACK,    16      # the model walk's stack: the empty word, then
+                          # QW_MAX_BM_DEPTH entries
+.set BM_SIZE,     BM_STACK + 4 + 4 * QW_MAX_BM_DEPTH
 .set DSN_STACK,   4 * QW_MAX_DEPTH + 16   # r_render's dynamic-light descent:
                           # its stack of pending front children, on sp
 

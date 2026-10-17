@@ -1112,3 +1112,29 @@ followed by R0-R4.
   where two particles share a pixel), C = asm,
   interpreter = dynarec, the world views identical. Measured and left to
   a later call: the 192-row frustum (−7 k for ~4 KB of code).
+- **Brush models and the entity table** (2026-10-17: the progression mechanics' first stage: doors, lifts, buttons).
+  Details: `docs/porting-notes.md` §28. The cooked world is QWVA: every
+  brush model's faces on its own BSP nodes in the face stream (face id
+  0, T-junctions repaired within a model), a `qw_bmodel` table (bounds,
+  hull-0 root, clip roots, depth), the entity lump cooked into a `qw_ent`
+  table (86 classes, the 24 keys of the id1 maps, a string pool) and the
+  spawn functions' sounds in the bank (by class, `sounds`, worldtype;
+  the budget's second and third halving passes); the textures of every
+  drawn model packed (the world's only before: a door with its own
+  texture had no faces), the triggers' brushes left out. The engine spawns the
+  table into edicts (`engine/ents.c`): the brush models drawn by a walk
+  of their subtree from the model-space camera (`draw_bmodel`, the record
+  loop of draw_model, their cooked light kept), attached to the visible
+  leaf of their box nearest the eye; the solid ones in the traces
+  (`clip_trace` = SV_Move: the world, then SV_ClipToLinks over them, in C
+  and asm, the trace's `ent`). Every map recooked (32 x 4). Checks:
+  `clipdiff` and `pmdiff` 0 mismatches with START's 15 solid models in
+  the traces; the 12 world views and the game's frames pixel-identical to
+  the references (no model in them; the water frames' references were
+  the pre-blend renders, refreshed); e1m1's views with its doors in
+  place; DuckStation's play bench over the 32 maps clean (0 GP0 errors,
+  0 invalid reads). Costs: a trace 1 825 → 2 646 cycles and a physics tick 7 744 →
+  9 818 on START (the box test over its solid models: Quake's area
+  nodes come with the movers), the entities' stage +0.7 k at START's
+  spawn (the models' leaf choice), 9.3 k on e1m1's door view (5 models
+  drawn: to be measured part by part).

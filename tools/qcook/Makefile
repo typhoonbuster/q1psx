@@ -1,6 +1,6 @@
 CC      ?= cc
 CFLAGS  ?= -O2 -std=c11 -Wall -Wextra -Werror -D_DEFAULT_SOURCE
-SRC      = qcook.c tex.c world.c game.c sound.c
+SRC      = qcook.c tex.c world.c game.c sound.c ents.c
 HDR      = qcook.h anorms.h ../../formats/qtex.h ../../formats/qworld.h ../../formats/qgame.h ../../formats/qsound.h
 
 qcook: $(SRC) $(HDR)

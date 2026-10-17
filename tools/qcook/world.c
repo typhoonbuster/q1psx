@@ -17,26 +17,6 @@
 
 /* -------------------------------------------------------------- buffers -- */
 
-typedef struct { uint8_t *p; size_t len, cap; } buf_t;
-
-static void buf_put(buf_t *b, const void *data, size_t n)
-{
-	if (b->len + n > b->cap) {
-		b->cap = (b->cap + n) * 2;
-		b->p = realloc(b->p, b->cap);
-		if (!b->p)
-			die("out of memory");
-	}
-	memcpy(b->p + b->len, data, n);
-	b->len += n;
-}
-
-static void buf_align4(buf_t *b)
-{
-	static const uint8_t z[4];
-	buf_put(b, z, (4 - (b->len & 3)) & 3);
-}
-
 static int16_t clamp16(long v)
 {
 	return (int16_t) (v < -32768 ? -32768 : v > 32767 ? 32767 : v);
@@ -152,6 +132,8 @@ typedef struct {
 	int     *pair_face;     /* (face, record) pairs: which records  */
 	int     *pair_rec;      /* draw a piece of which face           */
 	int      npairs, pcap;
+	uint32_t wrecords;      /* the world's records: visibility ids  */
+	int      bmodel;        /* the brush model being emitted, 0 = world */
 } out_t;
 
 /* index of vertex k in the map's pool, adding it if new */
@@ -217,8 +199,10 @@ static void rec_flush(out_t *o, rec_t *r, const tex_slot *s)
 	qw_record h;
 	if (o->records >= 65535)
 		die("more than 65535 face records");
-	h.face_id   = (uint16_t) o->records;
-	for (int i = 0; i < r->nfaces; i++) {
+	/* a brush model's records have no visibility slot: face_id 0 (the
+	   renderer's stamp for a model's records), no leaf pairs */
+	h.face_id = o->bmodel ? 0 : (uint16_t) o->wrecords++;
+	for (int i = 0; i < r->nfaces && !o->bmodel; i++) {
 		if (o->npairs == o->pcap) {
 			o->pcap      = o->pcap ? o->pcap * 2 : 4096;
 			o->pair_face = realloc(o->pair_face, (size_t) o->pcap * sizeof *o->pair_face);
@@ -615,12 +599,14 @@ static int face_miptex(const bsp_t *b, int f)
    tj_repair inserts such vertices into the edges they lie on. */
 typedef struct {
 	int    face;
+	int    model;           /* the Quake model the face belongs to        */
 	int    fixed;           /* T-junction vertices inserted               */
 	double s_off, t_off;    /* the cell's corner, Quake texels            */
 	poly_t pl;
 } piece_t;
 
 static piece_t *pc_list;
+static int     *face_model;              /* [num_faces]: the model of each face */
 static int      pc_num, pc_cap;
 static int     *pc_first, *pc_count;   /* per face */
 static uint32_t tj_inserted, tj_pieces;
@@ -691,6 +677,7 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 			}
 			piece_t *p = &pc_list[pc_num++];
 			p->face  = f;
+			p->model = face_model[f];
 			p->fixed = 0;
 			p->s_off = s0 + i * W;
 			p->t_off = t0 + j * H;
@@ -700,8 +687,9 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 	}
 }
 
-/* quantized vertex positions (the pool's: QW_VSCALE units) on a grid */
-typedef struct { int32_t q[3]; } qv_t;
+/* quantized vertex positions (the pool's: QW_VSCALE units) on a grid, per
+   model: a brush model's edges only take its own vertices (it moves) */
+typedef struct { int32_t q[3]; int model; } qv_t;
 #define TJ_CELL  256                     /* grid cell, quantized units (64 world units) */
 #define TJ_HSIZE (1 << 16)
 
@@ -726,12 +714,13 @@ static int32_t tj_floordiv(int32_t a, int32_t b)
 }
 
 /* add a quantized vertex once */
-static void tj_add(const double p[3])
+static void tj_add(const double p[3], int model)
 {
 	int32_t q[3] = { tj_quant(p[0]), tj_quant(p[1]), tj_quant(p[2]) };
 	uint32_t h = tj_cell_hash(tj_floordiv(q[0], TJ_CELL), tj_floordiv(q[1], TJ_CELL), tj_floordiv(q[2], TJ_CELL));
 	for (int i = tj_head[h]; i >= 0; i = tj_next[i])
-		if (tj_v[i].q[0] == q[0] && tj_v[i].q[1] == q[1] && tj_v[i].q[2] == q[2])
+		if (tj_v[i].q[0] == q[0] && tj_v[i].q[1] == q[1] && tj_v[i].q[2] == q[2] &&
+		    tj_v[i].model == model)
 			return;
 	if (tj_nv == tj_cap) {
 		tj_cap  = tj_cap ? 2 * tj_cap : 16384;
@@ -741,6 +730,7 @@ static void tj_add(const double p[3])
 			die("out of memory (T-junctions)");
 	}
 	memcpy(tj_v[tj_nv].q, q, sizeof q);
+	tj_v[tj_nv].model = model;
 	tj_next[tj_nv] = tj_head[h];
 	tj_head[h] = tj_nv++;
 }
@@ -756,7 +746,7 @@ static void tj_repair(const bsp_t *b)
 		tj_head[i] = -1;
 	for (int i = 0; i < pc_num; i++)
 		for (int k = 0; k < pc_list[i].pl.n; k++)
-			tj_add(pc_list[i].pl.v[k].p);
+			tj_add(pc_list[i].pl.v[k].p, pc_list[i].model);
 
 	int *stamp = xmalloc((size_t) tj_nv * sizeof *stamp);
 	for (int i = 0; i < tj_nv; i++)
@@ -794,7 +784,7 @@ static void tj_repair(const bsp_t *b)
 				for (int dy = -1; dy <= 1; dy++)
 				for (int dz = -1; dz <= 1; dz++)
 					for (int v = tj_head[tj_cell_hash(c0 + dx, c1 + dy, c2 + dz)]; v >= 0; v = tj_next[v]) {
-						if (stamp[v] == edge_id)
+						if (stamp[v] == edge_id || tj_v[v].model != pc->model)
 							continue;
 						stamp[v] = edge_id;
 						const int32_t *q = tj_v[v].q;
@@ -887,39 +877,14 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 
 /* ------------------------------------------------------------- entities -- */
 
-static int find_player_start(const bsp_t *b, double origin[3], double *angle)
+static int find_player_start(const ent_list *l, double origin[3], double *angle)
 {
-	const char *p = b->entities, *end = p + b->ent_len;
-	while (p < end) {
-		while (p < end && *p != '{') p++;
-		if (p >= end) break;
-		p++;
-		char cls[64] = "";
-		double o[3] = { 0, 0, 0 }, a = 0;
-		int have_o = 0;
-		while (p < end && *p != '}') {
-			char key[64], val[256];
-			int i;
-			while (p < end && *p != '"' && *p != '}') p++;
-			if (p >= end || *p == '}') break;
-			for (i = 0, p++; p < end && *p != '"' && i < 63; i++) key[i] = *p++;
-			key[i] = 0;
-			if (p < end) p++;
-			while (p < end && *p != '"' && *p != '}') p++;
-			if (p >= end || *p == '}') break;
-			for (i = 0, p++; p < end && *p != '"' && i < 255; i++) val[i] = *p++;
-			val[i] = 0;
-			if (p < end) p++;
-			if (!strcmp(key, "classname")) snprintf(cls, sizeof cls, "%s", val);
-			else if (!strcmp(key, "origin")) have_o = sscanf(val, "%lf %lf %lf", &o[0], &o[1], &o[2]) == 3;
-			else if (!strcmp(key, "angle")) a = atof(val);
-		}
-		if (!strcmp(cls, "info_player_start") && have_o) {
-			memcpy(origin, o, sizeof o);
-			*angle = a;
-			return 1;
-		}
-		if (p < end) p++;
+	for (int i = 0; i < l->num; i++) {
+		const ent_rec *e = &l->ents[i];
+		if (strcmp(e->classname, "info_player_start") || !ent_vector(l, e, "origin", origin))
+			continue;
+		*angle = ent_float(l, e, "angle", 0);
+		return 1;
 	}
 	return 0;
 }
@@ -935,13 +900,16 @@ static int depth_of(const bsp_t *b, int node)
 	return 1 + (a > c ? a : c);
 }
 
-static void mark_reachable(const bsp_t *b, int node, uint8_t *reach)
+/* the nodes of a model's hull-0 tree: reach[node] = model + 1 */
+static void mark_reachable(const bsp_t *b, int node, uint8_t *reach, int model)
 {
 	if (node < 0)
 		return;
-	reach[node] = 1;
-	mark_reachable(b, b->nodes[node].child[0], reach);
-	mark_reachable(b, b->nodes[node].child[1], reach);
+	if (reach[node])
+		die("node %d is in two models' trees", node);
+	reach[node] = (uint8_t) (model + 1);
+	mark_reachable(b, b->nodes[node].child[0], reach, model);
+	mark_reachable(b, b->nodes[node].child[1], reach, model);
 }
 
 /* Quake's rendering-hull point test: contents of the leaf holding p. */
@@ -981,22 +949,41 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 {
 	(void) fid;
 	const bsp_model *wm = &b->models[0];
+	if (b->num_models > 254)
+		die("%d models: more than 254", b->num_models);
 
-	/* every drawn face cut into pieces, T-junctions repaired */
+	ent_list ents;
+	ents_parse(b, &ents);
+
+	/* every drawn face cut into pieces (the world's and the brush models'),
+	   T-junctions repaired within each model */
 	pc_first = xmalloc((size_t) b->num_faces * sizeof *pc_first);
 	pc_count = xmalloc((size_t) b->num_faces * sizeof *pc_count);
+	face_model = xmalloc((size_t) b->num_faces * sizeof *face_model);
 	face_lsum = xcalloc((size_t) b->num_faces, sizeof *face_lsum);
 	face_lcnt = xcalloc((size_t) b->num_faces, sizeof *face_lcnt);
-	for (int f = 0; f < b->num_faces; f++) {   /* the world model's faces only */
+	for (int f = 0; f < b->num_faces; f++)
+		face_model[f] = -1;
+	uint8_t *drawn = xcalloc((size_t) b->num_models, 1);   /* (not the triggers') */
+	ents_drawn_models(b, drawn);
+	for (int m = 0; m < b->num_models; m++)
+		for (int f = b->models[m].firstface; f < b->models[m].firstface + b->models[m].numfaces; f++)
+			if (f >= 0 && f < b->num_faces && drawn[m])
+				face_model[f] = m;
+	free(drawn);
+	for (int f = 0; f < b->num_faces; f++) {
 		pc_count[f] = 0;
-		if (f >= wm->firstface && f < wm->firstface + wm->numfaces)
+		if (face_model[f] >= 0)
 			face_pieces(b, ts, f);
 	}
 	tj_repair(b);
 	int root = wm->headnode[0];
 
+	/* each model's hull-0 tree (reach[n] = model + 1): the world's is
+	   walked by the renderer with the PVS, a brush model's from its root */
 	uint8_t *reach = xcalloc((size_t) b->num_nodes, 1);
-	mark_reachable(b, root, reach);
+	for (int m = 0; m < b->num_models; m++)
+		mark_reachable(b, b->models[m].headnode[0], reach, m);
 
 	/* parents */
 	uint32_t *node_parent = xmalloc((size_t) b->num_nodes * 4);
@@ -1051,10 +1038,12 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	if ((long) b->num_nodes * QW_NODE_WORDS >= QW_NOPARENT)
 		die("%d nodes: parent offsets do not fit 16 bits", b->num_nodes);
 	qw_node *nodes = xcalloc((size_t) b->num_nodes + 1, sizeof *nodes);   /* + sentinel */
+	uint32_t *bm_records = xcalloc((size_t) b->num_models, sizeof *bm_records);
 	for (int i = 0; i < b->num_nodes; i++) {
 		const bsp_node *bn = &b->nodes[i];
 		const bsp_plane *pl = &b->planes[bn->planenum];
 		qw_node *n = &nodes[i];
+		uint32_t recs_before = o.records;
 
 		bbox(bn->mins, bn->maxs, n->c, n->h);
 		(void) pl;
@@ -1112,6 +1101,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 					}
 				rec_t *r = xcalloc(1, sizeof *r);
 				for (int k = 0; k < 3; k++) { r->mn[k] = 1e30; r->mx[k] = -1e30; }
+				o.bmodel = reach[i] - 1;
 				if (reach[i])
 					for (int q = 0; q < nq; q++) {
 						/* keep the record compact: flush before a face that
@@ -1136,7 +1126,10 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 				free(r);
 			}
 		}
+		if (reach[i] > 1)
+			bm_records[reach[i] - 1] += o.records - recs_before;
 	}
+	o.bmodel = 0;
 
 	/* marksurfaces: faces -> the records drawing them, deduplicated per
 	   leaf; records are the visibility ids */
@@ -1225,7 +1218,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	qw_view views[16];
 	int nviews = 0;
 	double so[3] = { 0, 0, 0 }, sa = 0;
-	int has_spawn = find_player_start(b, so, &sa);
+	int has_spawn = find_player_start(&ents, so, &sa);
 	if (has_spawn)
 		for (int k = 0; k < 4; k++) {
 			qw_view *v = &views[nviews++];
@@ -1322,7 +1315,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	h.num_nodes   = (uint32_t) b->num_nodes;
 	h.num_leaves  = (uint32_t) b->num_leaves;
 	h.num_marks   = (uint32_t) ngmarks;
-	h.num_faces   = o.records;                 /* visibility ids: the records */
+	h.num_faces   = o.wrecords;                /* visibility ids: the world's records */
 	h.num_records = o.records;
 	h.num_pieces  = o.quads + o.tris;
 	h.num_views   = (uint32_t) nviews;
@@ -1335,6 +1328,37 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	h.num_visleafs = (uint32_t) wm->visleafs;
 	if (h.max_depth > QW_MAX_DEPTH)
 		die("BSP depth %u exceeds the renderer stack (%d)", h.max_depth, QW_MAX_DEPTH);
+
+	/* the brush models: bounds spread by a unit (Mod_LoadSubmodels), the
+	   hull-0 root (its subtree is walked by the renderer), the clip roots */
+	qw_bmodel *bmodels = xcalloc((size_t) b->num_models, sizeof *bmodels);
+	h.max_bm_depth = 0;
+	for (int m = 1; m < b->num_models; m++) {
+		const bsp_model *bm = &b->models[m];
+		qw_bmodel *q = &bmodels[m];
+		for (int k = 0; k < 3; k++) {
+			q->mins[k] = (int32_t) lround((bm->mins[k] - 1) * QW_CLIP_SUB);
+			q->maxs[k] = (int32_t) lround((bm->maxs[k] + 1) * QW_CLIP_SUB);
+		}
+		q->root  = bm->headnode[0] >= 0 ? (uint32_t) bm->headnode[0]
+		         : 0x80000000u | (uint32_t) (-1 - bm->headnode[0]);
+		q->hull1 = bm->headnode[1];
+		q->hull2 = bm->headnode[2];
+		int d = depth_of(b, bm->headnode[0]);
+		if (d > QW_MAX_BM_DEPTH)
+			die("brush model %d: depth %d > %d", m, d, QW_MAX_BM_DEPTH);
+		q->depth       = (uint16_t) d;
+		q->num_records = (uint16_t) bm_records[m];
+		if ((uint32_t) d > h.max_bm_depth)
+			h.max_bm_depth = (uint32_t) d;
+	}
+
+	/* the entities */
+	buf_t etab, estr;
+	memset(&etab, 0, sizeof etab);
+	memset(&estr, 0, sizeof estr);
+	int unknown = 0;
+	ents_cook(&ents, b->num_models, &etab, &estr, &h.worldtype, &h.title, &unknown);
 
 	buf_t f;
 	memset(&f, 0, sizeof f);
@@ -1409,12 +1433,26 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 			buf_put(&f, &qc, sizeof qc);
 		}
 		h.len_clip = (uint32_t) f.len - h.ofs_clip;
-		for (int hull = 1; hull <= 2; hull++) {
-			int d = clip_depth(b, wm->headnode[hull]);
-			if (d > QW_MAX_SPLIT)
-				die("clip hull %d depth %d > %d", hull, d, QW_MAX_SPLIT);
-		}
+		for (int m = 0; m < b->num_models; m++)
+			for (int hull = 1; hull <= 2; hull++) {
+				int d = clip_depth(b, b->models[m].headnode[hull]);
+				if (d > QW_MAX_SPLIT)
+					die("model %d clip hull %d depth %d > %d", m, hull, d, QW_MAX_SPLIT);
+			}
 	}
+
+	/* the brush models, the entities and their strings */
+	buf_align4(&f);                        /* (the clipnodes are 6 bytes) */
+	h.ofs_bmodels = (uint32_t) f.len;
+	h.num_bmodels = (uint32_t) b->num_models;
+	buf_put(&f, bmodels, (size_t) b->num_models * sizeof *bmodels);
+	h.ofs_ents = (uint32_t) f.len;
+	h.num_ents = (uint32_t) (etab.len / sizeof(qw_ent));
+	buf_put(&f, etab.p, etab.len);
+	h.ofs_strings = (uint32_t) f.len;
+	h.len_strings = (uint32_t) estr.len;
+	buf_put(&f, estr.p, estr.len);
+	buf_align4(&f);
 	memcpy(f.p, &h, sizeof h);
 
 	FILE *fp = fopen(out_path, "wb");
@@ -1435,12 +1473,19 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	       tj_inserted, tj_pieces, o.pieces_eared);
 	if (has_spawn)
 		printf("qcook:   spawn %d %d %d yaw %d\n", h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
+	{
+		uint32_t brecs = o.records - o.wrecords;
+		printf("qcook:   %d brush models, %u records, depth <= %u; %u entities (%d unknown), "
+		       "%u B of strings; worldtype %u\n", b->num_models - 1, brecs, h.max_bm_depth,
+		       h.num_ents, unknown, h.len_strings, h.worldtype);
+	}
 
-	free(f.p); free(o.stream.p); free(nodes); free(leaves);
-	free(node_parent); free(leaf_parent); free(reach);
+	free(f.p); free(o.stream.p); free(nodes); free(leaves); free(bmodels);
+	free(etab.p); free(estr.p); ents_free(&ents);
+	free(node_parent); free(leaf_parent); free(reach); free(bm_records);
 	free(face_group); free(gmarks); free(gfirst); free(gcount); free(uf_up); free(edge_face);
 	free(memb); free(order); free(o.pair_face); free(o.pair_rec);
-	free(face_mfirst); free(face_mleaf);
+	free(face_mfirst); free(face_mleaf); free(face_model);
 }
 
 /* ---------------------------------------------------------------- check -- */
@@ -1478,8 +1523,15 @@ int world_check(const char *path)
 	SECTION(h.ofs_tex, h.num_tex * sizeof(qw_tex));
 	SECTION(h.ofs_verts, h.num_verts * sizeof(qw_vert));
 	SECTION(h.ofs_ambient, h.num_leaves * 2);
+	SECTION(h.ofs_bmodels, h.num_bmodels * sizeof(qw_bmodel));
+	SECTION(h.ofs_ents, h.num_ents * sizeof(qw_ent));
+	SECTION(h.ofs_strings, h.len_strings);
 	if (h.max_depth > QW_MAX_DEPTH)
 		FAIL("depth %u > %d", h.max_depth, QW_MAX_DEPTH);
+	if (h.max_bm_depth > QW_MAX_BM_DEPTH)
+		FAIL("brush model depth %u > %d", h.max_bm_depth, QW_MAX_BM_DEPTH);
+	if (h.num_faces > h.num_records)
+		FAIL("more visibility ids than records");
 	if (h.root >= h.num_nodes)
 		FAIL("root %u out of range", h.root);
 
@@ -1559,8 +1611,39 @@ int world_check(const char *path)
 	for (uint32_t i = 0; i < h.num_marks; i++)
 		if (marks[i] >= h.num_faces) FAIL("mark %u out of range", i);
 
-	printf("check: %s OK — %u nodes, %u leaves, %u records, %u polys, depth %u\n",
-	       path, h.num_nodes, h.num_leaves, recs, polys, h.max_depth);
+	/* brush models and entities */
+	const qw_bmodel *bm = (const qw_bmodel *) (d + h.ofs_bmodels);
+	uint32_t num_clipnodes = ((const qw_clip_header *) (d + h.ofs_clip))->num_clipnodes;
+	for (uint32_t i = 1; i < h.num_bmodels; i++) {
+		uint32_t r = bm[i].root;
+		if (r & 0x80000000u) { if ((r & 0x7fffffffu) >= h.num_leaves) FAIL("bmodel %u: root leaf out of range", i); }
+		else if (r >= h.num_nodes) FAIL("bmodel %u: root out of range", i);
+		if (bm[i].hull1 < 0 || (uint32_t) bm[i].hull1 >= num_clipnodes ||
+		    bm[i].hull2 < 0 || (uint32_t) bm[i].hull2 >= num_clipnodes)
+			FAIL("bmodel %u: clip roots out of range", i);
+		for (int k = 0; k < 3; k++)
+			if (bm[i].mins[k] > bm[i].maxs[k]) FAIL("bmodel %u: bounds", i);
+		if (bm[i].depth > h.max_bm_depth) FAIL("bmodel %u: depth %u", i, bm[i].depth);
+	}
+	const qw_ent *ents = (const qw_ent *) (d + h.ofs_ents);
+	const char *strs = (const char *) (d + h.ofs_strings);
+	if (h.len_strings < 1 || strs[0] || strs[h.len_strings - 1])
+		FAIL("string pool not NUL-ended");
+	for (uint32_t i = 0; i < h.num_ents; i++) {
+		const qw_ent *e = &ents[i];
+		if (e->class >= QE_COUNT) FAIL("entity %u: class %u", i, e->class);
+		if (e->model < 0 || (uint32_t) e->model >= h.num_bmodels) FAIL("entity %u: model %d", i, e->model);
+		uint16_t so[6] = { e->target, e->targetname, e->killtarget, e->message, e->map, e->classname };
+		for (int k = 0; k < 6; k++)
+			if (so[k] >= h.len_strings) FAIL("entity %u: string offset %u", i, so[k]);
+		if (!e->classname) FAIL("entity %u: no classname", i);
+	}
+	if (h.title >= h.len_strings) FAIL("title string out of range");
+
+	printf("check: %s OK — %u nodes, %u leaves, %u records (%u the world's), %u polys, depth %u; "
+	       "%u brush models, %u entities\n",
+	       path, h.num_nodes, h.num_leaves, recs, h.num_faces, polys, h.max_depth,
+	       h.num_bmodels ? h.num_bmodels - 1 : 0, h.num_ents);
 	free(d);
 	return 0;
 }

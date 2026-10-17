@@ -17,7 +17,9 @@
 #         HASHONLY=1 dumps only the frames' hashes (`H` lines): no packets,
 #         no pictures, a run several times shorter (the console is slow).
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
-#         frames per map; MUSIC=1 puts the music on the bench disc (the .cue
+#         frames per map; MAP=E1M1 restricts the maps bench to that map (its
+#         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds
+#         a view there, NOENTS=1 leaves the entities out, an A / B); MUSIC=1 puts the music on the bench disc (the .cue
 #         then carries the tracks: docs/porting-notes.md §26).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
@@ -47,12 +49,16 @@ HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
 PLAY=${PLAY:-0}
 MUSIC=${MUSIC:-0}
+MAP=${MAP:-}
+VIEW=${VIEW:-}
+NOENTS=${NOENTS:-0}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
-      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" "$ROOT" >/dev/null
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
 	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
 
@@ -63,14 +69,15 @@ LOG="$ROOT/build-bench/bench.log" \
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
-[ "$VIEWS" = 0 ] || [ "$BENCH_MAPS" = 1 ] || [ "$HASHONLY" = 1 ] && exit 0
+[ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0
 
 # Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
 # output can be checked without a screen (the game's dumps need GAME.DAT's
-# images too).
+# images too); a single map's bench (MAP=...) with that map's textures.
 make -s -C "$ROOT/tools/pktview"
 mkdir -p "$ROOT/build-bench/views"
 TEXEXT=tex; [ "$TEX4" = 1 ] && TEXEXT=tx4
+TEXMAP=start; [ -n "$MAP" ] && TEXMAP=$(echo "$MAP" | tr 'A-Z' 'a-z')
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
-	"$ROOT/cooked/id1/start_$FIDNAME.$TEXEXT" "$ROOT/build-bench/views/" \
+	"$ROOT/cooked/id1/${TEXMAP}_$FIDNAME.$TEXEXT" "$ROOT/build-bench/views/" \
 	"$ROOT/cooked/id1/game.dat" | sed 's/^/  /'

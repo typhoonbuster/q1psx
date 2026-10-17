@@ -344,7 +344,7 @@
 	bnez    $s4, \p\()_guard
 	nop
 3:	sra     $t0, $s4, 4                  # 16-bit -> Q_FIX fraction
-	b       ct_ret
+	b       ct_core_ret
 	sw      $t0, TR_FRACTION($s0)
 
 # \p\()_fcontents: v0 = contents of node t9 at sweep fraction t7.
@@ -383,6 +383,12 @@
 	.type   clip_trace, @function
 
 # -----------------------------------------------------------------------------
+# clip_trace(hull, start, end, tr): SV_Move. The world's hull first
+# (ct_core), then (SV_ClipToLinks) every brush model of clip_bmodels whose
+# box the swept box reaches (SV_MoveBounds: the hull's box around the
+# sweep, a unit wider): the sweep in the model's space through ct_core into
+# a scratch trace, its end point put back in the world, and taken when it
+# is hit first or the sweep starts inside it. Mirrors engine/clip.c.
 clip_trace:
 	addiu   $sp, $sp, -40
 	sw      $fp, 36($sp)
@@ -397,6 +403,228 @@ clip_trace:
 	sw      $s7, 32($sp)
 
 	move    $s0, $a3
+	lui     $s7, 0x1F80
+	lui     $t5, %hi(world)
+	addiu   $t5, $t5, %lo(world)
+	lw      $s1, W_CLIPNODES($t5)
+	lw      $s2, W_PLANES($t5)
+	lw      $s3, W_ROOT($t5)
+	sw      $a0, PS_HULL($s7)
+	sw      $a1, PS_WSTART($s7)
+	sw      $a2, PS_WEND($s7)
+	sw      $a3, PS_WTR($s7)
+	bnez    $s1, 1f
+	li      $t6, 2
+	lw      $t0, 0($a2)                  # no clip hulls: a free move
+	lw      $t1, 4($a2)
+	lw      $t2, 8($a2)
+	li      $t3, 1
+	li      $t4, Q_FIX_ONE
+	sw      $zero, TR_STARTSOLID($s0)
+	sw      $zero, TR_ALLSOLID($s0)
+	sw      $t3, TR_INOPEN($s0)
+	sw      $zero, TR_INWATER($s0)
+	sw      $t4, TR_FRACTION($s0)
+	sw      $t0, TR_ENDPOS+0($s0)
+	sw      $t1, TR_ENDPOS+4($s0)
+	sw      $t2, TR_ENDPOS+8($s0)
+	sw      $zero, TR_PLANE_N+0($s0)
+	sw      $zero, TR_PLANE_N+4($s0)
+	b       ct_ret
+	sw      $zero, TR_PLANE_D($s0)
+1:	beqz    $a0, 2f                      # hull 0: the world's BSP, from its
+	sll     $s3, $s3, 8                  # root as a KUSEG pointer (like
+	bne     $a0, $t6, 3f                 # its children)
+	lw      $s3, W_HULL1($t5)
+	lw      $s3, W_HULL2($t5)
+	b       3f
+	nop
+2:	srl     $s3, $s3, 8
+3:	bal     ct_core                      # the world
+	nop
+
+	# ---- the brush models ---------------------------------------------------
+	lui     $t5, %hi(clip_num_bmodels)
+	lw      $t5, %lo(clip_num_bmodels)($t5)
+	lw      $a1, PS_WSTART($s7)
+	beqz    $t5, ct_ret
+	lw      $a2, PS_WEND($s7)
+	lw      $a0, PS_HULL($s7)
+	lui     $t4, %hi(clip_bmodels)
+	addiu   $t4, $t4, %lo(clip_bmodels)
+	sll     $t6, $t5, 3                  # n * 40 = n * 8 + n * 32
+	sll     $t5, $t5, 5
+	addu    $t5, $t5, $t6
+	addu    $t5, $t5, $t4
+	sw      $t4, PS_BMI($s7)
+	sw      $t5, PS_BMEND($s7)
+	sw      $zero, PS_BMIDX($s7)
+	# the swept box: min / max of start and end, the hull's box around
+	# it, a unit wider (ct_hull_box: 6 words per hull)
+	sll     $t6, $a0, 3
+	sll     $t7, $a0, 4
+	addu    $t6, $t6, $t7                # hull * 24
+	lui     $t7, %hi(ct_hull_box)
+	addiu   $t7, $t7, %lo(ct_hull_box)
+	addu    $t6, $t6, $t7
+	move    $t8, $zero                   # axis * 4
+4:	addu    $t0, $a1, $t8
+	addu    $t1, $a2, $t8
+	lw      $t2, 0($t0)                  # start[k]
+	lw      $t3, 0($t1)                  # end[k]
+	addu    $t7, $t6, $t8
+	lw      $t0, 0($t7)                  # the hull's mins[k]
+	lw      $t1, 12($t7)                 # maxs[k]
+	slt     $v0, $t3, $t2                # end < start?
+	beqz    $v0, 5f
+	move    $v1, $t2                     # lo = start, hi = end
+	move    $v1, $t3                     # lo = end, hi = start
+	move    $t3, $t2
+5:	addu    $v1, $v1, $t0
+	addu    $t3, $t3, $t1
+	addiu   $v1, $v1, -CLIP_SUB
+	addiu   $t3, $t3, CLIP_SUB
+	addu    $t9, $s7, $t8
+	sw      $v1, PS_BMIN($t9)
+	sw      $t3, PS_BMAX($t9)
+	addiu   $t8, $t8, 4
+	li      $t0, 12
+	bne     $t8, $t0, 4b
+	nop
+
+ct_bm_reload:                            # the swept box in registers (ct_core
+	lw      $s4, PS_BMIN+0($s7)          # takes them)
+	lw      $s5, PS_BMIN+4($s7)
+	lw      $s6, PS_BMIN+8($s7)
+	lw      $fp, PS_BMAX+0($s7)
+	lw      $v1, PS_BMAX+4($s7)
+	lw      $a3, PS_BMAX+8($s7)
+ct_bm_next:
+	lw      $t4, PS_BMI($s7)
+	lw      $t5, PS_BMEND($s7)
+	lw      $t6, PS_BMIDX($s7)
+	beq     $t4, $t5, ct_ret
+	addiu   $t5, $t4, CB_SIZE
+	sw      $t5, PS_BMI($s7)
+	addiu   $t6, $t6, 1
+	sw      $t6, PS_BMIDX($s7)
+	lw      $t0, CB_ABSMAX+0($t4)        # the boxes apart on an axis: next
+	lw      $t1, CB_ABSMIN+0($t4)
+	slt     $t0, $t0, $s4                # absmax.x < bmin.x
+	bnez    $t0, ct_bm_next
+	slt     $t1, $fp, $t1                # bmax.x < absmin.x
+	bnez    $t1, ct_bm_next
+	lw      $t0, CB_ABSMAX+4($t4)
+	lw      $t1, CB_ABSMIN+4($t4)
+	slt     $t0, $t0, $s5
+	bnez    $t0, ct_bm_next
+	slt     $t1, $v1, $t1
+	bnez    $t1, ct_bm_next
+	lw      $t0, CB_ABSMAX+8($t4)
+	lw      $t1, CB_ABSMIN+8($t4)
+	slt     $t0, $t0, $s6
+	bnez    $t0, ct_bm_next
+	slt     $t1, $a3, $t1
+	bnez    $t1, ct_bm_next
+	lw      $t6, CB_BM($t4)              # the qw_bmodel
+	lw      $a1, PS_WSTART($s7)          # the sweep in the model's space
+	lw      $a2, PS_WEND($s7)
+	move    $t8, $zero
+7:	addu    $t0, $t4, $t8
+	lw      $t1, CB_ORG($t0)
+	addu    $t2, $a1, $t8
+	lw      $t3, 0($t2)
+	addu    $t2, $a2, $t8
+	lw      $t7, 0($t2)
+	addu    $t9, $s7, $t8
+	subu    $t3, $t3, $t1
+	sw      $t3, PS_BSTART($t9)
+	subu    $t7, $t7, $t1
+	sw      $t7, PS_BEND($t9)
+	addiu   $t8, $t8, 4
+	li      $t0, 12
+	bne     $t8, $t0, 7b
+	nop
+	lw      $a0, PS_HULL($s7)            # the model's hull of that size
+	lw      $s3, BM_HULL1($t6)
+	li      $t1, 2
+	beqz    $a0, 8f
+	lw      $t0, BM_HULL2($t6)
+	beq     $a0, $t1, 9f
+	nop
+	b       ct_bm_trace
+	nop
+8:	lw      $s3, BM_ROOT($t6)            # hull 0: its render nodes (KUSEG)
+	b       ct_bm_trace
+	nop
+9:	move    $s3, $t0
+ct_bm_trace:
+	addiu   $s0, $s7, PS_BTRACE
+	addiu   $a1, $s7, PS_BSTART
+	bal     ct_core
+	addiu   $a2, $s7, PS_BEND
+	lw      $t4, PS_BMI($s7)
+	lw      $s0, PS_WTR($s7)             # the call's trace again
+	addiu   $t4, $t4, -CB_SIZE           # the model's entry
+	lw      $t0, CB_ORG+0($t4)           # its end point back in the world
+	lw      $t1, CB_ORG+4($t4)
+	lw      $t2, CB_ORG+8($t4)
+	lw      $t5, PS_BTRACE+TR_ENDPOS+0($s7)
+	lw      $t6, PS_BTRACE+TR_ENDPOS+4($s7)
+	lw      $t7, PS_BTRACE+TR_ENDPOS+8($s7)
+	addu    $t5, $t5, $t0
+	addu    $t6, $t6, $t1
+	addu    $t7, $t7, $t2
+	sw      $t5, PS_BTRACE+TR_ENDPOS+0($s7)
+	sw      $t6, PS_BTRACE+TR_ENDPOS+4($s7)
+	sw      $t7, PS_BTRACE+TR_ENDPOS+8($s7)
+	lw      $t0, PS_BTRACE+TR_ALLSOLID($s7)
+	lw      $t1, PS_BTRACE+TR_STARTSOLID($s7)
+	lw      $t2, PS_BTRACE+TR_FRACTION($s7)
+	lw      $t3, TR_FRACTION($s0)
+	or      $t0, $t0, $t1
+	bnez    $t0, 1f                      # all solid or starting inside: taken
+	slt     $t2, $t2, $t3
+	beqz    $t2, 2f                      # not hit first
+	nop
+1:	lw      $t5, TR_STARTSOLID($s0)      # (kept set)
+	lw      $t0, PS_BTRACE+0($s7)
+	lw      $t1, PS_BTRACE+4($s7)
+	lw      $t2, PS_BTRACE+8($s7)
+	lw      $t3, PS_BTRACE+12($s7)
+	or      $t0, $t0, $t5
+	sw      $t0, 0($s0)
+	sw      $t1, 4($s0)
+	sw      $t2, 8($s0)
+	sw      $t3, 12($s0)
+	lw      $t0, PS_BTRACE+16($s7)
+	lw      $t1, PS_BTRACE+20($s7)
+	lw      $t2, PS_BTRACE+24($s7)
+	lw      $t3, PS_BTRACE+28($s7)
+	sw      $t0, 16($s0)
+	sw      $t1, 20($s0)
+	sw      $t2, 24($s0)
+	sw      $t3, 28($s0)
+	lw      $t0, PS_BTRACE+32($s7)
+	lw      $t1, PS_BTRACE+36($s7)
+	lw      $t2, PS_BTRACE+40($s7)
+	lw      $t3, PS_BMIDX($s7)           # the model's index + 1: what was hit
+	sw      $t0, 32($s0)
+	sw      $t1, 36($s0)
+	sw      $t2, 40($s0)
+	b       ct_bm_reload
+	sh      $t3, TR_ENT($s0)
+2:	beqz    $t1, ct_bm_reload            # not even starting inside it
+	li      $t0, 1
+	b       ct_bm_reload
+	sw      $t0, TR_STARTSOLID($s0)
+
+# ct_core: one hull from one root. s0 = the trace_t to fill, s3 = the root
+# (hull 0: a node pointer), a0 = hull, a1 = start, a2 = end, s1 / s2 / s7
+# set. Returns through PS_CORERA (the loop's bal's take ra). Clobbers
+# everything but s0-s3, s7.
+ct_core:
+	sw      $ra, PS_CORERA($s7)
 	lw      $t0, 0($a2)                  # end
 	lw      $t1, 4($a2)
 	lw      $t2, 8($a2)
@@ -411,30 +639,10 @@ clip_trace:
 	sw      $t1, TR_ENDPOS+4($s0)
 	sw      $t2, TR_ENDPOS+8($s0)
 	sw      $zero, TR_PLANE_N+0($s0)
-	sw      $zero, TR_PLANE_N+4($s0)
+	sw      $zero, TR_PLANE_N+4($s0)     # (n[2], and ent: the world)
 	sw      $zero, TR_PLANE_D($s0)
 
-	lui     $t5, %hi(world)
-	addiu   $t5, $t5, %lo(world)
-	lw      $s1, W_CLIPNODES($t5)
-	lw      $s2, W_PLANES($t5)
-	lw      $s3, W_ROOT($t5)
-	bnez    $s1, 1f
-	li      $t6, 2
-	sw      $zero, TR_ALLSOLID($s0)      # no clip hulls: a free move
-	b       ct_ret
-	sw      $t3, TR_INOPEN($s0)
-1:	beqz    $a0, 2f                      # hull 0: the world's BSP, from its
-	sll     $s3, $s3, 8                  # root as a KUSEG pointer (like
-	bne     $a0, $t6, 3f                 # its children)
-	lw      $s3, W_HULL1($t5)
-	lw      $s3, W_HULL2($t5)
-	b       3f
-	nop
-2:	srl     $s3, $s3, 8
-3:
 	# start / delta to the scratchpad and into GTE rows 1-2
-	lui     $s7, 0x1F80
 	lw      $t3, 0($a1)                  # start
 	lw      $t4, 4($a1)
 	lw      $t5, 8($a1)
@@ -487,6 +695,12 @@ clip_trace:
 ct_done:
 	sll     $t0, $s6, 4
 	addu    $sp, $sp, $t0                # drop any pending splits
+ct_core_ret:
+	lw      $ra, PS_CORERA($s7)
+	nop
+	jr      $ra
+	nop
+
 ct_ret:
 	lw      $v0, TR_FRACTION($s0)
 	lw      $ra, 0($sp)
@@ -548,6 +762,13 @@ set_endpos:
 	ctc2    $t2, C2_R33
 
 	.size   clip_trace, . - clip_trace
+
+	.section .rodata.ct_hull_box, "a", @progbits
+	.align  2
+ct_hull_box:                             # the hulls' mins[3], maxs[3], 1/8 units (clip.c hull_box)
+	.word   0, 0, 0, 0, 0, 0
+	.word   -16 * CLIP_SUB, -16 * CLIP_SUB, -24 * CLIP_SUB, 16 * CLIP_SUB, 16 * CLIP_SUB, 32 * CLIP_SUB
+	.word   -32 * CLIP_SUB, -32 * CLIP_SUB, -24 * CLIP_SUB, 32 * CLIP_SUB, 32 * CLIP_SUB, 64 * CLIP_SUB
 
 # -----------------------------------------------------------------------------
 	.section .text.clip_contents, "ax", @progbits

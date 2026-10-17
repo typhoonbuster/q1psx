@@ -27,6 +27,9 @@
 
 world_t world;   /* only the clip-hull fields are used */
 
+clip_bmodel_t clip_bmodels[CLIP_MAX_BMODELS];   /* (no brush models on the host) */
+int           clip_num_bmodels;
+
 int16_t r_sin(int a) { return (int16_t) lround(sin(a * 2 * M_PI / 4096) * 4096); }
 int16_t r_cos(int a) { return (int16_t) lround(cos(a * 2 * M_PI / 4096) * 4096); }
 

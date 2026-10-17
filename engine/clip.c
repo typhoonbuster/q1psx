@@ -141,8 +141,10 @@ static void set_endpos(trace_t *tr, int32_t f)
 /* SV_RecursiveHullCheck, iterative. A sub-sweep that ends in an open leaf
    "returns 1" to the innermost pending split, which then tries its far
    side; anything that resolves the trace (an impact, or never leaving
-   solid) ends it at once, as Quake's chain of "return false" does. */
-q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+   solid) ends it at once, as Quake's chain of "return false" does. One
+   hull from one root: the world's, or a brush model's in its own space. */
+static q_fixed trace_core(int hull, hnum root, const int32_t start[3], const int32_t end[3],
+                          trace_t *tr)
 {
 	memset(tr, 0, sizeof *tr);
 	tr->fraction = Q_FIX_ONE;
@@ -150,13 +152,6 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 	for (int i = 0; i < 3; i++)
 		tr->endpos[i] = end[i];
 
-	if (!world.clipnodes || !world.root) {
-		tr->allsolid = 0;
-		tr->inopen = 1;
-		return tr->fraction;
-	}
-
-	hnum root = root_of(hull);
 	tr_start = start;
 	for (int i = 0; i < 3; i++)
 		tr_delta[i] = end[i] - start[i];
@@ -251,6 +246,72 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 		nsplit++;
 		num = child_of(hull, num, side);
 		f2  = fm;
+	}
+	return tr->fraction;
+}
+
+/* the hulls' boxes (SV_MoveBounds takes the mover's mins and maxs: the
+   point hull's are 0, the others' Quake's player and large sizes) */
+static const int32_t hull_box[3][6] = {
+	{ 0, 0, 0, 0, 0, 0 },
+	{ -16 * CLIP_SUB, -16 * CLIP_SUB, -24 * CLIP_SUB, 16 * CLIP_SUB, 16 * CLIP_SUB, 32 * CLIP_SUB },
+	{ -32 * CLIP_SUB, -32 * CLIP_SUB, -24 * CLIP_SUB, 32 * CLIP_SUB, 32 * CLIP_SUB, 64 * CLIP_SUB },
+};
+
+/* SV_Move: the world, then (SV_ClipToLinks) every listed brush model whose
+   box the swept box reaches, traced in the model's space (start and end
+   less its origin, the hull of the mover's size) and taken when it is hit
+   first or the sweep starts inside it; a start inside any of them marks
+   the trace. */
+q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+{
+	if (!world.clipnodes || !world.root) {
+		memset(tr, 0, sizeof *tr);
+		tr->fraction = Q_FIX_ONE;
+		tr->inopen = 1;
+		for (int i = 0; i < 3; i++)
+			tr->endpos[i] = end[i];
+		return tr->fraction;
+	}
+	trace_core(hull, root_of(hull), start, end, tr);
+	if (!clip_num_bmodels)
+		return tr->fraction;
+
+	int32_t bmin[3], bmax[3];                     /* SV_MoveBounds: a unit wider */
+	for (int k = 0; k < 3; k++) {
+		int32_t lo = start[k] < end[k] ? start[k] : end[k];
+		int32_t hi = start[k] < end[k] ? end[k] : start[k];
+		bmin[k] = lo + hull_box[hull][k] - CLIP_SUB;
+		bmax[k] = hi + hull_box[hull][k + 3] + CLIP_SUB;
+	}
+	for (int i = 0; i < clip_num_bmodels; i++) {
+		const clip_bmodel_t *cb = &clip_bmodels[i];
+		const qw_bmodel     *bm = cb->bm;
+		int k;
+		for (k = 0; k < 3; k++)
+			if (bmin[k] > cb->absmax[k] || bmax[k] < cb->absmin[k])
+				break;
+		if (k < 3)
+			continue;
+		int32_t ls[3], le[3];
+		for (k = 0; k < 3; k++) {
+			ls[k] = start[k] - cb->origin[k];
+			le[k] = end[k] - cb->origin[k];
+		}
+		hnum root = hull == 0 ? (hnum) bm->root : hull == 2 ? bm->hull2 : bm->hull1;
+		trace_t t;
+		trace_core(hull, root, ls, le, &t);
+		for (k = 0; k < 3; k++)
+			t.endpos[k] += cb->origin[k];
+		if (t.allsolid || t.startsolid || t.fraction < tr->fraction) {
+			int was_startsolid = tr->startsolid;
+			t.ent = (int16_t) (i + 1);
+			*tr   = t;
+			if (was_startsolid)
+				tr->startsolid = 1;
+		} else if (t.startsolid) {
+			tr->startsolid = 1;
+		}
 	}
 	return tr->fraction;
 }
