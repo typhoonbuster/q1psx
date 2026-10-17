@@ -39,8 +39,8 @@ typedef struct {
 } dlight_t;
 
 extern dlight_t dlights[MAX_DLIGHTS];
-extern int      dl_debug;                  /* > 0: the C hook prints that many lit records */
 extern uint32_t dl_save_n;                 /* records saved this frame */
+extern uint16_t dl_sqrt[1024];           /* sqrt(i << 11): the lights, snd.c */
 
 void      dl_init(void);
 void      dl_clear(void);                  /* a new map */
@@ -48,7 +48,15 @@ dlight_t *dl_alloc(int key, int now);      /* CL_AllocDlight: the same key's, el
 void      dl_decay(int now);               /* CL_DecayLights, once per tick */
 void      dl_push(int now);                /* R_PushDlights: the live lights for r_frame */
 void      dl_stamp_nodes(void);            /* r_render, after mark_pvs: the nodes the lights reach */
+#ifndef Q1PSX_DLIGHT_C
+#define Q1PSX_DLIGHT_C 0                   /* (CMake: 0 the asm, 1 the C reference, 2 both) */
+#endif
+#if Q1PSX_DLIGHT_C == 1
 void      dl_restore(void);                /* after r_frame: the records' light bytes back */
+#else
+void      dl_restore_asm(void);            /* (engine/r_world.s: the same, no C in between) */
+#define   dl_restore dl_restore_asm
+#endif
 /* the renderer's record hook (engine/r_world.s dr_light_rec), C reference
    version: a stamped record of a node a light reaches, about to be
    drawn, lit in place */

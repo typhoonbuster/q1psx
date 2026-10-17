@@ -23,7 +23,7 @@
 
 #define RL_MAX_ITEMS 400
 #define RL_MAX_ENTS   64
-#define RL_MAX_LISTS 255
+#define RL_MAX_LISTS 127   /* leaves with a list a frame (7 bits of the leaf's vis word) */
 
 /* engine/r_defs.inc mirrors both layouts (RI_*, RE_*) */
 typedef struct {

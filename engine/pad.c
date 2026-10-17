@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <psxapi.h>
+#include <psxgpu.h>
 #include <psxpad.h>
 #include <hwregs_c.h>
 
@@ -95,19 +96,89 @@ static int pad_force_analog(void)
 
 static int digital_frames, attempts;
 
-static void bios_start(void)
+/* ----------------------------------------------------------- the poll -- */
+
+/* The BIOS driver (StartPAD) polls both ports in the vblank handler, a byte
+   at a time, waiting for each: 13 k cycles a frame on PCSX-Redux (its serial
+   port takes ~535 cycles a byte), landing anywhere in the renderer. This
+   driver polls port 1 only, the same way, in the vblank callback: half the
+   waiting. (An interrupt-driven poll, a byte per /ACK interrupt, was tried
+   first: the kernel's interrupt dispatch costs ~2.7 k cycles a byte on
+   PCSX-Redux, 22 k a frame; on the real machine, whose serial byte takes
+   ~40 us, it would be the better driver.) The pad's id byte says how long
+   the poll is (0x41: a digital pad, 5 bytes; 0x73: analog, 9; 0xf3: config
+   mode, 9); a pad that stops answering ends the poll by a short timeout. */
+
+static const uint8_t poll_tx[9] = { 0x01, PAD_CMD_READ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static volatile int   driver_on;
+
+static void poll_sync(void)
 {
-	StartPAD();
-	ChangeClearPAD(0);   /* let psxgpu's handler see the vblank IRQ too */
+	uint8_t rx[9];
+	int n = 9, got = 0;
+	SIO_CTRL(0) = 0x1003;                  /* TX on, port 1 selected, /ACK sets the IRQ flag */
+	for (volatile int i = 0; i < 40; i++)
+		;                                  /* (the select settles) */
+	for (int i = 0; i < n; i++) {
+		SIO_DATA(0) = poll_tx[i];
+		if (!sio_wait(0x0002, 0x800))      /* the answer byte */
+			break;
+		rx[got++] = SIO_DATA(0);
+		if (i == 1) {                      /* the id byte: the poll's length */
+			int len = rx[1] & 0xf;
+			n = rx[1] == 0xff || len == 0xf ? 2 : 3 + 2 * len;
+			if (n > 9)
+				n = 9;
+		}
+		if (i == n - 1)
+			break;
+		if (!sio_wait(0x0200, 0x400))      /* /ACK: the pad takes another byte */
+			break;
+		SIO_CTRL(0) = 0x1013;              /* the flag cleared, the pad still selected */
+	}
+	SIO_CTRL(0) = 0x0010;                  /* deselected, any flag cleared */
+	uint8_t *b = pad_buf[0];
+	if (got >= 5 && got >= n && rx[1] != 0xff) {
+		b[0] = 0;                          /* PADTYPE: stat, id, buttons, sticks */
+		b[1] = rx[1];
+		b[2] = rx[3];
+		b[3] = rx[4];
+		for (int i = 5; i < 9; i++)
+			b[i - 1] = got > i ? rx[i] : 0x80;
+	} else {
+		b[0] = 0xff;
+	}
+}
+
+static void pad_vblank(void)
+{
+	if (driver_on)
+		poll_sync();
+}
+
+static void driver_start(void)
+{
+	SIO_CTRL(0) = 0x0040;                  /* the port reset */
+	SIO_MODE(0) = 0x000d;                  /* 8 bits, no parity, x1 */
+	SIO_BAUD(0) = 0x0088;                  /* 250 kbps */
+	SIO_CTRL(0) = 0x0010;
+	driver_on = 1;
+}
+
+/* the driver off and idle, for a synchronous exchange (pad_force_analog) */
+static void driver_stop(void)
+{
+	driver_on = 0;
+	VSync(0);                              /* a poll in flight ends with the vblank */
 }
 
 void pad_init(void)
 {
-	InitPAD(pad_buf[0], 34, pad_buf[1], 34);
 	pad_buf[0][0] = pad_buf[1][0] = 0xff;   /* "no data" until the first poll */
 	attempts = 1;
 	printf("pad: analog mode %s\n", pad_force_analog() ? "on" : "not set (digital pad, or no answer)");
-	bios_start();
+	VSyncCallback(pad_vblank);
+	driver_start();
 }
 
 void pad_read(void)
@@ -143,9 +214,9 @@ void pad_read(void)
 		if (++digital_frames >= 120 && attempts < 3) {
 			digital_frames = 0;
 			attempts++;
-			StopPAD();
+			driver_stop();
 			int ok = pad_force_analog();
-			bios_start();
+			driver_start();
 			printf("pad: analog mode %s (try %d)\n", ok ? "on" : "not set", attempts);
 		}
 	} else {

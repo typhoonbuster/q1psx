@@ -5,6 +5,7 @@
 #include <hwregs_c.h>
 
 #include "cd.h"
+#include "dlight.h"
 #include "game.h"
 #include "mem.h"
 #include "qsound.h"
@@ -24,6 +25,8 @@ int snd_log;
 
 #define MASTER_VOL  0x2ccc       /* Quake's volume cvar, 0.7                 */
 #define NOMINAL_CLIP_DIST 1000   /* snd_dma.c sound_nominal_clip_dist        */
+#define CLIP_UNITS  (NOMINAL_CLIP_DIST * 64 * R_POS_SUB)   /* x dist_mult: the silence line, 1/R_POS_SUB units */
+#define DIST_M(dist_mult) ((dist_mult) * 65536 / (CLIP_UNITS / 256))   /* dist x256 = len x DIST_M >> 16 */
 #define AMBIENT_LEVEL 77         /* ambient_level 0.3, x256                  */
 #define AMBIENT_FADE  427        /* ambient_fade 100 per second: per tick, x256 */
 #define NEVER 0x7fffffff
@@ -34,6 +37,8 @@ typedef struct {
 	int      entnum, entchannel;
 	int      master_vol;         /* 0..255                                   */
 	int      dist_mult;          /* atten x64 (x 1 / 64000 per world unit)   */
+	uint32_t reach;              /* the Manhattan distance from which it is silent */
+	int      dist_m;             /* DIST_M(dist_mult)                        */
 	int      leftvol, rightvol;  /* 0..255                                   */
 	int      end;                /* tick it ends (NEVER: a loop)             */
 	int      start_tick;         /* (the same-sound-this-frame offset)       */
@@ -41,11 +46,22 @@ typedef struct {
 
 static channel_t dyn[NUM_DYNAMIC];
 
+/* a static source as the per-frame loop takes it (snd_map_start makes
+   them from the bank's qs_static entries, in place) */
+typedef struct {
+	int16_t  origin[3];          /* 1/R_POS_SUB units                        */
+	uint8_t  voice;              /* V_STATIC-relative                        */
+	uint8_t  volume;             /* 0..255                                   */
+	uint16_t reach;              /* the Manhattan distance (1/R_POS_SUB units)
+	                                from which it is silent; 0xffff: never   */
+	uint16_t dist_m;             /* DIST_M(atten)                            */
+} static_t;                      /* 12 bytes                                 */
+
 /* the bank's directory, in the game arena (fixed slots) */
 static qs_sound  *bank;
 static int        bank_n;
-static qs_static *statics;
-static int        statics_n;
+static qs_static *statics;       /* the bank's, then static_t's (snd_map_start) */
+static int        statics_n;     /* static_t's with a voice                   */
 static int        cd_track;
 static int         named[S_COUNT];          /* S_* -> bank index or -1     */
 
@@ -143,9 +159,6 @@ int snd_load_bank(const char *map)
 	memcpy(bank, f + h->ofs_sounds, bank_n * sizeof *bank);
 	statics_n = (int) h->num_statics;
 	memcpy(statics, f + h->ofs_statics, statics_n * sizeof *statics);
-	for (int i = 0; i < statics_n; i++)
-		for (int k = 0; k < 3; k++)
-			statics[i].origin[k] *= R_POS_SUB;
 	cd_track = (int) h->cd_track;
 	for (int i = 0; i < S_COUNT; i++) {
 		uint32_t hh = qs_hash(names[i]);
@@ -188,17 +201,30 @@ void snd_map_start(void)
 {
 	snd_stop_all();
 	static_n = 0;
+	static_t *rt = (static_t *) statics;     /* (12 bytes over 16: in place, forwards) */
+	int n = 0;
 	for (int i = 0; i < statics_n; i++) {
-		int s = statics[i].sound, v;
+		qs_static st = statics[i];
+		int s = st.sound, v;
 		for (v = 0; v < static_n && static_sfx[v] != s; v++)
 			;
 		if (v == static_n) {
 			if (static_n >= NUM_STATIC)
-				continue;
+				continue;                        /* (no voice left: never heard) */
 			static_sfx[static_n++] = s;
 			voice_start(V_STATIC + v, s, 0, 0, 0);
 		}
+		static_t *r = &rt[n++];
+		for (int k = 0; k < 3; k++) {
+			int32_t o = st.origin[k] * R_POS_SUB;
+			r->origin[k] = (int16_t) (o > 32767 ? 32767 : o < -32768 ? -32768 : o);
+		}
+		r->voice  = (uint8_t) v;
+		r->volume = st.volume;
+		r->reach  = st.atten ? (uint16_t) (CLIP_UNITS / st.atten) : 0xffff;
+		r->dist_m = (uint16_t) DIST_M(st.atten);
 	}
+	statics_n = n;
 	amb_sfx[0] = named[S_AMB_WATER1];
 	amb_sfx[1] = named[S_AMB_WIND2];
 	for (int a = 0; a < 2; a++)
@@ -208,51 +234,67 @@ void snd_map_start(void)
 
 /* ----------------------------------------------------------- spatialize -- */
 
-static uint32_t isqrt32(uint32_t x)
+/* sqrt(x) within +-1 for x < 2^31, from dl_sqrt (sqrt of i << 11, i <
+   1024): x shifted by an even count into [2^19, 2^21), its table entry
+   within 1/512, one Newton step, the count shifted back */
+static uint32_t isqrt_fast(uint32_t x)
 {
-	uint32_t r = 0, bit = 1u << 30;
-	while (bit > x) bit >>= 2;
-	while (bit) {
-		if (x >= r + bit) { x -= r + bit; r = (r >> 1) + bit; }
-		else r >>= 1;
-		bit >>= 2;
+	int k = 0;
+	if (x < 1u << 19) {
+		if (x < 2)
+			return x;
+		while (x < 1u << 19) { x <<= 2; k--; }
+	} else {
+		if (x >= 1u << 27) { x >>= 8; k = 4; }
+		if (x >= 1u << 23) { x >>= 4; k += 2; }
+		if (x >= 1u << 21) { x >>= 2; k += 1; }
 	}
-	return r;
+	uint32_t r = dl_sqrt[x >> 11];
+	r = (r + x / r) >> 1;
+	return k >= 0 ? r << k : r >> -k;
 }
 
-/* SND_Spatialize: distance attenuation and the stereo split from the
-   listener's right vector; the view entity is always full volume */
-static void spatialize(int entnum, const int32_t origin[3], int master_vol, int dist_mult,
+/* SND_Spatialize for a source d (1/R_POS_SUB units) off the listener,
+   whose Manhattan distance is under its reach: the distance attenuation
+   dist = len x dist_mult / 1000 units (x256 as len x dist_m >> 16), the
+   stereo split from the listener's right vector; volumes 0..255 */
+static inline void spatialize_d(int32_t dx, int32_t dy, int32_t dz, int master_vol, int dist_m,
+                                int *leftvol, int *rightvol)
+{
+	int32_t len = (int32_t) isqrt_fast((uint32_t) (dx * dx + dy * dy + dz * dz));
+	int scale = 256 - ((len * dist_m) >> 16);        /* (1 - dist) x256 */
+	int dot = len ? (listener_right[0] * dx + listener_right[1] * dy +
+	                 listener_right[2] * dz) / len : 0;   /* x4096 (the sum < 2^31) */
+	int vs = master_vol * scale;
+	int r = vs * (4096 + dot) >> 20;
+	int l = vs * (4096 - dot) >> 20;
+	*rightvol = r < 0 ? 0 : r > 255 ? 255 : r;
+	*leftvol  = l < 0 ? 0 : l > 255 ? 255 : l;
+}
+
+/* a channel's: the view entity is always full volume; a source past its
+   reach is silent (the Manhattan distance bounds the real one, so this is
+   exact); the rest within 2048 units of the listener */
+static void spatialize(int entnum, const int32_t origin[3], int master_vol, uint32_t reach, int dist_m,
                        int *leftvol, int *rightvol)
 {
 	if (entnum == ENT_PLAYER) {
 		*leftvol = *rightvol = master_vol;
 		return;
 	}
-	int32_t d[3], manhattan = 0;
+	int32_t d[3];
+	uint32_t manhattan = 0;
 	for (int k = 0; k < 3; k++) {
 		d[k] = origin[k] - listener[k];
 		if (d[k] > 16383) d[k] = 16383;              /* 2048 units: beyond hearing */
 		if (d[k] < -16383) d[k] = -16383;
-		manhattan += d[k] < 0 ? -d[k] : d[k];
+		manhattan += (uint32_t) (d[k] < 0 ? -d[k] : d[k]);
 	}
-	/* silent past 1000 / atten units (the Manhattan distance bounds the
-	   real one, so this is exact): most static sources, every frame */
-	if (dist_mult && manhattan * dist_mult >= NOMINAL_CLIP_DIST * 64 * R_POS_SUB) {
+	if (manhattan >= reach) {
 		*leftvol = *rightvol = 0;
 		return;
 	}
-	int32_t len = (int32_t) isqrt32((uint32_t) (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
-	/* dist x dist_mult, x256: len in 1/8 units (< 28 k), dist_mult in 1/64
-	   per unit: their product fits 32 bits */
-	int dist = len * dist_mult / (NOMINAL_CLIP_DIST * 64 * R_POS_SUB / 256);
-	int dot = len ? (listener_right[0] * d[0] + listener_right[1] * d[1] +
-	                 listener_right[2] * d[2]) / len : 0;   /* x4096 (the sum < 2^31) */
-	int scale = 256 - dist;                          /* (1 - dist) x256 */
-	int r = master_vol * scale * (4096 + dot) / (256 * 4096);
-	int l = master_vol * scale * (4096 - dot) / (256 * 4096);
-	*rightvol = r < 0 ? 0 : r > 255 ? 255 : r;
-	*leftvol  = l < 0 ? 0 : l > 255 ? 255 : l;
+	spatialize_d(d[0], d[1], d[2], master_vol, dist_m, leftvol, rightvol);
 }
 
 /* ----------------------------------------------------------------- start -- */
@@ -292,10 +334,12 @@ void snd_start(int entnum, int entchannel, int sfx, const int32_t origin[3], int
 	for (int k = 0; k < 3; k++)
 		ch->origin[k] = origin[k];
 	ch->dist_mult  = atten;
+	ch->reach      = atten ? (uint32_t) (CLIP_UNITS / atten) : 0xffffffffu;
+	ch->dist_m     = DIST_M(atten);
 	ch->master_vol = vol;
 	ch->entnum     = entnum;
 	ch->entchannel = entchannel;
-	spatialize(entnum, origin, vol, atten, &ch->leftvol, &ch->rightvol);
+	spatialize(entnum, origin, vol, ch->reach, ch->dist_m, &ch->leftvol, &ch->rightvol);
 	if (!ch->leftvol && !ch->rightvol) {
 		ch->sfx = -1;
 		return;                                      /* not audible at all */
@@ -324,11 +368,12 @@ void snd_start(int entnum, int entchannel, int sfx, const int32_t origin[3], int
 
 /* ---------------------------------------------------------------- update -- */
 
-/* S_UpdateAmbientSounds: the listener's leaf levels, faded */
+/* S_UpdateAmbientSounds: the listener's leaf levels, faded. The leaf is
+   the renderer's (r_frame found the camera's this frame, at the quarter
+   unit; the listener is the camera) */
 static void update_ambients(int ticks)
 {
-	int32_t p[3] = { listener[0] / R_POS_SUB, listener[1] / R_POS_SUB, listener[2] / R_POS_SUB };
-	const qw_leaf *l = world.ambient ? world_point_leaf(p) : 0;
+	const qw_leaf *l = world.ambient ? (const qw_leaf *) r_state.view_leaf : 0;
 	for (int a = 0; a < 2; a++) {
 		if (amb_sfx[a] < 0)
 			continue;
@@ -373,25 +418,33 @@ void snd_update(const int32_t origin[3], int yaw, int pitch, int roll, int ticks
 			ch->sfx = -1;
 			continue;
 		}
-		spatialize(ch->entnum, ch->origin, ch->master_vol, ch->dist_mult, &ch->leftvol, &ch->rightvol);
+		spatialize(ch->entnum, ch->origin, ch->master_vol, ch->reach, ch->dist_m, &ch->leftvol, &ch->rightvol);
 		voice_set(V_DYNAMIC + i, ch->leftvol, ch->rightvol);
 	}
 
 	/* the static sounds: each source spatialized, the sources of one sound
-	   summed into its voice (S_Update's combine) */
+	   summed into its voice (S_Update's combine); most are past their
+	   reach, a compare each. (An asm version of this loop was tried and
+	   came out 85 cycles slower than the compiler's: not kept.) */
 	for (int v = 0; v < static_n; v++)
 		static_lvol[v] = static_rvol[v] = 0;
-	for (int i = 0; i < statics_n; i++) {
-		const qs_static *st = &statics[i];
-		int v;
-		for (v = 0; v < static_n && static_sfx[v] != st->sound; v++)
-			;
-		if (v == static_n)
+	const static_t *st = (const static_t *) statics;
+	for (int i = 0; i < statics_n; i++, st++) {
+		int32_t dx = st->origin[0] - listener[0], dy = st->origin[1] - listener[1],
+		        dz = st->origin[2] - listener[2];
+		uint32_t m = (uint32_t) (dx < 0 ? -dx : dx) + (uint32_t) (dy < 0 ? -dy : dy) +
+		             (uint32_t) (dz < 0 ? -dz : dz);
+		if (m >= st->reach)
 			continue;
+		if (st->reach == 0xffff) {               /* (no attenuation: within 2048 units) */
+			if (dx > 16383) dx = 16383; else if (dx < -16383) dx = -16383;
+			if (dy > 16383) dy = 16383; else if (dy < -16383) dy = -16383;
+			if (dz > 16383) dz = 16383; else if (dz < -16383) dz = -16383;
+		}
 		int l, r;
-		spatialize(ENT_WORLD, st->origin, st->volume, st->atten, &l, &r);
-		static_lvol[v] += l;
-		static_rvol[v] += r;
+		spatialize_d(dx, dy, dz, st->volume, st->dist_m, &l, &r);
+		static_lvol[st->voice] += l;
+		static_rvol[st->voice] += r;
 	}
 	for (int v = 0; v < static_n; v++) {
 		int l = static_lvol[v] > 255 ? 255 : static_lvol[v];

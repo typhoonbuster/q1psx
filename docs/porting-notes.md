@@ -2871,3 +2871,142 @@ dumps (`t8hi`) are identical with the gates in place (the 12-view total
 4 356 k → 4 376 k: the node stamp's load and compare per block, the
 record gate); the game scenario's 15 frames hash the same under the
 dynarec and the interpreter, and with the C reference and the asm.
+
+## §25 — The third optimization pass: the whole engine (2026-10-17)
+
+The rule for this pass: whenever cycles saved exceed cycles added, by a single one,
+the change goes in. Measured with the game bench's hash-only mode on
+start's spawn (`HASHONLY=1 BENCH_GAME=1 scripts/bench.sh 300`, profile
+build, high, 8 px, the original HUD: 192 rows), every step keeping the
+15 frames' hashes identical to the pass's start (`bench_hash_asm13`),
+the C and asm dynamic lights agreeing, the interpreter agreeing with the
+dynarec, and the 12 world views identical (`scripts/dlcheck.sh check
+t8hi`).
+
+### 25.1 What was done, in order, with its measured gain
+
+Cycles a frame on the shotgun view (773.6 k at the start), the other
+views in brackets where they differ.
+
+1. **The dynamic lights' node descent in asm**, inline in r_render after
+   the PVS marking (`engine/r_world.s`, after `mark_done`): a stack of
+   pending front children on sp (`DSN_STACK`, the tree's depth), the back
+   child walked first; and **the restore in asm** (`dl_restore_asm`,
+   the padded words back). The C versions stay as the `Q1PSX_DLIGHT_C=1`
+   references. −10.8 k (the rocket launcher's explosion −64 k, the HUD
+   views −30 k).
+2. **One entry for the record hook**: `dr_light_full` saves what the
+   loop keeps and falls into `dl_light_record_asm` with the first light
+   that reached the record, whose sphere test is not run again; the
+   sky / liquid flag test moved before the sphere tests. A first version
+   forgot that the hook's loop loads each light's origin into t0-t2 and
+   entered after that load: the hashes caught it on the second view.
+3. **The light gate after the record's frustum test** (RECLOOP: the
+   `bnez $gp` moved past the four plane tests and the affine bits), so a
+   culled record is never lit; the hook now keeps a1, a2 (the near and
+   affine bits), v0, v1 and reloads a3 and at. With 2: −31 k (the
+   muzzle flash lights mostly the floor under the player, out of view).
+4. **The sound's spatialization** (`engine/snd.c`): the static sources
+   rebuilt at map start into 12-byte entries with their voice, their
+   reach (the Manhattan distance past which they are silent, exact
+   since it bounds the real one) and `dist_m` (the attenuation as a
+   16.16 multiplier: `dist x256 = len x dist_m >> 16`, no division);
+   `isqrt_fast` (the dynamic lights' `dl_sqrt` table on the squared
+   length shifted by an even count into [2^19, 2^21), one Newton step:
+   within ±1) instead of the 16-iteration bit loop; the ambients take
+   the renderer's view leaf (found this frame at the quarter unit)
+   instead of a second BSP descent. The bench's `snd` lines (every
+   start's volumes) stayed identical. 15.9 k → 3.6 k.
+5. **The entities**: r_part.c's particle lists (a 16-bit `next` in the
+   particle's padding: the active ones walked newest first, as Quake
+   draws them; the free list LIFO) instead of a scan of all 256 slots
+   twice a frame; the projectile loops bounded by the highest slot in
+   use; `q_isqrt64` with a 32-bit path (a quarter of the work, exact);
+   the entity matrices by the GTE (`engine/ent_mat.s`: the view's
+   rotation times the model's columns by three MVMVAs, the translation
+   by a fourth with TR, bit-exact with the C's `>> 12`). `ents`
+   14.2 k → 6.4 k (the lightning 60 k → 44 k). The particles' draw
+   order changed with the lists (newest first): the frames with
+   particles hash differently; their renders differ from the previous
+   ones by 2 (the HUD views) to 15 pixels (the explosion) where two
+   particles of one depth bucket cover the same pixel (§25.3).
+6. **The HUD cached** (`engine/hud.c`, Quake's `sb_updates`): the
+   sprites are built only when what they show changes (a 12-word state:
+   style, health, armour, ammo, items, weapon, the pain face, the
+   weapon row's 2 s) into the last `VID_HUD_BYTES` of each frame
+   arena's packet area (`vid_hud_block`: no RAM of its own; the walk's
+   end moved before it), tagged with that state; a frame whose block
+   shows the state links it (`vid_ovl_append`, at the overlay chain's
+   end), one whose other buffer's block shows it copies that chain
+   (links rebuilt), else it builds. A block is read by the GPU only
+   while its own buffer's list draws, so the buffer being built is
+   always free to write. 9.8 k → 0.45 k.
+7. **The pad polled by the game, port 1 only** (`engine/pad.c`): the
+   BIOS driver polls both ports a byte at a time, waiting for each,
+   inside the vblank handler: 13 k cycles a frame on PCSX-Redux (a bench
+   with `StartPAD` off: 663 k against 676 k), landing anywhere in the
+   renderer (the `r_walk` stage's min / max 15 k apart). The game's
+   driver does the same for port 1 in `VSyncCallback`: 10 k, −2.8 k. An
+   interrupt-driven poll (a byte per /ACK interrupt, the CPU never
+   waiting) was written first: the kernel's interrupt dispatch costs
+   2.7 k a byte on PCSX-Redux, 22 k a frame, worse than the BIOS; on the
+   real machine, whose serial byte takes ~40 µs, it would be the better
+   driver (noted; the synchronous one shipped).
+8. **The leaf's list flag in its vis word's sign bit** (`rlist.c
+   leaf_list`: the id | 0x80 in the top byte, 127 lists a frame): the
+   walk's `srl` + `bnez` per leaf become one `bltz`; draw_ents strips
+   the bit. ~1 k.
+
+Tried and reverted: **the static sounds' loop in asm** (the same
+arithmetic, the C kept as its reference and checked against it: no
+difference) came out 85 cycles a frame slower than the compiler's loop
+(the multiplies' HI/LO gaps and the load delays cost the hand-written
+version what the compiler schedules around). And, with the lesson, a
+**lean clip path for the view model** (slow_poly's clip path without the pool, the stack and the split
+tests, the same packets) gained 2 k on the shotgun view and lost 12 k on
+the axe (its bail-out to slow_poly for an edge over SPAN came after the
+clip work). A bench with the view model off had shown its share of
+`r_slow` at 24 k for 32 polygons: slow_poly's clip path is ~750 cycles a
+polygon already, the divisions and the GTE work most of it. The world's
+own 76 near polygons cost 172 k (their subdivision, inherent). Measure a
+stage's share with a disabling bench before writing a rewrite.
+
+Measured and left for later (RAM): the **192-row frustum** when the
+status bar is on (the view is 192 rows high, its planes `3z ± 5y`
+instead of `3z ± 4y`; `R_YSLOPE` in `engine/r_defs.inc` builds it): −6
+to −8 k a frame (1 %: few records lie wholly under row 192), but the
+full-screen style needs the 240-row planes, so it costs a second copy
+of the walk and the record loop (~4 KB) or a mask per test (~9 k, a
+loss). Not built.
+
+### 25.2 The cost table (profile build, start's spawn, cycles a frame)
+
+| view | start of the pass | end | stages at the end |
+|---|---|---|---|
+| axe (unlit) | 702.7 k | 672.6 k | r_walk 117 k, r_block 357 k, r_slow 187 k, ents 5.0 k, snd 3.6 k, hud 0.45 k |
+| shotgun | 773.6 k | 712.8 k | r_walk 118 k, r_block 385 k, r_slow 196 k, ents 6.4 k, dlight 2.6 k |
+| super shotgun | 842.3 k | 783.9 k | r_slow 257 k (161 near polygons) |
+| nailgun | 779.4 k | 714.6 k | |
+| grenade launcher | 764.9 k | 704.6 k | |
+| rocket launcher (explosion, two lights) | 1 271 k | 1 128 k | dlight 13 k, ents 25 k |
+| lightning | 919.7 k | 850.7 k | ents 44 k (the bolts) |
+| HUD original / q2psx | 924.5 k / 930.6 k | 834.2 k / 845.3 k | |
+
+The pad's 10 k is in every figure (the vblank lands inside the frame,
+in whichever stage is running: the rocket launcher view's `snd` reads
+15 k, 3.6 k of it the sound, the rest the poll of its second vblank).
+The world's slow path is the largest fixed cost left (172 k of the
+shotgun's 196 k); after it the fast path's 385 k, twice optimized.
+
+### 25.3 Checking
+
+For every step: the hash-only game bench against the pass's start, the
+`snd` lines identical, the dlight C reference (`DLIGHT_C=1`) hashing the
+same as the asm, the checker build (`DLIGHT_C=2`, no `dlchk` line), the
+interpreter (`EMU_ARGS=-interpreter`) the same as the dynarec, the full
+dump's renders for the four views whose hashes changed with the
+particles' order compared pixel by pixel with the previous renders
+(the grenade launcher's identical; the HUD views 2 pixels apart, the
+explosion 15: particles of one depth bucket on the same pixel, drawn in
+the other order), and `scripts/dlcheck.sh check t8hi` identical.
+

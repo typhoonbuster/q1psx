@@ -104,10 +104,10 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | BIOS / kernel | 64 KB | `0x80000000-0x8000FFFF`, untouchable |
 | Code + rodata + data/bss | ~200 KB | renderer asm is small; C grows with QuakeC |
 | Stack | 16 KB | |
-| Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame |
+| Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
 | Level arena | 1152 KB | world render data + clip hulls + PVS (the biggest map 696 KB) |
-| Game arena | 160 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 66 KB), filled once at boot, plus the sound bank's directory slots (7 KB) and the dynamic lights' save buffer (17 KB) |
+| Game arena | 160 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 66 KB), filled once at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
 The level arena is a bump allocator that is reset on map load. There is no
@@ -165,6 +165,10 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 - **Rendering** is double-buffered: the CPU builds frame N+1's packets in
   arena B while the GPU DMA draws frame N from arena A. One `VSync` per frame
   is the target; an overrun shows as 30 fps on the overlay, never as tearing.
+- **The pad** is polled by the game's own driver (`engine/pad.c`), port 1
+  only, in the vblank callback (10 k cycles a frame on PCSX-Redux, where a
+  serial byte takes ~535 cycles; the BIOS's two-port driver took 13 k). The
+  DualShock is switched to analog mode at boot by the same port code.
 
 ## 6. World format (cooked by `qcook`)
 

@@ -9,7 +9,6 @@
 #include "world.h"
 
 dlight_t dlights[MAX_DLIGHTS];
-int      dl_debug;                        /* the bench: records to print */
 
 /* the lights as the renderer's block hook reads them (r_state.lights):
    vertex units */
@@ -114,7 +113,9 @@ void dl_decay(int now)
 
 /* ---------------------------------------------------------------- world -- */
 
-/* the nodes whose box the light's sphere reaches, from the root (a box
+#if Q1PSX_DLIGHT_C == 1
+/* the C reference of r_render's descent (engine/r_world.s, after
+   mark_done): the nodes whose box the light's sphere reaches, from the root (a box
    outside it ends its subtree, so does one out of the PVS: r_render
    calls this after mark_pvs), stamped when the sphere straddles their
    plane too (R_MarkLights' rule: a node's faces lie on its plane, so a
@@ -158,6 +159,7 @@ void dl_stamp_nodes(void)
 	for (uint32_t i = 0; i < r_state.nlights; i++)
 		mark_nodes(world.root, &rlights[i], (uint16_t) r_state.framecount, (uint16_t) r_state.visframe);
 }
+#endif
 
 /* R_PushDlights: the live lights for the renderer, which lights each face
    block it draws (engine/r_world.s dr_lights -> dl_block) */
@@ -204,6 +206,7 @@ typedef struct {
    unit per vertex unit, x 1.5 for the cook's light gain), saturating at
    255; `dist` from dl_sqrt on the squared distance >> 11 (Quake's
    octagonal "sd + td / 2" approximated the same length). */
+#if Q1PSX_DLIGHT_C != 0
 void dl_light_record(qw_record *q, const qw_node *node)
 {
 	if (q->flags & (QWF_SKY | QWF_LIQUID))
@@ -250,18 +253,7 @@ void dl_light_record(qw_record *q, const qw_node *node)
 		}
 		if (e->cutoff < 0)
 			continue;
-		if (dl_debug > 0) {
-			dl_debug--;
-			printf("dl rec %u node %08x light %d o %d %d %d r %d min %d: cutoff %d impact %d %d %d nv %d sc %d %d %d sr %d\n",
-			       (unsigned) id, (unsigned) node, i, l->o[0], l->o[1], l->o[2], l->radius, l->minlight,
-			       e->cutoff, e->ix, e->iy, e->iz, nv, q->sc[0], q->sc[1], q->sc[2], q->sr);
-			for (int v = 0; v < nv && v < 6; v++) {
-				const qw_vert *p = &world.verts[idx[v]];
-				int32_t a = p->x - e->ix, b = p->y - e->iy, c = p->z - e->iz;
-				uint32_t d2 = (uint32_t) (a * a + b * b + c * c) >> 11;
-				printf("  v%d %d %d %d d2 %u dist %d light %u\n", v, p->x, p->y, p->z, (unsigned) d2,
-				       d2 < 1024 ? dl_sqrt[d2] : -1, light[v]);
-			}
+
 		}
 		if (!(dl_touched[id >> 5] & (1u << (id & 31)))) {   /* saved once a frame */
 			if (dl_save_n >= SAVE_MAX)
@@ -363,6 +355,11 @@ void dl_check_record(qw_record *q, const qw_node *node)
 		}
 }
 
+#endif
+
+#if Q1PSX_DLIGHT_C == 1
+/* the C reference of r_world.s dl_restore_asm (the asm puts the padded
+   words back: the same bytes where the renderer reads) */
 void dl_restore(void)
 {
 	while (dl_save_n > 0) {
@@ -374,6 +371,7 @@ void dl_restore(void)
 		memcpy(light, h + 2, nv);
 	}
 }
+#endif
 
 /* ------------------------------------------------------------- entities -- */
 

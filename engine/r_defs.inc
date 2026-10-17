@@ -58,6 +58,8 @@
 .set DLB_MIN,         16
 .set DLB_VALID,       36    # computed for this block
 .set DLB_SIZE,        48
+.set DL_SAVE_ENTRY,   52    # dlight.c: a saved record (the record, its vertex count, 44 bytes)
+.set DL_SAVE_MAX,     470
 
 # ---- the render list (engine/rlist.h): r_item_t (16 B), r_ent_t (64 B) -----
 .set RI_NEXT,     0     # next item of the list + 1, 0 ends
@@ -175,6 +177,9 @@
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
+.ifndef R_YSLOPE          # the frustum's vertical slope x4: 4 (240 rows: y <= 3z/4)
+.set R_YSLOPE,    4       # or 5 (the 192-row viewport over the status bar: y <= 3z/5)
+.endif
 .ifndef R_DLIGHT_C        # the dynamic lights' record hook: 0 the asm, 1 the C
 .set R_DLIGHT_C,  0       # reference (engine/dlight.c dl_light_record), 2 the asm
 .endif                    # checked record by record by the C (CMake Q1PSX_DLIGHT_C)
@@ -185,6 +190,9 @@
                           # part (63 entries from +4: an empty pop reads the
                           # word at +0), and the unit spilled to RAM
 .set WALK_RAM,    1024    # RAM behind it: depth <= 63 x 5 = 315 >= QW_MAX_DEPTH
+.set QW_MAX_DEPTH, 256    # formats/qworld.h: the deepest node chain
+.set DSN_STACK,   4 * QW_MAX_DEPTH + 16   # r_render's dynamic-light descent:
+                          # its stack of pending front children, on sp
 
 .set TIMER2,      0x1120  # root counter 2 value, offset from 0x1F800000's
                           # upper half (0x1F801120)

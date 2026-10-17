@@ -12,6 +12,44 @@ const char *const hud_style_name[HUD_STYLES] = { "original", "q2 psx" };
 static int style = HUD_ORIGINAL;
 static int cur_tpage = -1;
 
+/* The HUD's packets are built only when what they show changes (Quake's
+   sb_updates): they live in the arena's HUD block (vid_hud_block), each
+   buffer's block tagged with the state it shows. A frame whose state its
+   block shows just links the block; one whose state the other buffer's
+   block shows (the usual case after a change) copies that; otherwise the
+   packets are built. The block: a header, then the packets as a chain. */
+#define HUD_MAGIC 0x31445548u                   /* "HUD1" */
+typedef struct {
+	int32_t  style, dead, health, armor, weapon, ammo[AMMO_COUNT];
+	uint32_t items;
+	int32_t  pain, weapons_shown;
+} hud_state_t;
+typedef struct {
+	uint32_t    magic;
+	hud_state_t state;
+	uint32_t   *head, *tail;                    /* the chain (head 0: nothing to draw) */
+	uint32_t    bytes;                          /* of packets after the header */
+	uint32_t    packets[];
+} hud_block_t;
+static uint8_t  *blk_at, *blk_end;              /* the block being built */
+static uint32_t *blk_head, *blk_tail;
+
+static void *hud_alloc(int bytes)
+{
+	uint32_t *p = (uint32_t *) blk_at;
+	if (blk_at + bytes > blk_end)
+		return 0;
+	blk_at += bytes;
+	setlen(p, (bytes - 4) / 4);
+	termPrim(p);
+	if (blk_tail)
+		setaddr(blk_tail, p);
+	else
+		blk_head = p;
+	blk_tail = p;
+	return p;
+}
+
 void hud_set_style(int s)
 {
 	style = s;
@@ -32,13 +70,13 @@ static void pic(int id, int x, int y)
 {
 	const qg_pic *p = &gdata.pics[id];
 	if (p->tpage != cur_tpage) {
-		DR_TPAGE *t = vid_ovl_alloc(sizeof *t);
+		DR_TPAGE *t = hud_alloc(sizeof *t);
 		if (!t)
 			return;
 		setDrawTPage(t, 0, 0, p->tpage);
 		cur_tpage = p->tpage;
 	}
-	SPRT *s = vid_ovl_alloc(sizeof *s);
+	SPRT *s = hud_alloc(sizeof *s);
 	if (!s)
 		return;
 	setSprt(s);
@@ -80,12 +118,12 @@ static void smallnum(int x, int y, int value)
 		if (d[i] || !lead || i == 2) {
 			lead = 0;
 			if (p->tpage != cur_tpage) {
-				DR_TPAGE *t = vid_ovl_alloc(sizeof *t);
+				DR_TPAGE *t = hud_alloc(sizeof *t);
 				if (!t) return;
 				setDrawTPage(t, 0, 0, p->tpage);
 				cur_tpage = p->tpage;
 			}
-			SPRT_8 *s = vid_ovl_alloc(sizeof *s);
+			SPRT_8 *s = hud_alloc(sizeof *s);
 			if (!s) return;
 			setSprt8(s);
 			setXY0(s, x + i * 8, y);
@@ -204,13 +242,81 @@ static void draw_q2psx(void)
 	item_row(8, 8);
 }
 
+static void hud_state(hud_state_t *s)
+{
+	s->style  = style;
+	s->dead   = pl.dead;
+	s->health = pl.health;
+	s->armor  = pl.armor;
+	s->weapon = pl.weapon;
+	for (int i = 0; i < AMMO_COUNT; i++)
+		s->ammo[i] = pl.ammo[i];
+	s->items  = pl.items;
+	s->pain   = game_tick_count <= pl.pain_until;
+	s->weapons_shown = game_tick_count - pl.weapon_switch_tick < 2 * GAME_HZ;
+}
+
+static int hud_state_same(const hud_state_t *a, const hud_state_t *b)
+{
+	const uint32_t *x = (const uint32_t *) a, *y = (const uint32_t *) b;
+	for (unsigned i = 0; i < sizeof *a / 4; i++)
+		if (x[i] != y[i])
+			return 0;
+	return 1;
+}
+
+/* the other block's packets into this one, the chain relinked */
+static void hud_copy(hud_block_t *b, const hud_block_t *o)
+{
+	const uint32_t *src = o->packets;
+	uint32_t *dst = b->packets, *prev = 0;
+	b->head = o->head ? dst : 0;
+	for (uint32_t at = 0; at < o->bytes; ) {
+		uint32_t n = (src[0] >> 24) + 1;        /* words, the tag included */
+		for (uint32_t k = 1; k < n; k++)
+			dst[k] = src[k];
+		if (prev)
+			setaddr(prev, dst);
+		setlen(dst, n - 1);
+		termPrim(dst);
+		prev = dst;
+		src += n;
+		dst += n;
+		at  += n * 4;
+	}
+	b->tail  = prev;
+	b->bytes = o->bytes;
+	b->state = o->state;
+	b->magic = HUD_MAGIC;
+}
+
 void hud_draw(void)
 {
 	if (!gdata.ok)
 		return;
-	cur_tpage = -1;
-	if (style == HUD_ORIGINAL)
-		draw_original();
-	else
-		draw_q2psx();
+	hud_state_t now;
+	hud_state(&now);
+	hud_block_t *b = vid_hud_block(0);
+	if (b->magic != HUD_MAGIC || !hud_state_same(&b->state, &now)) {
+		const hud_block_t *o = vid_hud_block(1);
+		if (o->magic == HUD_MAGIC && hud_state_same(&o->state, &now)) {
+			hud_copy(b, o);
+		} else {
+			blk_at   = (uint8_t *) b->packets;
+			blk_end  = (uint8_t *) b + VID_HUD_BYTES;
+			blk_head = blk_tail = 0;
+			cur_tpage = -1;
+			if (style == HUD_ORIGINAL)
+				draw_original();
+			else
+				draw_q2psx();
+			b->head  = blk_head;
+			b->tail  = blk_tail;
+			b->bytes = (uint32_t) (blk_at - (uint8_t *) b->packets);
+			b->state = now;
+			b->magic = HUD_MAGIC;
+		}
+	}
+	if (b->head)
+		vid_ovl_append(b->head, b->tail);
 }

@@ -63,6 +63,14 @@ void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */
    whole screen (the chain opens with a DR_AREA when the viewport is
    smaller), before the overlay bucket's other packets (the debug text). */
 void *vid_ovl_alloc(int bytes);                /* NULL when the arena is full */
+void  vid_ovl_append(void *head, void *tail);  /* a ready chain (terminated) at its end */
+
+/* The HUD's packets keep across frames (hud.c): the last VID_HUD_BYTES of
+   each buffer's arena, past what vid_alloc hands out. A buffer's block is
+   read by the GPU only while that buffer's display list draws, so the
+   block of the buffer being built is free to write. */
+#define VID_HUD_BYTES 1536
+void *vid_hud_block(int previous);             /* this buffer's (0) or the other's (1) */
 
 void  vid_flip(void);
 void  vid_dump(int hash_only);                  /* display list -> stdout (P lines,

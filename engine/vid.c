@@ -27,7 +27,7 @@ static void begin_buffer(int i)
 	ClearOTagR(buf[i].ot, VID_OT_LEN);
 	vid_frame.ot      = buf[i].ot;
 	vid_frame.pkt     = buf[i].arena;
-	vid_frame.end     = buf[i].arena + VID_ARENA_BYTES;
+	vid_frame.end     = buf[i].arena + VID_ARENA_BYTES - VID_HUD_BYTES;
 	vid_frame.dropped = 0;
 	ovl_head = ovl_tail = NULL;
 	if (viewport_rows < VID_H) {         /* the overlay draws over the whole screen */
@@ -64,6 +64,20 @@ void *vid_ovl_alloc(int bytes)
 		ovl_head = p;
 	ovl_tail = p;
 	return p;
+}
+
+void vid_ovl_append(void *head, void *tail)
+{
+	if (ovl_tail)
+		setaddr(ovl_tail, head);
+	else
+		ovl_head = head;
+	ovl_tail = tail;
+}
+
+void *vid_hud_block(int previous)
+{
+	return buf[back ^ previous].arena + VID_ARENA_BYTES - VID_HUD_BYTES;
 }
 
 void vid_init(void)

@@ -1064,3 +1064,19 @@ followed by R0-R4.
   60-550 k cycles a frame on the bookkeeping alone. The bench has a
   hash-only mode (`HASHONLY=1`) and a `DLIGHT_C=1` build for the
   C-versus-asm check.
+- **Third optimization pass, the whole engine** (2026-10-17). Details: `docs/porting-notes.md`
+  §25. The dynamic lights' node descent and restore in asm, one entry for
+  the record hook, the light gate after the record's frustum test; the
+  sound's statics precomputed (voice, reach, attenuation multiplier), a
+  table square root, the renderer's view leaf for the ambients; r_part.c's
+  particle lists, bounded projectile loops, the entity matrices by the
+  GTE; the HUD's sprites cached in the frame arenas' tail and rebuilt
+  only when what they show changes; the pad polled by the game (port 1,
+  in the vblank callback); the leaf list flag in the vis word's sign.
+  Start's spawn, shotgun view: 773.6 k → 712.8 k cycles (−7.9 %), the
+  rocket's explosion 1 271 k → 1 128 k, the HUD views −10 %; `snd` 15.9 k
+  → 3.6 k, `hud` 9.8 k → 0.45 k, `ents` 14 k → 6 k. Hashes identical
+  throughout (the particles' draw order aside: 2 to 15 pixels differ
+  where two particles share a pixel), C = asm,
+  interpreter = dynarec, the world views identical. Measured and left to
+  a later call: the 192-row frustum (−7 k for ~4 KB of code).

@@ -38,27 +38,25 @@ static void angle_vectors(int pitch, int yaw, int roll, int32_t f[3], int32_t r[
 	u[2] = cr * cp >> 12;
 }
 
-/* the entity's GTE rotation: view rotation x model-to-world; Quake's model
-   axes are forward, -right, up (r_alias.c R_AliasSetUpTransform, with the
-   pitch negated: entity pitches are backward) */
-static void ent_rotation(r_ent_t *e, int yaw, int pitch, int roll)
+/* the entity's GTE rotation: view rotation x model-to-world, and its
+   translation, by the GTE (engine/ent_mat.s). Quake's model axes are
+   forward, -right, up (r_alias.c R_AliasSetUpTransform, with the pitch
+   negated: entity pitches are backward): the model-to-world matrix's
+   columns */
+void rl_ent_matrix(r_ent_t *e, const int16_t cols[3][4], const int16_t o[4]);
+
+static void ent_rotation(r_ent_t *e, int yaw, int pitch, int roll, const int16_t o[4])
 {
 	int32_t f[3], r[3], u[3];
 	angle_vectors(-pitch, yaw, roll, f, r, u);
-	int32_t mw[3][3];                       /* model -> world, x4096 */
+	int16_t cols[3][4];
 	for (int i = 0; i < 3; i++) {
-		mw[i][0] = f[i];
-		mw[i][1] = -r[i];
-		mw[i][2] = u[i];
+		cols[0][i] = (int16_t) f[i];
+		cols[1][i] = (int16_t) -r[i];
+		cols[2][i] = (int16_t) u[i];
 	}
-	for (int i = 0; i < 3; i++)
-		for (int j = 0; j < 3; j++) {
-			int32_t s = 0;
-			for (int k = 0; k < 3; k++)
-				s += r_state.rot[i * 3 + k] * mw[k][j];
-			e->rot[i * 3 + j] = (int16_t) (s >> 12);
-		}
-	e->rot[9] = 0;
+	cols[0][3] = cols[1][3] = cols[2][3] = 0;
+	rl_ent_matrix(e, cols, o);
 }
 
 static void ent_model(r_ent_t *e, const qg_model *m, int frame, int light)
@@ -92,21 +90,20 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
 		return 0;
 	r_ent_t *e = &r_ents[n_ents++];
 	ent_model(e, m, frame, light);
+	/* translation: the view's, plus the origin through the view rotation */
+	int16_t o[4];
+	for (int k = 0; k < 3; k++)
+		o[k] = (int16_t) (org[k] * QW_VSCALE / R_POS_SUB);
+	o[3] = 0;
 	if (m->flags & QGF_SPRITE) {            /* a billboard: its quad is in the view plane */
 		memset(e->rot, 0, sizeof e->rot);
 		e->rot[0] = e->rot[4] = e->rot[8] = R_MATRIX_ONE;
+		rl_ent_matrix(e, 0, o);
 	} else {
-		ent_rotation(e, yaw, pitch, roll);
+		ent_rotation(e, yaw, pitch, roll, o);
 	}
 	if (!(m->flags & QGF_FLAT))
 		e->dots = (uint32_t) (gdata.dots + ((yaw * QG_LIGHT_YAWS / ANG_TURN) & (QG_LIGHT_YAWS - 1)) * QG_NORMALS);
-	/* translation: the view's, plus the origin through the view rotation */
-	int32_t o[3];
-	for (int k = 0; k < 3; k++)
-		o[k] = org[k] * QW_VSCALE / R_POS_SUB;
-	for (int i = 0; i < 3; i++)
-		e->tr[i] = r_state.tr[i] + ((r_state.rot[i * 3] * o[0] + r_state.rot[i * 3 + 1] * o[1] +
-		                             r_state.rot[i * 3 + 2] * o[2]) >> 12);
 	return e;
 }
 
@@ -121,15 +118,17 @@ void rl_view_model(r_ent_t *e)
 	e->flags = RE_VIEW;
 }
 
+/* the leaf's list id in its vis word's top byte, with bit 31 set: the walk
+   tests the word's sign for "anything to draw here" (r_world.s wl_ents) */
 static int leaf_list(qw_leaf *leaf)
 {
-	int id = (int) (leaf->vis >> 24);
+	int id = (int) (leaf->vis >> 24) & 0x7f;
 	if (!id) {
 		if (n_lists >= RL_MAX_LISTS)
 			return 0;
 		touched[n_lists++] = leaf;
 		id = n_lists;
-		leaf->vis |= (uint32_t) id << 24;
+		leaf->vis |= (uint32_t) (id | 0x80) << 24;
 		r_lists[id] = 0;
 	}
 	return id;

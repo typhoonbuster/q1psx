@@ -838,7 +838,6 @@ static void bench_game(void)
 		         w < W_COUNT ? wname[w] : "");
 		bench_acc_t acc;
 		bench_reset(&acc, names[w]);
-		dl_debug = w == W_SHOTGUN ? 3 : 0;              /* (the C light hook's trace) */
 		for (int i = 0; i < 4; i++)
 			run_frame(0, 0);
 		for (int i = 0; i < 16; i++) {
@@ -881,6 +880,9 @@ static void bench_game(void)
 	}
 	game_active = 0;
 	hud_set_style(HUD_ORIGINAL);
+	pad_read();                                       /* the interrupt-driven poll, seen once */
+	printf("pad poll: %s type %d held %04x sticks %d %d %d %d\n", pad.connected ? "connected" : "absent",
+	       pad.type, pad.held, pad.lx, pad.ly, pad.rx, pad.ry);
 }
 
 static void run_bench(void)

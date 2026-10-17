@@ -93,14 +93,15 @@ enum { PT_STATIC, PT_GRAV, PT_SLOWGRAV, PT_FIRE, PT_EXPLODE, PT_EXPLODE2 };
 typedef struct {
 	int32_t org[3];        /* 1/SUB units                                  */
 	int32_t vel[3];        /* 1/SUB units per tick, x 256                  */
-	int32_t die;           /* tick, 0: free                                */
+	int32_t die;           /* tick                                         */
 	int32_t ramp;          /* x 256                                        */
 	uint8_t type, colour;
+	uint16_t next;         /* r_part.c's lists: the next particle + 1, 0 ends */
 	const qw_leaf *leaf;
 } particle_t;
 
 static particle_t particles[MAX_PARTICLES];
-static int        part_next;
+static uint16_t   part_active, part_free;   /* the lists' heads, index + 1 (R_ClearParticles) */
 
 /* u/s -> particle velocity */
 static int32_t pvel(int32_t ups)
@@ -110,15 +111,26 @@ static int32_t pvel(int32_t ups)
 
 #define PGRAV ((800 * SUB * 256) / (GAME_HZ * GAME_HZ) / 20)   /* r_part.c: gravity x 0.05 */
 
+/* R_ClearParticles: every particle on the free list */
+static void particles_clear(void)
+{
+	part_active = 0;
+	part_free   = 1;
+	for (int i = 0; i < MAX_PARTICLES; i++)
+		particles[i].next = (uint16_t) (i + 2 <= MAX_PARTICLES ? i + 2 : 0);
+}
+
+/* the free list's head onto the active list's (r_part.c: none left, none made) */
 static particle_t *particle_new(void)
 {
-	for (int n = 0; n < MAX_PARTICLES; n++) {
-		particle_t *p = &particles[part_next];
-		part_next = (part_next + 1) % MAX_PARTICLES;
-		if (!p->die)
-			return p;
-	}
-	return 0;
+	if (!part_free)
+		return 0;
+	particle_t *p = &particles[part_free - 1];
+	int i = part_free;
+	part_free   = p->next;
+	p->next     = (uint16_t) part_active;
+	part_active = i;
+	return p;
 }
 
 /* R_RunParticleEffect: `count` sparks of `colour` (its 8-shade ramp) */
@@ -173,48 +185,57 @@ static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int smoke)
 	}
 }
 
+/* R_DrawParticles' run: the active list walked, a dead particle (its time
+   or its ramp's end) unlinked onto the free list */
 static void particles_tick(void)
 {
-	for (int i = 0; i < MAX_PARTICLES; i++) {
-		particle_t *p = &particles[i];
-		if (!p->die)
-			continue;
-		if (p->die <= game_tick_count) {
-			p->die = 0;
-			continue;
-		}
-		for (int k = 0; k < 3; k++)
-			p->org[k] += p->vel[k] >> PV_SHIFT;
-		switch (p->type) {
-		case PT_FIRE:                                 /* ramp3, rises */
-			p->ramp += 256 * 5 / GAME_HZ;
-			if (p->ramp >= 6 << 8) { p->die = 0; break; }
-			p->colour = ramp3[p->ramp >> 8];
-			p->vel[2] += PGRAV;
-			break;
-		case PT_EXPLODE:                              /* ramp1, speeds up, falls */
-			p->ramp += 256 * 10 / GAME_HZ;
-			if (p->ramp >= 8 << 8) { p->die = 0; break; }
-			p->colour = ramp1[p->ramp >> 8];
+	uint16_t *link = &part_active;
+	for (int i = part_active; i; ) {
+		particle_t *p = &particles[i - 1];
+		int dead = p->die <= game_tick_count;
+		if (!dead) {
 			for (int k = 0; k < 3; k++)
-				p->vel[k] += p->vel[k] / 15;
-			p->vel[2] -= PGRAV;
-			break;
-		case PT_EXPLODE2:                             /* ramp2, slows down, falls */
-			p->ramp += 256 * 15 / GAME_HZ;
-			if (p->ramp >= 8 << 8) { p->die = 0; break; }
-			p->colour = ramp2[p->ramp >> 8];
-			for (int k = 0; k < 3; k++)
-				p->vel[k] -= p->vel[k] / GAME_HZ;
-			p->vel[2] -= PGRAV;
-			break;
-		case PT_GRAV:
-		case PT_SLOWGRAV:
-			p->vel[2] -= PGRAV;
-			break;
-		default:
-			break;
+				p->org[k] += p->vel[k] >> PV_SHIFT;
+			switch (p->type) {
+			case PT_FIRE:                                 /* ramp3, rises */
+				p->ramp += 256 * 5 / GAME_HZ;
+				if (p->ramp >= 6 << 8) { dead = 1; break; }
+				p->colour = ramp3[p->ramp >> 8];
+				p->vel[2] += PGRAV;
+				break;
+			case PT_EXPLODE:                              /* ramp1, speeds up, falls */
+				p->ramp += 256 * 10 / GAME_HZ;
+				if (p->ramp >= 8 << 8) { dead = 1; break; }
+				p->colour = ramp1[p->ramp >> 8];
+				for (int k = 0; k < 3; k++)
+					p->vel[k] += p->vel[k] / 15;
+				p->vel[2] -= PGRAV;
+				break;
+			case PT_EXPLODE2:                             /* ramp2, slows down, falls */
+				p->ramp += 256 * 15 / GAME_HZ;
+				if (p->ramp >= 8 << 8) { dead = 1; break; }
+				p->colour = ramp2[p->ramp >> 8];
+				for (int k = 0; k < 3; k++)
+					p->vel[k] -= p->vel[k] / GAME_HZ;
+				p->vel[2] -= PGRAV;
+				break;
+			case PT_GRAV:
+			case PT_SLOWGRAV:
+				p->vel[2] -= PGRAV;
+				break;
+			default:
+				break;
+			}
 		}
+		int next = p->next;
+		if (dead) {
+			*link     = (uint16_t) next;
+			p->next   = (uint16_t) part_free;
+			part_free = i;
+		} else {
+			link = &p->next;
+		}
+		i = next;
 	}
 }
 
@@ -239,6 +260,7 @@ typedef struct {
 } proj_t;
 
 static proj_t projs[MAX_PROJ];
+static int    proj_top;                /* past the highest slot in use: the loops' bound */
 
 static proj_t *proj_new(int type)
 {
@@ -246,6 +268,8 @@ static proj_t *proj_new(int type)
 		if (projs[i].type == PJ_FREE) {
 			memset(&projs[i], 0, sizeof projs[i]);
 			projs[i].type = type;
+			if (i >= proj_top)
+				proj_top = i + 1;
 			return &projs[i];
 		}
 	return 0;
@@ -352,8 +376,11 @@ static void proj_move(proj_t *p)
 
 static void projs_tick(void)
 {
-	for (int i = 0; i < MAX_PROJ; i++) {
+	int top = 0;
+	for (int i = 0; i < proj_top; i++) {
 		proj_t *p = &projs[i];
+		if (p->type != PJ_FREE)
+			top = i + 1;
 		switch (p->type) {
 		case PJ_FREE:
 			break;
@@ -392,6 +419,7 @@ static void projs_tick(void)
 			break;
 		}
 	}
+	proj_top = top;
 }
 
 /* ---------------------------------------------------------------- damage -- */
@@ -765,7 +793,7 @@ static void w_fire_lightning(void)
 	clip_trace(0, org, end, &tr);
 	/* TE_LIGHTNING2: the beam, 0.2 s; one per player (replaced) */
 	proj_t *b = 0;
-	for (int i = 0; i < MAX_PROJ && !b; i++)
+	for (int i = 0; i < proj_top && !b; i++)
 		if (projs[i].type == PJ_BEAM)
 			b = &projs[i];
 	if (!b)
@@ -889,7 +917,8 @@ void game_init(void)
 {
 	memset(&pl, 0, sizeof pl);
 	memset(projs, 0, sizeof projs);
-	memset(particles, 0, sizeof particles);
+	proj_top = 0;
+	particles_clear();
 	game_tick_count = 0;
 }
 
@@ -923,7 +952,8 @@ void game_spawn(void)
 	pl.weapon_switch_tick = game_tick_count - TICKS(200);
 	pl.muzzleflash = 0;
 	memset(projs, 0, sizeof projs);
-	memset(particles, 0, sizeof particles);
+	proj_top = 0;
+	particles_clear();
 	dl_clear();
 }
 
@@ -1043,7 +1073,7 @@ void game_render(void)
 		dl->die      = game_tick_count + TICKS(10);
 	}
 	pl.muzzleflash = 0;
-	for (int i = 0; i < MAX_PROJ; i++)
+	for (int i = 0; i < proj_top; i++)
 		if (projs[i].type == PJ_ROCKET) {
 			dlight_t *dl = dl_alloc(ENT_PROJ + i, game_tick_count);
 			for (int k = 0; k < 3; k++) dl->origin[k] = projs[i].org[k];
@@ -1076,7 +1106,7 @@ void game_render(void)
 	}
 
 	/* projectiles and effects, in their leaves */
-	for (int i = 0; i < MAX_PROJ; i++) {
+	for (int i = 0; i < proj_top; i++) {
 		proj_t *p = &projs[i];
 		if (p->type == PJ_FREE || !p->leaf)
 			continue;
@@ -1121,10 +1151,9 @@ void game_render(void)
 			break;
 		}
 	}
-	for (int i = 0; i < MAX_PARTICLES; i++) {
-		const particle_t *p = &particles[i];
-		if (p->die)
-			rl_add_particle(p->leaf, p->org, p->colour);
+	for (int i = part_active; i; i = particles[i - 1].next) {   /* (R_DrawParticles' order) */
+		const particle_t *p = &particles[i - 1];
+		rl_add_particle(p->leaf, p->org, p->colour);
 	}
 }
 
