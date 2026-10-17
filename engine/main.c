@@ -247,7 +247,7 @@ static void loading_screen(uint32_t done, uint32_t total)
 	vid_flip();
 }
 
-#ifdef Q1PSX_BENCH
+#if defined(Q1PSX_BENCH) && !Q1PSX_BENCH_PLAY
 #define LOAD_PROGRESS NULL         /* the bench measures; no screen */
 #else
 #define LOAD_PROGRESS loading_screen
@@ -351,11 +351,19 @@ static void draw_overlay(void)
 
 /* Run one frame; prof_stage[] / prof_count[] describe it until the next call.
    dump: 1 prints the frame's display list (vid_dump), 2 only its hash. */
+#if Q1PSX_BENCH_PLAY
+static int play_trace;                     /* the play bench: the first frames' stages, for a hang's place */
+#define PLAY_STEP(s) do { if (play_trace > 0) printf("play step %s\n", s); } while (0)
+#else
+#define PLAY_STEP(s) ((void) 0)
+#endif
+
 static void run_frame(int interactive, int dump)
 {
 	prof_frame_reset();
 	uint32_t t0 = prof_now();
 	if (interactive) {
+		PLAY_STEP("pad");
 		pad_read();
 		if ((pad.held & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START) &&
 		    (pad.pressed & (PAD_SELECT | PAD_START))) {
@@ -365,27 +373,39 @@ static void run_frame(int interactive, int dump)
 		}
 		if ((pad.pressed & PAD_START) && !(pad.held & PAD_SELECT))
 			overlay_on = !overlay_on;
+		PLAY_STEP("player");
 		player_update();
 	}
+	PLAY_STEP("render");
 	frame_work();
 	if (game_active) {
 		uint32_t t1 = prof_now();
+		PLAY_STEP("hud");
 		hud_draw();
 		uint32_t t2 = prof_now();
+		PLAY_STEP("snd");
 		snd_update(cam.pos, cam.yaw, cam.pitch, cam.roll, game_tick_count);
 		uint32_t t3 = prof_now();
 		prof_add(PROF_HUD, t1, t2);
 		prof_add(PROF_SND, t2, t3);
 	}
 	prof_add(PROF_FRAME, t0, prof_now());
-	if (interactive)
+	if (interactive) {
+		PLAY_STEP("music");
 		music_tick();
-	if (interactive && overlay_on)
+	}
+	if (interactive && overlay_on) {
+		PLAY_STEP("overlay");
 		draw_overlay();
+	}
 	if (dump)
 		vid_dump(dump == 2);
+	PLAY_STEP("flip");
 	vid_flip();
 	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl);
+#if Q1PSX_BENCH_PLAY
+	if (play_trace > 0) { printf("play step done\n"); play_trace--; }
+#endif
 }
 
 /* ------------------------------------------------------------ map menu -- */
@@ -550,6 +570,11 @@ static void menu_frame(void)
 #endif
 #ifndef Q1PSX_BENCH_MAPS
 #define Q1PSX_BENCH_MAPS 0    /* 1: every map on the disc (BENCH_MAPS=1 scripts/bench.sh) */
+#endif
+#ifndef Q1PSX_BENCH_PLAY
+#define Q1PSX_BENCH_PLAY 0    /* 1: the maps bench goes through the game's own path too: the
+                                 loading screen, then 30 interactive frames (the pad read,
+                                 the HUD, the sound, the music) per map (PLAY=1) */
 #endif
 #ifndef Q1PSX_BENCH_HASHONLY
 #define Q1PSX_BENCH_HASHONLY 0  /* 1: the dumps are hashes only (HASHONLY=1 scripts/bench.sh) */
@@ -776,6 +801,17 @@ static void bench_maps(void)
 		}
 		printf("bench map %s fid %s arena %u KB\n", world_map_name(m), fidelity_name[fidelity],
 		       mem_level_used() / 1024);
+		if (Q1PSX_BENCH_PLAY) {                 /* the game's frames on the map, as a player's */
+			game_spawn();
+			game_active = 1;
+#if Q1PSX_BENCH_PLAY
+			play_trace = 2;
+#endif
+			for (int i = 0; i < 30; i++)
+				run_frame(1, 0);
+			game_active = 0;
+			printf("bench play %s ok\n", world_map_name(m));
+		}
 		for (uint32_t v = 0; v < 4 && v < world.num_views; v++) {
 			const qw_view *vw = &world.views[v];
 			cam.pos[0] = vw->pos[0] * CLIP_SUB;

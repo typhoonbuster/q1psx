@@ -275,11 +275,12 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 	fwrite(&h, sizeof h, 1, f);
 
 	uint32_t ofs = h.ofs_tex + (uint32_t) num_miptex * (uint32_t) sizeof(qtex4_tex);
-	ofs = (ofs + 31u) & ~31u;
+	ofs = (ofs + 63u) & ~63u;                            /* (64: the GPU DMA's 16-word unit; zeros follow each rectangle) */
 	if (ncl) {
 		qtex_rect r = { 0, QTEX4_CLUT_Y, (uint16_t) cl_w, (uint16_t) cl_rows, ofs };
 		fwrite(&r, sizeof r, 1, f);
 		ofs += (uint32_t) (cl_w * cl_rows * 2);          /* 32 B per CLUT */
+		ofs  = (ofs + 63u) & ~63u;
 	}
 	for (int p = 0; p < ts->pages_used; p++) {
 		qtex_rect r;
@@ -293,10 +294,13 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 	}
 	fwrite(tab, sizeof *tab, (size_t) num_miptex, f);
 	long here = ftell(f);
-	static const uint8_t zero[32];
-	fwrite(zero, 1, (size_t) (((here + 31) & ~31L) - here), f);
-	if (ncl)
+	static const uint8_t zero[64];
+	fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
+	if (ncl) {
 		fwrite(clut, 2, (size_t) (cl_w * cl_rows), f);
+		here = ftell(f);
+		fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
+	}
 	for (int p = 0; p < ts->pages_used; p++) {
 		const uint8_t *n4 = nib + (size_t) p * PAGE_TEX * PAGE_TEX;
 		for (int y = 0; y < page_h[p]; y++)
@@ -464,7 +468,7 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 	fwrite(&h, sizeof h, 1, f);
 
 	uint32_t ofs = (uint32_t) (sizeof h + (size_t) ts->pages_used * sizeof(qtex_rect));
-	ofs = (ofs + 31u) & ~31u;
+	ofs = (ofs + 63u) & ~63u;                            /* (64: the GPU DMA's 16-word unit) */
 	for (int p = 0; p < ts->pages_used; p++) {
 		qtex_rect r;
 		r.x = (uint16_t) (QTEX_PAGE_X0 + (p % QTEX_PAGE_COLS) * (PAGE_TEX / 2));
@@ -476,8 +480,8 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 		ofs += (uint32_t) r.w * r.h * 2;       /* 256 * h bytes: 32-multiple */
 	}
 	long here = ftell(f);
-	static const uint8_t zero[32];
-	fwrite(zero, 1, (size_t) (((here + 31) & ~31L) - here), f);
+	static const uint8_t zero[64];
+	fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
 	for (int p = 0; p < ts->pages_used; p++)
 		fwrite(pages + (size_t) p * PAGE_TEX * PAGE_TEX, 1,
 		       (size_t) page_h[p] * PAGE_TEX, f);

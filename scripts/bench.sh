@@ -16,6 +16,9 @@
 #         counter columns read 0).
 #         HASHONLY=1 dumps only the frames' hashes (`H` lines): no packets,
 #         no pictures, a run several times shorter (the console is slow).
+#         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
+#         frames per map; MUSIC=1 puts the music on the bench disc (the .cue
+#         then carries the tracks: docs/porting-notes.md §26).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
 #         by record by the C ("dlchk" lines).
@@ -42,12 +45,14 @@ BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
 HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
+PLAY=${PLAY:-0}
+MUSIC=${MUSIC:-0}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
-      -DQ1PSX_DLIGHT_C="$DLIGHT_C" "$ROOT" >/dev/null
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
 	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
 

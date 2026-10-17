@@ -5,6 +5,7 @@
 
 #include "cd.h"
 #include "gdata.h"
+#include "world.h"
 #include "mem.h"
 #include "qtex.h"
 
@@ -30,10 +31,8 @@ int gdata_load(void)
 
 	/* images to VRAM: the CLUT row, then the pages' used rows */
 	const qtex_rect *r = (const qtex_rect *) (f + h->ofs_rects);
-	for (uint32_t i = 0; i < h->num_rects; i++) {
-		RECT rc = { (int16_t) r[i].x, (int16_t) r[i].y, (int16_t) r[i].w, (int16_t) r[i].h };
-		LoadImage(&rc, (const uint32_t *) (f + r[i].data_ofs));
-	}
+	for (uint32_t i = 0; i < h->num_rects; i++)
+		vram_upload(f + r[i].data_ofs, &r[i]);   /* (world.c: LoadImage's DMA rounding) */
 	DrawSync(0);
 
 	/* tables and geometry to the game arena */

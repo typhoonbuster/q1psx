@@ -11,6 +11,7 @@
 
 #include <stdint.h>
 
+#include "qtex.h"
 #include "qworld.h"
 
 #define FIDELITY_LEVELS 4   /* 0 low, 1 medium, 2 high, 3 ultra */
@@ -70,5 +71,9 @@ int world_load(int map, int fidelity, int tex4, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);
+
+/* a texture rectangle (formats/qtex.h) into VRAM, through a zero-padded
+   copy when LoadImage's DMA would send bytes past its data (world.c) */
+void vram_upload(const uint8_t *data, const qtex_rect *r);
 
 #endif

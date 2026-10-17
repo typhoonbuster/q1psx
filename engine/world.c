@@ -85,12 +85,36 @@ static void load_step(uint32_t base)
 static qtex4_tex tex4_tab[TEX4_MAX];
 static uint32_t  tex4_n;
 
+/* LoadImage sends the rectangle's w x h halfwords by DMA in units of 16
+   words, rounding a shorter last unit up: up to 60 bytes past the data go
+   to the GPU too, as commands. A stray word made DuckStation's GPU (and
+   would make the machine's) lose the command stream: the load hung on the
+   next DrawSync; PCSX-Redux ignores them. A rectangle whose size is not a
+   multiple of 64 bytes (a 4-bit CLUT row of an odd count of CLUTs: 32
+   bytes each) goes up from a zero-padded copy (GP0 NOPs after the data). */
+void vram_upload(const uint8_t *data, const qtex_rect *r)
+{
+	RECT rc = { (int16_t) r->x, (int16_t) r->y, (int16_t) r->w, (int16_t) r->h };
+	uint32_t len = (uint32_t) r->w * r->h * 2;
+	if (len & 63) {
+		uint32_t mark = mem_level_mark();
+		uint8_t *tmp = mem_level_alloc((len + 63) & ~63u);
+		if (tmp) {
+			memcpy(tmp, data, len);
+			memset(tmp + len, 0, 64 - (len & 63));
+			LoadImage(&rc, (const uint32_t *) tmp);
+			DrawSync(0);                     /* (the DMA done before the copy goes) */
+			mem_level_release(mark);
+			return;
+		}
+	}
+	LoadImage(&rc, (const uint32_t *) data);
+}
+
 static void upload_rects(const uint8_t *f, const qtex_rect *r, uint32_t n)
 {
-	for (uint32_t i = 0; i < n; i++) {
-		RECT rc = { (int16_t) r[i].x, (int16_t) r[i].y, (int16_t) r[i].w, (int16_t) r[i].h };
-		LoadImage(&rc, (const uint32_t *) (f + r[i].data_ofs));
-	}
+	for (uint32_t i = 0; i < n; i++)
+		vram_upload(f + r[i].data_ofs, &r[i]);
 }
 
 /* The map's texture set into VRAM: QTX3 (8bpp, the Quake palette) or QTX4

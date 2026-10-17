@@ -79,12 +79,13 @@ set(Q1PSX_BENCH_GAME 0 CACHE STRING "1: bench the game instead: every weapon fir
 set(Q1PSX_BENCH_T 8 CACHE STRING "Affine-warp threshold the bench renders with (px)")
 set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
+set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
-		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY})
+		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY})
 	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
 	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
 		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c")
@@ -182,7 +183,8 @@ endif()
 option(Q1PSX_MUSIC "Put the cooked music on the disc as CD-DA tracks" ON)
 set(AUDIO_TRACKS "")
 set(_music "")
-if(Q1PSX_MUSIC AND NOT Q1PSX_BENCH)
+set(Q1PSX_BENCH_MUSIC 0 CACHE STRING "1: the bench disc carries the music too (the loads after CD-DA playback)")
+if(Q1PSX_MUSIC AND (NOT Q1PSX_BENCH OR Q1PSX_BENCH_MUSIC))
 	file(GLOB _music CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/music/track*.wav)
 	list(SORT _music)
 	foreach(_src ${_music})

@@ -370,10 +370,15 @@ void snd_start(int entnum, int entchannel, int sfx, const int32_t origin[3], int
 
 /* S_UpdateAmbientSounds: the listener's leaf levels, faded. The leaf is
    the renderer's (r_frame found the camera's this frame, at the quarter
-   unit; the listener is the camera) */
+   unit; the listener is the camera): a KUSEG pointer, as the walk keeps
+   them (render.c r_bind_world), brought back to KSEG0 before the index
+   against world.leaves. (world_point_leaf's leaf was KUSEG too, and the
+   index garbage: the ambients read a wild address, 0 on PCSX-Redux, an
+   invalid read on DuckStation, a bus error on the machine.) */
 static void update_ambients(int ticks)
 {
-	const qw_leaf *l = world.ambient ? (const qw_leaf *) r_state.view_leaf : 0;
+	const qw_leaf *l = world.ambient && r_state.view_leaf
+	                 ? (const qw_leaf *) (r_state.view_leaf | 0x80000000u) : 0;
 	for (int a = 0; a < 2; a++) {
 		if (amb_sfx[a] < 0)
 			continue;

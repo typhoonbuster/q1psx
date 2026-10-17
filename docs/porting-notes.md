@@ -3010,3 +3010,78 @@ particles' order compared pixel by pixel with the previous renders
 explosion 15: particles of one depth bucket on the same pixel, drawn in
 the other order), and `scripts/dlcheck.sh check t8hi` identical.
 
+## §26 — DuckStation: the loads that hung at 99 % (2026-10-17)
+
+The report: levels such as E4M5 and E2M1 hang at 99 % of the loading bar
+on DuckStation, load on PCSX-Redux; and will it run on the machine? The
+headless bench runs on PCSX-Redux, which is lenient; DuckStation is the
+better proxy for the hardware, so it was made to run the bench too.
+
+### 26.1 Running DuckStation headless
+
+The AppImage (0.1-11826) takes no `-settings`; its data live in its XDG
+data directory, under the home. A private home keeps the usual settings
+untouched: `HOME=<dir>` with a copy of `settings.ini` edited for
+`[Logging] LogToConsole = true`, `[BIOS] TTYLogging = true` (the game's
+`printf` lines come out as `I/TTY:`), `[GPU] Renderer = Software`,
+`[Audio] Backend = Null`, and a symlink to the BIOS directory; then
+`DuckStation-x64.AppImage -batch -nogui -earlyconsole -- q1psx.cue`
+(Qt needs a real display: no `offscreen` platform in the AppImage; a
+window opens). The bench disc carries the music with
+`-DQ1PSX_BENCH_MUSIC=1` (the `.cue`, not the `.bin`: the TOC comes from
+it). The all-maps bench then loads the 32 maps at the chosen fidelity,
+with the music started after each, as the game does.
+
+### 26.2 What was found
+
+1. **The hang: `LoadImage`'s DMA rounding.** PSn00bSDK sends a
+   rectangle's data by DMA in units of 16 words and rounds a shorter last
+   unit up (its log: "transfer data length (328) is not a multiple of
+   16, rounding"), so up to 60 bytes past the data reach the GPU as
+   commands. DuckStation logged `Unimplemented GP0 command 0xF8` with a
+   FIFO of 4-bit pixel data, then a VRAM-to-VRAM copy (`0x94`) took the
+   next words as its coordinates: the command stream is lost and the
+   next `DrawSync` never returns — the load hung at E1M7 in the bench,
+   the first map whose 4-bit CLUT row is an odd count of CLUTs (32 bytes
+   each: 41 CLUTs = 1 312 bytes = 328 words; the page rectangles are
+   multiples of 128 bytes). PCSX-Redux ignores stray words. The machine
+   would behave like DuckStation. Fixed in the loader (`vram_upload`: a
+   rectangle whose size is not a multiple of 64 bytes goes up from a
+   zero-padded copy in the level arena, GP0 NOPs after the data, the
+   copy released after a `DrawSync`) for the world's textures and the
+   game data; and in the cook (rectangles 64-aligned, zeros after them),
+   which a recook brings. With the fix, DuckStation loads all 32 maps
+   (medium, 4-bit) with the music playing between them.
+2. **The TOC.** `CdGetToc` right after `CdInit` returned 0 tracks on
+   DuckStation (the drive is not ready yet; PCSX-Redux answers at once):
+   no music at all there. `music_init` retries for up to 3 s (a quarter
+   second apart): 11 tracks on the second try.
+3. **The track index.** `CdGetToc` fills `toc[0]` with track 1;
+   `music_play(track)` used `toc[track]`: one track off, and the last
+   track (E1M5's and E4M5's 11) read past the table, a zeroed entry:
+   `CdlSetloc` 00:00:00. Fixed (`toc[track - 1]`).
+
+4. **The ambients' leaf, a wild read every frame.** `update_ambients`
+   took the camera's leaf (`r_state.view_leaf`, and `world_point_leaf`'s
+   result before it) as a pointer to index `world.leaves`; the walk keeps
+   its node and leaf pointers in KUSEG (`0x00xxxxxx`, render.c
+   `r_bind_world`) while the leaf table is a KSEG0 pointer, so the
+   difference was garbage and `world.ambient[idx]` a read far outside RAM
+   every frame: 0 on PCSX-Redux (silent ambients), an "Invalid byte read"
+   logged by DuckStation's play bench, a bus error on the machine. Fixed:
+   the pointer brought back to KSEG0 (`| 0x80000000`) before the index.
+   The play bench (`PLAY=1`: the loading screen, then 30 interactive
+   frames per map, the pad read, the HUD, the sound, the music) exists
+   for this: the view benches never ran the game's frame.
+
+The two levels reported (E4M5, E2M1) have even CLUT counts at medium:
+their hang at 99 % is most likely the fourth fault — the first game
+frame after the load, with the water or wind ambient on, read the wild
+address and DuckStation stopped there, the last frame on screen being
+the bar's (the start map, without area ambients, never took that path).
+To be confirmed on the fixed build. Hardware: the synchronous pad poll
+(§25.1 item 7) and the CD-DA code are the parts no emulator fully
+proves; the rest of this section is the kind of thing DuckStation
+catches and PCSX-Redux does not, so the play bench runs there before a
+disc goes to the machine (TESTING.md 9.z).
+

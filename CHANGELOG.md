@@ -1064,6 +1064,26 @@ followed by R0-R4.
   60-550 k cycles a frame on the bookkeeping alone. The bench has a
   hash-only mode (`HASHONLY=1`) and a `DLIGHT_C=1` build for the
   C-versus-asm check.
+- **Levels hanging at 99 % on DuckStation** (2026-10-17: on DuckStation, not on PCSX-Redux). Details:
+  `docs/porting-notes.md` §26. Reproduced headless (DuckStation from a
+  private home with its console and TTY log, the all-maps bench with the
+  music disc): the load hung at the first map whose 4-bit CLUT row is an
+  odd count of CLUTs. `LoadImage` sends the data by DMA in 16-word units,
+  rounding up: up to 60 bytes past a rectangle's data go to the GPU as
+  commands (`GP0 0xF8`, a VRAM copy with garbage coordinates), the GPU
+  loses the stream and the next `DrawSync` never returns; PCSX-Redux
+  ignores the stray words. Now a rectangle whose size is not a multiple
+  of 64 bytes goes up from a zero-padded copy (`vram_upload`, the world
+  and the game data), and the cook aligns rectangles to 64 bytes with
+  zeros after them. Also: `CdGetToc` right after `CdInit` answered 0
+  tracks on DuckStation (the drive not ready yet; retried for 3 s now), and
+  `music_play` indexed the table of contents one track off (`toc[0]` is
+  track 1). The bench disc can carry the music (`MUSIC=1`), and the maps
+  bench can go through the game's own path, the loading screen and 30
+  interactive frames per map (`PLAY=1`): both ran on DuckStation. The
+  play bench found a fourth fault: the ambients' leaf index mixed the
+  walk's KUSEG leaf pointer with the KSEG0 leaf table (a wild read every
+  frame: silent on PCSX-Redux, a bus error on the machine); fixed.
 - **Third optimization pass, the whole engine** (2026-10-17). Details: `docs/porting-notes.md`
   §25. The dynamic lights' node descent and restore in asm, one entry for
   the record hook, the light gate after the record's frustum test; the

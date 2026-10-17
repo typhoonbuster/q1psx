@@ -50,7 +50,10 @@ typedef struct {
 
 typedef struct {
 	uint16_t x, y, w, h;     /* VRAM rectangle, halfword units           */
-	uint32_t data_ofs;       /* from file start; w*h*2 bytes, 32-aligned */
+	uint32_t data_ofs;       /* from file start; w*h*2 bytes, 64-aligned
+	                            (the GPU DMA's 16-word unit; the cook
+	                            zero-fills up to the next rectangle, the
+	                            loader pads a copy of older files) */
 } qtex_rect;
 
 /* "QTX4": the same texture set in 4bpp (the menu's 4-bit textures), one per
