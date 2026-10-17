@@ -2,11 +2,14 @@
 #include <string.h>
 
 #include "clip.h"
+#include "dlight.h"
 #include "game.h"
 #include "gdata.h"
+#include "prof.h"
 #include "q_fixed.h"
 #include "render.h"
 #include "rlist.h"
+#include "snd.h"
 #include "world.h"
 
 player_t pl;
@@ -40,6 +43,12 @@ static void view_vectors(int yaw, int pitch, int32_t f[3], int32_t r[3], int32_t
 	f[0] = cp * cy >> 12; f[1] = cp * sy >> 12; f[2] = -sp;
 	r[0] = sy;            r[1] = -cy;           r[2] = 0;
 	u[0] = sp * cy >> 12; u[1] = sp * sy >> 12; u[2] = cp;
+}
+
+/* rint(random() x n) + 1: 1 .. n + 1 (the sound picks) */
+static int rand_rint(int n)
+{
+	return (int) (((q_rand() & 0x7fff) * (uint32_t) n + 16383) / 32767) + 1;
 }
 
 static int32_t vlen(const int32_t v[3])
@@ -255,6 +264,12 @@ static void explode_at(const int32_t org[3])
 {
 	const qw_leaf *leaf = leaf_at(org);
 	particle_explosion(org, leaf);
+	snd_start(ENT_TEMP, 0, S_R_EXP3, org, 255, ATTN_NORM);
+	dlight_t *dl = dl_alloc(0, game_tick_count);     /* TE_EXPLOSION's light */
+	for (int k = 0; k < 3; k++) dl->origin[k] = org[k];
+	dl->radius = 350;
+	dl->die    = game_tick_count + TICKS(50);
+	dl->decay  = 300;
 	proj_t *e = proj_new(PJ_EXPLOSION);
 	if (e) {
 		for (int k = 0; k < 3; k++) e->org[k] = org[k];
@@ -298,6 +313,12 @@ static void proj_move(proj_t *p)
 	case PJ_SPIKE:
 	case PJ_SSPIKE:
 		particle_effect(p->org, p->leaf, 0, p->type == PJ_SPIKE ? 10 : 20);   /* TE_SPIKE */
+		if (q_rand() % 5)
+			snd_start(ENT_TEMP, 0, S_TINK1, p->org, 255, ATTN_NORM);
+		else {
+			int rnd = (int) (q_rand() & 3);
+			snd_start(ENT_TEMP, 0, rnd == 1 ? S_RIC1 : rnd == 2 ? S_RIC2 : S_RIC3, p->org, 255, ATTN_NORM);
+		}
 		p->type = PJ_FREE;
 		break;
 	case PJ_ROCKET: {
@@ -313,6 +334,7 @@ static void proj_move(proj_t *p)
 	case PJ_GRENADE: {
 		/* ClipVelocity with overbounce 1.5; rests on a floor when slow */
 		int32_t n[3] = { tr.plane_n[0], tr.plane_n[1], tr.plane_n[2] };
+		snd_start(ENT_PROJ + (int) (p - projs), CHAN_WEAPON, S_BOUNCE, p->org, 255, ATTN_NORM);
 		int32_t dot = (p->vel[0] * n[0] + p->vel[1] * n[1] + p->vel[2] * n[2]) >> 12;
 		int32_t backoff = dot * 3 / 2;
 		for (int k = 0; k < 3; k++)
@@ -374,8 +396,14 @@ static void projs_tick(void)
 
 /* ---------------------------------------------------------------- damage -- */
 
+/* PlayerDie: GibPlayer below -40, else DeathSound */
 static void player_die(void)
 {
+	if (pl.health < -40)
+		snd_start(ENT_PLAYER, CHAN_VOICE, (q_rand() & 0x7fff) < 0x4000 ? S_GIB : S_UDEATH,
+		          pl.pm.pos, 255, ATTN_NONE);
+	else
+		snd_start(ENT_PLAYER, CHAN_VOICE, S_DEATH1 + rand_rint(4) - 1, pl.pm.pos, 255, ATTN_NONE);
 	pl.dead       = 1;
 	pl.death_tick = game_tick_count;
 	pl.weaponframe = 0;
@@ -424,8 +452,19 @@ static void t_damage(int damage, const int32_t inflictor[3])
 		pl.pm.onground = 0;
 	}
 	pl.health -= take;
-	if (pl.health <= 0)
+	if (pl.health <= 0) {
 		player_die();
+		return;
+	}
+	/* player_pain -> player_pain1 -> PainSound: not while the weapon
+	   animates; one every half second (the water, slime and lava variants
+	   come with swimming) */
+	if (pl.weaponframe)
+		return;
+	if (pl.pain_finished > game_tick_count)
+		return;
+	pl.pain_finished = game_tick_count + TICKS(50);
+	snd_start(ENT_PLAYER, CHAN_VOICE, S_PAIN1 + rand_rint(5) - 1, pl.pm.pos, 255, ATTN_NORM);
 }
 
 /* T_RadiusDamage on the player (the only thing that takes damage) */
@@ -517,6 +556,8 @@ static void anim_start(int anim, int frame)
 	pl.anim        = anim;
 	pl.weaponframe = frame;
 	pl.anim_next   = game_tick_count + TICKS(10);
+	if (anim != AN_AXE_A && anim != AN_AXE_B)      /* player_shot1, nail1, light1, rocket1 */
+		pl.muzzleflash = 1;
 }
 
 static void anim_tick(void)
@@ -539,12 +580,14 @@ static void anim_tick(void)
 	case AN_NAIL:                                  /* player_nail1 / 2 while firing */
 		if (!pl.fire) { pl.anim = 0; pl.weaponframe = 0; break; }
 		pl.weaponframe = pl.weaponframe % 8 + 1;
+		pl.muzzleflash = 1;                            /* player_nail1 / 2 */
 		w_fire_spikes((pl.weaponframe & 1) ? 4 : -4);
 		pl.attack_finished = game_tick_count + TICKS(20);
 		break;
 	case AN_LIGHT:                                 /* player_light1 / 2 while firing */
 		if (!pl.fire) { pl.anim = 0; pl.weaponframe = 0; break; }
 		pl.weaponframe = pl.weaponframe % 4 + 1;
+		pl.muzzleflash = 1;                            /* player_light1 / 2 */
 		w_fire_lightning();
 		pl.attack_finished = game_tick_count + TICKS(20);
 		break;
@@ -568,9 +611,10 @@ static void w_fire_axe(void)
 	clip_trace(0, src, end, &tr);
 	if (tr.fraction >= Q_FIX_ONE)
 		return;
-	int32_t org[3];                                 /* TE_GUNSHOT at the wall */
+	int32_t org[3];                                 /* hit wall: TE_GUNSHOT */
 	for (int k = 0; k < 3; k++)
 		org[k] = tr.endpos[k] - 4 * SUB * f[k] / 4096;
+	snd_start(ENT_PLAYER, CHAN_WEAPON, S_AXHIT2, pl.pm.pos, 255, ATTN_NORM);
 	particle_effect(org, leaf_at(org), 0, 20);
 }
 
@@ -602,6 +646,7 @@ static void fire_bullets(int count, int32_t spread_x, int32_t spread_y)
 
 static void w_fire_shotgun(void)
 {
+	snd_start(ENT_PLAYER, CHAN_WEAPON, S_GUNCOCK, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(2);
 	pl.ammo[AMMO_SHELLS]--;
 	fire_bullets(6, 164, 164);                      /* 0.04 x 4096 */
@@ -613,6 +658,7 @@ static void w_fire_super_shotgun(void)
 		w_fire_shotgun();
 		return;
 	}
+	snd_start(ENT_PLAYER, CHAN_WEAPON, S_SHOTGN2, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(4);
 	pl.ammo[AMMO_SHELLS] -= 2;
 	fire_bullets(14, 573, 328);                     /* 0.14, 0.08 x 4096 */
@@ -636,6 +682,7 @@ static void w_fire_spikes(int ox)
 	int32_t f[3], r[3], u[3], org[3];
 	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
 	if (pl.ammo[AMMO_NAILS] >= 2 && pl.weapon == W_SNAILGUN) {   /* W_FireSuperSpikes */
+		snd_start(ENT_PLAYER, CHAN_WEAPON, S_SPIKE2, pl.pm.pos, 255, ATTN_NORM);
 		pl.attack_finished = game_tick_count + TICKS(20);
 		pl.ammo[AMMO_NAILS] -= 2;
 		for (int k = 0; k < 3; k++)
@@ -648,6 +695,7 @@ static void w_fire_spikes(int ox)
 		w_set_current(w_best_weapon());
 		return;
 	}
+	snd_start(ENT_PLAYER, CHAN_WEAPON, S_ROCKET1I, pl.pm.pos, 255, ATTN_NORM);
 	pl.attack_finished = game_tick_count + TICKS(20);
 	pl.ammo[AMMO_NAILS]--;
 	for (int k = 0; k < 3; k++)
@@ -661,6 +709,7 @@ static void w_fire_grenade(void)
 	int32_t f[3], r[3], u[3];
 	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
 	pl.ammo[AMMO_ROCKETS]--;
+	snd_start(ENT_PLAYER, CHAN_WEAPON, S_GRENADE, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(2);
 	proj_t *p = proj_new(PJ_GRENADE);
 	if (!p) return;
@@ -681,6 +730,7 @@ static void w_fire_rocket(void)
 	int32_t f[3], r[3], u[3];
 	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
 	pl.ammo[AMMO_ROCKETS]--;
+	snd_start(ENT_PLAYER, CHAN_WEAPON, S_SGUN1, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(2);
 	proj_t *p = proj_new(PJ_ROCKET);
 	if (!p) return;
@@ -701,6 +751,10 @@ static void w_fire_lightning(void)
 	}
 	int32_t f[3], r[3], u[3], org[3], end[3];
 	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
+	if (pl.t_width < game_tick_count) {
+		snd_start(ENT_PLAYER, CHAN_WEAPON, S_LHIT, pl.pm.pos, 255, ATTN_NORM);
+		pl.t_width = game_tick_count + TICKS(60);
+	}
 	pl.punch = -DEG(2);
 	pl.ammo[AMMO_CELLS]--;
 	for (int k = 0; k < 3; k++) {
@@ -736,6 +790,7 @@ static void w_attack(void)
 		return;
 	switch (pl.weapon) {
 	case W_AXE:
+		snd_start(ENT_PLAYER, CHAN_WEAPON, S_AX1, pl.pm.pos, 255, ATTN_NORM);
 		anim_start((q_rand() & 1) ? AN_AXE_A : AN_AXE_B, (q_rand() & 1) ? 1 : 5);
 		if (pl.anim == AN_AXE_A) pl.weaponframe = 1; else pl.weaponframe = 5;
 		pl.attack_finished = game_tick_count + TICKS(50);
@@ -770,6 +825,7 @@ static void w_attack(void)
 		anim_start(AN_LIGHT, 1);
 		w_fire_lightning();
 		pl.attack_finished = game_tick_count + TICKS(20);
+		snd_start(ENT_PLAYER, CHAN_AUTO, S_LSTART, pl.pm.pos, 255, ATTN_NORM);
 		break;
 	}
 }
@@ -861,11 +917,14 @@ void game_spawn(void)
 	pl.attack_finished = game_tick_count;
 	pl.punch = pl.dmg_time = pl.dmg_roll = pl.dmg_pitch = 0;
 	pl.pain_until  = 0;
+	pl.pain_finished = pl.t_width = pl.jump_flag = 0;
 	pl.dead        = 0;
 	pl.viewheight  = PM_EYE_HEIGHT * SUB;
 	pl.weapon_switch_tick = game_tick_count - TICKS(200);
+	pl.muzzleflash = 0;
 	memset(projs, 0, sizeof projs);
 	memset(particles, 0, sizeof particles);
+	dl_clear();
 }
 
 void game_tick(const game_cmd_t *cmd)
@@ -887,12 +946,26 @@ void game_tick(const game_cmd_t *cmd)
 		pc.walk = cmd->walk;
 		if (cmd->centre)
 			pl.pm.pitch = 0;
+		if (pc.jump && pl.pm.onground)              /* PlayerJump */
+			snd_start(ENT_PLAYER, CHAN_BODY, S_PLYRJMP8, pl.pm.pos, 255, ATTN_NORM);
+		pl.jump_flag = pl.pm.vel[2];                /* PlayerPreThink */
 		pmove_step(&pl.pm, &pc);
 		w_weapon_frame(cmd);
 		anim_tick();
+		/* PlayerPostThink: landed */
+		if (pl.jump_flag < -300 && pl.pm.onground && pl.health > 0) {
+			if (pl.jump_flag < -650) {
+				t_damage(5, 0);
+				snd_start(ENT_PLAYER, CHAN_VOICE, S_LAND2, pl.pm.pos, 255, ATTN_NORM);
+			} else {
+				snd_start(ENT_PLAYER, CHAN_VOICE, S_LAND, pl.pm.pos, 255, ATTN_NORM);
+			}
+			pl.jump_flag = 0;
+		}
 	}
 	projs_tick();
 	particles_tick();
+	dl_decay(game_tick_count);
 
 	/* the view's kicks decay: punchangle 10 degrees per second */
 	if (pl.punch < 0) { pl.punch += DEG(10) / GAME_HZ; if (pl.punch > 0) pl.punch = 0; }
@@ -956,6 +1029,32 @@ void game_render(void)
 	if (!gdata.ok)
 		return;
 
+	/* the dynamic lights (CL_RelinkEntities): the muzzle flash, 16 up and
+	   18 forward, for 0.1 s; each rocket's, for the frame; then the world
+	   lit (R_PushDlights) */
+	if (pl.muzzleflash && !pl.dead) {
+		int32_t f[3], r[3], u[3];
+		view_vectors(pl.pm.yaw, 0, f, r, u);
+		dlight_t *dl = dl_alloc(ENT_PLAYER, game_tick_count);
+		for (int k = 0; k < 3; k++)
+			dl->origin[k] = pl.pm.pos[k] + (k == 2 ? 16 * SUB : 0) + 18 * SUB * f[k] / 4096;
+		dl->radius   = 200 + (int) (q_rand() & 31);
+		dl->minlight = 32;
+		dl->die      = game_tick_count + TICKS(10);
+	}
+	pl.muzzleflash = 0;
+	for (int i = 0; i < MAX_PROJ; i++)
+		if (projs[i].type == PJ_ROCKET) {
+			dlight_t *dl = dl_alloc(ENT_PROJ + i, game_tick_count);
+			for (int k = 0; k < 3; k++) dl->origin[k] = projs[i].org[k];
+			dl->radius = 200;
+			dl->die    = game_tick_count + 1;
+		}
+	uint32_t t0 = prof_now();
+	dl_push(game_tick_count);
+	uint32_t t1 = prof_now();
+	prof_add(PROF_DLIGHT, t0, t1);
+
 	/* the view model: at the eye, bobbing (V_CalcRefdef), lit by the eye's
 	   leaf; a little lower with the full-screen viewport than with the
 	   status bar's (Quake's viewsize fudge) */
@@ -969,6 +1068,7 @@ void game_render(void)
 		const qw_leaf *leaf = leaf_at(org);
 		int light = leaf ? leaf->light : 128;
 		if (light < 24) light = 24;                   /* always some light on the gun */
+		light += dl_add_at(org, game_tick_count) * 3 / 2;   /* (x the cook's light gain) */
 		r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
 		                      pl.pm.yaw, -pl.pm.pitch, 0, light);
 		rl_view_model(e);                /* no subdivision; clipped at 5 units, like Quake */
@@ -980,7 +1080,7 @@ void game_render(void)
 		proj_t *p = &projs[i];
 		if (p->type == PJ_FREE || !p->leaf)
 			continue;
-		int light = p->leaf->light;
+		int light = p->leaf->light + dl_add_at(p->org, game_tick_count) * 3 / 2;
 		switch (p->type) {
 		case PJ_SPIKE:
 			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_SPIKE], 0, p->org, p->yaw, p->pitch, 0, light));
@@ -1030,5 +1130,8 @@ void game_render(void)
 
 void game_render_done(void)
 {
+	uint32_t t0 = prof_now();
 	rl_end();
+	dl_restore();                          /* the world's light bytes back */
+	prof_add(PROF_DLIGHT, t0, prof_now());
 }

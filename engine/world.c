@@ -161,6 +161,7 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 	}
 	world.verts       = (const qw_vert *) (f + h->ofs_verts);
 	world.num_verts   = h->num_verts;
+	world.ambient     = f + h->ofs_ambient;
 	world.num_nodes   = h->num_nodes;
 	world.num_leaves  = h->num_leaves;
 	world.num_faces   = h->num_faces;

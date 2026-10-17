@@ -12,13 +12,21 @@
 #                globbed it at configure time), or ep1 if there are none.
 #   LIGHT_GAIN   vertex light scale (default 1.5; 1 = Quake's own brightness,
 #                dark on a TV)
+#   QUAKE_MUSIC  a directory of trackNN.ogg / .mp3 / .wav (the 2021 rerelease:
+#                <Quake>/rerelease/id1/music); default: next to pak0. They
+#                become the disc's CD-DA tracks (ffmpeg converts them).
+#   COOK_MUSIC   0 skips the music (default 1 when the directory exists)
 #
 # Output, per map and fidelity (low medium high ultra = disc N 0..3):
 #   cooked/id1/<map>_<fidelity>.tex   QTX3 texture pages  -> disc <MAP>_<N>.TEX
 #   cooked/id1/<map>_<fidelity>.tx4   QTX4, same in 4bpp  -> disc <MAP>_<N>.TX4
 #   cooked/id1/<map>_<fidelity>.wld   QWV2 world          -> disc <MAP>_<N>.WLD
+# per map (with the high job), the sound bank (formats/qsound.h):
+#   cooked/id1/<map>.snd              QSB1 sounds         -> disc <MAP>.SND
 # and once, the game data (weapon models, projectiles, HUD; formats/qgame.h):
 #   cooked/id1/game.dat               QGM1                -> disc GAME.DAT
+# and the music, as 44.1 kHz stereo WAV for mkpsxiso's audio tracks:
+#   cooked/music/trackNN.wav                              -> CD-DA track NN
 # Jobs run in parallel; each one's log is shown only if it fails.
 
 set -euo pipefail
@@ -47,7 +55,7 @@ make -s -C tools/qcook
 # start clean: the disc carries every cooked file, so a map cooked earlier
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
-rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/game.dat
+rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.snd cooked/id1/game.dat
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game.dat > "$LOGS/game.log" 2>&1 \
@@ -56,9 +64,11 @@ tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game.dat > "$LOGS/ga
 cook_one() {   # map fidelity
 	local pak=$QUAKE_PAK0
 	case $1 in e2*|e3*|e4*|end) pak=${QUAKE_PAK1:?$1 needs QUAKE_PAK1} ;; esac
+	local snd=""
+	[ "$2" = high ] && snd="--sounds cooked/id1/$1.snd"   # (fidelity-independent: once)
 	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
 	                      --fidelity "$2" --tex "cooked/id1/$1_$2.tex" --tex4 "cooked/id1/$1_$2.tx4" \
-	                      --world "cooked/id1/$1_$2.wld" \
+	                      --world "cooked/id1/$1_$2.wld" $snd \
 	                      --light-gain "${LIGHT_GAIN:-1.5}" \
 	                      > "$LOGS/$1_$2.log" 2>&1 \
 	|| { echo "cook FAILED: $1 $2"; cat "$LOGS/$1_$2.log"; return 1; }
@@ -70,3 +80,23 @@ for m in $MAPS; do for f in low medium high ultra; do echo "$m $f"; done; done \
 	| xargs -P "$(nproc)" -n 2 bash -c 'cook_one "$0" "$1"'
 
 echo "cooked $(echo $MAPS | wc -w) maps x 4 fidelity levels -> $ROOT/cooked/"
+
+# the music: Quake's CD tracks 2..11 (worldspawn "sounds"), converted once
+QUAKE_MUSIC=${QUAKE_MUSIC:-"$(dirname "$QUAKE_PAK0")/../rerelease/id1/music"}
+if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/dev/null; then
+	mkdir -p cooked/music
+	n=0
+	for src in "$QUAKE_MUSIC"/track*.ogg "$QUAKE_MUSIC"/track*.mp3 "$QUAKE_MUSIC"/track*.wav; do
+		[ -f "$src" ] || continue
+		out="cooked/music/$(basename "${src%.*}").wav"
+		if [ ! -f "$out" ] || [ "$src" -nt "$out" ]; then
+			ffmpeg -loglevel error -y -i "$src" -ar 44100 -ac 2 -sample_fmt s16 \
+			       -fflags +bitexact -flags:a +bitexact "$out" || { echo "cook FAILED: music $src"; exit 1; }
+		fi
+		n=$((n + 1))
+	done
+	echo "music: $n CD-DA tracks in $ROOT/cooked/music/"
+else
+	rm -rf cooked/music
+	echo "music: none (set QUAKE_MUSIC / COOK_MUSIC=1, needs ffmpeg)"
+fi

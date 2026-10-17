@@ -18,6 +18,12 @@ test is additionally required before checking it off.
 `scripts/run-emu.sh [image.bin]` builds if needed and launches PCSX-Redux
 (OpenBIOS, no PS1 BIOS required).
 
+**Headless speed.** PCSX-Redux builds since 2026-10 run `-no-ui` at about
+real-time speed (the earlier ones ran unthrottled) and write the console at
+~5 KB/s, so a display-list dump of ~100 KB takes 20 s: `scripts/bench.sh`
+waits 420 s for the game scenario (15 dumps), `scripts/dlcheck.sh` 500 s, and
+a `BENCH_MAPS=1` run needs `SECS=3000`.
+
 **No reliable headless screenshot path yet.** PCSX-Redux `-no-ui` runs the CPU
 but has no GPU backend, so its web API (`/api/v1/gpu/vram/raw`) returns empty
 VRAM; the GUI + `-webserver` combination crashes on this machine. Until that is
@@ -61,7 +67,8 @@ solved, two checks are used:
 | R6.5 | Asm micro-optimizations: `scripts/dlcheck.sh check t8hi` identical; `EMU_ARGS=-interpreter SECS=2400` gives the same `H` lines (compare the `^H ` lines of the reference and of `build-bench/bench.log`: the interpreter's console doubles characters in the `P` lines); the bench's physics diffs at 0 mismatches; the 128 spawn views by hash: `BENCH_MAPS=1 PROFILE=0 SECS=3000 scripts/dlcheck.sh check maps8` | headless bench | recommended (RAM wait states, write buffer and I-cache are not emulated) |
 | 7.x | `progs.dat` executed: player spawn, doors/buttons | required | — |
 | 8.x | Enemy + shotgun + HUD working | required | recommended |
-| 9.x | SPU SFX; CD-DA/XA music | required | required (SPU mixing + CD-DA playback differ in emu) |
+| 8.2 dlights | Dynamic lights: the game bench's nailgun / lightning frames show the muzzle flash on the walls and the gun (`gnailgun.png`, `glightning.png`), the rocket's light along its flight, the explosion's; the hashes agree under the interpreter; `t8hi` (no game) identical; the per-frame cost in the `bench g*` lines | headless bench + GUI | recommended (the look of the flash) |
+| 9.x | Sound and music: the game bench's `snd` lines (every start: entity, channel, volumes, the channel picked) identical between runs and under `EMU_ARGS=-interpreter`; the boot log's `snd:` bank line per map and `music:` track count; the cook's per-map `sounds —` lines (SPU bytes, halved loops, worst SNR); a listen to the mix, the spatialization, the loops' seams, the track change on a map load | headless bench + GUI | required (SPU mixing + CD-DA playback differ in emu) |
 | 10.2 | Save/load via memory card | required | required (real memory card) |
 | 13.x | Full cycle-accurate pass + CD-R/flashcart + NTSC/PAL TV | PCSX-Redux | required |
 

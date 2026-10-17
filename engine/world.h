@@ -37,6 +37,7 @@ typedef struct {
 	uint32_t       num_verts;
 	int            tex4;            /* the 4-bit textures are loaded  */
 	uint32_t       vis_leaves;      /* PVS rows: leaves 1..vis_leaves  */
+	const uint8_t *ambient;         /* [num_leaves][2]: water, sky levels */
 } world_t;
 
 #ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */

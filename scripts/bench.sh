@@ -14,6 +14,10 @@
 #         PROFILE=0 builds the renderer without its counters / stage timers,
 #         as the "release" preset does: frame totals only (the stage and
 #         counter columns read 0).
+#         HASHONLY=1 dumps only the frames' hashes (`H` lines): no packets,
+#         no pictures, a run several times shorter (the console is slow).
+#         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
+#         asm (the hashes must match).
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -25,19 +29,24 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-SECS=${1:-60}
+BENCH_GAME=${BENCH_GAME:-0}
+# PCSX-Redux (builds since 2026-10) runs headless at about real-time speed and
+# writes the console at ~5 KB/s: the game scenario's 15 dumps need ~6 minutes
+SECS=${1:-$([ "$BENCH_GAME" = 1 ] && echo 420 || echo 60)}
 FID=${FID:-2}
 T=${T:-8}
 TEX4=${TEX4:-0}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
-BENCH_GAME=${BENCH_GAME:-0}
 PROFILE=${PROFILE:-1}
+HASHONLY=${HASHONLY:-0}
+DLIGHT_C=${DLIGHT_C:-0}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
-      -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
+      -DQ1PSX_DLIGHT_C="$([ "$DLIGHT_C" = 1 ] && echo ON || echo OFF)" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" >/dev/null
 
 LOG="$ROOT/build-bench/bench.log" \
@@ -47,7 +56,7 @@ LOG="$ROOT/build-bench/bench.log" \
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
-[ "$VIEWS" = 0 ] || [ "$BENCH_MAPS" = 1 ] && exit 0
+[ "$VIEWS" = 0 ] || [ "$BENCH_MAPS" = 1 ] || [ "$HASHONLY" = 1 ] && exit 0
 
 # Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
 # output can be checked without a screen (the game's dumps need GAME.DAT's

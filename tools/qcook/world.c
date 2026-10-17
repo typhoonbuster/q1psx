@@ -1359,6 +1359,10 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	}
 
 	/* texture table: CLUT, tpage and texture window per miptex */
+	h.ofs_ambient = (uint32_t) f.len;           /* the leaves' water / sky levels */
+	for (int i = 0; i < b->num_leaves; i++)
+		buf_put(&f, b->leaves[i].ambient, 2);
+	buf_align4(&f);
 	h.ofs_tex = (uint32_t) f.len;
 	h.num_tex = (uint32_t) b->num_miptex;
 	for (int i = 0; i < b->num_miptex; i++) {
@@ -1473,6 +1477,7 @@ int world_check(const char *path)
 	SECTION(h.ofs_views, h.num_views * sizeof(qw_view));
 	SECTION(h.ofs_tex, h.num_tex * sizeof(qw_tex));
 	SECTION(h.ofs_verts, h.num_verts * sizeof(qw_vert));
+	SECTION(h.ofs_ambient, h.num_leaves * 2);
 	if (h.max_depth > QW_MAX_DEPTH)
 		FAIL("depth %u > %d", h.max_depth, QW_MAX_DEPTH);
 	if (h.root >= h.num_nodes)

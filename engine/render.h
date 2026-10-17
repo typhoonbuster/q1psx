@@ -71,6 +71,8 @@ typedef struct {
 	uint32_t viewmodel;      /* +196 r_ent_t * drawn first (on top), or 0    */
 	int32_t  ofy;            /* +200 the viewport's vertical centre (120, 96) */
 	int32_t  vh2;            /* +204 the viewport's height (240, 192)         */
+	uint32_t nlights;        /* +208 dynamic lights this frame (dlight.c)      */
+	uint32_t lights;         /* +212 their table, 32 bytes each (DL_*)        */
 } r_state_t;
 
 extern r_state_t r_state;

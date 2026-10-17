@@ -2574,3 +2574,273 @@ scenario's 15 frames hash the same under the dynarec and the interpreter
 (the interpreter's console doubles characters in the `P` lines, so only
 the `H` lines compare; `pktview` then reports oversized primitives from the
 garbled lines, which are not in the frames).
+
+### 22.8 Fixes after the first play session (2026-10-17)
+
+- **The controls were the digital scheme's.** The pad in use reported
+  itself digital (type 4: a DualShock powers up in digital mode until its
+  ANALOG button is pressed, and most emulators start it that way too), so
+  the digital-pad mapping (L1 / R1 strafe, L2 / R2 look...) was in effect.
+  Two changes: `engine/pad.c` switches the pad to analog mode itself at
+  boot with the DualShock configuration commands on SIO0 (0x43 enter
+  config mode, 0x44 analog on and locked, 0x43 leave), one byte at a time
+  with the /ACK pulse between bytes and timeouts for pads that do not
+  answer (the BIOS driver cannot send them, so it is stopped while they
+  go out; a pad plugged in later gets two more tries, two seconds apart);
+  and the digital scheme now keeps scheme B's buttons (R2 / Square fire,
+  L2 / Cross jump, R1 / L1 weapons, Circle level the view), the d-pad
+  walking and turning, with Triangle held for strafing and looking (Quake's
+  +strafe and +klook). The BIOS reads an analog pad's 9 bytes instead of
+  5 in its vblank handler, busy-waiting at 250 kbps: about 4 k cycles a
+  frame more (the 12-view bench total 4 356 k → 4 360 k); a driver of our
+  own, sending the next byte from the /ACK interrupt, would get most of
+  that back (the optimization pass).
+- **Blue pixels on the guns** (the super shotgun's and nailguns' barrels).
+  Two causes, both in the cook (`tools/qcook/game.c`). The skins were
+  packed edge to edge in the game's VRAM pages, and the GPU's texture
+  coordinates stray a texel past a triangle's edge, so the neighbour's
+  texels showed: every skin and sprite sheet now has a 2-texel border of
+  its own edge texels (the HUD's pictures are drawn as sprites, texel for
+  texel, and need none), and the UVs are clamped to the image. And a Quake
+  skin's unused area is a flat blue fill that no triangle samples at full
+  resolution, but which the 2 × 2 reduction averaged into the edge texels:
+  the reduction now only averages the texels inside a triangle's texture
+  coordinates (rasterized with a texel of margin), and the blocks outside
+  take their used neighbours' colours. The 4 pages overflowed with the
+  borders: the projectiles' skins (the rocket's is 288 × 196 for a model
+  24 units long) go in at a quarter of their resolution (`skin_div` per
+  model; the view models stay at a half) and the packer is MaxRects (best
+  short side fit) instead of the skyline, 208 K texels of 256 K placed.
+- **The view model's back-face culling** (cook time) is geometric now: a
+  triangle is dropped when its plane keeps every eye position on its back
+  in every frame (the eye sits in a small box about the model's origin:
+  −0.4 × bob forward, bob and the view size's 2 units down), the file's
+  winding convention read off the model's vertex normals by majority. The
+  vertex-normal test it replaces could keep or drop the wrong triangles
+  near silhouettes. A few more triangles survive (the super shotgun's pump
+  frame 733 k → 755 k cycles).
+- **PCSX-Redux** was updated on this machine (2026-10-17) and its headless
+  mode now runs at about real-time speed with the console at ~5 KB/s
+  (TESTING.md): the game scenario takes 6 minutes, hence
+  `scripts/bench.sh`'s 420 s default for it.
+
+## §23 — Sound and music (2026-10-17)
+
+Next: the sound effects and the music. Quake's sound
+engine is `snd_dma.c` (channels, spatialization, ambients) over a software
+mixer (`snd_mix.c`); the PS1's SPU mixes 24 ADPCM voices itself, so the
+port keeps the former and hands the latter to the hardware. The music is
+Quake's CD audio, which the PS1 has natively.
+
+### 23.1 The cooked sound bank: `<MAP>.SND` (formats/qsound.h, tools/qcook/sound.c)
+
+- **One bank per map.** Quake precaches, on every map, worldspawn's list
+  (world.qc) and the weapons' (W_Precache): 68 sounds, 405 KB as SPU
+  ADPCM; the map's ambient entities add up to 170 KB (drip1 alone, 12.5 s,
+  is 79 KB); the SPU has 512 KB less its first 4 KB. So the cook picks per
+  map: the core (weapons, the player's pain, death, jump and landing, the
+  axe, the menu's clicks, talk: 39 sounds, 196 KB) always; the water set
+  (drowning, swimming, splashes, 88 KB) when the BSP has water leaves or
+  water ambient levels; lava, slime, sky (the wind), the teleporters'
+  (50 KB) when it has teleporters, the items' (22 KB) when it has items,
+  the boss's; then the ambients its entities spawn with (misc.qc's
+  `ambientsound` calls: the ambient_* entities, the torches and flames
+  (fire1), triggers.qc's teleporter hum unless SILENT) and the two area
+  ambients (water1, wind2). When the total still exceeds the SPU, the
+  longest looping ambients are halved in sample rate, largest first, and
+  the cook says so (`1 halved` on start, e1m2, e3m5: drip1). e1m2 comes to
+  492 KB, e2m6 416 KB, e1m7 402 KB.
+- **WAV → ADPCM.** `GetWavinfo`'s rules (snd_mem.c): 8 or 16-bit mono, the
+  `cue ` chunk's first point is the loop start, a LIST chunk after it with
+  a "mark" purpose gives the loop's length (every id ambient loops from 0
+  to its end). The encoder is the SPU's: 16-byte blocks of 28 samples,
+  the filter (5) and shift (13) with the least squared error per block,
+  predicting from the decoder's own history. A loop start is moved to a
+  block boundary by prepending silence (under 2.5 ms), and the loop's last
+  block is filled with the loop's first samples so the repeat is seamless
+  (the loop runs at most 27 samples long); its last block is flagged end +
+  repeat, a one-shot's end only (the voice keys off). The worst signal to
+  noise over a bank is 15 dB (tornoff2, power: noisy sounds), the usual
+  for the format.
+- **The file:** a directory of `qs_sound` (name hash, SPU offset, length,
+  pitch = rate × 4096 / 44100, loop flag, length in 60 Hz ticks), the
+  static sounds (`qs_static`: origin, sound, volume × 255, attenuation
+  × 64), the CD track (worldspawn "sounds"), the names (debugging), then
+  the ADPCM. 32 banks, cooked by the "high" job of each map (they do not
+  depend on the fidelity level).
+- **The leaves' ambient levels** (water, sky: Quake's
+  `ambient_level[AMBIENT_WATER / SKY]`) go in the world file, QWV9, 2
+  bytes per leaf after the vertex pool (`ofs_ambient`); slime and lava
+  have no sound in Quake.
+
+### 23.2 The engine (engine/snd.c, engine/music.c)
+
+- **Loading.** Before the world: `snd_load_bank` reads the bank through
+  the level arena, uploads the ADPCM to SPU RAM at 0x1010 by DMA
+  (`SpuWrite`) and keeps the directory and the static list in two fixed
+  slots of the game arena (7 KB); `world_load` then resets the arena. The
+  game's named sounds (S_* in snd.h, 69 names) are resolved by hash once
+  per bank; a sound the cook left out of this map is simply silent.
+- **Voices.** 0-1 the area ambients, 2-9 the dynamic channels
+  (`MAX_DYNAMIC_CHANNELS` 8), 10-23 the static sounds — one voice per
+  *distinct* static sound: Quake's `S_Update` sums the volumes of every
+  static source of one sound into the first channel playing it ("so we
+  don't mix five torches every frame"), and that combined channel is a
+  looping voice here (e2m6's 85 torches are one voice). A voice is keyed
+  on with ADSR 0x000F / 0x0000 (full at once; off at once at key-off or
+  the end flag), volume = Quake's 0..255 × 64, pitch from the bank.
+- **`snd_start` is `S_StartSound`:** `SND_PickChannel` (the same entity's
+  same channel is always replaced, channel 0 never replaces, a monster
+  never takes the player's, else the first to end), `SND_Spatialize`
+  (the view entity full volume; otherwise `(1 − dist × atten / 1000) ×
+  (1 ± right · dir)` per side, with an integer square root in 1/8 units),
+  inaudible starts dropped, the channel's end = now + the sound's ticks
+  (a loop never ends), and the same sound started this frame offset by a
+  random tenth of a second (in 28-sample blocks).
+- **`snd_update`** once per frame, with the camera and the game's tick:
+  `S_UpdateAmbientSounds` (the camera leaf's two levels × 0.3, under 8
+  silent, fading 100 per second), the ended dynamic channels freed, the
+  others respatialized (Quake keeps a channel's origin where it started),
+  every static source spatialized and summed into its sound's voice. The
+  listener's right vector is AngleVectors' with roll.
+- **Events (engine/game.c), as the QC plays them:** the axe swing
+  (W_Attack, CHAN_WEAPON), its wall hit (axhit2), the guns (guncock,
+  shotgn2, rocket1i, spike2, grenade, sgun1), the lightning's lstart on
+  CHAN_AUTO at every W_Attack (every 0.1 s while firing, as in Quake) and
+  lhit every 0.6 s (`t_width`); the spikes' tink1 or, one time in five,
+  ric1-3 (cl_tent.c TE_SPIKE, entity −1); the grenade's bounce on its own
+  entity; r_exp3 at an explosion; the jump (PlayerJump, CHAN_BODY); the
+  landing (PlayerPostThink: land, or land2 with 5 damage when the tick's
+  starting z velocity was under −650); the pain (player_pain → PainSound:
+  not while the weapon animates, one every half second, pain1-6 by
+  `rint(random() × 5) + 1`); death1-5, or gib / udeath below −40 health.
+  The water, slime and lava variants wait for swimming. The map menu
+  clicks (menu1 on a move, menu2 on a choice). ATTN_NORM is 64, Quake's
+  1.0 × 64; the player's position is the sound's origin.
+- **Music:** `music_play(track)` sets the drive to CD-DA with auto-pause,
+  seeks the TOC's track and plays; the auto-pause callback restarts it
+  (Quake loops the map's track); `load_level` stops it before the CD
+  reads and plays the bank's track after. The bench's disc has no audio
+  tracks: `CdGetToc` reports one track and nothing plays.
+
+### 23.3 The disc
+
+`scripts/cook.sh` converts the rerelease's `trackNN.ogg` (`QUAKE_MUSIC`,
+found next to pak0 by default; `COOK_MUSIC=0` skips) to 44.1 kHz stereo
+WAV with ffmpeg, and CMake lists them as `<track type="audio">` after the
+data track (`Q1PSX_MUSIC`, off for the bench preset); the Quake track
+number is the disc's (track 1 is the data). The 10 tracks make the image
+about 650 MB. The banks are `MAPS/<MAP>.SND`.
+
+### 23.4 Checking it
+
+The game scenario logs every start (`snd e<entity> c<channel> <hash>
+v<volume> a<attenuation> L<left> R<right> ch<channel> k<skip>`): the
+entity, channel, volumes and the channel picked are Quake's logic on the
+game's deterministic events, so the lines must match between the dynarec
+and the interpreter, and between runs. The boot log lists the bank
+(`snd: \MAPS\START.SND;1 — 71 sounds, 487 KB of SPU RAM, 48 static
+sounds, CD track 4`) and the disc's tracks. The listening is done by ear.
+
+## §24 — Dynamic lights (2026-10-17)
+
+After the sound: the dynamic lights. Quake's are
+`cl_dlights` (cl_main.c): the muzzle flash (EF_MUZZLEFLASH, set by the
+player's firing frames: shot1, nail1 and nail2, light1 and light2,
+rocket1 — a light 16 up and 18 forward of the player, radius 200 + rand
+& 31, minlight 32, for 0.1 s), a rocket's (EF_ROCKET: radius 200 for the
+frame, at the rocket), an explosion's (TE_EXPLOSION: radius 350 for 0.5 s,
+decaying 300 a second). `R_PushDlights` marks the surfaces each light's
+sphere straddles by descending the BSP (R_MarkLights: front child only
+when the light is more than its radius in front of the plane, back child
+only when behind, else the node's own surfaces and both children), and
+`R_AddDynamicLights` adds light to a marked surface's lightmap texels:
+`rad = radius − |plane distance|`, nothing under the light's minlight,
+then `rad − dist` per texel, `dist` an octagonal approximation of the
+distance in the plane to the light's impact point ("sd + td / 2").
+Entities (and the view model) add `radius − distance` of each light to
+their light.
+
+### 24.1 On vertex lighting, in the walk (engine/dlight.c, engine/r_world.s)
+
+The world is lit per vertex (the cook samples the lightmap at each
+record's vertices into its light bytes), so the lightmap texel becomes
+the vertex. Three enumerations were tried before the right one:
+
+- R_MarkLights as is (descend by planes, light the straddled nodes'
+  records): 60-90 k cycles for a muzzle flash, 550 k for an explosion —
+  a straddled plane runs through the whole map, and its node's face block
+  (hundreds of records) had to be scanned for the few near the light.
+- By leaves (the light's sphere against the boxes down to the leaves,
+  then their marked faces, a record table built at load): 89 k — the
+  marks of the leaves near the player are many and shared.
+- **In the walk.** The walk already holds, for each node's face block it
+  is about to draw, the records that are drawn (stamped) and the node's
+  plane. When `r_state.nlights` is set, the block goes through
+  `dr_lights` before the record loop (`r_world.s`, one load and branch
+  per block otherwise): for each live light, the node's box against the
+  light's sphere (a whole block skipped at once), then `rad = radius −
+  |distance to the node's plane|`, nothing under minlight, the impact
+  point; for each stamped record (sky and liquid excepted) whose sphere
+  the light reaches (Chebyshev distance of the centre, less the radius,
+  under `radius − minlight`), its light bytes saved once a frame (a bit
+  per record, 52-byte entries in a 24 KB buffer of the game arena) and
+  each vertex within `rad − minlight` of the impact point gets `rad −
+  dist` × 3/8 (a quarter world unit per vertex unit, × 1.5 for the cook's
+  light gain), saturating at 255. `dist` comes from a 1024-entry table
+  of square roots on the squared distance >> 11 (Quake's octagonal
+  "sd + td / 2" approximated the same length). `dl_restore` puts the
+  bytes back after `r_frame`, as Quake rebuilds a dlit lightmap each
+  frame; `dl_push` lists the live lights for the renderer in vertex
+  units. Only drawn records cost anything, and only the blocks the light
+  reaches cost more than the box test.
+- The routine exists twice: `dl_block` in C (the reference, documented
+  arithmetic) and `dl_block_asm` (the one built; `DLIGHT_C=1
+  scripts/bench.sh` builds the C instead, and the frames' hashes must
+  agree). The first comparison disagreed because of the stub that calls
+  either from the walk: it saved the walk's registers at the bottom of
+  its stack frame, and the o32 ABI lets a C callee write its incoming
+  argument registers to the caller's first 16 bytes — `dl_block` did,
+  and the record loop then ran on a corrupted block range (15 % smaller
+  frames). The stub keeps those 16 bytes free now.
+- The nodes a light reaches are stamped before the frame (`dl_push`: a
+  descent from the root, a node's box outside the sphere ending its
+  subtree, the coming frame count written in the node's spare halfword),
+  and the walk takes the hook only for a stamped node: two instructions
+  a block, instead of the box test per block per light that cost 85 k a
+  frame when every block went through the hook. Entities: `dl_add_at` sums `radius − distance` (exact, after a
+  Manhattan reject) and the game adds it × 1.5 to the leaf's light before
+  `rl_model` clamps at 170 (the view model from its 24 minimum, as
+  R_DrawViewModel).
+
+### 24.2 The game (engine/game.c)
+
+`pl.muzzleflash` is raised where the QC sets EF_MUZZLEFLASH (anim_start
+for the shot and rocket chains, every tick of the nail and lightning
+chains) and consumed by `game_render`, which allocates the lights
+(CL_AllocDlight: the same key's slot, else a dead one, else the first),
+one per rocket in flight with its own key, and calls `dl_push` before the
+render list is drawn; `explode_at` allocates the explosion's; `dl_decay`
+runs per tick (300 / 60 = 5 units). A new map clears them.
+
+### 24.3 Checking and cost
+
+The game bench's frames carry the muzzle flash (the weapon dumps come
+0.4 s into firing, so the shotgun's has passed but the nailguns' and the
+lightning's are on) and the rocket's and explosion's lights; its hashes
+must agree between the dynarec and the interpreter and between the C
+reference and the asm (`HASHONLY=1` runs dump only the hashes: a run
+takes a third of the time). The world dumps (`t8hi`) have no game and
+stay identical. The bench's `dlight` stage (`dl_push`'s node
+stamping and the restore) and the `r_block` stage (the hook runs inside
+the record loop) give the cost, as of this commit (C and asm agreeing
+hash for hash): a muzzle flash frame costs 80 k cycles more than the
+same frame unlit (778 k against 698 k on start's spawn: 23 k in `dlight`,
+the rest in `r_block`), an explosion with a rocket in flight 570 k more
+(1 271 k, three vblanks). **That is not acceptable yet**: the per-block
+stub and setup (every stamped block, lit or not, pays the register
+saves and the box test per light) and the per-vertex loop (~80 cycles a
+vertex, three multiplies and their HI/LO spacing) are the next targets
+of the optimization pass, along with lighting only the vertices of
+records in the light's reach rather than every stamped record of a
+reached block.

@@ -11,8 +11,11 @@
  * vertex shared by two records is duplicated (each record's indices are its
  * own slots), so records gather adjacent triangles. View models are written
  * nearest-first, the renderer's painter order, as seen from the eye at the
- * model origin. Skins go to VRAM at half resolution (2x2 texels averaged,
- * then the nearest palette colour): the screen never shows them larger.
+ * model origin. Skins go to VRAM reduced (a view model's to a half, a
+ * projectile's to a quarter: 2x2 / 4x4 texels averaged, then the nearest
+ * palette colour): the screen never shows them larger. Each skin and
+ * sprite sheet has a border of its own edge texels in the page (the GPU
+ * strays a texel past a triangle's edge).
  * Sprites: one record per frame, a quad in the view plane. Pictures
  * (gfx.wad): as they are, index 255 transparent.
  *
@@ -87,67 +90,138 @@ static int nearest_colour(int r, int g, int b)
 static uint8_t gpage[GP_PAGES][PT][PT];
 static int page_rows[GP_PAGES];
 
-/* an image to place: its pixels, then where it went */
+/* an image to place: its pixels, then where it went. A textured polygon's
+   image (a skin, a sprite sheet) gets a border of replicated edge texels
+   in the page: the GPU's texture coordinates stray a texel past a
+   triangle's edge, and a neighbour's texels showed there (blue pixels from
+   the bolt's skin on the barrels). Pictures are drawn as sprites, texel
+   for texel: no border. */
+#define GP_BORDER 2
 typedef struct {
 	const char *what;
 	int         w, h;
 	uint8_t    *px;
-	int         page, u, v;
+	int         border;
+	int         page, u, v;    /* u, v: the image's own origin (past the border) */
 } image;
 
 static image images[256];
 static int   nimages;
 
-static image *add_image(const char *what, int w, int h)
+static image *add_image(const char *what, int w, int h, int border)
 {
 	if (nimages >= 256) die("too many images");
-	if (w < 1 || h < 1 || w > PT || h > PT) die("%s: %dx%d does not fit a texture page", what, w, h);
+	if (w < 1 || h < 1 || w + 2 * border > PT || h + 2 * border > PT)
+		die("%s: %dx%d does not fit a texture page", what, w, h);
 	image *im = &images[nimages++];
 	im->what = what;
 	im->w = w;
 	im->h = h;
+	im->border = border;
 	im->px = xcalloc((size_t) w * h, 1);
 	im->page = -1;
 	return im;
 }
 
-static int by_height(const void *a, const void *b)
+static int by_area(const void *a, const void *b)
 {
 	const image *const *x = a, *const *y = b;
-	if ((*x)->h != (*y)->h) return (*y)->h - (*x)->h;
+	int xa = ((*x)->w + 2 * (*x)->border) * ((*x)->h + 2 * (*x)->border);
+	int ya = ((*y)->w + 2 * (*y)->border) * ((*y)->h + 2 * (*y)->border);
+	if (xa != ya) return ya - xa;
 	return (*y)->w - (*x)->w;
 }
 
-/* Skyline packing over the game's pages: images by decreasing height, each
-   at the lowest spot (then leftmost) of any page where it fits; the skyline
-   of a page is its top edge, one height per texel column. */
+/* The free space of a page as maximal rectangles (MaxRects): placing an
+   image cuts every free rectangle it overlaps into the pieces left of,
+   right of, above and below it, and the pieces another contains are
+   dropped. An image goes where its shorter leftover side is the smallest
+   (best short side fit), over all pages; images by decreasing area. */
+typedef struct { int x, y, w, h; } rect;
+#define MAX_FREE 2048
+static rect freer[GP_PAGES][MAX_FREE];
+static int  nfree[GP_PAGES];
+
+static int contains(const rect *a, const rect *b)   /* a holds b */
+{
+	return b->x >= a->x && b->y >= a->y && b->x + b->w <= a->x + a->w && b->y + b->h <= a->y + a->h;
+}
+
+static void free_add(int p, rect r)
+{
+	if (r.w <= 0 || r.h <= 0) return;
+	for (int i = 0; i < nfree[p]; i++)
+		if (contains(&freer[p][i], &r)) return;
+	for (int i = 0; i < nfree[p]; )
+		if (contains(&r, &freer[p][i])) freer[p][i] = freer[p][--nfree[p]];
+		else i++;
+	if (nfree[p] >= MAX_FREE) die("MaxRects: too many free rectangles");
+	freer[p][nfree[p]++] = r;
+}
+
 static void place_images(void)
 {
 	image *order[256];
 	for (int i = 0; i < nimages; i++) order[i] = &images[i];
-	qsort(order, (size_t) nimages, sizeof *order, by_height);
-	static int sky[GP_PAGES][PT];
-	memset(sky, 0, sizeof sky);
+	qsort(order, (size_t) nimages, sizeof *order, by_area);
+	for (int p = 0; p < GP_PAGES; p++) {
+		freer[p][0] = (rect) { 0, 0, PT, PT };
+		nfree[p] = 1;
+	}
+	long area = 0, total = 0;
+	for (int n = 0; n < nimages; n++) {
+		total += (long) (order[n]->w + 2 * order[n]->border) * (order[n]->h + 2 * order[n]->border);
+		if (getenv("QCOOK_IMAGES"))
+			printf("image %-24s %3dx%3d +%d\n", order[n]->what, order[n]->w, order[n]->h, order[n]->border);
+	}
 	for (int n = 0; n < nimages; n++) {
 		image *im = order[n];
-		int bp = -1, bx = 0, by = PT + 1;
+		int b = im->border, bw = im->w + 2 * b, bh = im->h + 2 * b;
+		int bp = -1, bi = -1, bs = 1 << 30, bl = 1 << 30;
 		for (int p = 0; p < GP_PAGES; p++)
-			for (int x = 0; x + im->w <= PT; x++) {
-				int y = 0;
-				for (int k = 0; k < im->w; k++)
-					if (sky[p][x + k] > y) y = sky[p][x + k];
-				if (y + im->h <= PT && y < by) { bp = p; bx = x; by = y; }
+			for (int i = 0; i < nfree[p]; i++) {
+				const rect *f = &freer[p][i];
+				if (bw > f->w || bh > f->h) continue;
+				int ds = f->w - bw, dl = f->h - bh;
+				if (ds > dl) { int t = ds; ds = dl; dl = t; }
+				if (ds < bs || (ds == bs && dl < bl)) { bs = ds; bl = dl; bp = p; bi = i; }
 			}
 		if (bp < 0)
-			die("%s: the game's %d VRAM pages are full", im->what, GP_PAGES);
-		im->page = bp; im->u = bx; im->v = by;
-		for (int k = 0; k < im->w; k++)
-			sky[bp][bx + k] = by + im->h;
-		if (by + im->h > page_rows[bp])
-			page_rows[bp] = by + im->h;
-		for (int y = 0; y < im->h; y++)
-			memcpy(&gpage[bp][by + y][bx], im->px + (size_t) y * im->w, (size_t) im->w);
+			die("%s (%dx%d): the game's %d VRAM pages are full (%ld K texels placed of %ld K)",
+			    im->what, bw, bh, GP_PAGES, area / 1024, total / 1024);
+		rect at = { freer[bp][bi].x, freer[bp][bi].y, bw, bh };
+		im->page = bp; im->u = at.x + b; im->v = at.y + b;
+		area += (long) bw * bh;
+		/* split the free rectangles it overlaps */
+		rect old[MAX_FREE];
+		int nold = nfree[bp];
+		memcpy(old, freer[bp], (size_t) nold * sizeof *old);
+		nfree[bp] = 0;
+		for (int i = 0; i < nold; i++) {
+			rect f = old[i];
+			if (at.x >= f.x + f.w || at.x + at.w <= f.x || at.y >= f.y + f.h || at.y + at.h <= f.y) {
+				free_add(bp, f);
+				continue;
+			}
+			free_add(bp, (rect) { f.x, f.y, at.x - f.x, f.h });                                   /* left */
+			free_add(bp, (rect) { at.x + at.w, f.y, f.x + f.w - (at.x + at.w), f.h });             /* right */
+			free_add(bp, (rect) { f.x, f.y, f.w, at.y - f.y });                                   /* above */
+			free_add(bp, (rect) { f.x, at.y + at.h, f.w, f.y + f.h - (at.y + at.h) });             /* below */
+		}
+		if (at.y + bh > page_rows[bp])
+			page_rows[bp] = at.y + bh;
+		for (int y = 0; y < bh; y++)                /* the border: the edge texels again */
+			for (int x = 0; x < bw; x++) {
+				int sx = x - b, sy = y - b;
+				if (sx < 0) sx = 0;
+				if (sx >= im->w) sx = im->w - 1;
+				if (sy < 0) sy = 0;
+				if (sy >= im->h) sy = im->h - 1;
+				gpage[bp][at.y + y][at.x + x] = im->px[(size_t) sy * im->w + sx];
+			}
 	}
+	printf("qcook: %d images, %ld K texels of %d K in the game's pages\n", nimages, area / 1024,
+	       GP_PAGES * PT * PT / 1024);
 }
 
 static uint16_t page_tpage(int p)   /* 8bpp, no semi-transparency */
@@ -326,25 +400,28 @@ typedef struct {
 	int         id;
 	int         view;      /* a view model: nearest-first, seen from the origin */
 	int         flat;      /* QGF_FLAT */
+	int         skin_div;  /* the skin's resolution: 1 / skin_div (a view model
+	                          2: the screen never shows it larger; a
+	                          projectile 4: small and far) */
 	double      scale[3];  /* extra scale per axis (the lightning bolt is drawn
 	                          twice as long: one bolt per 60 units, not 30) */
 } model_spec;
 
 static const model_spec MODELS[] = {
-	{ "progs/v_axe.mdl",    QGM_V_AXE,    1, 0, { 1, 1, 1 } },
-	{ "progs/v_shot.mdl",   QGM_V_SHOT,   1, 0, { 1, 1, 1 } },
-	{ "progs/v_shot2.mdl",  QGM_V_SHOT2,  1, 0, { 1, 1, 1 } },
-	{ "progs/v_nail.mdl",   QGM_V_NAIL,   1, 0, { 1, 1, 1 } },
-	{ "progs/v_nail2.mdl",  QGM_V_NAIL2,  1, 0, { 1, 1, 1 } },
-	{ "progs/v_rock.mdl",   QGM_V_ROCK,   1, 0, { 1, 1, 1 } },
-	{ "progs/v_rock2.mdl",  QGM_V_ROCK2,  1, 0, { 1, 1, 1 } },
-	{ "progs/v_light.mdl",  QGM_V_LIGHT,  1, 0, { 1, 1, 1 } },
-	{ "progs/spike.mdl",    QGM_SPIKE,    0, 1, { 1, 1, 1 } },
-	{ "progs/s_spike.mdl",  QGM_S_SPIKE,  0, 1, { 1, 1, 1 } },
-	{ "progs/grenade.mdl",  QGM_GRENADE,  0, 1, { 1, 1, 1 } },
-	{ "progs/missile.mdl",  QGM_MISSILE,  0, 0, { 1, 1, 1 } },
-	{ "progs/bolt2.mdl",    QGM_BOLT,     0, 1, { 2, 1, 1 } },
-	{ "progs/s_explod.spr", QGM_S_EXPLOD, 0, 1, { 1, 1, 1 } },
+	{ "progs/v_axe.mdl",    QGM_V_AXE,    1, 0, 2, { 1, 1, 1 } },
+	{ "progs/v_shot.mdl",   QGM_V_SHOT,   1, 0, 2, { 1, 1, 1 } },
+	{ "progs/v_shot2.mdl",  QGM_V_SHOT2,  1, 0, 2, { 1, 1, 1 } },
+	{ "progs/v_nail.mdl",   QGM_V_NAIL,   1, 0, 2, { 1, 1, 1 } },
+	{ "progs/v_nail2.mdl",  QGM_V_NAIL2,  1, 0, 2, { 1, 1, 1 } },
+	{ "progs/v_rock.mdl",   QGM_V_ROCK,   1, 0, 2, { 1, 1, 1 } },
+	{ "progs/v_rock2.mdl",  QGM_V_ROCK2,  1, 0, 2, { 1, 1, 1 } },
+	{ "progs/v_light.mdl",  QGM_V_LIGHT,  1, 0, 2, { 1, 1, 1 } },
+	{ "progs/spike.mdl",    QGM_SPIKE,    0, 1, 4, { 1, 1, 1 } },
+	{ "progs/s_spike.mdl",  QGM_S_SPIKE,  0, 1, 4, { 1, 1, 1 } },
+	{ "progs/grenade.mdl",  QGM_GRENADE,  0, 1, 4, { 1, 1, 1 } },
+	{ "progs/missile.mdl",  QGM_MISSILE,  0, 0, 4, { 1, 1, 1 } },
+	{ "progs/bolt2.mdl",    QGM_BOLT,     0, 1, 4, { 2, 1, 1 } },
+	{ "progs/s_explod.spr", QGM_S_EXPLOD, 0, 1, 1, { 1, 1, 1 } },
 };
 #define NUM_MODELS (int) (sizeof MODELS / sizeof MODELS[0])
 
@@ -368,7 +445,7 @@ static void model_prepare(model_src *ms)
 		spr_t *s = &ms->spr;
 		spr_parse(s, ms->data, ms->len, sp->file);
 		/* the frames side by side, rows of as many as fit 256 texels */
-		int per_row = PT / s->frames[0].w;
+		int per_row = (PT - 2 * GP_BORDER) / s->frames[0].w;
 		if (per_row < 1) per_row = 1;
 		int rows = (s->nframes + per_row - 1) / per_row;
 		int cw = 0, ch = 0;
@@ -376,7 +453,7 @@ static void model_prepare(model_src *ms)
 			if (s->frames[f].w > cw) cw = s->frames[f].w;
 			if (s->frames[f].h > ch) ch = s->frames[f].h;
 		}
-		ms->im = add_image(sp->file, cw * (s->nframes < per_row ? s->nframes : per_row), ch * rows);
+		ms->im = add_image(sp->file, cw * (s->nframes < per_row ? s->nframes : per_row), ch * rows, GP_BORDER);
 		for (int f = 0; f < s->nframes; f++) {
 			ms->fx[f] = (f % per_row) * cw;
 			ms->fy[f] = (f / per_row) * ch;
@@ -388,22 +465,90 @@ static void model_prepare(model_src *ms)
 	}
 	mdl_t *m = &ms->mdl;
 	mdl_parse(m, ms->data, ms->len, sp->file);
-	/* the skin at half resolution */
-	int w2 = (m->skinw + 1) / 2, h2 = (m->skinh + 1) / 2;
-	ms->im = add_image(sp->file, w2, h2);
+	/* The skin's used texels: the ones whose centre is inside a triangle's
+	   texture coordinates (a back face's onseam vertices on the right
+	   half, as the renderer maps them); no margin, since the skin's fill
+	   begins right at the painted area's edge. The rest of a Quake skin is
+	   a flat blue fill that no triangle samples at full resolution, but
+	   that the reduction below would average into the edge texels: that
+	   is where blue pixels on the barrels came from. */
+	int sw = m->skinw, sh = m->skinh;
+	uint8_t *cover = xcalloc((size_t) sw * sh, 1);
+	for (int t = 0; t < m->ntris; t++) {
+		double tx[3], ty[3];
+		for (int k = 0; k < 3; k++) {
+			int vi = m->tris[t][k + 1];
+			tx[k] = m->st[vi][1] + (!m->tris[t][0] && m->st[vi][0] ? sw / 2 : 0) + 0.5;
+			ty[k] = m->st[vi][2] + 0.5;
+		}
+		double area = (tx[1] - tx[0]) * (ty[2] - ty[0]) - (tx[2] - tx[0]) * (ty[1] - ty[0]);
+		if (area == 0) continue;
+		double sgn = area > 0 ? 1 : -1;
+		int x0 = (int) floor(fmin(fmin(tx[0], tx[1]), tx[2])) - 1, x1 = (int) ceil(fmax(fmax(tx[0], tx[1]), tx[2])) + 1;
+		int y0 = (int) floor(fmin(fmin(ty[0], ty[1]), ty[2])) - 1, y1 = (int) ceil(fmax(fmax(ty[0], ty[1]), ty[2])) + 1;
+		for (int y = y0 < 0 ? 0 : y0; y <= y1 && y < sh; y++)
+			for (int x = x0 < 0 ? 0 : x0; x <= x1 && x < sw; x++) {
+				double px = x + 0.5, py = y + 0.5, in = 1;
+				for (int e = 0; e < 3 && in; e++) {           /* on the inner side of each edge */
+					int a = e, b = (e + 1) % 3;
+					double ex = tx[b] - tx[a], ey = ty[b] - ty[a], len = sqrt(ex * ex + ey * ey);
+					double dd = sgn * (ex * (py - ty[a]) - ey * (px - tx[a])) / (len > 0 ? len : 1);
+					if (dd < -0.01) in = 0;
+				}
+				if (in) cover[y * sw + x] = 1;
+			}
+	}
+	/* the skin at 1 / skin_div resolution: the used texels of each block
+	   averaged; a block with none takes its used neighbours' colour, so
+	   the GPU's stray texel next to an edge is never the blue */
+	int d = sp->skin_div, w2 = (sw + d - 1) / d, h2 = (sh + d - 1) / d;
+	ms->im = add_image(sp->file, w2, h2, GP_BORDER);
+	uint8_t *done = xcalloc((size_t) w2 * h2, 1);
+	int (*rgb)[3] = xcalloc((size_t) w2 * h2, sizeof *rgb);
 	for (int y = 0; y < h2; y++)
 		for (int x = 0; x < w2; x++) {
 			int r = 0, g = 0, b = 0, n = 0;
-			for (int dy = 0; dy < 2; dy++)
-				for (int dx = 0; dx < 2; dx++) {
-					int sx = 2 * x + dx, sy = 2 * y + dy;
-					if (sx >= m->skinw || sy >= m->skinh) continue;
-					int c = m->skin[sy * m->skinw + sx];
+			for (int dy = 0; dy < d; dy++)
+				for (int dx = 0; dx < d; dx++) {
+					int sx = d * x + dx, sy = d * y + dy;
+					if (sx >= sw || sy >= sh || !cover[sy * sw + sx]) continue;
+					int c = m->skin[sy * sw + sx];
 					r += palette[c * 3]; g += palette[c * 3 + 1]; b += palette[c * 3 + 2];
 					n++;
 				}
-			ms->im->px[y * w2 + x] = (uint8_t) nearest_colour(r / n, g / n, b / n);
+			if (n) {
+				rgb[y * w2 + x][0] = r / n; rgb[y * w2 + x][1] = g / n; rgb[y * w2 + x][2] = b / n;
+				done[y * w2 + x] = 1;
+			}
 		}
+	for (int pass = 0; pass < 4; pass++) {
+		uint8_t *now = xmalloc((size_t) w2 * h2);
+		memcpy(now, done, (size_t) w2 * h2);
+		for (int y = 0; y < h2; y++)
+			for (int x = 0; x < w2; x++) {
+				if (now[y * w2 + x]) continue;
+				int r = 0, g = 0, b = 0, n = 0;
+				for (int dy = -1; dy <= 1; dy++)
+					for (int dx = -1; dx <= 1; dx++) {
+						int nx = x + dx, ny = y + dy;
+						if (nx < 0 || ny < 0 || nx >= w2 || ny >= h2 || !now[ny * w2 + nx]) continue;
+						r += rgb[ny * w2 + nx][0]; g += rgb[ny * w2 + nx][1]; b += rgb[ny * w2 + nx][2];
+						n++;
+					}
+				if (n) {
+					rgb[y * w2 + x][0] = r / n; rgb[y * w2 + x][1] = g / n; rgb[y * w2 + x][2] = b / n;
+					done[y * w2 + x] = 1;
+				}
+			}
+		free(now);
+	}
+	for (int i = 0; i < w2 * h2; i++)
+		ms->im->px[i] = done[i] ? (uint8_t) nearest_colour(rgb[i][0], rgb[i][1], rgb[i][2])
+		                        : (uint8_t) nearest_colour(palette[m->skin[0] * 3], palette[m->skin[0] * 3 + 1],
+		                                                   palette[m->skin[0] * 3 + 2]);
+	free(cover);
+	free(done);
+	free(rgb);
 }
 
 #define REC_MAX_TRIS 48          /* 48 x 40 B + 8 < QW_MAX_REC_PKT */
@@ -437,6 +582,19 @@ static int rec_has(const mrec *r, int vi)
 }
 
 /* a model vertex of frame f in vertex units */
+/* the plane normal of a triangle, (v1 - v0) x (v2 - v0) */
+static void tri_normal(int16_t v[3][3], double n[3])
+{
+	double a[3], b[3];
+	for (int k = 0; k < 3; k++) {
+		a[k] = v[1][k] - v[0][k];
+		b[k] = v[2][k] - v[0][k];
+	}
+	n[0] = a[1] * b[2] - a[2] * b[1];
+	n[1] = a[2] * b[0] - a[0] * b[2];
+	n[2] = a[0] * b[1] - a[1] * b[0];
+}
+
 static void mdl_vertex(const mdl_t *m, int f, int vi, const double extra[3], int16_t out[3])
 {
 	const tvert *tv = &m->frames[f][vi];
@@ -531,39 +689,59 @@ static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 	out->tex.tpage  = page_tpage(im->page);
 	out->tex.window = 0xE2000000u;
 
-	/* A view model is only ever seen from the eye, at its origin, along +x
-	   (its angles are the view's): a triangle behind the near plane in every
-	   frame (x < 3 units: the renderer clips it at 5, the bob moves the model
-	   by 1.6 at most) is never drawn, nor is one whose vertex normals all
-	   point away from the eye in every frame (back-facing, with a margin
-	   for the smoothed normals near a silhouette). Both are dropped. */
+	/* A view model is only ever seen from the eye, which sits about the
+	   model's origin (Quake's view.c: the gun's origin is the view's plus
+	   0.4 x bob forward and bob up, the view size's 2-unit fudge; the bob
+	   runs -2.56 .. 4): a triangle behind the near plane in every frame
+	   (x < 3 units: the renderer clips at 5) is never drawn, nor is one
+	   whose plane keeps every eye position on its back in every frame
+	   (Quake's alias drawer skips a triangle wound backwards on screen,
+	   d_polyse.c D_DrawNonSubdiv, zero-area ones included). Both are
+	   dropped. The file's winding convention is read off the model
+	   itself: the side its vertex normals point to, by majority. */
+	static const double eye[8][3] = {
+		{ -2.5, -1, -7 }, { 2, -1, -7 }, { -2.5, 1, -7 }, { 2, 1, -7 },
+		{ -2.5, -1, 3.5 }, { 2, -1, 3.5 }, { -2.5, 1, 3.5 }, { 2, 1, 3.5 } };
 	uint8_t *keep = xmalloc((size_t) m->ntris);
 	int dropped_near = 0, dropped_back = 0;
+	double wind = 0;
+	for (int t = 0; t < m->ntris && sp->view; t++) {
+		int16_t v[3][3];
+		double n[3] = { 0, 0, 0 }, c[3];
+		for (int k = 0; k < 3; k++) {
+			int vi = m->tris[t][k + 1];
+			mdl_vertex(m, 0, vi, sp->scale, v[k]);
+			int ni = m->frames[0][vi].n;
+			if (ni >= QG_NORMALS) ni = 0;
+			for (int a = 0; a < 3; a++) n[a] += anorms[ni][a];
+		}
+		tri_normal(v, c);
+		double l = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+		if (l > 0)
+			wind += (c[0] * n[0] + c[1] * n[1] + c[2] * n[2]) / l;
+	}
 	for (int t = 0; t < m->ntris; t++) {
 		keep[t] = 1;
 		if (!sp->view)
 			continue;
 		int behind = 1, back = 1;
 		for (int f = 0; f < m->nframes && (behind || back); f++) {
-			double c[3] = { 0, 0, 0 }, n[3] = { 0, 0, 0 };
-			for (int k = 1; k < 4; k++) {
-				int16_t v[3];
-				int vi = m->tris[t][k];
-				mdl_vertex(m, f, vi, sp->scale, v);
-				if (v[0] >= 3 * QW_VSCALE)
+			int16_t v[3][3];
+			double n[3];
+			for (int k = 0; k < 3; k++) {
+				mdl_vertex(m, f, m->tris[t][k + 1], sp->scale, v[k]);
+				if (v[k][0] >= 3 * QW_VSCALE)
 					behind = 0;
-				int ni = m->frames[f][vi].n;
-				if (ni >= QG_NORMALS) ni = 0;
-				for (int a = 0; a < 3; a++) {
-					c[a] += v[a] / 3.0;
-					n[a] += anorms[ni][a] / 3.0;
-				}
 			}
-			double cl = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
-			double nl = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-			double dot = cl > 0 && nl > 0 ? (n[0] * c[0] + n[1] * c[1] + n[2] * c[2]) / (cl * nl) : 0;
-			if (dot < 0.3)                      /* facing the eye, or near the silhouette */
-				back = 0;
+			tri_normal(v, n);
+			for (int e = 0; e < 8; e++) {
+				double d = 0;
+				for (int a = 0; a < 3; a++)
+					d += n[a] * (eye[e][a] * QW_VSCALE - v[0][a]);
+				if (wind < 0) d = -d;
+				if (d > 0)                  /* this eye position sees its front */
+					back = 0;
+			}
 		}
 		if (behind) { keep[t] = 0; dropped_near++; }
 		else if (back) { keep[t] = 0; dropped_back++; }
@@ -633,11 +811,12 @@ static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 			int ss = m->st[vi][1], tt = m->st[vi][2];
 			if (!m->tris[t][0] && m->st[vi][0])          /* back face: onseam */
 				ss += m->skinw / 2;
-			long u = im->u + lround(ss / 2.0), v = im->v + lround(tt / 2.0);
-			if (u < 0) u = 0;
-			if (u > 255) u = 255;
-			if (v < 0) v = 0;
-			if (v > 255) v = 255;
+			/* the reduced skin's texel holding Quake's texel (s, t) */
+			long u = im->u + ss / sp->skin_div, v = im->v + tt / sp->skin_div;
+			if (u < im->u) u = im->u;
+			if (u > im->u + im->w - 1) u = im->u + im->w - 1;
+			if (v < im->v) v = im->v;
+			if (v > im->v + im->h - 1) v = im->v + im->h - 1;
 			tri->idx[k] = (uint8_t) (s[k] * 4);
 			tri->uv[k]  = (uint16_t) (u | v << 8);
 		}
@@ -808,7 +987,7 @@ static void pics_prepare(void)
 			/* conchars: 16 x 16 glyphs of 8 x 8; the yellow digits are
 			   characters 18-27 (row 1, columns 2-11); 0 is transparent there */
 			if (size < 128 * 128) die("gfx.wad: conchars too small");
-			ps->im = add_image(ps->lump, 80, 8);
+			ps->im = add_image(ps->lump, 80, 8, 0);
 			for (int y = 0; y < 8; y++)
 				for (int x = 0; x < 80; x++) {
 					uint8_t c = d[(8 + y) * 128 + 16 + x];
@@ -821,7 +1000,7 @@ static void pics_prepare(void)
 		if (lw < 1 || lh < 1 || (uint32_t) lw * (uint32_t) lh + 8 > size) die("gfx.wad: %s bad size", ps->lump);
 		int w = ps->w ? ps->w : lw;
 		if (ps->x0 + w > lw) die("gfx.wad: %s crop past its width", ps->lump);
-		ps->im = add_image(ps->lump, w, lh);
+		ps->im = add_image(ps->lump, w, lh, 0);
 		for (int y = 0; y < lh; y++)
 			memcpy(ps->im->px + (size_t) y * w, d + 8 + (size_t) y * lw + ps->x0, (size_t) w);
 	}

@@ -15,13 +15,17 @@
 #include <stdio.h>
 #include <string.h>
 #include <psxgpu.h>
+#include <hwregs_c.h>
 
 #include "bench.h"
 #include "cd.h"
 #include "game.h"
 #include "gdata.h"
 #include "hud.h"
+#include "dlight.h"
 #include "mem.h"
+#include "music.h"
+#include "snd.h"
 #include "pad.h"
 #include "clip.h"
 #include "pmove.h"
@@ -114,10 +118,12 @@ static void stick(int *x, int *y)
                   weapon, Triangle walk, Circle level the view, d-pad a
                   weapon group: up shotguns and axe, right nailguns, down
                   launchers, left lightning;
-     digital pad  d-pad walk / turn, L1 / R1 strafe, L2 / R2 look, Square
-                  fire, Cross jump, Circle / Triangle next / previous weapon;
+     digital pad  the same buttons; d-pad walk / turn, and with Triangle
+                  held strafe / look up and down (Quake's +strafe, +klook);
      SELECT + Cross noclip, SELECT + Square respawn; START the debug
      overlay; SELECT + START the map menu (run_frame).
+   A DualShock is switched to analog mode by pad_init (engine/pad.c), so
+   the digital scheme is for digital pads only.
    Turning and looking advance per physics tick (`ticks` this frame), so
    their speed does not depend on the frame rate. */
 static void player_cmd(game_cmd_t *cmd, int ticks)
@@ -158,19 +164,23 @@ static void player_cmd(game_cmd_t *cmd, int ticks)
 			if (pad.pressed & PAD_LEFT)  cmd->weapon_group = 3;
 		}
 	} else {
-		if (pad.held & PAD_UP)    cmd->fwd  =  PM_AXIS;
-		if (pad.held & PAD_DOWN)  cmd->fwd  = -PM_AXIS;
-		if (pad.held & PAD_LEFT)  yaw += turn;
-		if (pad.held & PAD_RIGHT) yaw -= turn;
-		if (pad.held & PAD_L1)    cmd->side = -PM_AXIS;
-		if (pad.held & PAD_R1)    cmd->side =  PM_AXIS;
-		if ((pad.held & PAD_L2) && !(pad.held & PAD_R2)) pitch -= look;
-		if ((pad.held & PAD_R2) && !(pad.held & PAD_L2)) pitch += look;
+		if (pad.held & PAD_TRIANGLE) {                  /* +strafe, +klook */
+			if (pad.held & PAD_LEFT)  cmd->side = -PM_AXIS;
+			if (pad.held & PAD_RIGHT) cmd->side =  PM_AXIS;
+			if (pad.held & PAD_UP)    pitch -= look;
+			if (pad.held & PAD_DOWN)  pitch += look;
+		} else {
+			if (pad.held & PAD_UP)    cmd->fwd  =  PM_AXIS;
+			if (pad.held & PAD_DOWN)  cmd->fwd  = -PM_AXIS;
+			if (pad.held & PAD_LEFT)  yaw += turn;
+			if (pad.held & PAD_RIGHT) yaw -= turn;
+		}
 		if (!sel) {
-			cmd->fire = (pad.held & PAD_SQUARE) != 0;
-			cmd->jump = (pad.pressed & PAD_CROSS) != 0;
-			cmd->weapon_next = (pad.pressed & PAD_CIRCLE) != 0;
-			cmd->weapon_prev = (pad.pressed & PAD_TRIANGLE) != 0;
+			cmd->fire = (pad.held & (PAD_R2 | PAD_SQUARE)) != 0;
+			cmd->jump = (pad.pressed & (PAD_L2 | PAD_CROSS)) != 0;
+			cmd->weapon_next = (pad.pressed & PAD_R1) != 0;
+			cmd->weapon_prev = (pad.pressed & PAD_L1) != 0;
+			cmd->centre = (pad.pressed & PAD_CIRCLE) != 0;
 		}
 	}
 	if (pl.dead)
@@ -249,6 +259,8 @@ static int load_level(int map, int fid)
 {
 	world_ok = 0;
 	load_map = map;
+	music_stop();                               /* one drive: the reads need it */
+	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	for (int f = fid; f >= 0 && !world_ok; f--) {
 		load_fid = f;
 		world_ok = world_load(map, f, set_tex4, LOAD_PROGRESS);
@@ -261,6 +273,8 @@ static int load_level(int map, int fid)
 			printf("level: %s does not fit at %s, loaded at %s\n", world_map_name(map),
 			       fidelity_name[fid], fidelity_name[fidelity]);
 		r_bind_world();
+		snd_map_start();
+		music_play(snd_cd_track());
 	}
 	return world_ok;
 }
@@ -284,9 +298,12 @@ static void frame_work(void)
 	if (!world_ok)
 		return;
 	r_set_view(cam.pos, cam.yaw, cam.pitch, cam.roll);
-	if (game_active)
+	if (game_active) {
+		uint32_t t0 = prof_now();
 		game_render();                  /* the render list, the view model: their
 		                                   matrices come from this frame's view */
+		prof_add(PROF_ENTS, t0, prof_now());   /* (the dlights' share counted apart) */
+	}
 	r_frame();
 	if (game_active)
 		game_render_done();
@@ -351,9 +368,18 @@ static void run_frame(int interactive, int dump)
 		player_update();
 	}
 	frame_work();
-	if (game_active)
+	if (game_active) {
+		uint32_t t1 = prof_now();
 		hud_draw();
+		uint32_t t2 = prof_now();
+		snd_update(cam.pos, cam.yaw, cam.pitch, cam.roll, game_tick_count);
+		uint32_t t3 = prof_now();
+		prof_add(PROF_HUD, t1, t2);
+		prof_add(PROF_SND, t2, t3);
+	}
 	prof_add(PROF_FRAME, t0, prof_now());
+	if (interactive)
+		music_tick();
 	if (interactive && overlay_on)
 		draw_overlay();
 	if (dump)
@@ -445,6 +471,10 @@ static void menu_frame(void)
 	int n = world_num_maps();
 
 	pad_read();
+	if (pad.pressed & (PAD_UP | PAD_DOWN | PAD_LEFT | PAD_RIGHT | PAD_L1 | PAD_R1 | PAD_L2 | PAD_R2))
+		snd_start(ENT_PLAYER, -1, S_MENU1, cam.pos, 255, ATTN_NORM);   /* S_LocalSound */
+	if (pad.pressed & (PAD_CROSS | PAD_START | PAD_CIRCLE))
+		snd_start(ENT_PLAYER, -1, S_MENU2, cam.pos, 255, ATTN_NORM);
 	if (n) {
 		if (pad.pressed & PAD_UP)
 			menu_sel = (menu_sel + n - 1) % n;
@@ -521,6 +551,10 @@ static void menu_frame(void)
 #ifndef Q1PSX_BENCH_MAPS
 #define Q1PSX_BENCH_MAPS 0    /* 1: every map on the disc (BENCH_MAPS=1 scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_HASHONLY
+#define Q1PSX_BENCH_HASHONLY 0  /* 1: the dumps are hashes only (HASHONLY=1 scripts/bench.sh) */
+#endif
+#define BENCH_DUMP (Q1PSX_BENCH_HASHONLY ? 2 : 1)
 #ifndef Q1PSX_BENCH_GAME
 #define Q1PSX_BENCH_GAME 0    /* 1: the game: every weapon fired, both HUDs, one frame
                                  dumped each (BENCH_GAME=1 scripts/bench.sh) */
@@ -771,6 +805,7 @@ static void bench_maps(void)
    HUD styles. The cost of the frame goes in the bench line. */
 static void bench_game(void)
 {
+	snd_log = 1;                                      /* every sound start, for the diff */
 	static const char *const wname[W_COUNT] = { "axe", "shotgun", "sshotgun", "nailgun",
 	                                            "snailgun", "glauncher", "rlauncher", "lightning" };
 	static char names[W_COUNT + 2][12];
@@ -811,7 +846,7 @@ static void bench_game(void)
 		}
 		bench_print(&acc);
 		printf("D %s\n", names[w]);
-		run_frame(0, 1);
+		run_frame(0, BENCH_DUMP);
 		for (int i = 0; i < 90; i++)                    /* the effects die down */
 			game_tick(&cmd);
 	}
@@ -839,7 +874,7 @@ static void bench_game(void)
 			if (t >= 18 && t % 6 == 0 && (t - 18) / 6 < 8) {
 				snprintf(wn[(t - 18) / 6], sizeof wn[0], "gwalk%d", (t - 18) / 6);
 				printf("D %s\n", wn[(t - 18) / 6]);
-				run_frame(0, 1);
+				run_frame(0, BENCH_DUMP);
 			}
 		}
 	}
@@ -888,7 +923,7 @@ static void run_bench(void)
 		}
 		bench_print(&acc);
 		printf("D view %u\n", v);
-		run_frame(0, 1);
+		run_frame(0, BENCH_DUMP);
 	}
 	/* scripted movement (no pad in headless runs): settle, accelerate,
 	   jump, run north into the end wall (stairs down, ramp up), then turn
@@ -956,10 +991,17 @@ static void run_bench(void)
 
 int main(void)
 {
+	/* the BIOS console (printf) goes out on SIO1 at its boot-time baud rate;
+	   an emulator that times the serial port (PCSX-Redux since 2026-10)
+	   would cap the bench's display-list dumps at a few KB/s */
+	SIO_MODE(1) = 0x004d;                  /* 8 bits, 1 stop bit, x1 */
+	SIO_BAUD(1) = 8;
 	vid_init();
 	pad_init();
 	prof_init();
 	cd_init();
+	snd_init();
+	music_init();
 	r_init();
 	vid_set_bg(40, 44, 60);   /* flat "sky" until R3.4 */
 	apply_settings();
@@ -968,6 +1010,7 @@ int main(void)
 
 	world_scan_maps();
 	gdata_load();
+	dl_init();
 	game_init();
 #ifdef Q1PSX_BENCH
 	fid_wanted = Q1PSX_BENCH_FID;

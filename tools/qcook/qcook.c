@@ -3,6 +3,7 @@
  *
  *   qcook map   --pak <pak0.pak> --map maps/start.bsp [--fidelity high]
  *               --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld>
+ *               [--sounds <out.snd>]                (tools/qcook/sound.c)
  *   qcook check <file.wld>
  *   qcook game  --pak <pak0.pak> --out <game.dat>     (tools/qcook/game.c)
  *
@@ -185,6 +186,8 @@ void bsp_parse(bsp_t *b, const uint8_t *raw, uint32_t len)
 		}
 		d->firstmark = rd_u16(p + 20);
 		d->nummarks  = rd_u16(p + 22);
+		for (int k = 0; k < 4; k++)
+			d->ambient[k] = p[24 + k];
 	}
 
 	p = lump(b, L_TEXINFO, &n, 40);
@@ -315,6 +318,7 @@ static int cmd_map(int argc, char **argv)
 	const char *out_tex4 = arg(argc, argv, "--tex4", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
 	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
+	const char *out_snd  = arg(argc, argv, "--sounds", NULL);
 	light_gain           = atof(arg(argc, argv, "--light-gain", "1.5"));
 	if (!pak_path || !map || !out_tex || !out_wld)
 		die("usage: qcook map --pak <pak> --map <name> [--fidelity f] --tex <out> --world <out>"
@@ -345,6 +349,8 @@ static int cmd_map(int argc, char **argv)
 	tex_set ts;
 	tex_build(&ts, &bsp, pal, fid, out_tex, out_tex4);
 	world_build(&bsp, &ts, fid, out_wld);
+	if (out_snd)
+		sound_build(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, out_snd);
 	return world_check(out_wld);
 }
 
@@ -360,7 +366,7 @@ int main(int argc, char **argv)
 	fprintf(stderr,
 	        "usage:\n"
 	        "  qcook map --pak <pak> --map <maps/x.bsp> [--fidelity low|medium|high|ultra]\n"
-	        "            --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld>\n"
+	        "            --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld> [--sounds <out.snd>]\n"
 	        "  qcook check <file.wld>\n"
 	        "  qcook game --pak <pak0.pak> --out <game.dat>\n");
 	return 2;

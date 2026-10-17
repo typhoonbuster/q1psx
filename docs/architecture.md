@@ -107,11 +107,19 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
 | Level arena | 1152 KB | world render data + clip hulls + PVS (the biggest map 696 KB) |
-| Game arena | 160 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 77 KB), filled once at boot |
+| Game arena | 160 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 66 KB), filled once at boot, plus the sound bank's directory slots (7 KB) and the dynamic lights' save buffer (17 KB) |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
 The level arena is a bump allocator that is reset on map load. There is no
 general-purpose heap at runtime.
+
+### SPU RAM (512 KB)
+
+The first 4 KB are the hardware's capture buffers; from 0x1010 up, the
+map's sound bank (`MAPS/<MAP>.SND`, formats/qsound.h): every sound the map
+can play as SPU ADPCM, 400-492 KB, uploaded by DMA at map load. No reverb
+work area (reverb off). The music never touches it: it is CD-DA
+(`docs/porting-notes.md` §23).
 
 ### Scratchpad (1 KB) — owned by the renderer during `r_frame`
 
@@ -142,6 +150,9 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 - CLUT: Quake's palette, one 256-entry row at (0, 480); the game data's own
   copy with index 255 transparent at (0, 504). A debug font lives in a
   corner (x ≥ 960).
+- The game's images (pages 6..9) are packed by MaxRects with a 2-texel
+  border of replicated edge texels around every skin and sprite sheet:
+  the GPU's texture coordinates stray a texel past a triangle's edge.
 - 4-bit textures (menu option, `<MAP>_<N>.TX4`, `docs/porting-notes.md`
   §20): the same tiles at the same texel positions, pages at x = 320 + 64 p
   on the first half (y = 0), and one 16-entry CLUT per texture from

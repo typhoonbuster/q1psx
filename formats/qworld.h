@@ -36,7 +36,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWV8"
+#define QWORLD_MAGIC "QWV9"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
@@ -61,7 +61,7 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWV8"                                  */
+	char     magic[4];             /* "QWV9"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
@@ -81,7 +81,9 @@ typedef struct {
 	uint32_t ofs_tex, num_tex;     /* qw_tex[num_tex], indexed by record.tex  */
 	uint32_t ofs_verts, num_verts; /* qw_vert[num_verts]: the map's vertex pool,
 	                                  shared by every record (16-bit indices) */
-	uint32_t reserved[1];
+	uint32_t ofs_ambient;          /* uint8_t[num_leaves][2]: the leaf's water and
+	                                  sky ambient sound levels (Quake's
+	                                  ambient_level[AMBIENT_WATER / SKY])      */
 } qw_header;
 
 /* One per Quake miptex (unused ones are zero). */
@@ -108,7 +110,8 @@ typedef struct {
 	int16_t  h[3];         /* +8  bbox half extents, vertex units              */
 	uint16_t plane3;       /* +14 plane index x 3 = word offset in the table   */
 	uint16_t parent;       /* +16 word offset of the parent, or QW_NOPARENT    */
-	uint16_t pad;          /* +18                                              */
+	uint16_t dlstamp;      /* +18 runtime: the frame count when a dynamic light
+	                              reaches the node's box (engine/dlight.c)    */
 	uint32_t child[2];     /* +20 disk: index, bit31 = leaf; RAM: ptr, bit0 = leaf */
 	uint32_t faces[2];     /* +28 front start, back start: disk offsets in the
 	                              face stream, RAM pointers. The back block

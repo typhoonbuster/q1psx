@@ -27,6 +27,10 @@ enum {
 	PROF_R_BLOCK,    /* renderer: block transform + fast-path emit     */
 	PROF_R_SLOW,     /* renderer: near clip / subdivision              */
 	PROF_OVERLAY,    /* debug text                                     */
+	PROF_ENTS,       /* game: the render list (view model, projectiles, particles) */
+	PROF_DLIGHT,     /* game: the dynamic lights on the world          */
+	PROF_SND,        /* sound: the channels respatialized              */
+	PROF_HUD,        /* the HUD's sprites                              */
 	PROF_STAGES
 };
 
@@ -37,6 +41,9 @@ enum {
 	PROF_N_POLYS,     /* polygons emitted                    */
 	PROF_N_SLOW,      /* polygons that took the slow path    */
 	PROF_N_SLOWTRI,   /* triangles the slow path emitted     */
+	PROF_N_DLNODES,   /* dynamic lights: BSP nodes visited   */
+	PROF_N_DLRECS,    /* dynamic lights: records lit         */
+	PROF_N_DLVERTS,   /* dynamic lights: vertices lit        */
 	PROF_COUNTERS
 };
 

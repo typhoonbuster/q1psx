@@ -51,7 +51,8 @@ typedef struct { float n[3]; float dist; int type; } bsp_plane;
 typedef struct { int planenum; int child[2]; int16_t mins[3], maxs[3];
                  int firstface, numfaces; } bsp_node;
 typedef struct { int contents, visofs; int16_t mins[3], maxs[3];
-                 int firstmark, nummarks; } bsp_leaf;
+                 int firstmark, nummarks;
+                 uint8_t ambient[4]; } bsp_leaf;   /* water, sky, slime, lava levels */
 typedef struct { float vecs[2][4]; int miptex, flags; } bsp_texinfo;
 typedef struct { int planenum, side, firstedge, numedges, texinfo;
                  uint8_t styles[4]; int lightofs; } bsp_face;   /* lightofs -1: none */
@@ -86,6 +87,14 @@ typedef struct {
 } bsp_t;
 
 void bsp_parse(bsp_t *b, const uint8_t *raw, uint32_t len);
+
+/* ---------------------------------------------------------------- sound -- */
+
+/* `qcook map --sounds`: the map's sound bank (formats/qsound.h, sound.c).
+   Sounds come from the map's pak, then from pak0. */
+void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
+                 long pak0_len, const char *out_path);
+
 
 /* ------------------------------------------------------------- textures -- */
 

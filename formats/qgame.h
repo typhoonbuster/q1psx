@@ -12,7 +12,8 @@
  *   indices point into whichever frame's pool the engine selects. The light
  *   bytes in the stream are placeholders the engine fills per draw (the
  *   stream must live in RAM). Record face ids are 0: the engine makes them
- *   pass its visibility stamp. Skins are at half resolution, in the palette.
+ *   pass its visibility stamp. Skins are in the palette, at half resolution
+ *   (view models) or a quarter (projectiles).
  *   Sprites are models too: one record (a quad in the view plane, x right,
  *   y down) per frame, drawn alone (QGF_SPRITE).
  *

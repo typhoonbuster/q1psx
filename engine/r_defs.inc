@@ -43,6 +43,24 @@
 .set RS_VIEWMODEL,    196
 .set RS_OFY,          200
 .set RS_VH2,          204
+.set RS_NLIGHTS,      208   # dynamic lights this frame, and their table
+.set RS_LIGHTS,       212   #   (engine/dlight.c rlight_t, 32 bytes each)
+.set DL_O,            0     # int32 origin[3], vertex units
+.set DL_RADIUS,       12    # vertex units
+.set DL_MINLIGHT,     16
+.set DL_RMM,          20    # radius - minlight
+.set DL_SIZE,         32
+.set DLB_FIRST,       16    # dl_blk: word 0 the count, then the entries (dlight.c dlblk_t)
+.set DLB_IX,          0     # the light's impact point on the block's plane, vertex units
+.set DLB_IY,          4
+.set DLB_IZ,          8
+.set DLB_CUTOFF,      12    # rad - minlight
+.set DLB_MIN,         16
+.set DLB_OX,          20    # the light's origin (the records' sphere test)
+.set DLB_OY,          24
+.set DLB_OZ,          28
+.set DLB_RMM,         32    # radius - minlight
+.set DLB_SIZE,        48
 
 # ---- the render list (engine/rlist.h): r_item_t (16 B), r_ent_t (64 B) -----
 .set RI_NEXT,     0     # next item of the list + 1, 0 ends
@@ -66,6 +84,7 @@
 .set N_VISFRAME,  6
 .set N_H,         8     # int16 h[3]
 .set N_PLANE3,   14     # plane index x 3: word offset in the plane table
+.set N_DLSTAMP,  18     # the frame count when a dynamic light reaches the box
 .set N_PARENT,   16     # uint16 word offset into the node array, 0xffff: none
 .set N_CHILD,    20     # child[2] pointers, bit 0 = leaf
 .set N_FACES,    28     # faces[2]: front start, back start (back end = the
@@ -88,10 +107,14 @@
 .set L_SIZE,     28
 
 # ---- qw_record (20 B) + polygons (12 B) -------------------------------------
+.set PL_N,        0     # qw_plane: int16 n[3] x4096
+.set PL_TYPE,     6     # 0..2 axial (n = 4096 on that axis), 3 general
+.set PL_DIST,     8     # x4096, 1/8 units
 .set R_FACE_ID,   0
 .set R_NVERTS,    2
 .set R_NQUADS,    3
 .set R_NTRIS,     4
+.set R_FLAGS,     5     # QWF_SKY 1, QWF_LIQUID 2
 .set R_SIZE,      6
 .set R_TEX,       8     # index into the qw_tex table (8 B: clut, tpage, window)
 .set R_SR,       10     # bounding sphere radius
@@ -147,13 +170,17 @@
 .set SP_CLUT16,   0x3d4   # current texture's clut << 16 (draw_records' v0;
 .set SP_TPAGE16,  0x3d8   # tpage << 16, its v1): the slow path reads them
 .set SP_SPRA,     0x3dc   # slow path: its own return address
-.set SP_FREE3E0,  0x3e0   # (free)
+.set SP_NLIGHTS,  0x3e0   # dynamic lights this frame (r_state.nlights): the
+                          # face blocks go through dr_lights first
 .set SP_T2,       0x3e4   # r_state.warp_t2: 2 x the affine-error threshold
 .set SP_T4,       0x3e8   # 2 x warp_t2: CAREFUL's 2 T2 zmin as one product
 .set SP_K16,      0x3ec   # r_state.warp_k16, the record warp bound (free: 0x3f0 - 0x3fb)
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
+.ifndef R_DLIGHT_C        # 1: the dynamic lights' block hook is the C reference
+.set R_DLIGHT_C,  0       #    (engine/dlight.c dl_block; CMake Q1PSX_DLIGHT_C)
+.endif
 .ifndef R_PROFILE           # renderer counters + stage timers (CMake option
 .set R_PROFILE,   1         # Q1PSX_PROFILE passes --defsym R_PROFILE=0|1)
 .endif

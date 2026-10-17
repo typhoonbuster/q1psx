@@ -35,4 +35,5 @@
 			<dummy sectors="1024"/>
 		</directory_tree>
 	</track>
+	@AUDIO_TRACKS@
 </iso_project>

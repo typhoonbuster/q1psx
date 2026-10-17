@@ -62,6 +62,15 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_PROFILE=${_q1psx_profile})
 target_compile_options(q1psx PRIVATE
 	$<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_PROFILE=${_q1psx_profile}>)
 
+# The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
+# its C reference (engine/dlight.c dl_block); both must give the same frames.
+option(Q1PSX_DLIGHT_C "Dynamic lights through the C reference instead of the asm" OFF)
+if(Q1PSX_DLIGHT_C)
+	target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=1>)
+else()
+	target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=0>)
+endif()
+
 # Headless benchmark variant (CMake preset "bench", driven by scripts/bench.sh):
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
 # no debug overlay. See docs/architecture.md §9.
@@ -72,11 +81,13 @@ set(Q1PSX_BENCH_MAPS 0 CACHE STRING "1: bench every map on the disc (spawn views
 set(Q1PSX_BENCH_GAME 0 CACHE STRING "1: bench the game instead: every weapon fired, both HUDs")
 set(Q1PSX_BENCH_T 8 CACHE STRING "Affine-warp threshold the bench renders with (px)")
 set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
+set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
-		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4})
+		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
+		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY})
 	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
 	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
 		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c")
@@ -136,11 +147,18 @@ endif()
 set(_maps "")
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tex
-                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.tx4)
+                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.tx4
+                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.snd)
 list(SORT _cooked)
 foreach(_src ${_cooked})
 	get_filename_component(_base "${_src}" NAME_WE)     # e1m1_high
 	get_filename_component(_ext "${_src}" EXT)          # .wld
+	if(_ext STREQUAL ".snd")                            # e1m1.snd -> E1M1.SND (formats/qsound.h)
+		string(TOUPPER "${_base}${_ext}" _name)
+		string(APPEND COOKED_ENTRIES
+			"<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t\t")
+		continue()
+	endif()
 	string(REGEX MATCH "^(.+)_(low|medium|high|ultra)$" _m "${_base}")
 	if(NOT _m)
 		continue()
@@ -161,10 +179,26 @@ else()
 	message(STATUS "q1psx: bundling ${_nmaps} cooked maps x 4 fidelity levels")
 endif()
 
+# The music: cooked/music/trackNN.wav (scripts/cook.sh, from the rerelease's
+# tracks) become CD-DA tracks after the data track; the bench's disc has
+# none (Q1PSX_MUSIC OFF).
+option(Q1PSX_MUSIC "Put the cooked music on the disc as CD-DA tracks" ON)
+set(AUDIO_TRACKS "")
+set(_music "")
+if(Q1PSX_MUSIC AND NOT Q1PSX_BENCH)
+	file(GLOB _music CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/music/track*.wav)
+	list(SORT _music)
+	foreach(_src ${_music})
+		string(APPEND AUDIO_TRACKS "<track type=\"audio\" source=\"${_src}\" />\n\t")
+	endforeach()
+	list(LENGTH _music _ntracks)
+	message(STATUS "q1psx: ${_ntracks} CD-DA music tracks")
+endif()
+
 # --- CD image ---------------------------------------------------------------
 psn00bsdk_add_cd_image(
 	iso        # target
 	q1psx      # -> q1psx.bin + q1psx.cue
 	${PROJECT_SOURCE_DIR}/iso/iso.xml
-	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${PROJECT_SOURCE_DIR}/cooked/id1/game.dat   # (a manual cook too)
+	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/cooked/id1/game.dat   # (a manual cook too)
 )

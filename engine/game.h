@@ -61,6 +61,10 @@ typedef struct {
 	int      punch;            /* punchangle pitch, binary degrees (< 0: up) */
 	int      dmg_time, dmg_roll, dmg_pitch;   /* the damage kick            */
 	int      pain_until;       /* tick: the HUD face is in pain until then   */
+	int      pain_finished;    /* tick: no pain sound before (PainSound)     */
+	int      t_width;          /* tick: the next lightning hit sound         */
+	int      jump_flag;        /* this tick's starting z velocity (landing)  */
+	int      muzzleflash;      /* EF_MUZZLEFLASH set this tick (a dlight)    */
 	int      dead, death_tick;
 	int      viewheight;       /* 1/R_POS_SUB units above the box origin     */
 	int      fire, fire_was;   /* the fire button now / last tick            */

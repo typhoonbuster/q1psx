@@ -15,10 +15,10 @@ uint32_t prof_stage[PROF_STAGES];
 uint32_t prof_count[PROF_COUNTERS];
 
 const char *const prof_stage_name[PROF_STAGES] = {
-	"frame", "sim", "r_setup", "r_walk", "r_block", "r_slow", "overlay",
+	"frame", "sim", "r_setup", "r_walk", "r_block", "r_slow", "overlay", "ents", "dlight", "snd", "hud",
 };
 const char *const prof_count_name[PROF_COUNTERS] = {
-	"nodes", "blocks", "verts", "polys", "slow", "slowtri",
+	"nodes", "blocks", "verts", "polys", "slow", "slowtri", "dlnodes", "dlrecs", "dlverts",
 };
 
 static volatile uint32_t prof_hi;

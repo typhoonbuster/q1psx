@@ -1003,3 +1003,61 @@ followed by R0-R4.
   eye) through the slow path without subdivision, projected with H = 40 and
   x4 rows so the GTE's divide holds; the cook drops its never-seen
   triangles. `sp_lerp` no longer clobbers the near plane's register.
+- **The first play session: controls and blue pixels** (2026-10-17).
+  Details: `docs/porting-notes.md` §22.8.
+  - The pad reported itself digital, so the digital mapping was in effect:
+    `engine/pad.c` now switches a DualShock to analog mode itself at boot
+    (the configuration commands on SIO0, with timeouts and retries), and
+    the digital scheme keeps scheme B's buttons (Triangle held: strafe and
+    look on the d-pad).
+  - Blue pixels on the barrels: the skins packed edge to edge bled into
+    each other on the GPU's stray texel (a 2-texel border of their own
+    edge texels now, UVs clamped), and the skins' unused blue fill was
+    averaged into the edge texels by the half-resolution reduction (only
+    the texels inside a triangle count now, the rest takes its neighbours'
+    colours). Projectile skins at a quarter resolution, a MaxRects packer:
+    208 K of 256 K texels placed.
+  - The view model's cook-time back-face culling is geometric (the plane
+    against the eye's box in every frame) instead of vertex-normal based.
+  - PCSX-Redux's newer builds run headless at real-time speed: the game
+    bench's default limit is 420 s (TESTING.md).
+- **Sound and music** (2026-10-17; CD-DA so the music takes no RAM). Details:
+  `docs/porting-notes.md` §23.
+  - `qcook map --sounds`: one bank per map (`formats/qsound.h`, QSB1,
+    `MAPS/<MAP>.SND`): Quake's always-precached set less what the map
+    cannot trigger (no water: no drowning...), the ambient sounds its
+    entities spawn with, the area ambients; WAVs read as `GetWavinfo` does
+    (cue point and mark length = the loop), encoded to SPU ADPCM
+    (best filter and shift per block, loops block-aligned); the longest
+    looping ambients halved in rate when the 508 KB of the SPU overflow.
+    The world file carries each leaf's water and sky ambient levels
+    (QWV9).
+  - `engine/snd.c`: snd_dma.c on 24 voices — 2 area ambients (the camera
+    leaf's levels, faded), 8 dynamic channels (`SND_PickChannel`,
+    `SND_Spatialize`, the end tick, the same-frame offset), one looping
+    voice per distinct static sound with the sources' volumes summed
+    (Quake's combine). `engine/game.c` plays what the QC plays: the
+    weapons, the lightning's lstart / lhit, spike tinks and ricochets,
+    the grenade's bounce, explosions, jump, landing (land2 and 5 damage
+    from −650), pain (every 0.5 s, not while the weapon animates), death
+    and gibs; the map menu's clicks.
+  - `engine/music.c`: the map's CD track (worldspawn "sounds") in a loop
+    through CD-DA with auto-pause; stopped for the CD reads of a map
+    load. `scripts/cook.sh` converts the rerelease's tracks with ffmpeg,
+    CMake lists them as audio tracks (`Q1PSX_MUSIC`, off for the bench).
+  - The game bench logs every sound start (deterministic: the dynarec
+    and the interpreter must agree line by line).
+- **Dynamic lights** (2026-10-17). Details: `docs/porting-notes.md`
+  §24. Quake's cl_dlights (the muzzle flash at the firing frames, a
+  rocket's, an explosion's with its decay), applied in the renderer's
+  walk: a face block about to be drawn goes through `dr_lights`
+  (`r_world.s`, asm; `engine/dlight.c dl_block` is the C reference), and
+  its stamped records within a light's reach get `rad − dist` on their
+  vertices' light bytes as R_AddDynamicLights gives it to lightmap texels
+  (`rad = radius − |plane distance|`, the minlight cutoff, the distance
+  to the impact point from a square-root table), saved once a frame and
+  restored after it; entities and the view model add `radius − distance`.
+  Two enumerations tried first (R_MarkLights' planes, the leaves) cost
+  60-550 k cycles a frame on the bookkeeping alone. The bench has a
+  hash-only mode (`HASHONLY=1`) and a `DLIGHT_C=1` build for the
+  C-versus-asm check.

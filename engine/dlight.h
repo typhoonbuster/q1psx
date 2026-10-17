@@ -1,0 +1,56 @@
+/*
+ * q1psx — dynamic lights: Quake's cl_dlights (cl_main.c CL_AllocDlight,
+ * CL_DecayLights), R_PushDlights / R_MarkLights (r_light.c) and
+ * R_AddDynamicLights (r_surf.c), on the world's vertex lighting.
+ *
+ * Each frame the renderer's walk, as it comes to a node's face block, adds
+ * the live lights to the vertices' light bytes of the records it is about
+ * to draw (R_MarkLights marks the faces on the planes a light's sphere
+ * straddles: the same faces survive the distance test, but a plane runs
+ * through the whole map, and here the walk has the drawn records and their
+ * plane at hand), as R_AddDynamicLights adds light to a surface's lightmap
+ * texels: `rad = radius - |plane distance|`, nothing
+ * under the light's minlight, then `rad - dist` at each vertex, `dist`
+ * Quake's octagonal approximation of the distance to the light's impact
+ * point in the plane. The bytes are put back after the frame (dl_restore).
+ * Entities add `radius - distance` of each light to their light
+ * (R_DrawEntitiesOnList, R_DrawViewModel): dl_add_at.
+ *
+ * Positions are the game's (1/R_POS_SUB world units); radii and minlight
+ * world units; `die` a game tick; decay world units per second.
+ */
+
+#ifndef Q1PSX_DLIGHT_H
+#define Q1PSX_DLIGHT_H
+
+#include <stdint.h>
+
+#include "qworld.h"
+
+#define MAX_DLIGHTS 8
+
+typedef struct {
+	int32_t origin[3];
+	int     radius;
+	int     die;
+	int     decay;
+	int     minlight;
+	int     key;
+} dlight_t;
+
+extern dlight_t dlights[MAX_DLIGHTS];
+
+void      dl_init(void);
+void      dl_clear(void);                  /* a new map */
+dlight_t *dl_alloc(int key, int now);      /* CL_AllocDlight: the same key's, else a dead one, else the first */
+void      dl_decay(int now);               /* CL_DecayLights, once per tick */
+void      dl_push(int now);                /* R_PushDlights: the live lights for r_frame */
+void      dl_restore(void);                /* after r_frame: the records' light bytes back */
+/* the renderer's hooks (engine/r_world.s dr_lights, dr_light_rec), C
+   reference versions: the lights reaching a node, as a table for its
+   block's records; a record about to be drawn, lit in place */
+uint32_t *dl_block_setup(const qw_node *node);
+void      dl_light_record(qw_record *rec, const uint32_t *tab);
+int       dl_add_at(const int32_t org[3], int now);   /* Σ (radius - distance), world units */
+
+#endif
