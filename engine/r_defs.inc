@@ -50,16 +50,13 @@
 .set DL_MINLIGHT,     16
 .set DL_RMM,          20    # radius - minlight
 .set DL_SIZE,         32
-.set DLB_FIRST,       16    # dl_blk: word 0 the count, then the entries (dlight.c dlblk_t)
+.set DLB_FIRST,       16    # dl_blk: word 0 the block's node, then an entry per light (dlight.c dlblk_t)
 .set DLB_IX,          0     # the light's impact point on the block's plane, vertex units
 .set DLB_IY,          4
 .set DLB_IZ,          8
-.set DLB_CUTOFF,      12    # rad - minlight
+.set DLB_CUTOFF,      12    # rad - minlight (< 0: the light does not reach the plane)
 .set DLB_MIN,         16
-.set DLB_OX,          20    # the light's origin (the records' sphere test)
-.set DLB_OY,          24
-.set DLB_OZ,          28
-.set DLB_RMM,         32    # radius - minlight
+.set DLB_VALID,       36    # computed for this block
 .set DLB_SIZE,        48
 
 # ---- the render list (engine/rlist.h): r_item_t (16 B), r_ent_t (64 B) -----
@@ -178,9 +175,9 @@
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
-.ifndef R_DLIGHT_C        # 1: the dynamic lights' block hook is the C reference
-.set R_DLIGHT_C,  0       #    (engine/dlight.c dl_block; CMake Q1PSX_DLIGHT_C)
-.endif
+.ifndef R_DLIGHT_C        # the dynamic lights' record hook: 0 the asm, 1 the C
+.set R_DLIGHT_C,  0       # reference (engine/dlight.c dl_light_record), 2 the asm
+.endif                    # checked record by record by the C (CMake Q1PSX_DLIGHT_C)
 .ifndef R_PROFILE           # renderer counters + stage timers (CMake option
 .set R_PROFILE,   1         # Q1PSX_PROFILE passes --defsym R_PROFILE=0|1)
 .endif

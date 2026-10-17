@@ -838,6 +838,7 @@ static void bench_game(void)
 		         w < W_COUNT ? wname[w] : "");
 		bench_acc_t acc;
 		bench_reset(&acc, names[w]);
+		dl_debug = w == W_SHOTGUN ? 3 : 0;              /* (the C light hook's trace) */
 		for (int i = 0; i < 4; i++)
 			run_frame(0, 0);
 		for (int i = 0; i < 16; i++) {

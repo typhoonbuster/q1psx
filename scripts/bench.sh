@@ -17,7 +17,8 @@
 #         HASHONLY=1 dumps only the frames' hashes (`H` lines): no packets,
 #         no pictures, a run several times shorter (the console is slow).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
-#         asm (the hashes must match).
+#         asm (the hashes must match); DLIGHT_C=2 the asm checked record
+#         by record by the C ("dlchk" lines).
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -46,8 +47,9 @@ FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
-      -DQ1PSX_DLIGHT_C="$([ "$DLIGHT_C" = 1 ] && echo ON || echo OFF)" "$ROOT" >/dev/null
-cmake --build "$ROOT/build-bench" >/dev/null
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" "$ROOT" >/dev/null
+cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
+	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
 
 LOG="$ROOT/build-bench/bench.log" \
 	"$ROOT/scripts/headless.sh" "$ROOT/build-bench/q1psx.bin" "$SECS" '^bench done' >/dev/null \

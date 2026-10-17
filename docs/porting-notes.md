@@ -2622,7 +2622,14 @@ garbled lines, which are not in the frames).
 - **PCSX-Redux** was updated on this machine (2026-10-17) and its headless
   mode now runs at about real-time speed with the console at ~5 KB/s
   (TESTING.md): the game scenario takes 6 minutes, hence
-  `scripts/bench.sh`'s 420 s default for it.
+  `scripts/bench.sh`'s 420 s default for it. The same update times the
+  CD drive: the boot's 128 `CdSearchFile` calls (one per map file, each
+  parsing the directory again) took 10 s there, as they would on the
+  drive. `world_scan_maps` now reads the MAPS directory once
+  (`cd_list_dir`: CdOpenDir / CdReadDir) and marks the maps present.
+- `scripts/bench.sh` used to run the previous binary when the build
+  failed (the build's output went to /dev/null): it aborts now, with the
+  build log's tail (`build-bench/build.log`).
 
 ## §23 — Sound and music (2026-10-17)
 
@@ -2833,14 +2840,34 @@ reference and the asm (`HASHONLY=1` runs dump only the hashes: a run
 takes a third of the time). The world dumps (`t8hi`) have no game and
 stay identical. The bench's `dlight` stage (`dl_push`'s node
 stamping and the restore) and the `r_block` stage (the hook runs inside
-the record loop) give the cost, as of this commit (C and asm agreeing
-hash for hash): a muzzle flash frame costs 80 k cycles more than the
-same frame unlit (778 k against 698 k on start's spawn: 23 k in `dlight`,
-the rest in `r_block`), an explosion with a rocket in flight 570 k more
-(1 271 k, three vblanks). **That is not acceptable yet**: the per-block
-stub and setup (every stamped block, lit or not, pays the register
-saves and the box test per light) and the per-vertex loop (~80 cycles a
-vertex, three multiplies and their HI/LO spacing) are the next targets
-of the optimization pass, along with lighting only the vertices of
-records in the light's reach rather than every stamped record of a
-reached block.
+the record loop) give the cost. The first version (a stub per stamped
+block computing every light's plane terms, a stub per stamped record):
+a muzzle flash frame 80 k cycles over the same frame unlit (778 k
+against 698 k on start's spawn), an explosion with a rocket in flight
+570 k over (1 271 k, three vblanks). The second: no per-block stub (gp
+holds the node), each stamped record of a reached block tested against
+the lights' spheres inline in the loop's spare registers, and a light's
+plane terms computed the first time it lights a record of the block and
+cached while the block lasts (`dl_blk`): the muzzle flash frame still
+80 k over (the inline test runs on every stamped record of a reached
+node, and the upper nodes' boxes hold the whole hall), the explosion
+600 k. Then R_MarkLights' own rule in the node stamping — a node whose
+plane is farther than the radius has no face to light, whatever its
+box — so the floor and the near walls' nodes stay and the hall's big
+far planes drop out: the muzzle flash 77 k, the explosion 600 k —
+what the block gate saved, the C descent stamping the nodes paid (it
+visited every node the explosion's sphere reaches, 1 500 of them).
+Then the stamping moved into r_render after the PVS marking (a stub
+around the C call), so a node out of the PVS ends its subtree, and the
+vertex loop fetches the next vertex and the light byte in the
+multiplies' HI/LO gaps: the muzzle flash frame 76 k over the unlit one
+(the C descent 20 k in `r_walk`: 101 nodes; `r_block` 45 k: 40 records,
+245 vertices, the inline tests; the restore 8 k), the explosion with a
+rocket in flight 575 k (596 nodes, 263 records, 1 499 vertices for two
+lights, 263 restores) — still the next targets: the descent and the
+restore in asm, one entry for the stub and the routine, the first
+passing light's test not run twice. The world
+dumps (`t8hi`) are identical with the gates in place (the 12-view total
+4 356 k → 4 376 k: the node stamp's load and compare per block, the
+record gate); the game scenario's 15 frames hash the same under the
+dynarec and the interpreter, and with the C reference and the asm.

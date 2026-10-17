@@ -1020,7 +1020,10 @@ followed by R0-R4.
   - The view model's cook-time back-face culling is geometric (the plane
     against the eye's box in every frame) instead of vertex-normal based.
   - PCSX-Redux's newer builds run headless at real-time speed: the game
-    bench's default limit is 420 s (TESTING.md).
+    bench's default limit is 420 s (TESTING.md); the boot's map scan reads
+    the MAPS directory once instead of searching 128 files (10 s on a
+    drive). `bench.sh` aborts when the build fails instead of running
+    the previous binary.
 - **Sound and music** (2026-10-17; CD-DA so the music takes no RAM). Details:
   `docs/porting-notes.md` §23.
   - `qcook map --sounds`: one bank per map (`formats/qsound.h`, QSB1,

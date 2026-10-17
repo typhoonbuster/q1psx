@@ -869,6 +869,22 @@ do_mark:
 	jal     mark_pvs
 	nop
 mark_done:
+	# the dynamic lights: the nodes their spheres reach (and whose plane
+	# they straddle), stamped with the frame count for the walk's block
+	# gate (dl_stamp_nodes, C; a stub around the C call)
+	lw      $t0, RS_NLIGHTS($s0)
+	nop
+	beqz    $t0, 1f
+	addiu   $sp, $sp, -32                # (o32 argument slots, ra, fp)
+	sw      $ra, 28($sp)
+	sw      $fp, 24($sp)
+	lui     $gp, %hi(r_gp_saved)
+	jal     dl_stamp_nodes
+	lw      $gp, %lo(r_gp_saved)($gp)
+	lw      $ra, 28($sp)
+	lw      $fp, 24($sp)
+	lui     $t8, 0x1f80
+1:	addiu   $sp, $sp, 32
 
 	# ---- BSP walk -------------------------------------------------------
 	lw      $s1, RS_ROOT($s0)
@@ -1079,63 +1095,67 @@ pop_1:                                   # (t0 loaded; draw_ents, wl_ents come h
 # Clobbers at, v0, a0-a3, t0-t7, t9; back to `walk` when done.
 # Dynamic lights: a node whose box a live light reaches carries this
 # frame's count (dl_push stamps them from the root, box by box); gp holds
-# the block's light table then (dr_lights: the lights' terms on the node's
-# plane), 0 otherwise, and the record loop lights each stamped record of
-# such a block in place before drawing it (dr_light_rec), the walk being
-# the one place that holds the drawn records and their plane together.
-	beq     $t7, $s4, dr_lights
+# the node then, 0 otherwise, and the record loop tests each stamped
+# record of such a block against the lights and lights it in place before
+# drawing it (dr_light_rec), the walk being the one place that holds the
+# drawn records and their plane together.
+	bne     $t7, $s4, dr_lit
 	move    $gp, $zero
+	move    $gp, $t2
 dr_lit:
 	RECLOOP dr, walk, 0
 
-# dr_lights: the block of node t2 is one a dynamic light reaches: the
-# lights' terms on its plane go into a table (engine/dlight.c
-# dl_block_setup, C, R_DLIGHT_C; else dl_block_setup_asm) and gp takes the
-# table, or 0 when no light reaches the node after all. Keeps what the
-# record loop takes: a0, a1, t0 (SP_FULL), v0 (the CLUT), v1 (the texture
-# run's tpage, alive across blocks), t9 (the profile timer), t2, fp, t8.
-# (The C callee may write the frame's first 16 bytes: the o32 argument
-# slots.) A C callee gets the real gp back from r_gp_saved.
-dr_lights:
-	addiu   $sp, $sp, -64
-	sw      $ra, 60($sp)
-	sw      $a0, 16($sp)
-	sw      $a1, 20($sp)
-	sw      $t0, 24($sp)
-	sw      $v0, 28($sp)
-	sw      $t9, 32($sp)
-	sw      $t2, 36($sp)
-	sw      $fp, 40($sp)
-	sw      $v1, 44($sp)
-.if R_DLIGHT_C
-	lui     $gp, %hi(r_gp_saved)
-	lw      $gp, %lo(r_gp_saved)($gp)
-	jal     dl_block_setup
-	move    $a0, $t2
-.else
-	jal     dl_block_setup_asm
-	move    $a0, $t2
-.endif
-	move    $gp, $v0                     # the table, or 0
-	lw      $ra, 60($sp)
-	lw      $a0, 16($sp)
-	lw      $a1, 20($sp)
-	lw      $t0, 24($sp)
-	lw      $v0, 28($sp)
-	lw      $t9, 32($sp)
-	lw      $t2, 36($sp)
-	lw      $fp, 40($sp)
-	lw      $v1, 44($sp)
-	lui     $t8, 0x1f80                  # the scratchpad again
-	j       dr_lit
-	addiu   $sp, $sp, 64
-
-# dr_light_rec: the stamped record a0 of a lit block (gp = its table),
-# about to be drawn: lit in place (dl_light_record, C; else
-# dl_light_record_asm), then back to the record loop. Keeps a0, a1, t2
-# (the record's size, for the cull), t9 (the loop's own load in the
-# gate's slot), v0, v1, fp, gp, t8.
+# dr_light_rec: the stamped record a0 of a block a dynamic light reaches
+# (gp = the node), about to be drawn. Its sphere against each live light
+# in the loop's own spare registers (nothing saved): a light that reaches
+# it sends the record to dl_light_record (C, R_DLIGHT_C; else
+# dl_light_record_asm) through a stub that keeps what the record loop
+# takes: a0, a1, t2 (the record's size, for the cull), t9 (the loop's own
+# load in the gate's slot), v0, v1, fp, gp, t8. (The C callee may write
+# the frame's first 16 bytes, the o32 argument slots, and gets the real gp
+# back from r_gp_saved.) Then back to the loop.
 dr_light_rec:
+	lw      $t0, SP_RSTATE($t8)
+	lh      $t3, R_SC+0($a0)             # the record's sphere
+	lw      $a2, RS_LIGHTS($t0)
+	lw      $a3, RS_NLIGHTS($t0)
+	lh      $t4, R_SC+2($a0)
+	lh      $t5, R_SC+4($a0)
+	sll     $a3, $a3, 5
+	lhu     $t6, R_SR($a0)
+	addu    $a3, $a3, $a2                # the lights' end
+dlr_test:
+	lw      $t0, DL_O+0($a2)             # against this light
+	lw      $t1, DL_O+4($a2)
+	lw      $t7, DL_O+8($a2)
+	subu    $t0, $t3, $t0
+	subu    $t1, $t4, $t1
+	subu    $t7, $t5, $t7
+	sra     $at, $t0, 31
+	xor     $t0, $t0, $at
+	subu    $t0, $t0, $at                # |dx|
+	sra     $at, $t1, 31
+	xor     $t1, $t1, $at
+	subu    $t1, $t1, $at                # |dy|
+	slt     $at, $t0, $t1
+	beqz    $at, 1f
+	sra     $at, $t7, 31                 # (|dz| begins in the slot)
+	move    $t0, $t1
+1:	xor     $t7, $t7, $at
+	subu    $t7, $t7, $at                # |dz|
+	slt     $at, $t0, $t7
+	beqz    $at, 2f
+	lw      $t1, DL_RMM($a2)             # radius - minlight (used two below)
+	move    $t0, $t7
+2:	subu    $t0, $t0, $t6                # far - sr
+	slt     $at, $t0, $t1
+	bnez    $at, dr_light_full           # under radius - minlight: lit
+	addiu   $a2, $a2, DL_SIZE
+	bne     $a2, $a3, dlr_test
+	nop
+	j       dr_lit_back                  # no light reaches it
+	nop
+dr_light_full:
 	addiu   $sp, $sp, -64
 	sw      $ra, 60($sp)
 	sw      $a0, 16($sp)
@@ -1146,7 +1166,7 @@ dr_light_rec:
 	sw      $v1, 36($sp)
 	sw      $fp, 40($sp)
 	sw      $gp, 44($sp)
-.if R_DLIGHT_C
+.if R_DLIGHT_C == 1
 	move    $a1, $gp
 	lui     $gp, %hi(r_gp_saved)
 	lw      $gp, %lo(r_gp_saved)($gp)
@@ -1155,6 +1175,15 @@ dr_light_rec:
 .else
 	jal     dl_light_record_asm
 	move    $a1, $gp
+.if R_DLIGHT_C == 2                      # then the C checks what the asm wrote
+	lw      $a0, 16($sp)
+	lw      $a1, 44($sp)
+	lui     $gp, %hi(r_gp_saved)
+	lw      $gp, %lo(r_gp_saved)($gp)
+	jal     dl_check_record
+	lui     $t8, 0x1f80
+.endif
+
 .endif
 	lw      $ra, 60($sp)
 	lw      $a0, 16($sp)
@@ -1170,140 +1199,12 @@ dr_light_rec:
 	addiu   $sp, $sp, 64
 
 # -----------------------------------------------------------------------------
-# dl_block_setup_asm: a0 = the node. The C reference (engine/dlight.c
-# dl_block_setup) documents it: for each live light whose sphere reaches
-# the node's box, the distance d to the node's plane, rad = radius - |d|
-# (nothing under minlight), the impact point, into a dl_blk entry (DLB_*);
-# v0 = dl_blk when any, else 0. Clobbers at, v0, v1, a0-a3, t0-t7, t9.
-dl_block_setup_asm:
-	lw      $t0, SP_RSTATE($t8)
-	lhu     $t1, N_PLANE3($a0)
-	lw      $t2, SP_PLANES($t8)
-	la      $v1, dl_blk
-	lw      $a1, RS_LIGHTS($t0)          # the lights
-	lw      $a2, RS_NLIGHTS($t0)
-	sll     $t1, $t1, 2
-	addu    $a3, $t2, $t1                # the node's plane
-	sll     $a2, $a2, 5
-	addu    $a2, $a2, $a1                # their end
-	sw      $zero, 0($v1)                # the count
-	addiu   $v0, $v1, DLB_FIRST          # the next entry
-dbs_light:
-	beq     $a1, $a2, dbs_done
-	lw      $t0, DL_O+0($a1)             # ox
-	lw      $t1, DL_O+4($a1)
-	lw      $t2, DL_O+8($a1)
-	lw      $t6, DL_RADIUS($a1)
-	lh      $t3, N_C+0($a0)              # the node's box against the light
-	lh      $t4, N_C+2($a0)
-	lh      $t5, N_C+4($a0)
-	subu    $t3, $t0, $t3
-	subu    $t4, $t1, $t4
-	subu    $t5, $t2, $t5
-	sra     $at, $t3, 31
-	xor     $t3, $t3, $at
-	subu    $t3, $t3, $at                # |dx|
-	sra     $at, $t4, 31
-	xor     $t4, $t4, $at
-	subu    $t4, $t4, $at
-	sra     $at, $t5, 31
-	xor     $t5, $t5, $at
-	subu    $t5, $t5, $at
-	lh      $t7, N_H+0($a0)
-	lh      $t9, N_H+2($a0)
-	addu    $t7, $t7, $t6
-	slt     $at, $t7, $t3                # h + radius < |dx|: outside
-	bnez    $at, dbs_next
-	addu    $t9, $t9, $t6
-	lh      $t7, N_H+4($a0)
-	slt     $at, $t9, $t4
-	bnez    $at, dbs_next
-	addu    $t7, $t7, $t6
-	slt     $at, $t7, $t5
-	bnez    $at, dbs_next
-	lbu     $t9, PL_TYPE($a3)
-	# d = n . o - dist, vertex units (an axial plane: o[type] x 4096)
-	lw      $t7, PL_DIST($a3)
-	sltiu   $at, $t9, 3
-	beqz    $at, 1f
-	sra     $t7, $t7, 1                  # 1/8 units -> vertex units, x4096
-	sll     $t9, $t9, 2
-	addu    $t9, $t9, $a1
-	lw      $t9, DL_O($t9)               # o[type]
-	b       2f
-	sll     $t9, $t9, 12
-1:	lh      $t3, PL_N+0($a3)
-	lh      $t4, PL_N+2($a3)
-	lh      $t5, PL_N+4($a3)
-	mult    $t3, $t0
-	mflo    $t3
-	nop                                  # (two apart from the next mult: HI/LO)
-	nop
-	mult    $t4, $t1
-	mflo    $t4
-	nop
-	nop
-	mult    $t5, $t2
-	addu    $t9, $t3, $t4
-	mflo    $t5
-	addu    $t9, $t9, $t5
-2:	subu    $t9, $t9, $t7
-	sra     $t9, $t9, 12                 # d
-	sra     $at, $t9, 31
-	xor     $t3, $t9, $at
-	subu    $t3, $t3, $at                # |d|
-	lw      $t4, DL_MINLIGHT($a1)
-	subu    $t3, $t6, $t3                # rad = radius - |d|
-	slt     $at, $t3, $t4
-	bnez    $at, dbs_next                # under minlight: nothing
-	subu    $t3, $t3, $t4                # cutoff = rad - minlight
-	sw      $t3, DLB_CUTOFF($v0)
-	sw      $t4, DLB_MIN($v0)
-	sw      $t0, DLB_OX($v0)
-	sw      $t1, DLB_OY($v0)
-	sw      $t2, DLB_OZ($v0)
-	lw      $t3, DL_RMM($a1)
-	lh      $t4, PL_N+0($a3)
-	lh      $t5, PL_N+2($a3)
-	sw      $t3, DLB_RMM($v0)
-	lh      $t7, PL_N+4($a3)
-	# the impact point: o - n d >> 12 (an axial plane's n is 4096 on its axis)
-	mult    $t4, $t9
-	mflo    $t4
-	sra     $t4, $t4, 12
-	subu    $t0, $t0, $t4
-	mult    $t5, $t9
-	mflo    $t5
-	sra     $t5, $t5, 12
-	subu    $t1, $t1, $t5
-	mult    $t7, $t9
-	mflo    $t7
-	sw      $t0, DLB_IX($v0)
-	sra     $t7, $t7, 12
-	subu    $t2, $t2, $t7
-	sw      $t1, DLB_IY($v0)
-	sw      $t2, DLB_IZ($v0)
-	lw      $t3, 0($v1)                  # the count
-	addiu   $v0, $v0, DLB_SIZE
-	addiu   $t3, $t3, 1
-	sw      $t3, 0($v1)
-dbs_next:
-	b       dbs_light
-	addiu   $a1, $a1, DL_SIZE
-dbs_done:
-	lw      $t0, 0($v1)
-	nop
-	beqz    $t0, 3f
-	move    $v0, $zero                   # none
-	move    $v0, $v1                     # the table
-3:	jr      $ra
-	nop
-
-# -----------------------------------------------------------------------------
-# dl_light_record_asm: a0 = the record, a1 = its block's table. The C
-# reference (engine/dlight.c dl_light_record) documents it: for each light
-# of the table whose sphere reaches the record's, the light bytes saved
-# once a frame (dl_touched, a dl_save_buf entry), then each vertex within
+# dl_light_record_asm: a0 = the record, a1 = its node. The C reference
+# (engine/dlight.c dl_light_record) documents it: for each live light
+# whose sphere reaches the record's, the light's terms on the node's plane
+# (d, rad = radius - |d|, the impact point; cached in dl_blk while the
+# block lasts, DLB_*), nothing under minlight; the light bytes saved once
+# a frame (dl_touched, a dl_save_buf entry); then each vertex within
 # cutoff of the impact point gets (rad - dist) x 3/8, saturating, dist
 # from dl_sqrt on the squared distance >> 11. Clobbers at, v0, v1, a0-a3,
 # t0-t7, t9.
@@ -1313,7 +1214,10 @@ dbs_done:
 	.set DLR_SQRT,  12
 	.set DLR_END,   16
 	.set DLR_RA,    20
-	.set DLR_SIZE,  32
+	.set DLR_PLANE, 24
+	.set DLR_A2,    28     # the light loop's cursor and end, across the vertex loop
+	.set DLR_A3,    32
+	.set DLR_SIZE,  40
 	.set DL_SAVE_ENTRY, 52
 	.set DL_SAVE_MAX,  470
 dl_light_record_asm:
@@ -1324,34 +1228,53 @@ dl_light_record_asm:
 	srl     $t4, $t4, 1                  # the id
 	sltiu   $at, $t4, 8192
 	beqz    $at, dlr_out                 # (past the bitmap: unlit)
+	nop
 	addiu   $sp, $sp, -DLR_SIZE
 	sw      $ra, DLR_RA($sp)
 	sw      $t4, DLR_ID($sp)
-	lbu     $v1, R_NVERTS($a0)
+	lw      $t0, SP_RSTATE($t8)
+	lhu     $t1, N_PLANE3($a1)
+	lw      $t2, SP_PLANES($t8)
+	la      $v1, dl_blk
+	lw      $a2, RS_LIGHTS($t0)          # the lights
+	lw      $a3, RS_NLIGHTS($t0)
+	sll     $t1, $t1, 2
+	addu    $t2, $t2, $t1                # the node's plane
+	sw      $t2, DLR_PLANE($sp)
+	lw      $t3, 0($v1)                  # the cache's block
+	sll     $a3, $a3, 5
+	beq     $t3, $a1, 1f                 # this block's terms are in
+	addu    $a3, $a3, $a2                # the lights' end
+	sw      $a1, 0($v1)                  # another block: its terms stale
+	move    $t3, $a2
+	addiu   $t4, $v1, DLB_FIRST
+2:	sw      $zero, DLB_VALID($t4)
+	addiu   $t3, $t3, DL_SIZE
+	bne     $t3, $a3, 2b
+	addiu   $t4, $t4, DLB_SIZE
+1:	lbu     $t6, R_NVERTS($a0)
 	lhu     $t9, R_POLYS($a0)
 	la      $t5, dl_sqrt
-	sw      $v1, DLR_NV($sp)
-	addiu   $t6, $v1, 3
-	andi    $t6, $t6, 0xfc
+	sw      $t6, DLR_NV($sp)
+	addiu   $t7, $t6, 3
+	andi    $t7, $t7, 0xfc
 	addu    $t9, $t9, $a0
-	subu    $v0, $t9, $t6                # the light bytes
+	subu    $v0, $t9, $t7                # the light bytes
 	sw      $t5, DLR_SQRT($sp)
 	sw      $v0, DLR_LIGHT($sp)
-	sll     $t6, $v1, 1
+	sll     $t6, $t6, 1
 	addiu   $t6, $t6, R_VERTS
 	addu    $t6, $t6, $a0
 	sw      $t6, DLR_END($sp)            # the indices' end
-	lw      $a2, 0($a1)                  # the lights
-	addiu   $a3, $a1, DLB_FIRST          # the first entry
+	addiu   $v1, $v1, DLB_FIRST          # the first entry (a3 - a2 apart from the first light)
 dlr_light:
-	beqz    $a2, dlr_done
-	addiu   $a2, $a2, -1
+	beq     $a2, $a3, dlr_done
 	lh      $t3, R_SC+0($a0)             # the record's sphere against the light
-	lw      $t0, DLB_OX($a3)
+	lw      $t0, DL_O+0($a2)
 	lh      $t4, R_SC+2($a0)
-	lw      $t1, DLB_OY($a3)
+	lw      $t1, DL_O+4($a2)
 	lh      $t5, R_SC+4($a0)
-	lw      $t2, DLB_OZ($a3)
+	lw      $t2, DL_O+8($a2)
 	subu    $t3, $t3, $t0
 	subu    $t4, $t4, $t1
 	subu    $t5, $t5, $t2
@@ -1370,11 +1293,78 @@ dlr_light:
 	move    $t3, $t4
 1:	slt     $at, $t3, $t5
 	beqz    $at, 2f
-	lw      $t7, DLB_RMM($a3)
+	lw      $t7, DL_RMM($a2)
 	move    $t3, $t5
 2:	subu    $t3, $t3, $t6                # far - sr
 	slt     $at, $t3, $t7
 	beqz    $at, dlr_next                # >= radius - minlight: out of reach
+	lw      $t4, DLB_VALID($v1)
+	lw      $t3, DLB_CUTOFF($v1)         # (the cached cutoff, for dlr_terms_in)
+	bnez    $t4, dlr_terms_in
+	nop
+	# the light's terms on the plane: d = n . o - dist (an axial plane:
+	# o[type] x 4096), rad = radius - |d|, cutoff = rad - minlight (< 0:
+	# under minlight), the impact point o - n d >> 12 (an axial plane's n
+	# is 4096 on its axis)
+	lw      $t7, DLR_PLANE($sp)
+	lw      $t6, DL_RADIUS($a2)
+	lbu     $t9, PL_TYPE($t7)
+	lw      $t3, PL_DIST($t7)
+	sltiu   $at, $t9, 3
+	beqz    $at, 3f
+	sra     $t3, $t3, 1                  # 1/8 units -> vertex units, x4096
+	sll     $t9, $t9, 2
+	addu    $t9, $t9, $a2
+	lw      $t9, DL_O($t9)               # o[type]
+	b       4f
+	sll     $t9, $t9, 12
+3:	lh      $t4, PL_N+0($t7)
+	lh      $t5, PL_N+2($t7)
+	lh      $t9, PL_N+4($t7)
+	mult    $t4, $t0
+	mflo    $t4
+	nop                                  # (two apart from the next mult: HI/LO)
+	nop
+	mult    $t5, $t1
+	mflo    $t5
+	nop
+	nop
+	mult    $t9, $t2
+	addu    $t4, $t4, $t5
+	mflo    $t9
+	addu    $t9, $t9, $t4
+4:	subu    $t9, $t9, $t3
+	sra     $t9, $t9, 12                 # d
+	sra     $at, $t9, 31
+	xor     $t3, $t9, $at
+	subu    $t3, $t3, $at                # |d|
+	lw      $t4, DL_MINLIGHT($a2)
+	subu    $t3, $t6, $t3                # rad = radius - |d|
+	subu    $t3, $t3, $t4                # cutoff = rad - minlight
+	sw      $t3, DLB_CUTOFF($v1)
+	sw      $t4, DLB_MIN($v1)
+	lh      $t4, PL_N+0($t7)
+	lh      $t5, PL_N+2($t7)
+	lh      $t7, PL_N+4($t7)
+	li      $t6, 1
+	sw      $t6, DLB_VALID($v1)
+	mult    $t4, $t9
+	mflo    $t4
+	sra     $t4, $t4, 12
+	subu    $t0, $t0, $t4
+	mult    $t5, $t9
+	mflo    $t5
+	sra     $t5, $t5, 12
+	subu    $t1, $t1, $t5
+	mult    $t7, $t9
+	mflo    $t7
+	sw      $t0, DLB_IX($v1)
+	sra     $t7, $t7, 12
+	subu    $t2, $t2, $t7
+	sw      $t1, DLB_IY($v1)
+	sw      $t2, DLB_IZ($v1)
+dlr_terms_in:                            # t3 = cutoff
+	bltz    $t3, dlr_next                # under minlight: nothing
 	lw      $t4, DLR_ID($sp)
 	# saved once a frame: the dl_touched bit
 	la      $t6, dl_touched
@@ -1386,7 +1376,7 @@ dlr_light:
 	li      $t9, 1
 	sllv    $t7, $t9, $t7                # its bit
 	lw      $t9, 0($t6)
-	lw      $v1, DLR_NV($sp)
+	lw      $t0, DLR_NV($sp)
 	and     $at, $t9, $t7
 	bnez    $at, dlr_lit                 # saved already
 	lw      $v0, DLR_LIGHT($sp)
@@ -1407,52 +1397,59 @@ dlr_light:
 	subu    $t6, $t6, $t7
 	addu    $t4, $t4, $t6                # the entry
 	sw      $a0, 0($t4)
-	sw      $v1, 4($t4)
-	addiu   $t5, $v1, 3
+	sw      $t0, 4($t4)
+	addiu   $t5, $t0, 3
 	andi    $t5, $t5, 0xfc               # the light bytes, padded to 4
 	srl     $t5, $t5, 2                  # as words
 	move    $t7, $v0
 	addiu   $t4, $t4, 8
-3:	lw      $t9, 0($t7)
+5:	lw      $t9, 0($t7)
 	addiu   $t5, $t5, -1
 	addiu   $t7, $t7, 4
 	sw      $t9, 0($t4)
-	bnez    $t5, 3b
+	bnez    $t5, 5b
 	addiu   $t4, $t4, 4
 dlr_lit:
-	# the vertices: ra = their indices, v1 = the end, v0 = the light bytes
-	lw      $t0, DLB_IX($a3)
-	lw      $t1, DLB_IY($a3)
-	lw      $t2, DLB_IZ($a3)
-	lw      $t3, DLB_CUTOFF($a3)
-	lw      $t4, DLB_MIN($a3)
+	# the vertices: ra = their indices, t6 = how many are left, v0 = the
+	# light bytes; a3 = the next vertex's address and a2 = the light byte
+	# are fetched an iteration ahead, into the multiplies' HI/LO gaps (the
+	# light loop's a2, a3 are kept on the stack meanwhile)
+	sw      $a2, DLR_A2($sp)
+	sw      $a3, DLR_A3($sp)
+	lw      $t0, DLB_IX($v1)
+	lw      $t1, DLB_IY($v1)
+	lw      $t2, DLB_IZ($v1)
+	lw      $t4, DLB_MIN($v1)
 	lw      $t5, DLR_SQRT($sp)
-	lw      $v1, DLR_END($sp)
+	lw      $t6, DLR_NV($sp)
 	lw      $t9, SP_VERTPOOL($t8)
-	addiu   $ra, $a0, R_VERTS
+	lhu     $a3, R_VERTS($a0)            # the first vertex
+	addiu   $ra, $a0, R_VERTS + 2
+	sll     $a3, $a3, 3
+	addu    $a3, $a3, $t9
 dlr_v:
-	lhu     $t6, 0($ra)
-	addiu   $ra, $ra, 2
-	sll     $t6, $t6, 3
-	addu    $t6, $t6, $t9
-	lh      $t7, 0($t6)                  # x
-	lh      $at, 2($t6)                  # y
-	lh      $t6, 4($t6)                  # z
-	subu    $t7, $t7, $t0
-	subu    $at, $at, $t1
-	mult    $t7, $t7
-	subu    $t6, $t6, $t2
-	mflo    $t7
-	nop                                  # (two apart from the next mult: HI/LO)
-	nop
+	lh      $at, 0($a3)                  # x
+	lh      $a1, 2($a3)                  # y  (a1, the node: dlr_done reloads nothing from it)
+	lh      $t7, 4($a3)                  # z
+	lbu     $a2, 0($v0)                  # its light byte
+	subu    $at, $at, $t0
+	subu    $a1, $a1, $t1
 	mult    $at, $at
+	subu    $t7, $t7, $t2
+	lhu     $a3, 0($ra)                  # the next vertex (one past the last: harmless)
+	addiu   $ra, $ra, 2
 	mflo    $at
+	sll     $a3, $a3, 3                  # (two apart from the next mult: HI/LO)
+	addu    $a3, $a3, $t9
+	mult    $a1, $a1
+	addiu   $t6, $t6, -1                 # one fewer left
+	mflo    $a1
 	nop
 	nop
-	mult    $t6, $t6
-	addu    $t7, $t7, $at
-	mflo    $t6
-	addu    $t7, $t7, $t6                # the squared distance
+	mult    $t7, $t7
+	addu    $at, $at, $a1
+	mflo    $t7
+	addu    $t7, $t7, $at                # the squared distance
 	srl     $t7, $t7, 11
 	sltiu   $at, $t7, 1024
 	beqz    $at, dlr_v_next              # past the table: far
@@ -1466,20 +1463,22 @@ dlr_v:
 	sll     $at, $t7, 1
 	addu    $t7, $t7, $at                # x 3
 	sra     $t7, $t7, 3                  # / 8
-	lbu     $at, 0($v0)
-	nop
-	addu    $at, $at, $t7
-	sltiu   $t7, $at, 256
-	bnez    $t7, dlr_v_next
-	sb      $at, 0($v0)                  # (overwritten below when it overflowed)
-	li      $at, 255
-	sb      $at, 0($v0)
+	addu    $a2, $a2, $t7
+	sltiu   $at, $a2, 256
+	bnez    $at, dlr_v_next
+	sb      $a2, 0($v0)                  # (overwritten below when it overflowed)
+	li      $a2, 255
+	sb      $a2, 0($v0)
 dlr_v_next:
-	bne     $ra, $v1, dlr_v
+	bnez    $t6, dlr_v
 	addiu   $v0, $v0, 1
+	lw      $v0, DLR_LIGHT($sp)          # (the next light's pass)
+	lw      $a2, DLR_A2($sp)
+	lw      $a3, DLR_A3($sp)
 dlr_next:
+	addiu   $v1, $v1, DLB_SIZE
 	b       dlr_light
-	addiu   $a3, $a3, DLB_SIZE
+	addiu   $a2, $a2, DL_SIZE
 dlr_done:
 	lw      $ra, DLR_RA($sp)
 	nop

@@ -1,12 +1,30 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 #include <psxcd.h>
 
 #include "cd.h"
 #include "mem.h"
 
 #define SECTOR 2048
+
+int cd_list_dir(const char *path, cd_list_fn fn)
+{
+	CdlDIR *dir = CdOpenDir(path);
+	if (!dir)
+		return 0;
+	CdlFILE f;
+	int n = 0;
+	while (CdReadDir(dir, &f)) {
+		if (f.name[0] == '.' || f.name[0] == 0)
+			continue;
+		fn(f.name, (uint32_t) f.size);
+		n++;
+	}
+	CdCloseDir(dir);
+	return n;
+}
 
 void cd_init(void)
 {

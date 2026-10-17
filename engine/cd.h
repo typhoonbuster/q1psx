@@ -22,7 +22,15 @@ typedef void (*cd_poll_fn)(uint32_t bytes_done);
    blocks. */
 void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll);
 
-/* Is the file on the disc? (No read; *size may be NULL.) */
+/* Is the file on the disc? (No read; *size may be NULL.) Each call parses
+   the directory again (a seek and a read: ~80 ms on the drive). */
 int   cd_exists(const char *name, uint32_t *size);
+
+/* The files of a directory ("\\MAPS"), one call of `fn` each with the
+   ISO name ("E1M1_2.WLD;1") and the size: one directory read for a whole
+   listing (world_scan_maps asked cd_exists 128 times: 10 s on the drive).
+   Returns the count, 0 if the directory is missing. */
+typedef void (*cd_list_fn)(const char *name, uint32_t size);
+int   cd_list_dir(const char *path, cd_list_fn fn);
 
 #endif

@@ -25,15 +25,29 @@ static const char *const quake_maps[] = {
 static const char *disc_maps[NUM_QUAKE_MAPS];
 static int         num_disc_maps;
 
+static uint8_t map_on_disc[NUM_QUAKE_MAPS];
+
+/* cd_list_dir's call: a "<MAP>_0.WLD" marks its map present */
+static void note_map_file(const char *name, uint32_t size)
+{
+	(void) size;
+	const char *s = name;
+	while (*s && *s != '_') s++;
+	if (strncmp(s, "_0.WLD", 6))
+		return;
+	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
+		if (!strncmp(name, quake_maps[i], (size_t) (s - name)) && !quake_maps[i][s - name])
+			map_on_disc[i] = 1;
+}
+
 int world_scan_maps(void)
 {
 	num_disc_maps = 0;
-	for (int i = 0; i < NUM_QUAKE_MAPS; i++) {
-		char name[24];
-		snprintf(name, sizeof name, "\\MAPS\\%s_0.WLD;1", quake_maps[i]);
-		if (cd_exists(name, NULL))
+	memset(map_on_disc, 0, sizeof map_on_disc);
+	cd_list_dir("\\MAPS", note_map_file);         /* one directory read */
+	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
+		if (map_on_disc[i])
 			disc_maps[num_disc_maps++] = quake_maps[i];
-	}
 	printf("world: %d maps on the disc\n", num_disc_maps);
 	return num_disc_maps;
 }
