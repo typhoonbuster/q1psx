@@ -360,8 +360,27 @@ static void sprite(const uint32_t *w, int n, int sw, int sh, int raw)
 	polys_drawn++;
 }
 
-/* a tile: a flat rectangle */
-static void tile(const uint32_t *w, int n, int tw, int th)
+/* the GPU's semi-transparency (the primitive's bit 1) by the page's blend
+   mode (DR_TPAGE bits 5-6): 0 B/2 + F/2, 1 B + F, 2 B - F, 3 B + F/4 */
+static void blend_pixel(int x, int y, const uint8_t f[3])
+{
+	if (x < clip_x0 || x > clip_x1 || y < clip_y0 || y > clip_y1)
+		return;
+	int mode = (cur_tpage >> 5) & 3;
+	for (int k = 0; k < 3; k++) {
+		int b = fb[y][x][k], v;
+		switch (mode) {
+		case 0:  v = (b + f[k]) / 2; break;
+		case 1:  v = b + f[k];       break;
+		case 2:  v = b - f[k];       break;
+		default: v = b + f[k] / 4;   break;
+		}
+		fb[y][x][k] = (uint8_t) ((v < 0 ? 0 : v > 255 ? 255 : v) & 0xf8);
+	}
+}
+
+/* a tile: a flat rectangle, blended when semi-transparent (the water's tint) */
+static void tile(const uint32_t *w, int n, int tw, int th, int semi)
 {
 	if (n < (tw ? 2 : 3))
 		return;
@@ -369,9 +388,14 @@ static void tile(const uint32_t *w, int n, int tw, int th)
 	if (!tw) { tw = (int) (w[2] & 0xffff); th = (int) (w[2] >> 16); }
 	uint8_t col[3] = { (uint8_t) (w[0] & 255), (uint8_t) ((w[0] >> 8) & 255), (uint8_t) ((w[0] >> 16) & 255) };
 	for (int y = 0; y < th; y++)
-		for (int x = 0; x < tw; x++)
+		for (int x = 0; x < tw; x++) {
+			if (semi) {
+				blend_pixel(x0 + x, y0 + y, col);
+				continue;
+			}
 			if (x0 + x >= clip_x0 && x0 + x <= clip_x1 && y0 + y >= clip_y0 && y0 + y <= clip_y1)
 				memcpy(fb[y0 + y][x0 + x], col, 3);
+		}
 	polys_drawn++;
 }
 
@@ -404,7 +428,7 @@ static void packet(const uint32_t *w, int n)
 		if (tex)
 			sprite(w, n, fixed, fixed, raw);
 		else
-			tile(w, n, fixed, fixed);
+			tile(w, n, fixed, fixed, code & 2);
 		return;
 	}
 

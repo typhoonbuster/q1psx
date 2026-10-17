@@ -1073,7 +1073,9 @@ followed by R0-R4.
   the lightning's discharge, the bubbles (a new sprite in GAME.DAT: recook
   it), the view's tint by the contents (a semi-transparent flat). The
   jump moved to Quake's place in the tick (after the acceleration) and is
-  now a held button: the walk scenario's frames changed.
+  now a held button. `tools/pktview` now blends semi-transparent tiles with
+  the page's mode (the tint shows in `gwater.png`). Verified on DuckStation
+  (the play bench: 32 maps, no invalid read, no GPU error).
 - **Levels hanging at 99 % on DuckStation** (2026-10-17: on DuckStation, not on PCSX-Redux). Details:
   `docs/porting-notes.md` §26. Reproduced headless (DuckStation from a
   private home with its console and TTY log, the all-maps bench with the
