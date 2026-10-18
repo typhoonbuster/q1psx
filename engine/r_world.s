@@ -266,7 +266,7 @@
 # own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
 # (t6: quad) = the corners' cache addresses; clobbers t0-t2, t7, t9, v0, v1
 # (reloaded with clut / tpage).
-.macro CAREFUL quad, skip, var
+.macro CAREFUL quad, skip, var, near
 	lw      $t0, SP_SZ($t3)
 	lw      $t1, SP_SZ($t4)
 	lw      $t2, SP_SZ($t5)
@@ -290,11 +290,11 @@
 .endif
 .endif
 .if \var
-	bnez    $t7, \skip                   # a corner nearer than the bound
-	lw      $v1, SP_T4($t8)
+	bnez    $t7, \near                   # a corner nearer than the bound
+	lw      $v1, SP_T4($t8)              # (\near: t1 = zmax)
 	subu    $t7, $t1, $t0                # depth range
 .else
-	bnez    $t7, \skip
+	bnez    $t7, \near
 	subu    $t7, $t1, $t0                # depth range
 .endif
 	mult    $v1, $t0                     # 2 T2 zmin (LO holds it through the
@@ -512,7 +512,7 @@ dr_lit_back:                             # record, in view, is lit first
 	addu    $t5, $t5, $t8
 	beqz    $a2, \p\()_quad_emit
 	addu    $t6, $t6, $t8
-	CAREFUL 1, \p\()_quad_skip, \var
+	CAREFUL 1, \p\()_quad_skip, \var, \p\()_quad_near
 \p\()_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -568,7 +568,7 @@ dr_lit_back:                             # record, in view, is lit first
 	addu    $t4, $t4, $t8
 	beqz    $a2, \p\()_tri_emit
 	addu    $t5, $t5, $t8
-	CAREFUL 0, \p\()_tri_skip, \var
+	CAREFUL 0, \p\()_tri_skip, \var, \p\()_tri_near
 \p\()_tri_emit:                             # POLY_GT3
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -607,6 +607,27 @@ dr_lit_back:                             # record, in view, is lit first
 	lw      $a0, SP_NEXTREC($t8)
 	b       \p\()_rec_1
 	lw      $t0, SP_FVBASE($t8)          # (\p\()_rec's)
+
+# A corner nearer than CAREFUL's bound (t1 = the farthest corner's SZ):
+# every corner behind the near plane (SZ < SP_ZNEAR, the GTE's SZ being
+# 0 behind the eye) leaves the slow path nothing to draw (its clip finds
+# them all behind): on to the next polygon. Else the slow path.
+\p\()_quad_near:
+	lw      $t0, SP_ZNEAR($t8)
+	lw      $v0, SP_CLUT16($t8)          # (CAREFUL used v0, v1)
+	slt     $t0, $t1, $t0
+	beqz    $t0, \p\()_quad_skip
+	lw      $v1, SP_TPAGE16($t8)
+	b       \p\()_quad_next
+	nop
+\p\()_tri_near:
+	lw      $t0, SP_ZNEAR($t8)
+	lw      $v0, SP_CLUT16($t8)
+	slt     $t0, $t1, $t0
+	beqz    $t0, \p\()_tri_skip
+	lw      $v1, SP_TPAGE16($t8)
+	b       \p\()_tri_next
+	nop
 
 # Near polygon: hand it to the slow path (engine/r_slow.c) — near clip,
 # subdivision, exact projection. t0 = 4 (quad) or 3 (triangle).
@@ -1547,9 +1568,9 @@ dlr_terms_in:                            # t3 = cutoff
 	addiu   $t4, $t4, 4
 dlr_lit:
 	# the vertices: ra = their indices, t6 = how many are left, v0 = the
-	# light bytes; a3 = the next vertex's address and a2 = the light byte
-	# are fetched an iteration ahead, into the multiplies' HI/LO gaps (the
-	# light loop's a2, a3 are kept on the stack meanwhile)
+	# light bytes; a3 = the next vertex's address is fetched an iteration
+	# ahead, in the GTE's shadow (SQR: the squared offset's three terms);
+	# the light loop's a2, a3 are kept on the stack meanwhile
 	sw      $a2, DLR_A2($sp)
 	sw      $a3, DLR_A3($sp)
 	lw      $t0, DLB_IX($v1)
@@ -1567,24 +1588,23 @@ dlr_v:
 	lh      $at, 0($a3)                  # x
 	lh      $a1, 2($a3)                  # y  (a1, the node: dlr_done reloads nothing from it)
 	lh      $t7, 4($a3)                  # z
-	lbu     $a2, 0($v0)                  # its light byte
 	subu    $at, $at, $t0
 	subu    $a1, $a1, $t1
-	mult    $at, $at
-	subu    $t7, $t7, $t2
+	mtc2    $at, C2_IR1                  # the offset to the GTE: SQR squares
+	subu    $t7, $t7, $t2                # its three terms at once (sf 0:
+	mtc2    $a1, C2_IR2                  # exact, |offset| < 2^15)
+	mtc2    $t7, C2_IR3
+	lbu     $a2, 0($v0)                  # its light byte
 	lhu     $a3, 0($ra)                  # the next vertex (one past the last: harmless)
+	SQR     0
 	addiu   $ra, $ra, 2
-	mflo    $at
-	sll     $a3, $a3, 3                  # (two apart from the next mult: HI/LO)
+	sll     $a3, $a3, 3
 	addu    $a3, $a3, $t9
-	mult    $a1, $a1
 	addiu   $t6, $t6, -1                 # one fewer left
-	mflo    $a1
-	nop
-	nop
-	mult    $t7, $t7
+	mfc2    $at, C2_MAC1
+	mfc2    $a1, C2_MAC2
+	mfc2    $t7, C2_MAC3
 	addu    $at, $at, $a1
-	mflo    $t7
 	addu    $t7, $t7, $at                # the squared distance
 	srl     $t7, $t7, 11
 	sltiu   $at, $t7, 1024
