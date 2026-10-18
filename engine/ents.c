@@ -924,6 +924,36 @@ static void ents_visible(uint16_t vis)
 	ents_relink    = 0;
 }
 
+/* The leaf a brush model is drawn in, when its box spans several: the one
+   holding the point of its box nearest the eye, moved 2 units further
+   toward the eye. The walk draws a leaf's models after what lies behind
+   that leaf and before what stands nearer: the model then comes after the
+   world beyond its nearest face (a slab over a pit: after the pit, not
+   among its walls) and under what is between it and the eye. NULL when
+   that leaf is solid or out of the PVS (the eye's own side hidden: the
+   nearest leaf in front is taken instead). */
+static const qw_leaf *camera_side_leaf(const edict_t *e, uint16_t vis)
+{
+	int32_t cam[3], p[3], d[3], m = 0;
+	for (int k = 0; k < 3; k++) {
+		cam[k] = r_state.cam[k] * CLIP_SUB / QW_VSCALE;        /* vertex units -> 1/8 */
+		int32_t lo = e->absmin[k] + CLIP_SUB, hi = e->absmax[k] - CLIP_SUB;   /* (the link's spread off) */
+		p[k] = cam[k] < lo ? lo : cam[k] > hi ? hi : cam[k];
+		d[k] = cam[k] - p[k];
+		int32_t a = d[k] < 0 ? -d[k] : d[k];
+		if (a > m) m = a;
+	}
+	if (!m)
+		return 0;                                 /* the eye inside the box */
+	int32_t q[3];
+	for (int k = 0; k < 3; k++)                   /* 2 units toward the eye (max norm) */
+		q[k] = (p[k] + d[k] * (2 * CLIP_SUB) / m) / CLIP_SUB;
+	const qw_leaf *l = world_point_leaf(q);
+	if (!l || l->contents == QW_CONTENTS_SOLID || l->visframe != vis)
+		return 0;
+	return l;
+}
+
 void ents_render(void)
 {
 	if (!edicts)
@@ -946,7 +976,9 @@ void ents_render(void)
 		const qw_leaf *best = 0;
 		int32_t bestz = 0;
 		unsigned mask = e->vismask;
-		if (!(mask & (mask - 1))) {
+		if (e->num_leaves > 1 && (best = camera_side_leaf(e, vis)) != 0) {
+			STAT(2);
+		} else if (!(mask & (mask - 1))) {
 			int j = 0;
 			while (!(mask & 1)) { mask >>= 1; j++; }
 			best = e->leaves[j];

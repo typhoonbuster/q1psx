@@ -11,6 +11,7 @@
 #include "render.h"
 #include "ui.h"
 #include "vid.h"
+#include "world.h"
 
 const char *const hud_style_name[HUD_STYLES] = { "original", "q2 psx" };
 
@@ -44,6 +45,10 @@ typedef struct {
 static uint8_t  *blk_at, *blk_end;              /* the block being built */
 static uint32_t *blk_head, *blk_tail;
 
+/* where the drawing goes: the cached block (the Q2 HUD), or straight to
+   the frame's overlay chain (the original HUD's parts) */
+static void *(*emit)(int bytes);
+
 static void *hud_alloc(int bytes)
 {
 	uint32_t *p = (uint32_t *) blk_at;
@@ -62,6 +67,8 @@ static void *hud_alloc(int bytes)
 
 void hud_set_style(int s)
 {
+	if (s != style)
+		hud_invalidate();
 	style = s;
 	int rows = s == HUD_ORIGINAL ? 192 : 240;
 	vid_set_viewport(rows);
@@ -75,26 +82,34 @@ int hud_style(void)
 
 /* ------------------------------------------------------------- drawing -- */
 
-/* a picture at (x, y); its page's DR_TPAGE when the page changes */
-static void pic(int id, int x, int y)
+/* a part of a picture, its texels (sx, sy) .. + (w, h), at (x, y); its
+   page's DR_TPAGE when the page changes */
+static void pic_sub(int id, int x, int y, int sx, int sy, int w, int h)
 {
 	const qg_pic *p = &gdata.pics[id];
 	if (p->tpage != cur_tpage) {
-		DR_TPAGE *t = hud_alloc(sizeof *t);
+		DR_TPAGE *t = emit(sizeof *t);
 		if (!t)
 			return;
 		setDrawTPage(t, 0, 0, p->tpage);
 		cur_tpage = p->tpage;
 	}
-	SPRT *s = hud_alloc(sizeof *s);
+	SPRT *s = emit(sizeof *s);
 	if (!s)
 		return;
 	setSprt(s);
 	setXY0(s, x, y);
-	setUV0(s, p->u, p->v);
-	setWH(s, p->w, p->h);
+	setUV0(s, p->u + sx, p->v + sy);
+	setWH(s, w, h);
 	setRGB0(s, 128, 128, 128);
 	s->clut = gdata.clut;
+}
+
+/* a picture at (x, y) */
+static void pic(int id, int x, int y)
+{
+	const qg_pic *p = &gdata.pics[id];
+	pic_sub(id, x, y, 0, 0, p->w, p->h);
 }
 
 /* Sbar_DrawNum: `digits` big digits, right-aligned, red when `red` */
@@ -128,12 +143,12 @@ static void smallnum(int x, int y, int value)
 		if (d[i] || !lead || i == 2) {
 			lead = 0;
 			if (p->tpage != cur_tpage) {
-				DR_TPAGE *t = hud_alloc(sizeof *t);
+				DR_TPAGE *t = emit(sizeof *t);
 				if (!t) return;
 				setDrawTPage(t, 0, 0, p->tpage);
 				cur_tpage = p->tpage;
 			}
-			SPRT_8 *s = hud_alloc(sizeof *s);
+			SPRT_8 *s = emit(sizeof *s);
 			if (!s) return;
 			setSprt8(s);
 			setXY0(s, x + i * 8, y);
@@ -157,7 +172,8 @@ static int face_pic(void)
 		return QGP_FACE_INVUL2;
 	int f = pl.health >= 100 ? 4 : pl.health / 20;
 	if (f < 0) f = 0;
-	return (game_tick_count <= pl.pain_until ? QGP_FACE_P1 : QGP_FACE1) + f;
+	/* sb_faces[f]: [4] is "face1" (healthy) .. [0] "face5" (near death) */
+	return (game_tick_count <= pl.pain_until ? QGP_FACE_P1 : QGP_FACE1) + 4 - f;
 }
 
 /* the armour's picture by the item (-1: none) */
@@ -219,41 +235,166 @@ static int item_row(int x, int y)
 	return x;
 }
 
-/* Sbar_Draw: the inventory bar at 192, the status bar at 216 */
-static void draw_original(void)
-{
-	pic(QGP_IBAR_L, 0, 192);
-	pic(QGP_IBAR_R, 160, 192);
-	weapon_row(0, 200);
-	for (int i = 0; i < AMMO_COUNT; i++)
-		smallnum((6 * i + 1) * 8 - 2, 192, pl.ammo[i]);
-	for (int i = 0; i < 6; i++)
-		if (pl.items & (1u << (17 + i)))
-			pic(QGP_KEY1 + i, 192 + i * 16, 200);
-	for (int i = 0; i < 4; i++)
-		if (pl.items & (1u << (28 + i)))
-			pic(QGP_SIGIL1 + i, 288 + i * 8, 200);
+/* ---- the original HUD, part by part --------------------------------------
 
-	if (pl.dead) {
-		pic(QGP_SCOREBAR_L, 0, 216);
-		pic(QGP_SCOREBAR_R, 160, 216);
-		return;
+   Its rows (192 .. 239) are below the 3D view: no frame clears them, each
+   framebuffer keeps the HUD last drawn into it. So a part (the inventory
+   bar's ammo counts, its weapons, its items; the status bar's armour, face,
+   health and ammo, or the dead player's scoreboard) is drawn into a buffer
+   only when what it shows differs from what that buffer shows: its
+   background (the bar's columns behind it) and its pictures. Quake redrew
+   the whole bar for every page after any change (sb_updates); a part is
+   the unit here. Whatever else draws over those rows (the menu's fade, the
+   intermission, a load, the other HUD style) invalidates both buffers. */
+enum { HP_AMMOS, HP_WEAPONS, HP_ITEMS, HP_ARMOR, HP_FACE, HP_HEALTH, HP_AMMO, HP_SCORE, HP_COUNT };
+static uint32_t part_shown[2][HP_COUNT][2];    /* per buffer: what each part shows */
+static uint8_t  part_valid[2][HP_COUNT];
+
+void hud_invalidate(void)
+{
+	memset(part_valid, 0, sizeof part_valid);
+}
+
+/* the bar's columns x0 .. x0 + w, its rows sy .. sy + h, from its two
+   160-wide halves, at the bar's place (y: its top row) */
+static void bar_bg(int left, int right, int y, int x0, int sy, int w, int h)
+{
+	if (x0 < 160) {
+		int ww = x0 + w > 160 ? 160 - x0 : w;
+		pic_sub(left, x0, y + sy, x0, sy, ww, h);
 	}
-	pic(QGP_SBAR_L, 0, 216);
-	pic(QGP_SBAR_R, 160, 216);
-	if (pl.items & IT_INVULNERABILITY) {          /* 666 and the disc (hud_draw) */
-		num(24, 216, 666, 3, 1);
-	} else {
-		num(24, 216, pl.armor, 3, pl.armor <= 25);
-		if (armor_pic() >= 0)
-			pic(armor_pic(), 0, 216);
+	if (x0 + w > 160) {
+		int s = x0 > 160 ? x0 : 160;
+		pic_sub(right, s, y + sy, s - 160, sy, x0 + w - s, h);
 	}
-	pic(face_pic(), 112, 216);
-	num(136, 216, pl.health, 3, pl.health <= 25);
-	int ap = ammo_pic();
-	if (ap >= 0) {
-		pic(ap, 224, 216);
-		num(248, 216, game_current_ammo(), 3, game_current_ammo() <= 10);
+}
+
+/* Sbar_SoloScoreboard: the dead player's bar, over the scorebar */
+static void solo_scoreboard(void)
+{
+	char str[48];
+	int secs = (game_tick_count - level_start_tick) / GAME_HZ;
+	ui_begin();
+	snprintf(str, sizeof str, "Monsters:%3d /%3d", level_killed_monsters(), level_total_monsters());
+	ui_text(8, 216 + 4, str);
+	snprintf(str, sizeof str, "Secrets :%3d /%3d", level_found_secrets(), level_total_secrets());
+	ui_text(8, 216 + 12, str);
+	snprintf(str, sizeof str, "Time :%3d:%d%d", secs / 60, secs % 60 / 10, secs % 10);
+	ui_text(184, 216 + 4, str);
+	const char *name = world.title ? world.title : "";
+	ui_text(232 - (int) strlen(name) * 4, 216 + 12, name);
+	cur_tpage = -1;                                /* (ui set its own pages) */
+}
+
+/* what a part shows (two words), and drawing it */
+static void part_state(int p, uint32_t s[2])
+{
+	s[1] = 0;
+	switch (p) {
+	case HP_AMMOS:
+		s[0] = (uint32_t) pl.ammo[0] | (uint32_t) pl.ammo[1] << 10 | (uint32_t) pl.ammo[2] << 20;
+		s[1] = (uint32_t) pl.ammo[3];
+		break;
+	case HP_WEAPONS: {
+		uint32_t f = 0;
+		for (int i = 0; i < 7; i++)
+			if (pl.items & (IT_SHOTGUN << i))
+				f |= (uint32_t) (weapon_frame(i) + 1) << (3 * i);
+		s[0] = f;
+		break;
+	}
+	case HP_ITEMS:  s[0] = pl.items >> 17; break;
+	case HP_ARMOR:  s[0] = (pl.items & IT_INVULNERABILITY) ? 1 : 2 + (uint32_t) armor_pic() + 64 * (uint32_t) pl.armor; break;
+	case HP_FACE:   s[0] = (uint32_t) face_pic(); break;
+	case HP_HEALTH: s[0] = (uint32_t) pl.health; break;
+	case HP_AMMO:   s[0] = (uint32_t) (ammo_pic() + 1) | (uint32_t) game_current_ammo() << 8; break;
+	default: {                                      /* the scoreboard: its numbers, the second */
+		s[0] = (uint32_t) level_killed_monsters() | (uint32_t) level_found_secrets() << 16;
+		s[1] = (uint32_t) ((game_tick_count - level_start_tick) / GAME_HZ);
+		break;
+	}
+	}
+}
+
+static void part_draw(int p)
+{
+	switch (p) {
+	case HP_AMMOS:
+		bar_bg(QGP_IBAR_L, QGP_IBAR_R, 192, 0, 0, 192, 8);
+		for (int i = 0; i < AMMO_COUNT; i++)
+			smallnum((6 * i + 1) * 8 - 2, 192, pl.ammo[i]);
+		break;
+	case HP_WEAPONS:
+		bar_bg(QGP_IBAR_L, QGP_IBAR_R, 192, 0, 8, 192, 16);
+		weapon_row(0, 200);
+		break;
+	case HP_ITEMS:
+		bar_bg(QGP_IBAR_L, QGP_IBAR_R, 192, 192, 0, 128, 24);
+		for (int i = 0; i < 6; i++)
+			if (pl.items & (1u << (17 + i)))
+				pic(QGP_KEY1 + i, 192 + i * 16, 200);
+		for (int i = 0; i < 4; i++)
+			if (pl.items & (1u << (28 + i)))
+				pic(QGP_SIGIL1 + i, 288 + i * 8, 200);
+		break;
+	case HP_ARMOR:
+		bar_bg(QGP_SBAR_L, QGP_SBAR_R, 216, 0, 0, 112, 24);
+		if (pl.items & IT_INVULNERABILITY) {      /* 666 and the disc */
+			num(24, 216, 666, 3, 1);
+			ui_begin();
+			ui_aux(QGA_DISC, 0, 216);
+			cur_tpage = -1;
+		} else {
+			num(24, 216, pl.armor, 3, pl.armor <= 25);
+			if (armor_pic() >= 0)
+				pic(armor_pic(), 0, 216);
+		}
+		break;
+	case HP_FACE:
+		bar_bg(QGP_SBAR_L, QGP_SBAR_R, 216, 112, 0, 24, 24);
+		pic(face_pic(), 112, 216);
+		break;
+	case HP_HEALTH:
+		bar_bg(QGP_SBAR_L, QGP_SBAR_R, 216, 136, 0, 88, 24);
+		num(136, 216, pl.health, 3, pl.health <= 25);
+		break;
+	case HP_AMMO: {
+		bar_bg(QGP_SBAR_L, QGP_SBAR_R, 216, 224, 0, 96, 24);
+		int ap = ammo_pic();
+		if (ap >= 0) {
+			pic(ap, 224, 216);
+			num(248, 216, game_current_ammo(), 3, game_current_ammo() <= 10);
+		}
+		break;
+	}
+	default:                                       /* Sbar_Draw, dead: the scorebar */
+		bar_bg(QGP_SCOREBAR_L, QGP_SCOREBAR_R, 216, 0, 0, 320, 24);
+		solo_scoreboard();
+		break;
+	}
+}
+
+/* Sbar_Draw: the inventory bar at 192, the status bar at 216 (or the
+   scoreboard when dead), each part drawn into this buffer if it changed */
+static void draw_original_parts(void)
+{
+	int buf = vid_back();
+	emit = vid_ovl_alloc;
+	cur_tpage = -1;
+	for (int p = 0; p < HP_COUNT; p++) {
+		int sbar = p >= HP_ARMOR && p <= HP_AMMO;
+		if ((sbar && pl.dead) || (p == HP_SCORE && !pl.dead)) {
+			part_valid[buf][p] = 0;                /* (not on the bar now) */
+			continue;
+		}
+		uint32_t s[2];
+		part_state(p, s);
+		if (part_valid[buf][p] && part_shown[buf][p][0] == s[0] && part_shown[buf][p][1] == s[1])
+			continue;
+		part_draw(p);
+		part_shown[buf][p][0] = s[0];
+		part_shown[buf][p][1] = s[1];
+		part_valid[buf][p]    = 1;
 	}
 }
 
@@ -523,6 +664,7 @@ void hud_draw(void)
 		return;
 	if (level_intermission) {
 		draw_intermission();
+		hud_invalidate();                         /* (its pictures cover the bars' rows) */
 		return;
 	}
 	/* CL_ParseClientdata: the items just received */
@@ -537,6 +679,12 @@ void hud_draw(void)
 		ui_begin();
 		draw_center_string(center_text, -1);
 	}
+	if (style == HUD_ORIGINAL) {                  /* the bars below the view: by parts */
+		draw_original_parts();
+		return;
+	}
+	/* the Q2 layout lies over the view, cleared every frame: drawn every
+	   frame, its packets built only when what it shows changes */
 	hud_state_t now;
 	hud_state(&now);
 	hud_block_t *b = vid_hud_block(0);
@@ -549,10 +697,8 @@ void hud_draw(void)
 			blk_end  = (uint8_t *) b + VID_HUD_BYTES;
 			blk_head = blk_tail = 0;
 			cur_tpage = -1;
-			if (style == HUD_ORIGINAL)
-				draw_original();
-			else
-				draw_q2psx();
+			emit = hud_alloc;
+			draw_q2psx();
 			b->head  = blk_head;
 			b->tail  = blk_tail;
 			b->bytes = (uint32_t) (blk_at - (uint8_t *) b->packets);
@@ -564,9 +710,6 @@ void hud_draw(void)
 		vid_ovl_append(b->head, b->tail);
 	if ((pl.items & IT_INVULNERABILITY) && !pl.dead) {   /* Sbar's draw_disc over the armour */
 		ui_begin();
-		if (style == HUD_ORIGINAL)
-			ui_aux(QGA_DISC, 0, 216);
-		else
-			ui_aux(QGA_DISC, 124, 212);
+		ui_aux(QGA_DISC, 124, 212);
 	}
 }

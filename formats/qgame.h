@@ -114,7 +114,7 @@ enum {
 	QGP_KEY1 = QGP_INVA_SHOTGUN + 35,            /* sb_items: keys, powerups     */
 	QGP_KEY2, QGP_INVIS, QGP_INVULN, QGP_SUIT, QGP_QUAD,
 	QGP_SIGIL1, QGP_SIGIL2, QGP_SIGIL3, QGP_SIGIL4,
-	QGP_FACE1, QGP_FACE2, QGP_FACE3, QGP_FACE4, QGP_FACE5,   /* dying .. healthy */
+	QGP_FACE1, QGP_FACE2, QGP_FACE3, QGP_FACE4, QGP_FACE5,   /* healthy .. near death */
 	QGP_FACE_P1, QGP_FACE_P2, QGP_FACE_P3, QGP_FACE_P4, QGP_FACE_P5,   /* in pain */
 	QGP_FACE_INVIS, QGP_FACE_INVUL1, QGP_FACE_INVUL2, QGP_FACE_INV2, QGP_FACE_QUAD,
 	QGP_SMALLNUM,                /* the inventory bar's yellow digits 0-9, 80 x 8 */

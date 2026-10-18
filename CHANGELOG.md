@@ -1187,3 +1187,12 @@ followed by R0-R4.
   the two volumes, Graphics), and the fidelity row only on a disc with a
   choice. A row of the inventory bar, overwritten at boot by the old aux
   CLUT row, is right again.
+- **The second play test** (2026-10-18). §33: START's floor over the pit
+  painted in the wrong order (the buried faces of the still brush models
+  left out at the cook, a spanning model drawn in the leaf on the eye's
+  side of its nearest face); the status bar's face no longer upside down;
+  the original HUD drawn part by part, each part only into a framebuffer
+  that does not show it yet; the dead player's solo scoreboard; a frame
+  rate cap (60 / 45 / 30 / 15) in Graphics. The tick rate measured: 21 k
+  to 48 k cycles a tick, a lower rate would save 2 to 4 % of a frame: not
+  done.

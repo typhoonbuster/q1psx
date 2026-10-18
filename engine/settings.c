@@ -13,6 +13,8 @@ const uint16_t warp_budgets[] = { 1000, 1500, 2000, 2500, 3000, 4000 };
 const char *const warp_mode_name[R_WARP_MODES] = { "fixed", "dynamic", "budget" };
 const int num_warp_t      = (int) sizeof warp_t_px;
 const int num_warp_budget = (int) (sizeof warp_budgets / sizeof warp_budgets[0]);
+const uint8_t fps_caps[]  = { 60, 45, 30, 15 };
+const int num_fps_caps    = (int) sizeof fps_caps;
 
 settings_t settings;
 int settings_fid_mask = (1 << FIDELITY_LEVELS) - 1;
@@ -31,6 +33,7 @@ void settings_defaults(void)
 	settings.dlights = 1;
 	settings.volume  = 7;
 	settings.music   = 10;
+	settings.fps_cap = 0;                /* 60: no cap */
 }
 
 void settings_apply(void)
@@ -46,6 +49,7 @@ void settings_apply(void)
 	dl_enabled = settings.dlights;
 	snd_set_volume(settings.volume);
 	snd_set_cd_volume(settings.music);
+	vid_set_fps_cap(fps_caps[settings.fps_cap]);
 }
 
 int settings_fid_step(int fid, int d)

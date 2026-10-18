@@ -4,6 +4,8 @@
 
 #include "bench.h"
 #include "prof.h"
+#include "render.h"
+#include "vid.h"
 
 void bench_reset(bench_acc_t *b, const char *name)
 {
@@ -14,6 +16,9 @@ void bench_reset(bench_acc_t *b, const char *name)
 void bench_add(bench_acc_t *b, uint32_t vbl)
 {
 	b->frames++;
+	if (vid_stats.pkt_bytes > b->pkt_max)
+		b->pkt_max = vid_stats.pkt_bytes;
+	b->full_frames += r_arena_full != 0;
 	b->vbl_sum += vbl;
 	for (int i = 0; i < PROF_STAGES; i++) {
 		b->stage_sum[i] += prof_stage[i];
@@ -36,5 +41,5 @@ void bench_print(const bench_acc_t *b)
 	for (int i = 0; i < PROF_COUNTERS; i++)
 		if (b->count_sum[i])
 			printf(" %s=%u", prof_count_name[i], b->count_sum[i] / n);
-	printf("\n");
+	printf(" pkt=%u%s\n", b->pkt_max, b->full_frames ? " FULL" : "");
 }

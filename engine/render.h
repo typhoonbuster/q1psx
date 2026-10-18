@@ -121,9 +121,14 @@ extern r_warp_t r_warp;
 
 void r_set_warp(int mode, int t_px, int budget);
 
+/* the last frame's walk ran out of packet arena (its nearest records,
+   drawn last in the painter's order, were not drawn) */
+extern int r_arena_full;
+
 /* After each frame: its CPU cycles (input to the end of the overlay) and
    the vblanks it took. Adjusts T for the next frame in the dynamic modes. */
-void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl);
+void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share);   /* share: the
+                                              vblanks the frame rate cap gives this frame */
 
 /* asm entry point (engine/r_world.s) */
 void r_render(r_state_t *s);

@@ -33,7 +33,7 @@ static const uint8_t sp_rows[]    = { 0 };
 #define MAIN_ITEMS         (int) sizeof main_rows
 #define SINGLEPLAYER_ITEMS (int) sizeof sp_rows
 enum { O_RESET, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
-enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_COUNT };
+enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_FPS, G_COUNT };
 #define SLIDER_RANGE       10
 #define GREY               56          /* a greyed entry's shade (128: as it is) */
 
@@ -176,7 +176,7 @@ static void graphics_draw(void)
 	static const char *const label[G_COUNT] = {
 		"              Fidelity", "              Textures", "             Dithering",
 		"          Warp control", "             Threshold", "                Budget",
-		"                   HUD", "        Dynamic lights" };
+		"                   HUD", "        Dynamic lights", "        Frame rate cap" };
 	uint8_t rows[G_COUNT];
 	int n = graphics_rows(rows);
 	char val[24];
@@ -195,7 +195,8 @@ static void graphics_draw(void)
 		case G_T:      snprintf(val, sizeof val, "%d px", warp_t_px[settings.t]); break;
 		case G_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
 		case G_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
-		default:       snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
+		case G_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
+		default:       snprintf(val, sizeof val, "%d fps", fps_caps[settings.fps_cap]); break;
 		}
 		m_print(220, y, val, shade);
 	}
@@ -213,6 +214,7 @@ void menu_draw(void)
 		return;
 	ui_begin();
 	ui_fade();                                    /* Draw_FadeScreen */
+	hud_invalidate();                             /* (the fade darkens the bars too) */
 	ui_begin();
 	switch (m_state) {
 	case M_MAIN:         main_draw(); break;
@@ -350,7 +352,8 @@ static void graphics_adjust(int g, int d)
 	case G_T:      settings.t = wrap(settings.t, d, num_warp_t); break;
 	case G_BUDGET: settings.budget = wrap(settings.budget, d, num_warp_budget); break;
 	case G_HUD:    settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
-	default:       settings.dlights ^= 1; break;
+	case G_DLIGHTS: settings.dlights ^= 1; break;
+	default:       settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;
 	}
 	settings_apply();                             /* the fidelity and the textures: at a load */
 }

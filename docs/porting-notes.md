@@ -3672,3 +3672,61 @@ baked into their records, so the animation is done in VRAM:
   dumped ones. `ENTS=1 scripts/bench.sh` dumps e1m1's first button before
   and after it is pressed (`ee1m1_button0`: red, `ee1m1_button1`: the
   alternate, yellow) and logs the frame changes (`anim:` lines).
+
+## §33 — The second play test: a floor gone, the face, the HUD, the frame rate (2026-10-18)
+
+- **START's floor over the pit to the end** (func_bossgate, *38: a slab
+  384 x 416 units, 16 thick) "disappeared". It was drawn, in the wrong
+  order: the renderer has no depth buffer, the walk paints back to front,
+  and a brush model goes whole into one leaf of the world. Its dark side
+  faces, buried under the room's floor, were painted over the floor (a
+  black band along the pit's edge), and from other angles the pit's walls,
+  painted after the slab, covered it. Two changes:
+  - the cook leaves out the faces of the brush models that never move
+    (func_wall, func_illusionary, the episode and boss gates) that are
+    buried in the world: the space in front of each corner and of the
+    centre is solid (67 faces on start, none of which Quake shows: its
+    z-sorted spans hide them);
+  - a brush model whose box spans several leaves is drawn in the leaf
+    holding the point of its box nearest the eye, moved 2 units toward the
+    eye: the leaf on the eye's side of its nearest face, so the model comes
+    after the world beyond that face (the pit under the slab) and before
+    what stands between it and the eye. When that leaf is solid or out of
+    the PVS, the old choice (the visible leaf in front nearest the eye).
+- **The status bar's face** was upside down: Quake's sb_faces[4], for 100
+  health and more, is "face1"; "face5" is the one near death.
+- **The original HUD, part by part.** Its rows (192 .. 239) lie below the
+  view: no frame clears them, each framebuffer keeps what was last drawn
+  there. The inventory bar's ammo counts, weapons and items and the status
+  bar's armour, face, health and ammo are each drawn into a framebuffer only
+  when what they show differs from what that framebuffer shows (their bar's
+  columns behind them, then their pictures), straight into the frame's
+  overlay chain. The menu's fade, the intermission, a load, the other HUD
+  style invalidate both framebuffers. Quake redrew the whole bar for each
+  page after any change (sb_updates); a part is the unit here. The Q2-style
+  HUD lies over the view, which is cleared every frame: it is drawn every
+  frame from its cached packets as before. The bench's dumped frames draw
+  every part (pktview sees only dumped frames).
+- **The dead player's bar**: Sbar_SoloScoreboard over the scorebar
+  ("Monsters: n / n", "Secrets : n / n", the level's time, its name), as
+  Quake shows it, where only the empty scorebar was drawn.
+- **A frame rate cap** in Graphics (and the debug menu): 60 (none), 45, 30
+  or 15 frames a second. vid_flip shows a frame no sooner than its share of
+  vblanks after the last (45: 1, 1, 2 in turn). The game's time and input
+  stay the vblanks' (§30); the dynamic warp measures a frame against its
+  share (a capped 30 fps frame is not "over budget" for taking two
+  vblanks).
+- **The tick rate** (the question: would 32 ticks a second, or 20 as
+  Quake's network rate, gain much?). Measured at start's spawn
+  (`BENCH_GAME=1`, `bench tick` lines): a tick costs 21 k cycles standing,
+  21 k walking, 48 k firing the nailgun (its nails' traces and
+  particles): 4 to 9 % of a 60 fps frame. At 32 ticks a second a 60 fps
+  frame would save about half of that, 2 to 4 %; the renderer is the other
+  90 %. Against that: the physics (pmove.s) and every timing of the game
+  are built on 1/60 s ticks, and a camera moved 32 times a second needs
+  interpolating to stay smooth at 60 fps (a tick of lag). Not done: too
+  little for the cost. (A level's first items' drop, all in one tick 0.2 s
+  after the spawn, costs 270 k cycles once.)
+- **pkt** in the bench lines: the most packet arena bytes a frame used, and
+  FULL when a frame's walk ran out of it (its nearest records lost). The
+  128 spawn views peak at 64.8 KB of the 94 KB.

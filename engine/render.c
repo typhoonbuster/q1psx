@@ -162,13 +162,13 @@ void r_set_warp(int mode, int t_px, int budget)
 #define WARP_LOW    (WARP_FRAME * 3 / 4)
 #define WARP_CALM   4
 
-void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl)
+void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 {
 	int over, room;
 	switch (r_warp.mode) {
-	case R_WARP_DYNAMIC:
-		over = vbl > 1 || frame_cycles > WARP_HIGH;
-		room = vbl <= 1 && frame_cycles < WARP_LOW;
+	case R_WARP_DYNAMIC:                       /* (against the frame rate cap's share) */
+		over = vbl > share || frame_cycles > WARP_HIGH * share;
+		room = vbl <= share && frame_cycles < WARP_LOW * share;
 		break;
 	case R_WARP_BUDGET:
 		over = r_warp.tris > (uint32_t) r_warp.budget;
@@ -274,6 +274,8 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 
 /* ----------------------------------------------------------------- frame -- */
 
+int r_arena_full;
+
 void r_frame(void)
 {
 	if (!bound)
@@ -312,6 +314,7 @@ void r_frame(void)
 	uint32_t slowb = r_state.slow_bytes <= bytes ? r_state.slow_bytes : bytes;
 	r_warp.tris = (bytes - slowb) / 26 + slowb / 40;
 	vid_frame.pkt = (uint8_t *) r_state.pkt;
+	r_arena_full  = r_state.pkt >= r_state.pkt_end;   /* the walk stopped short: the nearest records lost */
 
 #if Q1PSX_PROFILE
 	/* the slow path runs inside the face-record timing: take it out */

@@ -17,6 +17,8 @@ enum { HUD_ORIGINAL, HUD_Q2PSX, HUD_STYLES };
 extern const char *const hud_style_name[HUD_STYLES];
 
 void hud_set_style(int style);   /* sets the renderer's and the GPU's viewport */
+void hud_invalidate(void);       /* something drew over the bars' rows: every part
+                                    drawn again into both framebuffers */
 int  hud_style(void);
 void hud_draw(void);             /* this frame's HUD, from the player's state;
                                     the intermission's overlay instead during it,

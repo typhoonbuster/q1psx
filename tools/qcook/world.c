@@ -978,6 +978,66 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 			if (f >= 0 && f < b->num_faces && drawn[m])
 				face_model[f] = m;
 	free(drawn);
+
+	/* the faces of the brush models that never move (func_wall,
+	   func_illusionary, the episode and boss gates) buried in the world:
+	   the space in front of every corner and of the centre is solid. Quake
+	   never shows them (its z-sorted spans hide them); the PS1's painter's
+	   order would paint them over the world (the boss gate's dark edges
+	   over START's floor) */
+	{
+		uint8_t *still = xcalloc((size_t) b->num_models, 1);
+		static const char *const still_classes[] = { "func_wall", "func_illusionary", "func_episodegate",
+		                                             "func_bossgate" };
+		for (int i = 0; i < ents.num; i++) {
+			const char *mdl = ent_value(&ents, &ents.ents[i], "model");
+			if (!mdl || mdl[0] != '*')
+				continue;
+			for (unsigned c = 0; c < sizeof still_classes / sizeof still_classes[0]; c++)
+				if (!strcmp(ents.ents[i].classname, still_classes[c])) {
+					int idx = atoi(mdl + 1);
+					if (idx > 0 && idx < b->num_models)
+						still[idx] = 1;
+				}
+		}
+		int buried = 0, wroot = b->models[0].headnode[0];
+		for (int f = 0; f < b->num_faces; f++) {
+			if (face_model[f] <= 0 || !still[face_model[f]])
+				continue;
+			const bsp_face  *bf = &b->faces[f];
+			const bsp_plane *pl = &b->planes[bf->planenum];
+			double n[3], c[3] = { 0, 0, 0 }, v[64][3];
+			int nv = 0;
+			for (int k = 0; k < 3; k++)
+				n[k] = bf->side ? -pl->n[k] : pl->n[k];
+			for (int e = 0; e < bf->numedges && nv < 64; e++, nv++) {
+				int se = b->surfedges[bf->firstedge + e];
+				int vi = se >= 0 ? b->edges[se * 2] : b->edges[-se * 2 + 1];
+				for (int k = 0; k < 3; k++) {
+					v[nv][k] = b->verts[vi * 3 + k];
+					c[k] += v[nv][k];
+				}
+			}
+			if (nv < 3)
+				continue;
+			for (int k = 0; k < 3; k++)
+				c[k] /= nv;
+			int open = 0;
+			for (int i = 0; i <= nv && !open; i++) {
+				double q[3];
+				for (int k = 0; k < 3; k++)     /* 2 units out, a tenth of the way in */
+					q[k] = (i < nv ? v[i][k] + (c[k] - v[i][k]) * 0.1 : c[k]) + n[k] * 2;
+				open = point_contents(b, wroot, q) != -2;
+			}
+			if (!open) {
+				face_model[f] = -1;
+				buried++;
+			}
+		}
+		if (buried)
+			printf("qcook: %d buried faces of still brush models left out\n", buried);
+		free(still);
+	}
 	for (int f = 0; f < b->num_faces; f++) {
 		pc_count[f] = 0;
 		if (face_model[f] >= 0)

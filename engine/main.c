@@ -267,6 +267,7 @@ static int load_level(int map, int fid)
 		ents_load();                            /* the map's entities */
 		ents_spawn(1);
 		anim_reset();
+		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		snd_map_start();
 		music_play(snd_cd_track());
 	}
@@ -416,9 +417,10 @@ static void run_frame(int interactive, int dump)
 	}
 	PLAY_STEP("render");
 #ifdef Q1PSX_BENCH
-	if (dump)
-		anim_invalidate();                  /* a dump shows the textures' frames (pktview
-		                                       sees no frame but the dumped ones) */
+	if (dump) {
+		anim_invalidate();                  /* a dump shows the textures' frames and the */
+		hud_invalidate();                   /* whole HUD (pktview sees only dumped frames) */
+	}
 #endif
 	frame_work();
 	if (game_active) {
@@ -447,8 +449,9 @@ static void run_frame(int interactive, int dump)
 	if (dump)
 		vid_dump(dump == 2);
 	PLAY_STEP("flip");
+	uint32_t share = (uint32_t) vid_frame_vbl();
 	vid_flip();
-	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl);
+	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl, share);
 #if Q1PSX_BENCH_PLAY
 	if (play_trace > 0) { printf("play step done\n"); play_trace--; }
 #endif
@@ -488,7 +491,7 @@ static const char *map_tag(int m)
 }
 
 /* The options under the map list: L2 / R2 pick one, L1 / R1 change it. */
-enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_COUNT };
+enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_DLIGHTS, OPT_FPS, OPT_COUNT };
 static int opt_sel;
 
 static void opt_step(int d)
@@ -500,7 +503,9 @@ static void opt_step(int d)
 	case OPT_WARP:   settings.warp = (settings.warp + R_WARP_MODES + d) % R_WARP_MODES; break;
 	case OPT_T:      settings.t = (settings.t + num_warp_t + d) % num_warp_t; break;
 	case OPT_BUDGET: settings.budget = (settings.budget + num_warp_budget + d) % num_warp_budget; break;
-	default:         settings.hud = (settings.hud + HUD_STYLES + d) % HUD_STYLES; break;
+	case OPT_HUD:    settings.hud = (settings.hud + HUD_STYLES + d) % HUD_STYLES; break;
+	case OPT_DLIGHTS: settings.dlights ^= 1; break;
+	default:         settings.fps_cap = (settings.fps_cap + num_fps_caps + d) % num_fps_caps; break;
 	}
 	apply_settings();   /* warp, dithering, the HUD at once; textures, fidelity on load */
 }
@@ -508,7 +513,7 @@ static void opt_step(int d)
 static void opt_draw(void)
 {
 	static const char *const label[OPT_COUNT] = {
-		"fidelity", "textures", "dither", "warp", "threshold", "budget", "hud",
+		"fidelity", "textures", "dither", "warp", "threshold", "budget", "hud", "dlights", "fps cap",
 	};
 	char line[48], val[16];
 	for (int o = 0; o < OPT_COUNT; o++) {
@@ -519,9 +524,11 @@ static void opt_draw(void)
 		case OPT_WARP:   snprintf(val, sizeof val, "%s", warp_mode_name[settings.warp]); break;
 		case OPT_T:      snprintf(val, sizeof val, "%d px", warp_t_px[settings.t]); break;
 		case OPT_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
-		default:         snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
+		case OPT_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
+		case OPT_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
+		default:         snprintf(val, sizeof val, "%d", fps_caps[settings.fps_cap]); break;
 		}
-		int x = 16 + (o % 2) * 152, y = 178 + (o / 2) * 10;
+		int x = 16 + (o % 2) * 152, y = 168 + (o / 2) * 10;
 		snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
 		vid_text(x, y, line);
 		if (o == opt_sel)
@@ -534,6 +541,7 @@ static void opt_draw(void)
    one (reloading it if the textures or the fidelity changed). */
 static void mapmenu_frame(void)
 {
+	hud_invalidate();                           /* (this menu draws over the whole screen) */
 	int n = world_num_maps();
 
 	pad_read();
@@ -1317,6 +1325,40 @@ static void bench_menu(void)
 	hud_set_style(HUD_ORIGINAL);
 }
 
+/* what a game tick costs (the tick rate question): walking, then firing
+   the nailgun, then standing, at the spawn; cycles a tick, averaged */
+static void bench_tick_cost(void)
+{
+	game_spawn();
+	game_active = 1;
+	static const char *const what[3] = { "walk", "fire", "idle" };
+	for (int k = 0; k < 3; k++) {
+		game_cmd_t cmd;
+		memset(&cmd, 0, sizeof cmd);
+		cmd.weapon_group = -1;
+		if (k == 0) { cmd.fwd = PM_AXIS; cmd.side = 30; }
+		if (k == 1) { cmd.fire = 1; }
+		if (k == 1)                                    /* the nailgun */
+			for (int n = 0; n < W_COUNT && pl.weapon != W_NAILGUN; n++) {
+				game_cmd_t c2 = cmd;
+				c2.fire = 0;
+				c2.weapon_next = 1;
+				game_tick(&c2);
+			}
+		uint32_t total = 0, worst = 0;
+		for (int t = 0; t < 120; t++) {
+			uint32_t t0 = prof_now();
+			game_tick(&cmd);
+			uint32_t c = prof_cycles(t0, prof_now());
+			total += c;
+			if (c > worst) worst = c;
+		}
+		printf("bench tick %s: %u cycles a tick on average, %u at worst\n", what[k], (unsigned) (total / 120),
+		       (unsigned) worst);
+	}
+	game_active = 0;
+}
+
 static void bench_game(void)
 {
 	snd_log = 1;                                      /* every sound start, for the diff */
@@ -1437,6 +1479,8 @@ static void bench_game(void)
 		}
 	}
 	bench_menu();
+	snd_log = 0;
+	bench_tick_cost();                                /* (last: it moves the player) */
 	game_active = 0;
 	pad_read();                                       /* the interrupt-driven poll, seen once */
 	printf("pad poll: %s type %d held %04x sticks %d %d %d %d\n", pad.connected ? "connected" : "absent",

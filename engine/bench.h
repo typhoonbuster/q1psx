@@ -25,6 +25,8 @@ typedef struct {
 	uint32_t    stage_sum[PROF_STAGES];
 	uint32_t    stage_max[PROF_STAGES];
 	uint32_t    count_sum[PROF_COUNTERS];
+	uint32_t    pkt_max;        /* the most arena bytes a frame used          */
+	uint32_t    full_frames;    /* frames whose walk ran out of arena         */
 } bench_acc_t;
 
 void bench_reset(bench_acc_t *b, const char *name);

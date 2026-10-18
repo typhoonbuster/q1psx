@@ -78,6 +78,12 @@ void  vid_shift(const int v[3], int contrast);
 void *vid_hud_block(int previous);             /* this buffer's (0) or the other's (1) */
 
 void  vid_flip(void);
+/* the frame rate cap: 60 (none), 45, 30 or 15 frames a second. A frame is
+   shown no sooner than its share of vblanks after the last (45: 1, 1, 2 in
+   turn); vid_frame_vbl() is that share for the frame being built */
+void  vid_set_fps_cap(int fps);
+int   vid_frame_vbl(void);
+int   vid_back(void);                          /* the framebuffer this frame is drawn into (0, 1) */
 void  vid_dump(int hash_only);                  /* display list -> stdout (P lines,
                                                    then its hash; or the hash only) */
 

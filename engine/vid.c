@@ -18,6 +18,8 @@ typedef struct {
 static vid_buffer_t buf[2];
 static int          back;          /* buffer the CPU is building into */
 static uint32_t     last_vbl;
+static uint8_t      cap_vbl[3] = { 1, 1, 1 };   /* vblanks a frame, in turn */
+static int          cap_len = 1, cap_pos;
 static int          viewport_rows = VID_H;
 static uint32_t    *ovl_head, *ovl_tail;   /* this frame's overlay chain */
 
@@ -141,6 +143,28 @@ void vid_ovl_append(void *head, void *tail)
 	ovl_tail = tail;
 }
 
+int vid_back(void)
+{
+	return back;
+}
+
+void vid_set_fps_cap(int fps)
+{
+	cap_pos = 0;
+	if (fps == 45) {
+		cap_vbl[0] = 1; cap_vbl[1] = 1; cap_vbl[2] = 2;   /* 3 frames in 4 vblanks */
+		cap_len = 3;
+		return;
+	}
+	cap_vbl[0] = (uint8_t) (fps == 30 ? 2 : fps == 15 ? 4 : 1);
+	cap_len = 1;
+}
+
+int vid_frame_vbl(void)
+{
+	return cap_vbl[cap_pos];
+}
+
 void *vid_hud_block(int previous)
 {
 	return buf[back ^ previous].arena + VID_ARENA_BYTES - VID_HUD_BYTES;
@@ -228,6 +252,9 @@ void vid_flip(void)
 	DrawSync(0);                     /* the previous frame is fully drawn */
 	uint32_t t1 = prof_now();
 	VSync(0);
+	while ((uint32_t) VSync(-1) - last_vbl < cap_vbl[cap_pos])
+		VSync(0);                    /* the cap: this frame's share of vblanks */
+	cap_pos = cap_pos + 1 < cap_len ? cap_pos + 1 : 0;
 	uint32_t t2 = prof_now();
 	vid_stats.sync_cycles  = prof_cycles(t0, t1);
 	vid_stats.vsync_cycles = prof_cycles(t1, t2);
