@@ -1139,12 +1139,13 @@ walk:
 walk_t0:                                 # (t0 = s1 & 1: a leaf?)
 	bnez    $t0, walk_leaf
 	addiu   $a0, $s1, -1                 # (the leaf, for walk_leaf)
-	lhu     $t0, N_VISFRAME($s1)
-	lh      $t1, N_C+4($s1)              # the frustum test's box, loaded ahead
-	bne     $t0, $s5, pop                # (harmless when unused). VZ with lh:
-	lwc2    C2_VXY0, N_C+0($s1)          # the halfwords after c[2] and h[2]
-	lh      $t2, N_H+4($s1)              # are visframe / plane3, not part of
-	lwc2    C2_VXY1, N_H+0($s1)          # the vectors
+	beqz    $s2, wn_inside               # fully inside the frustum already:
+	lhu     $t0, N_VISFRAME($s1)         # no box to load
+	lh      $t1, N_C+4($s1)              # the frustum test's box. VZ with lh:
+	bne     $t0, $s5, pop                # the halfwords after c[2] and h[2]
+	lwc2    C2_VXY0, N_C+0($s1)          # are visframe / plane3, not part of
+	lh      $t2, N_H+4($s1)              # the vectors
+	lwc2    C2_VXY1, N_H+0($s1)
 .if R_PROFILE
 	lw      $t3, SP_NODES($t8)
 .endif
@@ -1154,7 +1155,7 @@ walk_t0:                                 # (t0 = s1 & 1: a leaf?)
 	addiu   $t3, $t3, 1
 	sw      $t3, SP_NODES($t8)
 .endif
-	beqz    $s2, wn_side_1               # fully inside the frustum already
+	nop                                  # (two before the GTE reads them)
 	lhu     $a2, N_PLANE3($s1)           # (wn_side's first; FRUSTUM keeps a0,
 	FRUSTUM pop, "sll $a2, $a2, 2", "addu $a2, $a2, $s0", "lw $a3, PN_DIST($a2)", "lbu $a0, PN_TYPE($a2)", "sra $a3, $a3, 1"
 	b       wn_side_2                    #  a2, a3: the plane's setup is in its
@@ -1162,12 +1163,20 @@ walk_t0:                                 # (t0 = s1 & 1: a leaf?)
 
 	# the node's plane: d = n . cam - dist (x4096, vertex units); axial
 	# planes skip the products
-wn_side_1:                               # a2: plane index x 3, a word offset in
-	addiu   $s3, $s3, 4                  # the shared table s0 (dist in 1/8
-	sll     $a2, $a2, 2                  # units). (s3: the push's, below)
+wn_inside:                               # t0 = its visframe (the delay slot's)
+	lhu     $a2, N_PLANE3($s1)           # a2: plane index x 3, a word offset in
+	bne     $t0, $s5, pop                # the shared table s0 (dist in 1/8
+	sll     $a2, $a2, 2                  # units; harmless when popping)
+.if R_PROFILE
+	lw      $t3, SP_NODES($t8)
+	nop
+	addiu   $t3, $t3, 1
+	sw      $t3, SP_NODES($t8)
+.endif
 	addu    $a2, $a2, $s0
 	lw      $a3, PN_DIST($a2)
 	lbu     $a0, PN_TYPE($a2)
+	addiu   $s3, $s3, 4                  # (s3: the push's, below)
 	sra     $a3, $a3, 1                  # dist -> vertex units, x4096
 wn_side_2:                               # a2 = the plane, a3 = dist, a0 = type
 	sltiu   $t2, $a0, 3
@@ -1254,17 +1263,19 @@ walk_refill:                             # scratchpad stack empty: next RAM bloc
 
 walk_leaf:                               # a0 = the leaf (s1 - 1)
 	lhu     $t0, L_VISFRAME($a0)
-	lh      $t1, L_C+4($a0)
+	lhu     $a3, L_NMARKS($a0)
 	bne     $t0, $s5, pop
+	lw      $a2, L_MARKS($a0)
+	beqz    $s2, wl_marks                # fully inside the frustum: no box
+	sll     $a3, $a3, 1                  # marks x 2 bytes
+	lh      $t1, L_C+4($a0)
 	lwc2    C2_VXY0, L_C+0($a0)
 	lh      $t2, L_H+4($a0)
 	lwc2    C2_VXY1, L_H+0($a0)
 	mtc2    $t1, C2_VZ0
-	lhu     $a3, L_NMARKS($a0)
 	mtc2    $t2, C2_VZ1
-	lw      $a2, L_MARKS($a0)
-	beqz    $s2, wl_marks
-	sll     $a3, $a3, 1                  # marks x 2 bytes
+	nop                                  # (two before the GTE reads them)
+	nop
 	FRUSTUM pop
 wl_marks:
 	lw      $t3, SP_FVBASE($t8)
