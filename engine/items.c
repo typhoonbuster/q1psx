@@ -21,6 +21,7 @@
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
+#include "vid.h"
 #include "world.h"
 
 #define DEG(d) ((d) * ANG_TURN / 360)
@@ -610,12 +611,36 @@ void items_physics(edict_t *e)
 		toss_tick(e);
 }
 
+/* R_AliasCheckBBox's trivial reject, on the model's sphere: its origin in
+   the view's space (world x 6: the walk's matrix), wholly behind the eye or
+   outside a side of the 90 degree frustum (|x| <= z; |y| <= z x the
+   viewport's rows / 320); the distances to the slanted planes taken
+   conservatively (x sqrt 2 as 3 / 2, the vertical's 5 / 4) */
+static int in_view(const int32_t org[3], int radius_vu)
+{
+	int32_t v[3] = { org[0] * QW_VSCALE / CLIP_SUB, org[1] * QW_VSCALE / CLIP_SUB, org[2] * QW_VSCALE / CLIP_SUB };
+	const int16_t *r = r_state.rot;
+	int32_t z = ((r[6] * v[0] + r[7] * v[1] + r[8] * v[2]) >> 12) + r_state.tr[2];
+	int32_t rad = radius_vu * 3 / 2;                  /* vertex units -> the view's */
+	if (z + rad <= 0)
+		return 0;
+	int32_t x = ((r[0] * v[0] + r[1] * v[1] + r[2] * v[2]) >> 12) + r_state.tr[0];
+	if (x - z > rad * 3 / 2 || -x - z > rad * 3 / 2)
+		return 0;
+	int32_t y = ((r[3] * v[0] + r[4] * v[1] + r[5] * v[2]) >> 12) + r_state.tr[1];
+	int32_t zy = z * (int32_t) r_state.vh2 / VID_W;   /* half the rows over 160 */
+	if (y - zy > rad * 5 / 4 || -y - zy > rad * 5 / 4)
+		return 0;
+	return 1;
+}
+
 /* the items' models into the render list: in their leaf if the PVS sees
-   it, lit by it (and the dynamic lights), the pickups turning */
+   it and the frustum may, lit by it (and the dynamic lights), the pickups
+   turning */
 void items_render(void)
 {
 	uint16_t vis = (uint16_t) r_state.visframe;
-	int yaw = (int) ((int64_t) game_tick_count * DEG(100) / 60) & (ANG_TURN - 1);
+	int yaw = (game_tick_count % 216) * ANG_TURN / 216;   /* EF_ROTATE: 100 degrees a second (3.6 s a turn) */
 	for (int i = 0; i < ents_num_models; i++) {
 		edict_t *e = &edicts[ents_model_list[i]];
 		if (!e->inuse || e->item_model < 0)
@@ -624,6 +649,8 @@ void items_render(void)
 		if (!leaf || leaf->visframe != vis)
 			continue;
 		const qg_model *m = &world.models[e->item_model];
+		if (!in_view(e->origin, m->radius))
+			continue;
 		int frame = 0;
 		if (e->cnt)                               /* an animated group, 10 a second, its phase */
 			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
