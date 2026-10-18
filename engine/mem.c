@@ -35,10 +35,13 @@ static uint32_t game_top;
 void *mem_game_alloc(uint32_t bytes)
 {
 	uint32_t size = (bytes + 15u) & ~15u;
-	if (size > MEM_GAME_BYTES - game_top) {
-		printf("mem: game arena full (%u + %u > %u)\n",
+	if (size > MEM_GAME_BYTES - game_top) {    /* (boot-time tables: none may go
+		                                              missing, a NULL would be written
+		                                              through: stop here, said) */
+		printf("mem: game arena full (%u + %u > %u): MEM_GAME_BYTES too small\n",
 		       game_top, size, (uint32_t) MEM_GAME_BYTES);
-		return NULL;
+		for (;;)
+			;
 	}
 	void *p = game_mem + game_top;
 	game_top += size;

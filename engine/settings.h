@@ -27,7 +27,8 @@ typedef struct {
 	int music;       /* the CD music's, tenths (bgmvolume 1)                 */
 	int fps_cap;     /* fps_caps[] index: 60 (none), 45, 30, 15              */
 	int tick;        /* tick_rates[] index: the game's ticks a second        */
-	int viewmodel;   /* the weapon drawn (Quake's r_drawviewmodel)           */
+	int viewmodel;   /* the weapon drawn (Quake's r_drawviewmodel): 0 off,
+	                    1 the 3D model, 2 the 2D pictures (the cook's)        */
 	int drawdist;    /* draw_dists[] index: the draw distance (0: off)       */
 	int flat;        /* R_FLAT_*: the flat shading                           */
 } settings_t;
@@ -45,6 +46,7 @@ extern const int num_tick_rates;
 extern const uint16_t draw_dists[];       /* world units, 0: off */
 extern const int num_draw_dists;
 extern const char *const flat_name[];
+extern const char *const viewmodel_name[];   /* [3] */
 
 /* the fidelity levels the disc carries (bit n: level n; world_scan_maps) */
 extern int settings_fid_mask;

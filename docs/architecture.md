@@ -107,7 +107,7 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
 | Level arena | 1152 KB | world render data + clip hulls + PVS (the biggest map 696 KB) |
-| Game arena | 160 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 66 KB), filled once at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
+| Game arena | 224 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 66 KB; the 2D weapons' packets, 102 KB), filled once at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
 The level arena is a bump allocator that is reset on map load. There is no
@@ -152,11 +152,14 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
   down to row 511): Quake's palette, one 256-entry row at (0, 480); the
   4-bit textures' 16-entry CLUTs, 20 a row, rows 481 .. 502; the game
   data's own copy of the palette with index 255 transparent at (0, 504);
-  its aux pictures' CLUTs, 20 a row, rows 505 .. 506. (Until 2026-10-18
+  its aux pictures' CLUTs, 20 a row, rows 505 .. 506; the 2D weapon's
+  CLUT at (0, 507) (`docs/porting-notes.md` §38). (Until 2026-10-18
   the 4-bit and aux CLUTs ran along rows 480+ and 504 up to x 959: a map
   whose sixth page was full overwrote the menu's CLUTs, and the game
   data's pages lost a row to them.) A debug font lives in a corner
   (x ≥ 960).
+- The 2D weapon's slot (110 x 98 texels at an even u) is among the game's
+  images: the frame on screen is copied there through the display list.
 - The game's images (pages 6..9) are packed by MaxRects with a 2-texel
   border of replicated edge texels around every skin and sprite sheet:
   the GPU's texture coordinates stray a texel past a triangle's edge.

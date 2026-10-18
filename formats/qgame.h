@@ -17,6 +17,19 @@
  *   Sprites are models too: one record (a quad in the view plane, x right,
  *   y down) per frame, drawn alone (QGF_SPRITE).
  *
+ * The 2D weapons (Graphics: "Draw weapon: 2D")
+ *   Every view model frame as a picture, rendered by the cook as the eye
+ *   sees it (the status bar's viewport, the gun at rest), at half the
+ *   screen's resolution (as the view models' skins), its colour scaled for
+ *   the light by the engine: one 255-colour CLUT per weapon (index 0
+ *   transparent). The engine copies the frame on screen into one slot of
+ *   the game's pages (qg_header wslot) and the weapon's CLUT to
+ *   (QG_WCLUT_X, QG_WCLUT_Y) through the display list, and draws one quad
+ *   twice the size. Both are stored as ready display-list packets (a tag
+ *   word, GP0(A0h) to the slot, the texels; a frame's chain ends with
+ *   GP0(01h), the texture cache cleared): the engine makes their links
+ *   absolute at the load and hangs a chain in the ordering table as it is.
+ *
  * VRAM
  *   The texture pages the maps leave free (qtex.h QTEX_MAP_PAGES and up) and
  *   one 256-colour CLUT: the Quake palette with index 255 transparent (the
@@ -32,10 +45,13 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM4"
+#define QGAME_MAGIC "QGM5"
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
+
+#define QG_WCLUT_X  0
+#define QG_WCLUT_Y  507          /* the 2D weapon's CLUT: a free row under the aux CLUTs */
 
 #define QG_LIGHT_YAWS 16         /* light tables: one per 22.5 degrees of yaw */
 #define QG_NORMALS   162         /* Quake's vertex normals (anorms.h)         */
@@ -127,6 +143,33 @@ typedef struct {
 	uint16_t w, h;               /* texels                                       */
 } qg_pic;                        /* 8 bytes */
 
+/* The 2D weapons: per weapon (QGM_V_AXE .. QGM_V_LIGHT), its frames (the
+   model's, in its order) and its CLUT's packet; per frame, where it goes
+   on the screen at the gun's rest pose and its texels' packets (half
+   resolution, a transparent margin, rows of w bytes, w even). A packet's
+   tag links to the next one's offset in the pixel block, the chain's last
+   to 0xffffff. */
+#define QG_WEAPONS     8
+#define QG_WS_L0       86        /* the light the frames are shaded at: the
+                                    engine's colour is light x 128 / QG_WS_L0 */
+typedef struct {
+	uint16_t first, count;       /* its frames in the frame table               */
+	uint16_t anchor;             /* the gun's depth at rest (frame 0's vertices'
+	                                mean), 1/16 units: the bob's scale           */
+	uint16_t pad;
+	uint32_t ofs_clut;           /* its CLUT's packet in the pixel block         */
+} qg_wsprite;                    /* 12 bytes */
+
+typedef struct {
+	int16_t  x, y;               /* its top-left, screen pixels from the
+	                                projection's centre (160, 96: the status
+	                                bar's viewport, the gun 2 units up)         */
+	uint8_t  w, h;               /* texels (drawn twice the size)               */
+	uint16_t pad;
+	uint32_t ofs;                /* its texels' first packet in the pixel block */
+	uint32_t ofs_last;           /* and its last (GP0(01h))                     */
+} qg_wframe;                     /* 16 bytes */
+
 /* The aux pictures: the intermission's and the menu's (gfx/ lumps) and the
    console font (gfx.wad conchars), 4bpp with 16 colours each, in the two
    4-bit pages of the last VRAM column (x 960: QG_AUX_X, y 0 and 256); their
@@ -177,6 +220,10 @@ typedef struct {
 	                                among the rects)                             */
 	uint32_t num_finales, ofs_finales, len_finales;   /* qg_finale[num_finales]
 	                                then their texts (the block's len bytes)     */
+	uint32_t ofs_wsprites;       /* qg_wsprite[QG_WEAPONS]                       */
+	uint32_t num_wframes, ofs_wframes;   /* qg_wframe[num_wframes]               */
+	uint32_t ofs_wpix, len_wpix; /* the 2D weapons' packets: texels and CLUTs   */
+	qg_pic   wslot;              /* the VRAM slot a frame is copied to (u even) */
 } qg_header;
 
 /* The episodes' end texts (client.qc ExitIntermission's SVC_FINALE strings,

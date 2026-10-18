@@ -199,7 +199,7 @@ static void graphics_draw(void)
 		case G_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
 		case G_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
 		case G_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
-		case G_WEAPON: snprintf(val, sizeof val, "%s", settings.viewmodel ? "on" : "off"); break;
+		case G_WEAPON: snprintf(val, sizeof val, "%s", viewmodel_name[settings.viewmodel]); break;
 		case G_DRAWDIST:
 			if (draw_dists[settings.drawdist])
 				snprintf(val, sizeof val, "%d", draw_dists[settings.drawdist]);
@@ -365,7 +365,7 @@ static void graphics_adjust(int g, int d)
 	case G_BUDGET: settings.budget = wrap(settings.budget, d, num_warp_budget); break;
 	case G_HUD:    settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
 	case G_DLIGHTS: settings.dlights ^= 1; break;
-	case G_WEAPON: settings.viewmodel ^= 1; break;
+	case G_WEAPON: settings.viewmodel = wrap(settings.viewmodel, d, 3); break;
 	case G_DRAWDIST: settings.drawdist = wrap(settings.drawdist, d, num_draw_dists); break;
 	case G_FLAT:   settings.flat = wrap(settings.flat, d, R_FLAT_MODES); break;
 	case G_FPS:    settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;

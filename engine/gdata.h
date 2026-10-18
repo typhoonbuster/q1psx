@@ -24,6 +24,10 @@ typedef struct {
 	const qg_aux   *aux;       /* [QGA_COUNT]: 4-bit pictures (ui.h)       */
 	const qg_finale *finales;  /* the episodes' end texts, and their count */
 	uint32_t        num_finales;
+	const qg_wsprite *wsprites;  /* [QG_WEAPONS]: the 2D weapons            */
+	const qg_wframe  *wframes;   /* their frames                             */
+	uint8_t          *wpix;      /* their packets (links made absolute)      */
+	qg_pic            wslot;     /* the VRAM slot a frame is copied to       */
 } gdata_t;
 
 extern gdata_t gdata;
