@@ -1514,6 +1514,60 @@ static void bench_tick_rates(void)
 	game_active = 0;
 }
 
+/* Frames in motion: the player walks forward through start's hall,
+   turning left then right, each frame rendered after its vblanks' polls
+   (the last frame's vblanks: as the game loop takes them), at 60 and at
+   32 ticks a second. The leaf changes (mark_pvs), the ticks, the camera
+   between ticks: frames as in play. */
+static void bench_walk(void)
+{
+	static const uint8_t rates[2] = { 60, 32 };
+	for (int r = 0; r < 2; r++) {
+		game_spawn();
+		game_active = 1;
+		game_tick_hz = rates[r];
+		static char name[2][12];
+		snprintf(name[r], sizeof name[r], "walk%d", rates[r]);
+		bench_acc_t acc;
+		bench_reset(&acc, name[r]);
+		uint32_t sim = 0, total = 0, worst = 0, vbls[4] = { 0, 0, 0, 0 };
+		int polls = 1;
+		prof_sample_start();
+		for (int f = 0; f < 300; f++) {
+			pad_t p[4];
+			for (int i = 0; i < polls && i < 4; i++) {
+				memset(&p[i], 0, sizeof p[i]);
+				p[i].connected = 1;
+				p[i].type = 4;                         /* digital */
+				p[i].held = PAD_UP;
+				if (f >= 60 && f < 100)
+					p[i].held |= PAD_LEFT;
+				if (f >= 180 && f < 240)
+					p[i].held |= PAD_RIGHT;
+			}
+			uint32_t t0 = prof_now();
+			player_update(p, polls < 4 ? polls : 4);
+			uint32_t c = prof_cycles(t0, prof_now());
+			run_frame(0, 0);
+			c += prof_stage[PROF_FRAME];
+			sim += c - prof_stage[PROF_FRAME];
+			total += c;
+			if (c > worst) worst = c;
+			bench_add(&acc, vid_stats.vbl);
+			vbls[vid_stats.vbl < 4 ? vid_stats.vbl : 3]++;
+			polls = vid_stats.vbl ? vid_stats.vbl : 1;
+		}
+		prof_sample_stop();
+		bench_print(&acc);
+		printf("bench %s: 300 frames, sim + frame %u cycles on average, %u at worst; sim %u; "
+		       "1 vbl %u, 2 vbl %u, 3+ vbl %u\n", name[r], (unsigned) (total / 300), (unsigned) worst,
+		       (unsigned) (sim / 300), (unsigned) vbls[1], (unsigned) vbls[2], (unsigned) vbls[3]);
+		prof_sample_print(name[r]);
+	}
+	game_tick_hz = 60;
+	game_active = 0;
+}
+
 static void bench_game(void)
 {
 	snd_log = 1;                                      /* every sound start, for the diff */
@@ -1640,6 +1694,7 @@ static void bench_game(void)
 	snd_log = 0;
 	bench_tick_cost();                                /* (last: they move the player) */
 	bench_tick_rates();
+	bench_walk();
 	game_active = 0;
 	pad_read();                                       /* the interrupt-driven poll, seen once */
 	printf("pad poll: %s type %d held %04x sticks %d %d %d %d\n", pad.connected ? "connected" : "absent",
