@@ -25,6 +25,8 @@
 #   cooked/id1/<map>.snd              QSB1 sounds         -> disc <MAP>.SND
 # and once, the game data (weapon models, projectiles, HUD; formats/qgame.h):
 #   cooked/id1/game.dat               QGM1                -> disc GAME.DAT
+# the streamed assets (the monsters' models; formats/qstream.h):
+#   cooked/id1/stream.dat             QST1                -> disc STREAM.DAT
 # and the music, as 44.1 kHz stereo WAV for mkpsxiso's audio tracks:
 #   cooked/music/trackNN.wav                              -> CD-DA track NN
 # Jobs run in parallel; each one's log is shown only if it fails.
@@ -41,7 +43,7 @@ EP1="start e1m1 e1m2 e1m3 e1m4 e1m5 e1m6 e1m7 e1m8"
 RETAIL="e2m1 e2m2 e2m3 e2m4 e2m5 e2m6 e2m7 e3m1 e3m2 e3m3 e3m4 e3m5 e3m6 e3m7
         e4m1 e4m2 e4m3 e4m4 e4m5 e4m6 e4m7 e4m8 end"
 if [ -z "${COOK_MAPS:-}" ]; then
-	COOK_MAPS=$(ls cooked/id1/*_low.wld 2>/dev/null | sed 's|.*/||; s|_low\.wld$||' | tr '\n' ' ')
+	COOK_MAPS=$(ls cooked/id1/*_low.wld 2>/dev/null | sed 's|.*/||; s|_low\.wld$||' | tr '\n' ' ' || true)
 	COOK_MAPS=${COOK_MAPS:-ep1}
 fi
 case "$COOK_MAPS" in
@@ -55,11 +57,15 @@ make -s -C tools/qcook
 # start clean: the disc carries every cooked file, so a map cooked earlier
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
-rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.snd cooked/id1/game.dat
+rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.snd cooked/id1/game.dat cooked/id1/stream.dat
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game.dat > "$LOGS/game.log" 2>&1 \
 	|| { echo "cook FAILED: game data"; cat "$LOGS/game.log"; exit 1; }
+# the streamed assets (formats/qstream.h): the monsters' models, every map's
+tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} \
+                         --out cooked/id1/stream.dat > "$LOGS/stream.log" 2>&1 \
+	|| { echo "cook FAILED: streamed assets"; cat "$LOGS/stream.log"; exit 1; }
 
 cook_one() {   # map fidelity
 	local pak=$QUAKE_PAK0

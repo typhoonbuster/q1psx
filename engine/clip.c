@@ -273,12 +273,17 @@ static qw_plane box_planes[6] = {
 	{ { 0, 0, 4096 }, 2, 0, 0 }, { { 0, 0, 4096 }, 2, 0, 0 },
 };
 
+clip_mover_t clip_mover;
+
 /* SV_Move: the world, then (SV_ClipToLinks) every listed brush model whose
    box the swept box reaches, traced in the model's space (start and end
    less its origin, the hull of the mover's size) and taken when it is hit
    first or the sweep starts inside it; a start inside any of them marks
-   the trace. */
-q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+   the trace. The mover's box (`box`: mins[3], maxs[3]) bounds the sweep
+   and grows the boxes; entries from `first`, but `pass` (index + 1), the
+   boxes left out with `nomonsters`. */
+static q_fixed trace_move(int hull, const int32_t box[6], int first, int pass, int nomonsters,
+                          const int32_t start[3], const int32_t end[3], trace_t *tr)
 {
 	if (!world.clipnodes || !world.root) {
 		memset(tr, 0, sizeof *tr);
@@ -296,13 +301,15 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 	for (int k = 0; k < 3; k++) {
 		int32_t lo = start[k] < end[k] ? start[k] : end[k];
 		int32_t hi = start[k] < end[k] ? end[k] : start[k];
-		bmin[k] = lo + hull_box[hull][k] - CLIP_SUB;
-		bmax[k] = hi + hull_box[hull][k + 3] + CLIP_SUB;
+		bmin[k] = lo + box[k] - CLIP_SUB;
+		bmax[k] = hi + box[k + 3] + CLIP_SUB;
 	}
-	for (int i = 0; i < clip_num_bmodels; i++) {
+	for (int i = first; i < clip_num_bmodels; i++) {
 		const clip_bmodel_t *cb = &clip_bmodels[i];
 		const qw_bmodel     *bm = cb->bm;
 		int k;
+		if (i + 1 == pass || (!bm && nomonsters))
+			continue;
 		for (k = 0; k < 3; k++)
 			if (bmin[k] > cb->absmax[k] || bmax[k] < cb->absmin[k])
 				break;
@@ -316,8 +323,8 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 		trace_t t;
 		if (!bm) {                                /* a SOLID_BBOX entity: its box grown by */
 			for (k = 0; k < 3; k++) {             /* the mover's (SV_HullForEntity) */
-				box_planes[2 * k].dist     = (cb->absmax[k] - cb->origin[k] - hull_box[hull][k]) * 4096;
-				box_planes[2 * k + 1].dist = (cb->absmin[k] - cb->origin[k] - hull_box[hull][k + 3]) * 4096;
+				box_planes[2 * k].dist     = (cb->absmax[k] - cb->origin[k] - box[k]) * 4096;
+				box_planes[2 * k + 1].dist = (cb->absmin[k] - cb->origin[k] - box[k + 3]) * 4096;
 			}
 			const qw_clipnode *wc = world.clipnodes;
 			const qw_plane    *wp = world.planes;
@@ -343,6 +350,16 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 		}
 	}
 	return tr->fraction;
+}
+
+q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+{
+	return trace_move(hull, hull_box[hull], 1, 0, 0, start, end, tr);
+}
+
+q_fixed clip_trace_ent(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+{
+	return trace_move(hull, clip_mover.box, 0, clip_mover.pass, clip_mover.nomonsters, start, end, tr);
 }
 
 int clip_contents(int hull, const int32_t p[3])

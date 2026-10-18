@@ -401,9 +401,49 @@ clip_trace:
 	sw      $s5, 24($sp)
 	sw      $s6, 28($sp)
 	sw      $s7, 32($sp)
-
-	move    $s0, $a3
 	lui     $s7, 0x1F80
+	sll     $t6, $a0, 3                  # the mover: its hull's box (hull x 24)
+	sll     $t7, $a0, 4
+	addu    $t6, $t6, $t7
+	lui     $t7, %hi(ct_hull_box)
+	addiu   $t7, $t7, %lo(ct_hull_box)
+	addu    $t6, $t6, $t7
+	sw      $t6, PS_MBOX($s7)
+	sw      $zero, PS_PASS($s7)
+	sw      $zero, PS_NOMON($s7)
+	li      $t8, 1                       # from entry 1: the player's box is its own
+	b       ct_body
+	sw      $t8, PS_FIRST($s7)
+
+# clip_trace_ent(hull, start, end, tr): the same for clip_mover (clip.h):
+# its own box, every entry from the player's (0) but its pass one, the
+# boxes left out with nomonsters.
+	.global clip_trace_ent
+	.type   clip_trace_ent, @function
+clip_trace_ent:
+	addiu   $sp, $sp, -40
+	sw      $fp, 36($sp)
+	sw      $ra, 0($sp)
+	sw      $s0, 4($sp)
+	sw      $s1, 8($sp)
+	sw      $s2, 12($sp)
+	sw      $s3, 16($sp)
+	sw      $s4, 20($sp)
+	sw      $s5, 24($sp)
+	sw      $s6, 28($sp)
+	sw      $s7, 32($sp)
+	lui     $s7, 0x1F80
+	lui     $t6, %hi(clip_mover)
+	addiu   $t6, $t6, %lo(clip_mover)
+	lw      $t7, MV_PASS($t6)
+	lw      $t8, MV_NOMON($t6)
+	sw      $t6, PS_MBOX($s7)
+	sw      $t7, PS_PASS($s7)
+	sw      $t8, PS_NOMON($s7)
+	sw      $zero, PS_FIRST($s7)
+
+ct_body:
+	move    $s0, $a3
 	lui     $t5, %hi(world)
 	addiu   $t5, $t5, %lo(world)
 	lw      $s1, W_CLIPNODES($t5)
@@ -456,17 +496,15 @@ clip_trace:
 	sll     $t5, $t5, 5
 	addu    $t5, $t5, $t6
 	addu    $t5, $t5, $t4
-	sw      $t4, PS_BMI($s7)
+	lw      $t7, PS_FIRST($s7)           # the first entry: 0 or 1
 	sw      $t5, PS_BMEND($s7)
-	sw      $zero, PS_BMIDX($s7)
-	# the swept box: min / max of start and end, the hull's box around
-	# it, a unit wider (ct_hull_box: 6 words per hull)
-	sll     $t6, $a0, 3
-	sll     $t7, $a0, 4
-	addu    $t6, $t6, $t7                # hull * 24
-	lui     $t7, %hi(ct_hull_box)
-	addiu   $t7, $t7, %lo(ct_hull_box)
-	addu    $t6, $t6, $t7
+	beqz    $t7, 6f
+	sw      $t7, PS_BMIDX($s7)           # (index + 1 of the next entry, less 1)
+	addiu   $t4, $t4, CB_SIZE
+6:	sw      $t4, PS_BMI($s7)
+	# the swept box: min / max of start and end, the mover's box around
+	# it, a unit wider (PS_MBOX: mins[3], maxs[3])
+	lw      $t6, PS_MBOX($s7)
 	move    $t8, $zero                   # axis * 4
 4:	addu    $t0, $a1, $t8
 	addu    $t1, $a2, $t8
@@ -508,6 +546,14 @@ ct_bm_next:
 	sw      $t5, PS_BMI($s7)
 	addiu   $t6, $t6, 1
 	sw      $t6, PS_BMIDX($s7)
+	lw      $t0, PS_PASS($s7)            # the mover's own entry: next
+	lw      $t1, PS_NOMON($s7)
+	lw      $t2, CB_BM($t4)
+	beq     $t0, $t6, ct_bm_next
+	sltiu   $t2, $t2, 1                  # a box ...
+	and     $t2, $t2, $t1                # ... in a MOVE_NOMONSTERS trace: next
+	bnez    $t2, ct_bm_next
+	nop
 	lw      $t0, CB_ABSMAX+0($t4)        # the boxes apart on an axis: next
 	lw      $t1, CB_ABSMIN+0($t4)
 	slt     $t0, $t0, $s4                # absmax.x < bmin.x
@@ -627,12 +673,7 @@ ct_bm_done:
 # (ct_box_nodes), traced as a clip hull from its first node, the world's
 # tables back after. t4 = the entry, a0 = the call's hull.
 ct_box:
-	sll     $t6, $a0, 3
-	sll     $t7, $a0, 4
-	addu    $t6, $t6, $t7                # hull * 24
-	lui     $t7, %hi(ct_hull_box)
-	addiu   $t7, $t7, %lo(ct_hull_box)
-	addu    $t6, $t6, $t7                # the hull's box
+	lw      $t6, PS_MBOX($s7)            # the mover's box
 	lui     $t9, %hi(ct_box_planes)
 	addiu   $t9, $t9, %lo(ct_box_planes)
 	move    $t8, $zero                   # axis * 4
@@ -814,6 +855,13 @@ set_endpos:
 	ctc2    $t2, C2_R33
 
 	.size   clip_trace, . - clip_trace
+
+	.section .bss.clip_mover, "aw", @nobits
+	.align  2
+	.global clip_mover
+	.type   clip_mover, @object
+clip_mover:                              # clip_mover_t (clip.h): clip_trace_ent's mover
+	.space  32
 
 	.section .rodata.ct_hull_box, "a", @progbits
 	.align  2

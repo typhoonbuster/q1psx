@@ -617,7 +617,7 @@ void items_physics(edict_t *e)
    outside a side of the 90 degree frustum (|x| <= z; |y| <= z x the
    viewport's rows / 320); the distances to the slanted planes taken
    conservatively (x sqrt 2 as 3 / 2, the vertical's 5 / 4) */
-static int in_view(const int32_t org[3], int radius_vu)
+int ent_in_view(const int32_t org[3], int radius_vu)
 {
 	int32_t v[3] = { org[0] * QW_VSCALE / CLIP_SUB, org[1] * QW_VSCALE / CLIP_SUB, org[2] * QW_VSCALE / CLIP_SUB };
 	const int16_t *r = r_state.rot;
@@ -650,7 +650,7 @@ void items_render(void)
 		if (!leaf || leaf->visframe != vis)
 			continue;
 		const qg_model *m = &world.models[e->item_model];
-		if (!in_view(e->origin, m->radius))
+		if (!ent_in_view(e->origin, m->radius))
 			continue;
 		int frame = 0, flame = e->cnt && e->class != QE_MISC_TELEPORTTRAIN;   /* (a train's cnt: its own) */
 		if (flame)                                /* an animated group, 10 a second, its phase */

@@ -142,3 +142,13 @@
 .set PS_BSTART,   0x20C     # the sweep in the model's space[3]
 .set PS_BEND,     0x218
 .set PS_BTRACE,   0x224     # its trace_t (44 B, to 0x250)
+.set PS_MBOX,     0x278     # the mover's box: 6 words, mins[3] then maxs[3] (clip_trace:
+                            #   its hull's, ct_hull_box; clip_trace_ent: clip_mover's)
+.set PS_PASS,     0x27C     # the entry it skips: index + 1, 0 none
+.set PS_NOMON,    0x280     # MOVE_NOMONSTERS: the boxes left out
+.set PS_FIRST,    0x284     # the first entry tried (1: the player's own trace skips its box)
+
+# ---- clip_mover_t (engine/clip.h) ---------------------------------------------
+.set MV_BOX,         0     # int32 mins[3], maxs[3]
+.set MV_PASS,       24
+.set MV_NOMON,      28

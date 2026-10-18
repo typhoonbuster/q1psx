@@ -64,6 +64,9 @@ void snd_init(void);
    the CD music's (the SPU's CD input) */
 void snd_set_volume(int tenths);
 void snd_set_cd_volume(int tenths);
+/* the CD input's level against the setting, x256 (the music's fade around
+   a streamed read, engine/music.c) */
+void snd_cd_fade(int x256);
 
 /* the map's bank: MAPS/<MAP>.SND into SPU RAM (through the level arena,
    which it resets: call it before the world loads). 0 if there is none. */

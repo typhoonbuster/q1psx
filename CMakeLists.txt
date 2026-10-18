@@ -131,7 +131,7 @@ if(Q1PSX_BENCH)
 	endif()
 	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
 	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
-		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c")
+		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c;clip_trace_ent=clip_trace_ent_c;clip_mover=clip_mover_c")
 endif()
 
 # --- optional Quake game data on the disc ------------------------------------
@@ -184,6 +184,11 @@ set(COOKED_ENTRIES "")
 set(GAME_ENTRY "")
 if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/game.dat")
 	set(GAME_ENTRY "<file name=\"GAME.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/game.dat\" />")
+endif()
+# the streamed assets (formats/qstream.h: read while the game runs, engine/stream.c)
+set(STREAM_ENTRY "")
+if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/stream.dat")
+	set(STREAM_ENTRY "<file name=\"STREAM.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/stream.dat\" />")
 endif()
 set(_maps "")
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld

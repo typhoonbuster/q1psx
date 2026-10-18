@@ -125,10 +125,24 @@ void snd_set_volume(int tenths)
 	memset(voice_in, 0xff, sizeof voice_in);         /* every voice again, scaled anew */
 }
 
+static int cd_tenths = 10, cd_fade = 256;
+
+static void cd_volume_set(void)
+{
+	int v = CD_VOL * cd_tenths / 10 * cd_fade >> 8;
+	SpuSetCommonCDVolume((int16_t) v, (int16_t) v);
+}
+
 void snd_set_cd_volume(int tenths)
 {
-	int v = CD_VOL * (tenths < 0 ? 0 : tenths > 10 ? 10 : tenths) / 10;
-	SpuSetCommonCDVolume((int16_t) v, (int16_t) v);
+	cd_tenths = tenths < 0 ? 0 : tenths > 10 ? 10 : tenths;
+	cd_volume_set();
+}
+
+void snd_cd_fade(int x256)
+{
+	cd_fade = x256 < 0 ? 0 : x256 > 256 ? 256 : x256;
+	cd_volume_set();
 }
 
 /* key voice v on with the bank's sound s, `skip` ADPCM blocks in */

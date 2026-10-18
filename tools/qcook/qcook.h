@@ -134,6 +134,14 @@ qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int ski
 void    qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px);
 int     qc_mdl_flags(const qc_mdl *q);
 void    qc_mdl_cook(qc_mdl *q, int u0, int v0, buf_t *geo, void *qg_model_out);
+/* the compact format of the streamed models (formats/qstream.h): the
+   whole asset (qst_model, frames, records, skin) appended to `out` */
+void    qc_mdl_cook_compact(qc_mdl *q, buf_t *out);
+
+/* ---------------------------------------------------------------- stream -- */
+
+/* `qcook stream`: the streamed assets -> one QST1 file (stream.c) */
+int cmd_stream(int argc, char **argv);
 
 /* ---------------------------------------------------------------- sound -- */
 

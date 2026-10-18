@@ -32,7 +32,7 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM4"
+#define QGAME_MAGIC "QGM5"
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
@@ -177,7 +177,20 @@ typedef struct {
 	                                among the rects)                             */
 	uint32_t num_finales, ofs_finales, len_finales;   /* qg_finale[num_finales]
 	                                then their texts (the block's len bytes)     */
+	uint32_t num_free, ofs_free; /* qg_free[num_free]: what the images leave of
+	                                the game's pages (the streamed skins' room,
+	                                engine/stream.c)                           */
 } qg_header;
+
+/* A free rectangle of the game's pages, as the packer left them (maximal
+   rectangles: they overlap one another; a skin placed in one must not
+   overlap another skin placed in an overlapping one). */
+typedef struct {
+	uint8_t  page;               /* the texture page (formats/qtex.h: 6 .. 9)    */
+	uint8_t  pad;
+	uint8_t  u, v;               /* its corner, page-relative texels             */
+	uint16_t w, h;               /* texels                                       */
+} qg_free;                       /* 8 bytes */
 
 /* The episodes' end texts (client.qc ExitIntermission's SVC_FINALE strings,
    read from the pak's progs.dat): the map whose intermission shows it, which

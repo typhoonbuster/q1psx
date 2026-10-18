@@ -6,6 +6,8 @@
  *               [--sounds <out.snd>]                (tools/qcook/sound.c)
  *   qcook check <file.wld>
  *   qcook game  --pak <pak0.pak> --out <game.dat>     (tools/qcook/game.c)
+ *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
+ *                                                     (tools/qcook/stream.c)
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
  * writes the two files the engine loads for that map + fidelity level.
@@ -396,12 +398,15 @@ int main(int argc, char **argv)
 		return world_check(argv[2]);
 	if (argc >= 2 && !strcmp(argv[1], "game"))
 		return cmd_game(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "stream"))
+		return cmd_stream(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"
 	        "  qcook map --pak <pak> --map <maps/x.bsp> [--fidelity low|medium|high|ultra]\n"
 	        "            --tex <out.tex> [--tex4 <out.tx4>] --world <out.wld> [--sounds <out.snd>]\n"
 	        "  qcook check <file.wld>\n"
-	        "  qcook game --pak <pak0.pak> --out <game.dat>\n");
+	        "  qcook game --pak <pak0.pak> --out <game.dat>\n"
+	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n");
 	return 2;
 }

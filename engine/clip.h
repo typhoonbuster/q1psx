@@ -58,6 +58,20 @@ typedef struct {
 #define CLIP_MAX_BMODELS 128
 extern clip_bmodel_t clip_bmodels[CLIP_MAX_BMODELS];
 extern int           clip_num_bmodels;
+/* Entry 0 is the player's box (engine/ents.c keeps it): the player's own
+   traces (clip_trace: pmove, its shots) begin at entry 1, an entity's
+   (clip_trace_ent) at 0. */
+
+/* The entity clip_trace_ent moves (SV_Move's mins, maxs, passedict and
+   type): its own box, the entry it never hits (itself, or its owner for a
+   missile), and MOVE_NOMONSTERS (the boxes left out: only the world and
+   the brush models clip). */
+typedef struct {
+	int32_t box[6];        /* mins[3], maxs[3], 1/CLIP_SUB units          */
+	int32_t pass;          /* the clip_bmodels index + 1 it skips, 0 none  */
+	int32_t nomonsters;
+} clip_mover_t;            /* engine/p_defs.inc MV_* */
+extern clip_mover_t clip_mover;
 
 /* hull 0 = a point (projectiles, shots: the world's own BSP), 1 = player
    size, 2 = large. Returns tr->fraction. Does nothing (and reports a free
@@ -65,6 +79,12 @@ extern int           clip_num_bmodels;
    (engine/clip.s): positions must fit int16 there, i.e. stay within +-4095
    world units (Quake's own map limit). */
 q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
+
+/* SV_Move for clip_mover: the world's hull `hull` (the one of its size:
+   SV_HullForEntity's), the brush models' too, every box (the player's
+   first) grown by its own box, but its pass entry; the boxes left out
+   with nomonsters. */
+q_fixed clip_trace_ent(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
 
 /* Quake CONTENTS_* of hull `hull` at p (the world only, like Quake's
    SV_PointContents). */

@@ -79,11 +79,30 @@ struct edict_s {
 	int32_t  absmin[3], absmax[3];   /* in the world, a unit wider (SV_LinkEdict) */
 	int32_t  velocity[3];    /* units per second (a pusher's: its travel's)    */
 	int32_t  movedir[3];     /* x4096                                          */
-	int32_t  pos1[3], pos2[3];       /* the mover's ends                        */
-	int32_t  dest1[3], dest2[3];     /* the secret door's stops                 */
-	int32_t  finaldest[3];
-	int32_t  move_from[3];   /* SUB_CalcMove, exact in ticks: the position at  */
-	int32_t  move_delta[3];  /* ltime move_t0 plus delta x (ltime - t0) / ticks */
+	union {
+		struct {             /* a mover's (movers.c, subs.qc's SUB_CalcMove)   */
+			int32_t pos1[3], pos2[3];        /* the mover's ends                */
+			int32_t dest1[3], dest2[3];      /* the secret door's stops         */
+			int32_t finaldest[3];
+			int32_t move_from[3];  /* SUB_CalcMove, exact in ticks: the position at  */
+			int32_t move_delta[3]; /* ltime move_t0 plus delta x (ltime - t0) / ticks */
+		};
+		struct {             /* a monster's (monsters.c, ai.c), a gib's, a head's */
+			edict_t *oldenemy, *goalentity, *movetarget;
+			int32_t  pausetime, search_time, show_hostile, pain_finished;   /* ticks */
+			const struct mdef_s *mdef;       /* its kind (monsters.c)           */
+			uint16_t ang[3];       /* pitch, yaw, roll: 65536 a turn (anglemod's) */
+			int16_t  avel[3];      /* MOVETYPE_BOUNCE's avelocity, degrees a second */
+			int16_t  ideal_yaw;    /* degrees (vectoyaw's whole ones)              */
+			int16_t  yaw_speed;    /* degrees a think                             */
+			int16_t  view_ofs_z;   /* 1/CLIP_SUB units                            */
+			uint16_t mstate;       /* the next state of its kind's table          */
+			uint8_t  lefty, attack_state, deadflag, waterlevel;
+			int8_t   watertype;
+			uint8_t  ammo_shells, ammo_nails, ammo_rockets, ammo_cells;
+			uint8_t  mpad[3];
+		};
+	};
 	int32_t  move_t0, move_ticks;
 	int32_t  nextthink;      /* tick (a pusher's: its ltime), <= 0 = none      */
 	int32_t  ltime;          /* a pusher's local time, ticks                   */
@@ -97,7 +116,7 @@ struct edict_s {
 	const char *msgtext;     /* a message the QC sets (the map's: `message`)   */
 	const char *netname;     /* an item's name ("You got the ...")             */
 	int16_t  noise, noise1, noise2, noise3, noise4;   /* bank sounds (snd_find) */
-	int16_t  pad2;
+	int16_t  masset;         /* a streamed model (engine/stream.h), -1 none    */
 	uint32_t items;          /* a key door's key (IT_KEY1 / IT_KEY2), an item's */
 	uint32_t flags;
 	int32_t  aflag;          /* an item's amount (ammo, health, armor value)   */
@@ -196,5 +215,18 @@ int  ents_model_frame(int model);                /* the frame of the drawn edict
    fireball: item_model >= 0), rebuilt with the other lists */
 extern uint16_t ents_model_list[];
 extern int      ents_num_models;
+
+/* the live edicts with a streamed model or a monster's kind (masset >= 0,
+   mdef: engine/monsters.c) */
+extern uint16_t ents_streamed_list[];
+extern int      ents_num_streamed;
+
+/* the residency pass (engine/stream.c): every asset the edicts use, wanted
+   by their distance from the player */
+void ents_stream_wants(void);
+
+/* a model about `org` (1/CLIP_SUB units) of radius `radius_vu` (vertex
+   units) may be in the view's frustum (items.c) */
+int  ent_in_view(const int32_t org[3], int radius_vu);
 
 #endif

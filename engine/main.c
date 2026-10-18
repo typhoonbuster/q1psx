@@ -28,6 +28,7 @@
 #include "menu.h"
 #include "dlight.h"
 #include "mem.h"
+#include "monsters.h"
 #include "music.h"
 #include "snd.h"
 #include "pad.h"
@@ -38,6 +39,7 @@
 #include "render.h"
 #include "rlist.h"
 #include "settings.h"
+#include "stream.h"
 #include "vid.h"
 #include "world.h"
 
@@ -328,12 +330,17 @@ static void loading_screen(uint32_t done, uint32_t total)
 #define LOAD_PROGRESS loading_screen
 #endif
 
+/* the level arena's bytes the streamed assets leave free (a transient
+   load's room: vram_upload's padded copies) */
+#define STREAM_KEEP (8 * 1024)
+
 /* Load `map` at fidelity `fid`, or the highest lower level that fits the
    level arena. Sets world_ok / fidelity and binds the renderer. */
 static int load_level(int map, int fid)
 {
 	world_ok = 0;
 	load_map = map;
+	stream_abort();                             /* (the arena is reset, the drive taken) */
 	music_stop();                               /* one drive: the reads need it */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	for (int f = fid; f >= 0 && !world_ok; f--) {
@@ -349,7 +356,10 @@ static int load_level(int map, int fid)
 			       fidelity_name[fid], fidelity_name[fidelity]);
 		r_bind_world();
 		ents_load();                            /* the map's entities */
+		stream_map_start(STREAM_KEEP);          /* the arena's rest: the streamed assets */
+		monsters_map_start();
 		ents_spawn(1);
+		stream_preload();                       /* what the spawn's surroundings want */
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		snd_map_start();
@@ -455,6 +465,8 @@ static void run_frame(int interactive, int dump)
 {
 	prof_frame_reset();
 	uint32_t t0 = prof_now();
+	if (world_ok && game_active)
+		stream_frame();                     /* (between frames: the pools may move) */
 	if (interactive) {
 		PLAY_STEP("pad");
 		pad_t ticks[PAD_MAX_TICKS];
@@ -1019,6 +1031,7 @@ static void bench_pmove_diff(void)
 static void bench_maps(void)
 {
 	static char names[4][16];
+	stream_log = 1;
 	for (int m = 0; m < world_num_maps(); m++) {
 		if (Q1PSX_BENCH_MAP[0] && strcmp(world_map_name(m), Q1PSX_BENCH_MAP))
 			continue;
@@ -1875,6 +1888,7 @@ int main(void)
 	settings_defaults();
 	apply_settings();
 	gdata_load();
+	stream_init();
 	dl_init();
 	game_init();
 #ifdef Q1PSX_BENCH

@@ -12,11 +12,13 @@
 #include "hud.h"
 #include "level.h"
 #include "mem.h"
+#include "monsters.h"
 #include "pmove.h"
 #include "q_fixed.h"
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
+#include "stream.h"
 #include "world.h"
 
 clip_bmodel_t clip_bmodels[CLIP_MAX_BMODELS];
@@ -45,6 +47,8 @@ static int      num_touch;
 static uint16_t draw_list[CLIP_MAX_BMODELS + 64];   /* drawn brush models */
 uint16_t        ents_model_list[512];               /* drawn alias models (items.c) */
 int             ents_num_models;
+uint16_t        ents_streamed_list[512];            /* the monsters, the streamed models */
+int             ents_num_streamed;
 static int      num_draw;
 static uint16_t vis_list[CLIP_MAX_BMODELS + 64];    /* those the PVS stamp sees */
 static int      num_vis;
@@ -81,6 +85,7 @@ edict_t *ent_spawn(void)
 		e->inuse = 1;
 		e->class = QE_TEMP;
 		e->item_model = -1;
+		e->masset = -1;
 		e->noise = e->noise1 = e->noise2 = e->noise3 = e->noise4 = SND_NONE;
 		if (i >= num_edicts)
 			num_edicts = i + 1;
@@ -105,7 +110,7 @@ static void clip_update(edict_t *e)
 {
 	if (!e->clip)
 		return;
-	if (e->solid != SOLID_BSP && e->solid != SOLID_BBOX) {
+	if (e->solid != SOLID_BSP && e->solid != SOLID_BBOX && e->solid != SOLID_SLIDEBOX) {
 		clip_disable(e);
 		return;
 	}
@@ -162,7 +167,7 @@ void ent_link(edict_t *e)
 			e->absmax[k] += 15 * CLIP_SUB;
 		}
 	}
-	if (e->item_model >= 0) {                 /* an alias model: drawn in its centre's leaf */
+	if (e->item_model >= 0 || e->masset >= 0) {   /* an alias model: drawn in its centre's leaf */
 		int32_t c[3];
 		for (int k = 0; k < 3; k++)
 			c[k] = (e->origin[k] + (e->mins[k] + e->maxs[k]) / 2) / CLIP_SUB;
@@ -504,7 +509,9 @@ void ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edi
 static const int32_t player_mins[3] = { -16 * CLIP_SUB, -16 * CLIP_SUB, -24 * CLIP_SUB };
 static const int32_t player_maxs[3] = {  16 * CLIP_SUB,  16 * CLIP_SUB,  32 * CLIP_SUB };
 
-/* the player's mirror: its box, health, items, from the game's player */
+/* the player's mirror: its box, health, items, from the game's player;
+   its box in the traces' entry 0 (clip.h: the entities' traces meet it,
+   its own begin past it) */
 static void sync_player(void)
 {
 	edict_t *p = ent_player;
@@ -516,8 +523,9 @@ static void sync_player(void)
 	p->health     = (int16_t) pl.health;
 	p->items      = pl.items;
 	p->takedamage = pl.dead || game_intermission() ? DAMAGE_NO : DAMAGE_AIM;
-	p->solid      = pl.dead || game_intermission() ? SOLID_NOT : SOLID_SLIDEBOX;
+	p->solid      = pl.dead || game_intermission() || pl.pm.noclip ? SOLID_NOT : SOLID_SLIDEBOX;
 	p->movetype   = pl.pm.noclip ? MOVETYPE_NOCLIP : MOVETYPE_WALK;
+	clip_update(p);
 }
 
 /* SV_TestEntityPosition for the player: inside anything solid? */
@@ -645,13 +653,16 @@ static void run_think(edict_t *e)
 
 static void rebuild_lists(void)
 {
-	num_touch = num_draw = ents_num_models = 0;
+	num_touch = num_draw = ents_num_models = ents_num_streamed = 0;
 	for (int i = 2; i < num_edicts; i++) {
 		edict_t *e = &edicts[i];
 		if (!e->inuse)
 			continue;
 		if (e->item_model >= 0 && ents_num_models < (int) (sizeof ents_model_list / sizeof ents_model_list[0]))
 			ents_model_list[ents_num_models++] = (uint16_t) i;
+		if ((e->masset >= 0 || e->mdef) &&
+		    ents_num_streamed < (int) (sizeof ents_streamed_list / sizeof ents_streamed_list[0]))
+			ents_streamed_list[ents_num_streamed++] = (uint16_t) i;
 		if (e->touch && num_touch < (int) (sizeof touch_list / sizeof touch_list[0]))
 			touch_list[num_touch++] = (uint16_t) i;
 		if (e->draw && e->model && e->num_leaves &&
@@ -752,6 +763,7 @@ static edict_t *ent_new(const qw_ent *q)
 	e->target = q->target; e->targetname = q->targetname; e->killtarget = q->killtarget;
 	e->message = q->message; e->map = q->map;
 	e->item_model = -1;
+	e->masset = -1;
 	e->noise = e->noise1 = e->noise2 = e->noise3 = e->noise4 = SND_NONE;
 	return e;
 }
@@ -780,10 +792,16 @@ void ents_spawn(int first)
 	memcpy(edicts[1].maxs, player_maxs, sizeof player_maxs);
 	edicts[0].noise = edicts[0].noise1 = edicts[0].noise2 = edicts[0].noise3 = edicts[0].noise4 = SND_NONE;
 	edicts[1].noise = edicts[1].noise1 = edicts[1].noise2 = edicts[1].noise3 = edicts[1].noise4 = SND_NONE;
+	clip_bmodels[0].bm = 0;                   /* the traces' entry 0: the player's box */
+	clip_owner[0]      = ent_player;
+	edicts[1].clip     = 1;
+	clip_num_bmodels   = 1;
+	clip_disable(ent_player);
 	edicts[0].item_model = edicts[1].item_model = -1;     /* (no model of the map's) */
+	edicts[0].masset = edicts[1].masset = -1;
 	num_edicts = 2;
 
-	int unknown = 0, skipped = 0, inhibit = 0;
+	int unknown = 0, inhibit = 0;
 	for (uint32_t i = 0; i < world.num_ents; i++) {
 		const qw_ent *q = &world.ents[i];
 		int cls = q->class;
@@ -794,10 +812,7 @@ void ents_spawn(int first)
 			inhibit++;
 			continue;
 		}
-		if (cls >= QE_MONSTER_ARMY && cls <= QE_MONSTER_OLDONE) {   /* (Phase 8.1) */
-			skipped++;
-			continue;
-		}
+
 		if (cls == QE_UNKNOWN) {
 			unknown++;
 			continue;
@@ -806,6 +821,10 @@ void ents_spawn(int first)
 		if (!e)
 			break;
 
+		if (cls >= QE_MONSTER_ARMY && cls <= QE_MONSTER_OLDONE) {
+			monsters_spawn(e, q);
+			continue;
+		}
 		switch (cls) {
 		case QE_FUNC_DOOR: case QE_FUNC_DOOR_SECRET: case QE_FUNC_BUTTON:
 		case QE_FUNC_PLAT: case QE_FUNC_TRAIN: case QE_MISC_TELEPORTTRAIN:
@@ -832,8 +851,8 @@ void ents_spawn(int first)
 	int drawn = 0;
 	for (int i = 0; i < num_edicts; i++)
 		drawn += edicts[i].inuse && edicts[i].draw;
-	printf("ents: %d edicts (%d monsters left out, %d unknown, %d not on skill %d), %d solid brush "
-	       "models, %d drawn, %d models, %d touch, %d secrets\n", num_edicts, skipped, unknown, inhibit,
+	printf("ents: %d edicts (%d monsters, %d unknown, %d not on skill %d), %d solid brush "
+	       "models, %d drawn, %d models, %d touch, %d secrets\n", num_edicts, ent_total_monsters, unknown, inhibit,
 	       game_skill, clip_num_bmodels, drawn, ents_num_models, num_touch, ent_total_secrets);
 }
 
@@ -1014,4 +1033,14 @@ void ents_render(void)
 		rl_add_model(best, rl_bmodel(&world.bmodels[e->model], e->origin));
 	}
 	items_render();
+	monsters_render();
+}
+
+void ents_stream_wants(void)
+{
+	if (!edicts)
+		return;
+	if (lists_dirty)
+		rebuild_lists();
+	monsters_stream_wants();
 }

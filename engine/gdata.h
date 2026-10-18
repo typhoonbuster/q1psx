@@ -24,6 +24,9 @@ typedef struct {
 	const qg_aux   *aux;       /* [QGA_COUNT]: 4-bit pictures (ui.h)       */
 	const qg_finale *finales;  /* the episodes' end texts, and their count */
 	uint32_t        num_finales;
+	const qg_free  *free;      /* what the images leave of the game's pages
+	                              (the streamed skins' room), and its count */
+	uint32_t        num_free;
 } gdata_t;
 
 extern gdata_t gdata;

@@ -144,6 +144,30 @@ static void upload_rects(const uint8_t *f, const qtex_rect *r, uint32_t n)
 		vram_upload(f + r[i].data_ofs, &r[i]);
 }
 
+/* what the map's texture rectangles take of its pages (world_t page_rows,
+   page4_rows): a CLUT row (y >= 480) takes none */
+static uint16_t page_rows[QTEX_MAP_PAGES], page4_rows[QTEX_MAP_PAGES];
+
+static void note_rects(const qtex_rect *r, uint32_t n, int four)
+{
+	for (uint32_t i = 0; i < n; i++) {
+		if (r[i].y >= 480 || r[i].x < QTEX_PAGE_X0)
+			continue;
+		int x = r[i].x - QTEX_PAGE_X0, p, rows;
+		if (four) {
+			p = x / 64;
+			rows = r[i].y + r[i].h;
+			if (p < QTEX_MAP_PAGES && rows > page4_rows[p])
+				page4_rows[p] = (uint16_t) rows;
+		} else {
+			p = x / 128 + QTEX_PAGE_COLS * (r[i].y / 256);
+			rows = r[i].y % 256 + r[i].h;
+			if (p < QTEX_MAP_PAGES && rows > page_rows[p])
+				page_rows[p] = (uint16_t) rows;
+		}
+	}
+}
+
 /* The map's texture set into VRAM: QTX3 (8bpp, the Quake palette) or QTX4
    (4bpp, 16 colours per texture). */
 static int load_textures(const char *name)
@@ -151,15 +175,19 @@ static int load_textures(const char *name)
 	uint32_t mark = mem_level_mark(), size;
 	const uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
 	tex4_n = 0;
+	memset(page_rows, 0, sizeof page_rows);
+	memset(page4_rows, 0, sizeof page4_rows);
 	if (f && size >= sizeof(qtex_header) && !memcmp(f, QTEX_MAGIC, 4)) {
 		const qtex_header *h = (const qtex_header *) f;
 		RECT clut = { QTEX_CLUT_X, QTEX_CLUT_Y, 256, 1 };
 		LoadImage(&clut, (const uint32_t *) h->clut);
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
+		note_rects((const qtex_rect *) (f + sizeof *h), h->num_rects, 0);
 		printf("world: %s — %u texture pages -> VRAM\n", name, h->num_rects);
 	} else if (f && size >= sizeof(qtex4_header) && !memcmp(f, QTEX4_MAGIC, 4)) {
 		const qtex4_header *h = (const qtex4_header *) f;
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
+		note_rects((const qtex_rect *) (f + sizeof *h), h->num_rects, 1);
 		tex4_n = h->num_tex < TEX4_MAX ? h->num_tex : TEX4_MAX;
 		memcpy(tex4_tab, f + h->ofs_tex, tex4_n * sizeof *tex4_tab);
 		printf("world: %s — 4bpp, %u rects -> VRAM\n", name, h->num_rects);
@@ -224,6 +252,8 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		t->clut  = tex4_tab[i].clut;
 		t->tpage = tex4_tab[i].tpage;
 	}
+	memcpy(world.page_rows, page_rows, sizeof world.page_rows);
+	memcpy(world.page4_rows, page4_rows, sizeof world.page4_rows);
 	world.verts       = (const qw_vert *) (f + h->ofs_verts);
 	world.num_verts   = h->num_verts;
 	world.ambient     = f + h->ofs_ambient;

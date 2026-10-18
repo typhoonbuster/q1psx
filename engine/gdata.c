@@ -41,7 +41,8 @@ int gdata_load(void)
 	uint8_t *t = mem_game_alloc(tables);
 	uint8_t *g = mem_game_alloc(h->len_geo);
 	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
-	if (!t || !g || (h->len_finales && !fin)) {
+	uint8_t *fr  = h->num_free ? mem_game_alloc(h->num_free * sizeof(qg_free)) : 0;
+	if (!t || !g || (h->len_finales && !fin) || (h->num_free && !fr)) {
 		mem_level_release(mark);
 		return 0;
 	}
@@ -56,6 +57,11 @@ int gdata_load(void)
 		memcpy(fin, f + h->ofs_finales, h->len_finales);
 		gdata.finales     = (const qg_finale *) fin;
 		gdata.num_finales = h->num_finales;
+	}
+	if (fr) {
+		memcpy(fr, f + h->ofs_free, h->num_free * sizeof(qg_free));
+		gdata.free     = (const qg_free *) fr;
+		gdata.num_free = h->num_free;
 	}
 	gdata.geo  = g;
 	gdata.clut = h->clut;
