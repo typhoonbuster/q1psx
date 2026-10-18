@@ -3844,6 +3844,22 @@ After the second play test: still too slow, and no monsters yet.
   the game bench) and 0 physics mismatches; `DLIGHT_C=1` and `DLIGHT_C=2`
   agree with the asm (they had not compiled since §25's pass left a
   stray brace in dlight.c: fixed).
+- **Frames in motion** (the game bench's `bench walk` lines: start's hall
+  walked forward and turned for 300 frames, each after its vblanks'
+  polls): at 32 ticks a second 244 frames in one vblank, 55 in two, 1 in
+  three; the simulation 21.6 k cycles a frame (36.4 k at 60 Hz). The
+  profile in motion: the slow path 28 % of the samples (40 % of the busy
+  time: walls and floors near the eye), the rest of the renderer 36 %,
+  everything else under 4 %. The slow path follows the warp threshold:
+
+| Threshold | Frame on average | 1 vblank | 2 vblanks |
+|---|---|---|---|
+| 8 px (the default) | 461 k cycles | 244 | 55 |
+| 12 px | 392 k | 251 | 48 |
+| 16 px | 379 k (-18 %) | 259 | 40 |
+
+  (A picture's trade-off, the player's setting: the defaults left as
+  they are.)
 - **Draw weapon** (Graphics, the debug menu): Quake's r_drawviewmodel. The
   weapon costs 20 k to 95 k cycles a frame after the steps above (the
   super shotgun the most: its barrels cross the near plane); off, it is
