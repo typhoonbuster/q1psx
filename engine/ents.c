@@ -173,6 +173,12 @@ void ent_link(edict_t *e)
 		e->num_leaves = (uint8_t) world_box_leaves(e->absmin, e->absmax, idx, ENT_MAX_LEAVES);
 		for (int k = 0; k < e->num_leaves; k++)
 			e->leaves[k] = &world.leaves[idx[k]];
+		int32_t lo[3], hi[3];                 /* camera_side_leaf's points: the box, */
+		for (int k = 0; k < 3; k++) {         /* 2 units beyond it, truncated to units */
+			lo[k] = (e->absmin[k] >> 3) - 2;  /* (CLIP_SUB 8), with a unit to spare */
+			hi[k] = (e->absmax[k] >> 3) + 3;
+		}
+		e->topnode = world_box_topnode(lo, hi);
 		e->vis_stamp = 0xffff;
 		ents_relink = 1;
 	}
@@ -948,7 +954,7 @@ static const qw_leaf *camera_side_leaf(const edict_t *e, uint16_t vis)
 	int32_t q[3];
 	for (int k = 0; k < 3; k++)                   /* 2 units toward the eye (max norm) */
 		q[k] = (p[k] + d[k] * (2 * CLIP_SUB) / m) / CLIP_SUB;
-	const qw_leaf *l = world_point_leaf(q);
+	const qw_leaf *l = world_point_leaf_from(e->topnode, q);
 	if (!l || l->contents == QW_CONTENTS_SOLID || l->visframe != vis)
 		return 0;
 	return l;

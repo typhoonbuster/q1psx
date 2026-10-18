@@ -955,11 +955,14 @@ static void bench_maps(void)
 			bench_reset(&acc, names[v & 3]);
 			for (int i = 0; i < 4; i++)
 				run_frame(0, 0);
+			prof_sample_start();
 			for (int i = 0; i < 16; i++) {
 				run_frame(0, 0);
 				bench_add(&acc, vid_stats.vbl);
 			}
+			prof_sample_stop();
 			bench_print(&acc);
+			prof_sample_print(names[v & 3]);
 			printf("D %s\n", names[v & 3]);
 			ents_debug = 1;                     /* (the models drawn, by name) */
 			run_frame(0, Q1PSX_BENCH_MAP[0] ? 1 : 2);   /* one map: its frames in full */
@@ -1396,11 +1399,14 @@ static void bench_game(void)
 		bench_reset(&acc, names[w]);
 		for (int i = 0; i < 4; i++)
 			run_frame(0, 0);
+		prof_sample_start();
 		for (int i = 0; i < 16; i++) {
 			run_frame(0, 0);
 			bench_add(&acc, vid_stats.vbl);
 		}
+		prof_sample_stop();
 		bench_print(&acc);
+		prof_sample_print(names[w]);
 		printf("D %s\n", names[w]);
 		run_frame(0, BENCH_DUMP);
 		for (int i = 0; i < 90; i++)                    /* the effects die down */

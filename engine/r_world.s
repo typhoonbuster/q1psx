@@ -904,9 +904,11 @@ mark_done:
 	# from the root, a node out of the PVS or whose box is out of the
 	# sphere's reach ends its subtree; one whose plane the sphere
 	# straddles (|d| <= radius: its faces lie on that plane) takes the
-	# frame count. Depth first, the back child first and the front child
-	# pushed: a stack on sp of at most the tree's depth. The counters
-	# (dlnodes) are the C reference's only.
+	# frame count. A plane farther than radius + DL_PRUNE leaves only the
+	# light's side to descend (R_MarkLights). Depth first, the back child
+	# first and the front child pushed: a stack on sp of at most the
+	# tree's depth; s2 = radius + DL_PRUNE (the walk sets s1 - s3 after).
+	# The counters (dlnodes) are the C reference's only.
 	addiu   $sp, $sp, -DSN_STACK
 	lw      $a1, RS_LIGHTS($s0)
 	lw      $v1, SP_PLANES($t8)          # the plane table
@@ -920,6 +922,7 @@ dsn_light_b:
 	lw      $t6, DL_RADIUS($a1)
 	lw      $a0, RS_ROOT($s0)            # the root
 	move    $a3, $sp                     # the stack, empty
+	addiu   $s2, $t6, DL_PRUNE           # the side-only bound
 dsn_node:
 	lhu     $t3, N_VISFRAME($a0)
 dsn_node_vis:
@@ -987,6 +990,10 @@ dsn_node_vis:
 	mflo    $t9
 	addu    $t9, $t9, $t4
 4:	sra     $t9, $t9, 12                 # d, vertex units
+	slt     $at, $s2, $t9
+	bnez    $at, dsn_front               # d > radius + DL_PRUNE: the front only
+	addu    $at, $t9, $s2
+	bltz    $at, dsn_back                # d < -(radius + DL_PRUNE): the back only
 	sra     $at, $t9, 31
 	xor     $t9, $t9, $at
 	subu    $t9, $t9, $at                # |d|
@@ -1004,6 +1011,14 @@ dsn_pop:
 	beq     $a3, $sp, dsn_next           # the stack empty: this light is done
 	addiu   $a3, $a3, -4
 	lw      $a0, 0($a3)                  # popped
+	b       dsn_node_vis
+	lhu     $t3, N_VISFRAME($a0)
+dsn_front:                               # one side of the plane only: its
+	move    $t5, $v0                     # child (v0 front, t5 back), unless
+dsn_back:                                # a leaf
+	andi    $at, $t5, 1
+	bnez    $at, dsn_pop
+	move    $a0, $t5                     # (the pop reloads a0)
 	b       dsn_node_vis
 	lhu     $t3, N_VISFRAME($a0)
 dsn_next:

@@ -387,6 +387,45 @@ static int box_leaves(uint32_t at, const int32_t c[3], const int32_t h[3], uint1
 	}
 }
 
+/* The deepest node (or the leaf) whose region holds the whole box, world
+   units, inclusive: each node above it has every point of the box on one
+   side of its plane, by world_point_leaf's own integer test (d linear in
+   p: its extremes over the box are at corners), so world_point_leaf_from
+   it agrees with the descent from the root for every point of the box. */
+uint32_t world_box_topnode(const int32_t mins[3], const int32_t maxs[3])
+{
+	int32_t lo[3], hi[3];
+	for (int k = 0; k < 3; k++) {
+		lo[k] = mins[k] * QW_VSCALE;
+		hi[k] = maxs[k] * QW_VSCALE;
+	}
+	uint32_t at = (uint32_t) world.root;
+	while (!(at & 1)) {
+		const qw_node *n = (const qw_node *) at;
+		const qw_plane *pl = (const qw_plane *) ((const int32_t *) world.planes + n->plane3);
+		int32_t dist = pl->dist >> 1;
+		int32_t dmin, dmax;
+		if (pl->type < 3) {
+			dmin = lo[pl->type] * 4096 - dist;
+			dmax = hi[pl->type] * 4096 - dist;
+		} else {
+			dmin = dmax = -dist;
+			for (int k = 0; k < 3; k++) {
+				int32_t a = pl->n[k] * lo[k], b = pl->n[k] * hi[k];
+				dmin += a < b ? a : b;
+				dmax += a < b ? b : a;
+			}
+		}
+		if (dmin > 0)
+			at = n->child[0];             /* the whole box in front */
+		else if (dmax <= 0)
+			at = n->child[1];             /* the whole box behind (d <= 0) */
+		else
+			break;
+	}
+	return at;
+}
+
 int world_box_leaves(const int32_t mins[3], const int32_t maxs[3], uint16_t *out, int max)
 {
 	int32_t c[3], h[3];
@@ -401,8 +440,15 @@ int world_box_leaves(const int32_t mins[3], const int32_t maxs[3], uint16_t *out
 
 const qw_leaf *world_point_leaf(const int32_t pos[3])
 {
+	return world_point_leaf_from((uint32_t) world.root, pos);
+}
+
+/* The descent of world_point_leaf from `at` (a node or a tagged leaf): the
+   leaf it gives the root's, for a point inside the box world_box_topnode
+   took `at` from. */
+const qw_leaf *world_point_leaf_from(uint32_t at, const int32_t pos[3])
+{
 	int32_t p[3] = { pos[0] * QW_VSCALE, pos[1] * QW_VSCALE, pos[2] * QW_VSCALE };
-	uint32_t at = (uint32_t) world.root;
 	while (!(at & 1)) {
 		const qw_node *n = (const qw_node *) at;
 		const qw_plane *pl = (const qw_plane *) ((const int32_t *) world.planes + n->plane3);

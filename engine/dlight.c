@@ -119,8 +119,11 @@ void dl_decay(int now)
    outside it ends its subtree, so does one out of the PVS: r_render
    calls this after mark_pvs), stamped when the sphere straddles their
    plane too (R_MarkLights' rule: a node's faces lie on its plane, so a
-   plane farther than the radius has none to light; the subtree is still
-   descended) */
+   plane farther than the radius has none to light). A plane farther than
+   radius + DL_PRUNE puts the light's whole reach on one side: only that
+   child is descended (R_MarkLights again; the margin covers dl_sqrt's
+   and the roundings' error, so no vertex the far side holds would have
+   taken any light) */
 static void mark_nodes(qw_node *n, const rlight_t *l, uint16_t stamp, uint16_t visframe)
 {
 	for (;;) {
@@ -138,10 +141,17 @@ static void mark_nodes(qw_node *n, const rlight_t *l, uint16_t stamp, uint16_t v
 		          ? l->o[pl->type] * 4096 - (pl->dist >> 1)
 		          : pl->n[0] * l->o[0] + pl->n[1] * l->o[1] + pl->n[2] * l->o[2] - (pl->dist >> 1);
 		d >>= 12;                            /* vertex units */
+		uint32_t front = n->child[0], back = n->child[1];
+		if (d > l->radius + DL_PRUNE || d < -(l->radius + DL_PRUNE)) {
+			uint32_t c = d > 0 ? front : back;   /* R_MarkLights: the light's side only */
+			if (c & 1)
+				return;
+			n = (qw_node *) c;
+			continue;
+		}
 		if (d < 0) d = -d;
 		if (d <= l->radius)
 			n->dlstamp = stamp;
-		uint32_t front = n->child[0], back = n->child[1];
 		if (!(front & 1))
 			mark_nodes((qw_node *) front, l, stamp, visframe);
 		if (back & 1)

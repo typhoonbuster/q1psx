@@ -232,6 +232,16 @@ static long edge(const vtx *a, const vtx *b, int x, int y)
 
 static int polys_drawn, polys_huge;
 
+/* PKTVIEW_OCCL=1: which polygons end up with no pixel of their own in the
+   final picture (painted over, or wholly transparent): an ID per pixel */
+static int occl_on;
+static int idbuf[H][W];
+static int cur_id = -1;
+#define OCCL_MAX 16384
+static int id_written[OCCL_MAX];   /* pixels each polygon wrote */
+static int id_class[OCCL_MAX];     /* 1: bbox off the draw area, 2: bbox under 2 x 2 px */
+static int id_same[OCCL_MAX];      /* every corner on the same pixel */
+
 /* Affine triangle: barycentric interpolation of u, v and colour in screen
    space. `raw` textures skip the modulation; anything shaded or modulated
    is dithered, as the GPU does. */
@@ -285,6 +295,7 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 					continue;
 				if (raw) {
 					memcpy(fb[y][x], col, 3);
+					if (occl_on) { idbuf[y][x] = cur_id; if (cur_id >= 0) id_written[cur_id]++; }
 					continue;
 				}
 				for (int k = 0; k < 3; k++) {       /* texel x colour / 128 */
@@ -298,6 +309,7 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 				col[k] = (uint8_t) (d & 0xf8);
 			}
 			memcpy(fb[y][x], col, 3);
+			if (occl_on) { idbuf[y][x] = cur_id; if (cur_id >= 0) id_written[cur_id]++; }
 		}
 }
 
@@ -462,6 +474,19 @@ static void packet(const uint32_t *w, int n)
 		if (i == 0) clut  = (int) (uv >> 16);
 		if (i == 1) tpage = (int) (uv >> 16);
 	}
+	cur_id = polys_drawn < OCCL_MAX ? polys_drawn : -1;
+	if (occl_on && cur_id >= 0) {
+		int x0 = v[0].x, x1 = v[0].x, y0 = v[0].y, y1 = v[0].y;
+		for (int i = 1; i < nv; i++) {
+			if (v[i].x < x0) x0 = v[i].x;
+			if (v[i].x > x1) x1 = v[i].x;
+			if (v[i].y < y0) y0 = v[i].y;
+			if (v[i].y > y1) y1 = v[i].y;
+		}
+		id_class[cur_id] = x1 < clip_x0 || x0 > clip_x1 || y1 < clip_y0 || y0 > clip_y1 ? 1
+		                 : (x1 - x0 < 2 && y1 - y0 < 2) ? 2 : 0;
+		id_same[cur_id] = x0 == x1 && y0 == y1;
+	}
 	polys_drawn++;
 	tri(v[0], v[1], v[2], tex, raw, tpage, clut);
 	if (quad)
@@ -483,6 +508,8 @@ int main(int argc, char **argv)
 	const char *dis = getenv("PKTVIEW_DITHER");
 	if (dis && dis[0] == '0')
 		dither_on = 0;
+	const char *occ = getenv("PKTVIEW_OCCL");
+	occl_on = occ && occ[0] == '1';
 	const char *bgs = getenv("PKTVIEW_BG");
 	unsigned br, bgg, bb;
 	if (bgs && sscanf(bgs, "%u,%u,%u", &br, &bgg, &bb) == 3) {
@@ -510,6 +537,9 @@ int main(int argc, char **argv)
 				for (int x = 0; x < W; x++)
 					memcpy(fb[y][x], bg, 3);
 			polys_drawn = polys_huge = 0;
+			memset(idbuf, 0xff, sizeof idbuf);
+			memset(id_written, 0, sizeof id_written);
+			memset(id_class, 0, sizeof id_class);
 			twin = 0;
 			cur_tpage = 0;
 			clip_x0 = clip_y0 = 0;
@@ -537,6 +567,34 @@ int main(int argc, char **argv)
 			write_png(path);
 			printf("pktview: %s — %d primitives (%d too large for the GPU)\n",
 			       path, polys_drawn, polys_huge);
+			if (occl_on) {
+				static char seen[OCCL_MAX];
+				memset(seen, 0, sizeof seen);
+				long fill = 0, shown_px = 0;
+				for (int y = 0; y < H; y++)
+					for (int x = 0; x < W; x++)
+						if (idbuf[y][x] >= 0) { seen[idbuf[y][x]] = 1; shown_px++; }
+				int n = polys_drawn < OCCL_MAX ? polys_drawn : OCCL_MAX, wrote = 0, shown = 0;
+				int offs = 0, tiny = 0, other = 0, same = 0, same_shown = 0;
+				for (int i = 0; i < n; i++) {
+					fill += id_written[i];
+					wrote += id_written[i] > 0;
+					shown += seen[i];
+					same += id_same[i];
+					same_shown += id_same[i] && id_written[i];
+					if (!id_written[i]) {
+						if (id_class[i] == 1) offs++;
+						else if (id_class[i] == 2) tiny++;
+						else other++;
+					}
+				}
+				printf("occl: %s no pixel: off the draw area %d, under 2 x 2 px %d, other %d; all corners on one pixel %d (drawing %d)\n",
+				       name, offs, tiny, other, same, same_shown);
+				printf("occl: %s polygons %d, wrote a pixel %d, seen at the end %d (hidden %d = %.1f%%), "
+				       "pixels written %ld for %ld shown (overdraw %.2f)\n", name, n, wrote, shown,
+				       wrote - shown, 100.0 * (wrote - shown) / (wrote ? wrote : 1), fill, shown_px,
+				       shown_px ? (double) fill / shown_px : 0.0);
+			}
 			view = 0;
 		}
 	}

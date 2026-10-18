@@ -89,6 +89,7 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_C=${Q1PSX_DLIGHT_C})
 # no debug overlay. See docs/architecture.md §9.
 option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
 set(Q1PSX_BENCH_FID 2 CACHE STRING "Fidelity level the bench loads (0 low .. 3 ultra)")
+set(Q1PSX_BENCH_SAMPLE 0 CACHE STRING "1: the bench samples the PC (engine/prof.c) over each view's frames")
 set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics checks only")
 set(Q1PSX_BENCH_MAPS 0 CACHE STRING "1: bench every map on the disc (spawn views) instead")
 set(Q1PSX_BENCH_GAME 0 CACHE STRING "1: bench the game instead: every weapon fired, both HUDs")
@@ -102,6 +103,7 @@ set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID}
+		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}

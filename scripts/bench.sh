@@ -53,6 +53,7 @@ MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
 ENTS=${ENTS:-0}
+SAMPLE=${SAMPLE:-0}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
@@ -60,7 +61,7 @@ cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
-      -DQ1PSX_BENCH_ENTS="$ENTS" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
 	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
 

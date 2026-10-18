@@ -28,6 +28,9 @@
 #include "qworld.h"
 
 #define MAX_DLIGHTS 8
+#define DL_PRUNE    64           /* vertex units: a plane farther than a light's
+                                    radius + this holds none of its lit vertices
+                                    on its far side (engine/r_defs.inc DL_PRUNE) */
 
 typedef struct {
 	int32_t origin[3];

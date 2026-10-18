@@ -71,6 +71,8 @@ struct edict_s {
 	int16_t  mangle[3];      /* degrees: pitch, yaw, roll                      */
 	int16_t  pad0;
 	const qw_leaf *leaves[ENT_MAX_LEAVES];
+	uint32_t topnode;        /* a drawn brush model's: world_box_topnode of the
+	                            points camera_side_leaf may take (ents.c)     */
 	int32_t  origin[3];      /* 1/CLIP_SUB units                               */
 	int32_t  oldorigin[3];
 	int32_t  mins[3], maxs[3];       /* the box, local                          */

@@ -95,6 +95,12 @@ int world_load(int map, int fidelity, int tex4, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);
+/* The same descent from a node (or a tagged leaf) world_box_topnode gave,
+   for a point inside its box. */
+const qw_leaf *world_point_leaf_from(uint32_t at, const int32_t pos[3]);
+/* The deepest node (or tagged leaf) holding the whole box (world units,
+   inclusive) on its side of every plane above it. */
+uint32_t world_box_topnode(const int32_t mins[3], const int32_t maxs[3]);
 
 /* The leaves (indices) a box touches, solid ones left out, up to `max` of
    them (Quake's SV_FindTouchedLeafs); the box in 1/QW_CLIP_SUB units. */

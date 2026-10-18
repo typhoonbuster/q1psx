@@ -56,6 +56,14 @@ void     prof_init(void);
 uint32_t prof_now(void);          /* ticks (x8 = CPU cycles) */
 void     prof_frame_reset(void);
 
+/* the bench's PC sampler (Q1PSX_BENCH_SAMPLE): root counter 1 interrupts 2000
+   times a second and counts the interrupted address, by 32-byte block of
+   the code; prof_sample_print lists the blocks hit ("sample" / "samples" lines,
+   tools: the scratchpad's symbolizer, addr2line) */
+void     prof_sample_start(void);
+void     prof_sample_stop(void);
+void     prof_sample_print(const char *name);
+
 static inline uint32_t prof_cycles(uint32_t t0, uint32_t t1)
 {
 	return (t1 - t0) * PROF_CYCLES_PER_TICK;

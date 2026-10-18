@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <psxetc.h>
 #include <hwregs_c.h>
@@ -54,6 +55,65 @@ uint32_t prof_now(void)
 	last = now;
 	return now;
 }
+
+#if defined(Q1PSX_BENCH) && Q1PSX_BENCH_SAMPLE
+#define SAMPLE_BLOCKS 8192                 /* 256 KB of code, 32 bytes a block */
+extern char __text_start[];
+static uint16_t          sample_hist[SAMPLE_BLOCKS];
+static volatile uint32_t sample_total, sample_out;
+
+static void sample_isr(void)
+{
+	uint32_t epc;
+	__asm__ volatile ("mfc0 %0, $14" : "=r" (epc));
+	uint32_t i = (epc - (uint32_t) __text_start) >> 5;
+	if (i < SAMPLE_BLOCKS) {
+		if (sample_hist[i] < 0xffff)
+			sample_hist[i]++;
+	} else {
+		sample_out++;                      /* the BIOS's, the kernel's */
+	}
+	sample_total++;
+}
+
+void prof_sample_start(void)
+{
+	memset(sample_hist, 0, sizeof sample_hist);
+	sample_total = sample_out = 0;
+	InterruptCallback(IRQ_TIMER1, sample_isr);
+	TIMER_RELOAD(1) = 16934;               /* 33.87 MHz / 2000 */
+	TIMER_CTRL(1)   = (1 << 3) | (1 << 4) | (1 << 6);   /* reset and IRQ at the target, repeatedly; sysclock */
+}
+
+void prof_sample_stop(void)
+{
+	TIMER_CTRL(1) = 0;
+	InterruptCallback(IRQ_TIMER1, 0);
+}
+
+void prof_sample_print(const char *name)
+{
+	printf("sample %s total %u outside %u\n", name, (unsigned) sample_total, (unsigned) sample_out);
+	int n = 0;                                 /* every block hit: "block:count", hex block */
+	for (int i = 0; i < SAMPLE_BLOCKS; i++) {
+		if (!sample_hist[i])
+			continue;
+		if (!n)
+			printf("samples %s %08x", name, (unsigned) (uint32_t) __text_start);
+		printf(" %x:%u", i, sample_hist[i]);
+		if (++n == 24) {
+			printf("\n");
+			n = 0;
+		}
+	}
+	if (n)
+		printf("\n");
+}
+#else
+void prof_sample_start(void) {}
+void prof_sample_stop(void) {}
+void prof_sample_print(const char *name) { (void) name; }
+#endif
 
 void prof_frame_reset(void)
 {
