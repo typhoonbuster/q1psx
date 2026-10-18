@@ -266,7 +266,7 @@
 # own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
 # (t6: quad) = the corners' cache addresses; clobbers t0-t2, t7, t9, v0, v1
 # (reloaded with clut / tpage).
-.macro CAREFUL quad, skip, var, near
+.macro CAREFUL quad, far, var, near
 	lw      $t0, SP_SZ($t3)
 	lw      $t1, SP_SZ($t4)
 	lw      $t2, SP_SZ($t5)
@@ -322,11 +322,11 @@
 	addu    $v0, $v1, $t0                # W + H
 	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
 	mult    $v0, $t7                     # (W + H) x depth range
-	beqz    $t0, \skip
-	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the skip path
-	mflo    $v0                          #  reloads them)
+	beqz    $t0, \far
+	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the far and
+	mflo    $v0                          #  slow paths reload them)
 	sltu    $v0, $t9, $v0
-	bnez    $v0, \skip
+	bnez    $v0, \far
 	lw      $v0, SP_CLUT16($t8)
 .endm
 
@@ -512,7 +512,7 @@ dr_lit_back:                             # record, in view, is lit first
 	addu    $t5, $t5, $t8
 	beqz    $a2, \p\()_quad_emit
 	addu    $t6, $t6, $t8
-	CAREFUL 1, \p\()_quad_skip, \var, \p\()_quad_near
+	CAREFUL 1, \p\()_quad_far, \var, \p\()_quad_near
 \p\()_quad_emit:                            # POLY_GT4: colour, xy, uv per corner
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -568,7 +568,7 @@ dr_lit_back:                             # record, in view, is lit first
 	addu    $t4, $t4, $t8
 	beqz    $a2, \p\()_tri_emit
 	addu    $t5, $t5, $t8
-	CAREFUL 0, \p\()_tri_skip, \var, \p\()_tri_near
+	CAREFUL 0, \p\()_tri_far, \var, \p\()_tri_near
 \p\()_tri_emit:                             # POLY_GT3
 	lw      $t0, SP_COL($t3)             # c0
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
@@ -628,6 +628,84 @@ dr_lit_back:                             # record, in view, is lit first
 	lw      $v1, SP_TPAGE16($t8)
 	b       \p\()_tri_next
 	nop
+
+# CAREFUL's other exits (too big, or the affine bound): no corner near, so
+# every corner's SXY is its projection (saturated toward the screen at
+# worst). A polygon wholly off one side of the screen by the slow path's
+# own test (all x < 0, all y < 0, all x >= 320 or all y >= 240: its
+# triangles would all be culled, and the clip path's exact projections lie
+# on the same side) is left out; the others go to the slow path. The sign
+# bits of the SXY words carry y < 0 (31) and x < 0 (15); w - (240 << 16)
+# has the sign of y - 240, (w << 16) - (320 << 16) that of x - 320.
+\p\()_quad_far:
+	lw      $t0, SP_SXY($t3)
+	lw      $t1, SP_SXY($t4)
+	lw      $t2, SP_SXY($t5)
+	lw      $t7, SP_SXY($t6)
+	and     $t9, $t0, $t1
+	and     $t9, $t9, $t2
+	and     $t9, $t9, $t7
+	bltz    $t9, \p\()_quad_off         # all y < 0
+	andi    $t9, $t9, 0x8000
+	bnez    $t9, \p\()_quad_off         # all x < 0
+	lui     $v0, 240
+	subu    $t9, $t0, $v0
+	subu    $v1, $t1, $v0
+	or      $t9, $t9, $v1
+	subu    $v1, $t2, $v0
+	or      $t9, $t9, $v1
+	subu    $v1, $t7, $v0
+	or      $t9, $t9, $v1
+	bgez    $t9, \p\()_quad_off         # all y >= 240
+	lui     $v0, 320
+	sll     $t0, $t0, 16
+	sll     $t1, $t1, 16
+	sll     $t2, $t2, 16
+	sll     $t7, $t7, 16
+	subu    $t0, $t0, $v0
+	subu    $t1, $t1, $v0
+	or      $t0, $t0, $t1
+	subu    $t2, $t2, $v0
+	or      $t0, $t0, $t2
+	subu    $t7, $t7, $v0
+	or      $t0, $t0, $t7
+	bltz    $t0, \p\()_quad_skip        # not all x >= 320: the slow path
+	nop
+\p\()_quad_off:
+	lw      $v0, SP_CLUT16($t8)
+	b       \p\()_quad_next
+	lw      $v1, SP_TPAGE16($t8)
+\p\()_tri_far:
+	lw      $t0, SP_SXY($t3)
+	lw      $t1, SP_SXY($t4)
+	lw      $t2, SP_SXY($t5)
+	lui     $v0, 240
+	and     $t9, $t0, $t1
+	and     $t9, $t9, $t2
+	bltz    $t9, \p\()_tri_off          # all y < 0
+	andi    $t9, $t9, 0x8000
+	bnez    $t9, \p\()_tri_off          # all x < 0
+	subu    $t9, $t0, $v0
+	subu    $v1, $t1, $v0
+	or      $t9, $t9, $v1
+	subu    $v1, $t2, $v0
+	or      $t9, $t9, $v1
+	bgez    $t9, \p\()_tri_off          # all y >= 240
+	lui     $v0, 320
+	sll     $t0, $t0, 16
+	sll     $t1, $t1, 16
+	sll     $t2, $t2, 16
+	subu    $t0, $t0, $v0
+	subu    $t1, $t1, $v0
+	or      $t0, $t0, $t1
+	subu    $t2, $t2, $v0
+	or      $t0, $t0, $t2
+	bltz    $t0, \p\()_tri_skip         # not all x >= 320: the slow path
+	nop
+\p\()_tri_off:
+	lw      $v0, SP_CLUT16($t8)
+	b       \p\()_tri_next
+	lw      $v1, SP_TPAGE16($t8)
 
 # Near polygon: hand it to the slow path (engine/r_slow.c) — near clip,
 # subdivision, exact projection. t0 = 4 (quad) or 3 (triangle).
