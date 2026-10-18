@@ -4,7 +4,7 @@
  *   qcook.c   command line, pak access, BSP lump parsing, the levels
  *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX6 output
  *   world.c   face splitting, face records, nodes/leaves/PVS, QWVD output
- *   game.c    models, sprites, HUD pictures -> QGM5 (formats/qgame.h)
+ *   game.c    models, sprites, HUD pictures -> QGM6 (formats/qgame.h)
  *   items.c   the map's own models -> QMM1 (formats/qgame.h)
  *   decim.c   an alias model's triangles reduced (the model levels)
  *   ents.c    the entity lump: parsed for the world's entity table, the
@@ -40,7 +40,7 @@ const uint8_t *pak_find(const uint8_t *pak, long pak_len, const char *name, uint
 
 /* ----------------------------------------------------------------- game -- */
 
-/* `qcook game`: models, sprites and HUD pictures -> one QGM5 file per model
+/* `qcook game`: models, sprites and HUD pictures -> one QGM6 file per model
    level (game.c) */
 int cmd_game(int argc, char **argv);
 

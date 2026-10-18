@@ -1226,6 +1226,20 @@ followed by R0-R4.
   draws the fog's records flat and skips the PVS's far leaves: the
   heaviest views -9 to -27 % at 768. The flat shading (far, all) draws a
   record in its average light (POLY_FT4 / FT3): -1.1 to -1.5 %.
+- **The 2D weapons** (2026-10-18). §38: "Draw weapon: 2D" in
+  Graphics: the cook draws every frame of the eight view models (Quake's
+  alias drawing, halved, 255 colours a weapon) into GAME.DAT (`QGM5`) as
+  ready display-list packets; the engine hangs a frame's packets in the
+  ordering table when it changes (one VRAM slot) and draws one quad with
+  the 3D gun's bob, kick, lean and light: the game bench -4.4 % (the
+  super shotgun's frame -11.6 %). The gun is no longer drawn under the
+  Ring of Shadows (R_DrawViewModel).
+- **The 2D weapons, the first test** (§38): the walk's bob counted
+  once (the view rises with the gun: only its forward part shows), the
+  quad without the frame's transparent last column and row (no leftover
+  texels at its edges), the frames rendered on 216 rows for the
+  full-screen HUD, the axe's swings left 3D (their size), the CLUT in two
+  rows in turn; the scripted release flow sets the new Graphics rows.
 
 - **Four quality settings instead of one fidelity, and what each option
   costs** (2026-10-18: textures, models, map geometry and effects apart, a hint on every option). §39: textures (the resolution),

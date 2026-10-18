@@ -22,7 +22,8 @@
 #include <stdint.h>
 
 #define MEM_LEVEL_BYTES (1152 * 1024)
-#define MEM_GAME_BYTES  (160 * 1024)
+#define MEM_GAME_BYTES  (224 * 1024)   /* (+ the 2D weapons' 102 KB since 2026-10-18;
+                                          the dynamic lights' and the sounds' tables follow) */
 
 void     mem_level_reset(void);
 void    *mem_level_alloc(uint32_t bytes);      /* 16-byte aligned; NULL if full */
@@ -30,7 +31,8 @@ uint32_t mem_level_mark(void);
 void     mem_level_release(uint32_t mark);
 uint32_t mem_level_used(void);
 
-void    *mem_game_alloc(uint32_t bytes);       /* 16-byte aligned; NULL if full */
+void    *mem_game_alloc(uint32_t bytes);       /* 16-byte aligned; full: says so and stops
+                                                  (boot-time tables only) */
 uint32_t mem_game_used(void);
 
 #endif

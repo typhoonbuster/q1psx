@@ -27,6 +27,9 @@ const int num_tick_rates   = (int) sizeof tick_rates;
 const uint16_t draw_dists[]  = { 0, 2048, 1536, 1024, 768 };
 const int num_draw_dists     = (int) (sizeof draw_dists / sizeof draw_dists[0]);
 const char *const flat_name[R_FLAT_MODES] = { "off", "far", "all" };
+/* the gun: none, the model, or its frames as pictures (formats/qgame.h:
+   a quad instead of its triangles) */
+const char *const viewmodel_name[3] = { "off", "3D", "2D" };
 
 settings_t settings;
 int settings_level_mask[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK, QL_EFFECT_MASK };
@@ -123,7 +126,7 @@ void settings_step(int row, int d)
 	case SET_BUDGET:   settings.budget = wrap(settings.budget, d, num_warp_budget); break;
 	case SET_HUD:      settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
 	case SET_DLIGHTS:  settings.dlights ^= 1; break;
-	case SET_WEAPON:   settings.viewmodel ^= 1; break;
+	case SET_WEAPON:   settings.viewmodel = wrap(settings.viewmodel, d, 3); break;
 	case SET_DRAWDIST: settings.drawdist = wrap(settings.drawdist, d, num_draw_dists); break;
 	case SET_FLAT:     settings.flat = wrap(settings.flat, d, R_FLAT_MODES); break;
 	case SET_FPS:      settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;
@@ -143,7 +146,7 @@ void settings_value(int row, char *buf, int size)
 	case SET_BUDGET:   snprintf(buf, size, "%d tris", warp_budgets[settings.budget]); break;
 	case SET_HUD:      snprintf(buf, size, "%s", hud_style_name[settings.hud]); break;
 	case SET_DLIGHTS:  snprintf(buf, size, "%s", settings.dlights ? "on" : "off"); break;
-	case SET_WEAPON:   snprintf(buf, size, "%s", settings.viewmodel ? "on" : "off"); break;
+	case SET_WEAPON:   snprintf(buf, size, "%s", viewmodel_name[settings.viewmodel]); break;
 	case SET_DRAWDIST:
 		if (draw_dists[settings.drawdist])
 			snprintf(buf, size, "%d", draw_dists[settings.drawdist]);
@@ -218,8 +221,9 @@ void settings_hint(int row, const char *line[2])
 		else                  { a = "+ no relighting: faster in fights"; b = "- shots and explosions stay dark"; }
 		break;
 	case SET_WEAPON:
-		if (settings.viewmodel) { a = "- the gun takes 5 to 20% of a frame"; b = "Quake's view model"; }
-		else                    { a = "+ saves 5 to 20% of a frame";         b = "- no gun on screen"; }
+		if (settings.viewmodel == 2)      { a = "+ about 4% faster (up to 12%)";    b = "- the gun's frames as flat pictures"; }
+		else if (settings.viewmodel == 1) { a = "Quake's gun: 5 to 20% of a frame"; b = "2D: about 4% faster, flat frames"; }
+		else                              { a = "+ saves 5 to 20% of a frame";      b = "- no gun on screen"; }
 		break;
 	case SET_DRAWDIST:
 		switch (draw_dists[settings.drawdist]) {

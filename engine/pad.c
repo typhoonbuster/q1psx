@@ -212,13 +212,19 @@ static const struct { uint16_t from, to, buttons; } pad_script[] = {
 	{ 3300, 3304, PAD_RIGHT },     /* HUD: q2 psx (the budget skipped: greyed) */
 	{ 3360, 3364, PAD_DOWN },
 	{ 3420, 3424, PAD_CROSS },     /* dynamic lights: off */
-	{ 3480, 3484, PAD_START }, { 3540, 3544, PAD_START }, { 3600, 3604, PAD_START },   /* out: no load */
-	{ 3660, 3780, PAD_R2 },        /* two seconds of fire */
-	{ 3840, 3844, PAD_START },     /* the menu again (its cursor on Options) */
-	{ 3870, 3874, PAD_UP },
-	{ 3900, 3904, PAD_CROSS },     /* Single Player */
-	{ 3960, 3964, PAD_CROSS },     /* New Game: "Are you sure" */
-	{ 4020, 4024, PAD_CROSS },     /* yes: START at the levels chosen */
+	{ 3480, 3484, PAD_DOWN },
+	{ 3540, 3544, PAD_RIGHT },     /* draw weapon: 2D */
+	{ 3600, 3604, PAD_DOWN },
+	{ 3660, 3664, PAD_RIGHT },     /* draw distance: 2048 */
+	{ 3720, 3724, PAD_DOWN },
+	{ 3780, 3784, PAD_RIGHT },     /* flat shading: far */
+	{ 3840, 3844, PAD_START }, { 3900, 3904, PAD_START }, { 3960, 3964, PAD_START },   /* out: no load */
+	{ 4020, 4140, PAD_R2 },        /* two seconds of fire */
+	{ 4200, 4204, PAD_START },     /* the menu again (its cursor on Options) */
+	{ 4230, 4234, PAD_UP },
+	{ 4260, 4264, PAD_CROSS },     /* Single Player */
+	{ 4320, 4324, PAD_CROSS },     /* New Game: "Are you sure" */
+	{ 4380, 4384, PAD_CROSS },     /* yes: START at the levels chosen */
 };
 static uint32_t script_vbl;
 

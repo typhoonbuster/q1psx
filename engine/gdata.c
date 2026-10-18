@@ -72,10 +72,13 @@ int gdata_load(int level)
 	/* tables and geometry to the game arena */
 	uint32_t tables = (uint32_t) (QGM_COUNT * sizeof(qg_model) + QGP_COUNT * sizeof(qg_pic) +
 	                              QG_LIGHT_YAWS * QG_NORMALS + 256 * 4 + QGA_COUNT * sizeof(qg_aux));
+	uint32_t wtab = QG_WEAPONS * sizeof(qg_wsprite) + h->num_wframes * sizeof(qg_wframe);
 	uint8_t *t = mem_game_alloc(tables);
 	uint8_t *g = mem_game_alloc(geo_room);       /* (room for any level's models) */
 	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
-	if (!t || !g || (h->len_finales && !fin)) {
+	uint8_t *wt = mem_game_alloc(wtab);
+	uint8_t *wp = mem_game_alloc(h->len_wpix);
+	if (!t || !g || (h->len_finales && !fin) || !wt || !wp) {
 		mem_level_release(mark);
 		return 0;
 	}
@@ -90,6 +93,26 @@ int gdata_load(int level)
 		memcpy(fin, f + h->ofs_finales, h->len_finales);
 		gdata.finales     = (const qg_finale *) fin;
 		gdata.num_finales = h->num_finales;
+	}
+	/* the 2D weapons: their tables, their packets with absolute links (KUSEG,
+	   as the ordering table's); a chain's last stays 0xffffff (game.c hangs
+	   it in the ordering table); the same in every model level's file */
+	memcpy(wt, f + h->ofs_wsprites, QG_WEAPONS * sizeof(qg_wsprite));
+	memcpy(wt + QG_WEAPONS * sizeof(qg_wsprite), f + h->ofs_wframes, h->num_wframes * sizeof(qg_wframe));
+	memcpy(wp, f + h->ofs_wpix, h->len_wpix);
+	gdata.wsprites = (const qg_wsprite *) wt;
+	gdata.wframes  = (const qg_wframe *) (wt + QG_WEAPONS * sizeof(qg_wsprite));
+	gdata.wpix     = wp;
+	gdata.wslot    = h->wslot;
+	for (uint32_t i = 0; i < h->num_wframes; i++) {
+		uint32_t at = gdata.wframes[i].ofs;
+		for (;;) {
+			uint32_t *tag = (uint32_t *) (wp + at), next = *tag & 0xffffffu;
+			if (next == 0xffffffu)
+				break;
+			*tag = (*tag & 0xff000000u) | (((uint32_t) wp + next) & 0xffffffu);
+			at = next;
+		}
 	}
 	gdata.geo   = g;
 	gdata.clut  = h->clut;

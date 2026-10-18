@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <string.h>
+#include <psxgpu.h>
 
 #include "clip.h"
 #include "dlight.h"
@@ -8,7 +9,6 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
-#include "mem.h"
 #include "prof.h"
 #include "q_fixed.h"
 #include "render.h"
@@ -117,7 +117,7 @@ typedef struct {
 	const qw_leaf *leaf;
 } particle_t;
 
-static particle_t *particles;              /* [MAX_PARTICLES], in the game arena (game_init) */
+static particle_t particles[MAX_PARTICLES];   /* (the game arena has no room left: the 2D guns) */
 static uint16_t   part_active, part_free;   /* the lists' heads, index + 1 (R_ClearParticles) */
 
 /* u/s -> particle velocity */
@@ -128,12 +128,12 @@ static int32_t pvel(int32_t ups)
 
 #define PGRAV ((800 * SUB * 256) / (GAME_HZ * GAME_HZ) / 20)   /* r_part.c: gravity x 0.05 */
 
-/* R_ClearParticles: every particle on the free list (none before the pool) */
+/* R_ClearParticles: every particle on the free list */
 static void particles_clear(void)
 {
 	part_active = 0;
-	part_free   = particles ? 1 : 0;
-	for (int i = 0; particles && i < part_cap; i++)
+	part_free   = 1;
+	for (int i = 0; i < part_cap; i++)
 		particles[i].next = (uint16_t) (i + 2 <= part_cap ? i + 2 : 0);
 }
 
@@ -1539,8 +1539,6 @@ void game_restart_level(void)
 
 void game_init(void)
 {
-	if (!particles)
-		particles = mem_game_alloc(MAX_PARTICLES * sizeof *particles);
 	memset(&pl, 0, sizeof pl);
 	memset(projs, 0, sizeof projs);
 	proj_top = 0;
@@ -1833,6 +1831,89 @@ void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll)
 static const int weapon_model[W_COUNT] = { QGM_V_AXE, QGM_V_SHOT, QGM_V_SHOT2, QGM_V_NAIL,
                                            QGM_V_NAIL2, QGM_V_ROCK, QGM_V_ROCK2, QGM_V_LIGHT };
 
+/* The 2D weapon (Graphics: "Draw weapon: 2D", game_draw_viewmodel 2): the
+   gun's frame as the cook drew it at rest (formats/qgame.h), one quad
+   twice its texels' size after the world. Its texels' packets (and the
+   weapon's CLUT's) are hung, as they are, at the head of the ordering
+   table when the frame shown changes: copied to the slot before anything
+   draws. The 3D gun's moves relative to the camera on the quad: the bob's
+   forward part (V_CalcRefdef raises the view and the gun alike by the bob:
+   only the gun's 0.4 bob ahead shows, a scale about the view's centre at
+   the gun's depth at rest), the full screen's 2 units lower, the kick's
+   and the damage's pitch (the camera's pitch over the gun's: a shift),
+   the lean's roll (a turn about the view's centre); its light as the 3D
+   gun's, the colour light x 128 / QG_WS_L0. A chain is never hung again
+   in the next frame (only when the frame or the weapon changes), so the
+   GPU never follows a link this frame rewrites. The weapon's CLUT goes to
+   row 507 or 508 in turn (the GPU's CLUT cache keyed by the address never
+   serves the last weapon's); the quad leaves out the frame's last column
+   and row (transparent: a texel the GPU reads past its quad's edge is the
+   frame's own, never the slot's leftovers from a bigger frame). */
+static int ws_shown = -1, ws_clut = -1, ws_clut_row;
+
+void game_ws_invalidate(void)
+{
+	ws_shown = ws_clut = -1;
+}
+
+static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3D */
+{
+	const qg_wsprite *ws = &gdata.wsprites[wpn];
+	if (frame < 0 || frame >= ws->count)
+		frame = 0;
+	int key = ws->first + frame;
+	const qg_wframe *fr = &gdata.wframes[key];
+	if (!fr->w)                                   /* (an axe's swing: the cook's 3D) */
+		return 0;
+	if (key != ws_shown) {                        /* (hung first: drawn after the CLUT's) */
+		addPrims(&vid_frame.ot[OT_SKY], gdata.wpix + fr->ofs, gdata.wpix + fr->ofs_last);
+		ws_shown = key;
+	}
+	if (wpn != ws_clut) {
+		uint32_t *c = (uint32_t *) (gdata.wpix + ws->ofs_clut);
+		ws_clut_row ^= 1;
+		c[2] = (uint32_t) (QG_WCLUT_Y + ws_clut_row) << 16 | QG_WCLUT_X;   /* GP0(A0h)'s position */
+		addPrims(&vid_frame.ot[OT_SKY], c, c);
+		ws_clut = wpn;
+	}
+	POLY_FT4 *q = vid_alloc(sizeof *q);
+	if (!q)
+		return 1;
+	int cy = r_viewport_rows() / 2;
+	int32_t a16 = ws->anchor;                     /* the gun's depth, 1/16 units */
+	int32_t b16 = bob * 16 / SUB;
+	int32_t s12 = a16 * 4096 / (a16 + b16 * 2 / 5);           /* ahead: the scale */
+	int32_t dy16 = 0;                                         /* (1/16 px) */
+	if (cy == VID_H / 2)                                      /* (no 2-unit fudge there: */
+		dy16 = R_SCREEN_H * 16 * 2 * 16 / a16;                /*  2 units lower) */
+	int yaw, pitch, roll;
+	game_view_angles(&yaw, &pitch, &roll);
+	int k = pitch - pl.pm.pitch;                  /* the camera's pitch over the gun's */
+	int32_t kick16 = -R_SCREEN_H * 16 * r_sin(k) / r_cos(k);
+	int32_t cr = r_cos(roll), sr = r_sin(roll);
+	int16_t xy[4][2];
+	for (int c = 0; c < 4; c++) {
+		int32_t x16 = (fr->x + (c & 1) * 2 * (fr->w - 1)) * 16;
+		int32_t y16 = (fr->y + (c >> 1) * 2 * (fr->h - 1)) * 16 + dy16;
+		x16 = x16 * s12 >> 12;
+		y16 = (y16 * s12 >> 12) + kick16;
+		int32_t rx = (cr * x16 + sr * y16) >> 12, ry = (cr * y16 - sr * x16) >> 12;
+		xy[c][0] = (int16_t) (VID_W / 2 + (rx >> 4));
+		xy[c][1] = (int16_t) (cy + (ry >> 4));
+	}
+	setPolyFT4(q);
+	int col = light * 128 / QG_WS_L0;
+	if (col > 255) col = 255;
+	setRGB0(q, col, col, col);
+	setXY4(q, xy[0][0], xy[0][1], xy[1][0], xy[1][1], xy[2][0], xy[2][1], xy[3][0], xy[3][1]);
+	int u0 = gdata.wslot.u, v0 = gdata.wslot.v, u1 = u0 + fr->w - 1, v1 = v0 + fr->h - 1;
+	setUV4(q, u0, v0, u1, v0, u0, v1, u1, v1);
+	q->tpage = gdata.wslot.tpage;
+	q->clut  = (uint16_t) getClut(QG_WCLUT_X, QG_WCLUT_Y + ws_clut_row);
+	vid_link(OT_WEAPON, q);
+	return 1;
+}
+
 void game_render(void)
 {
 	r_state.viewmodel = 0;
@@ -1875,7 +1956,8 @@ void game_render(void)
 	/* the view model: at the eye, bobbing (V_CalcRefdef), lit by the eye's
 	   leaf; a little lower with the full-screen viewport than with the
 	   status bar's (Quake's viewsize fudge) */
-	if (game_draw_viewmodel && !pl.dead && !level_intermission) {   /* r_drawviewmodel */
+	if (game_draw_viewmodel && !pl.dead && !level_intermission &&   /* r_drawviewmodel; */
+	    !(pl.items & IT_INVISIBILITY)) {                              /* none when invisible */
 		int32_t f[3], r[3], u[3], org[3];
 		int bob = calc_bob();
 		view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
@@ -1886,10 +1968,15 @@ void game_render(void)
 		int light = leaf ? leaf->light : 128;
 		if (light < 24) light = 24;                   /* always some light on the gun */
 		light += dl_add_at(org, game_tick_count) * 3 / 2;   /* (x the cook's light gain) */
-		r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
-		                      pl.pm.yaw, -pl.pm.pitch, 0, light);
-		rl_view_model(e);                /* no subdivision; clipped at 5 units, like Quake */
-		r_state.viewmodel = (uint32_t) e;
+		if (light > 170) light = 170;                 /* (rlist.c ent_model's bound) */
+		if (game_draw_viewmodel == 2 && ws_draw(pl.weapon, pl.weaponframe, bob, light)) {
+			/* (the 2D gun) */
+		} else {
+			r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
+			                      pl.pm.yaw, -pl.pm.pitch, 0, light);
+			rl_view_model(e);            /* no subdivision; clipped at 5 units, like Quake */
+			r_state.viewmodel = (uint32_t) e;
+		}
 	}
 
 	/* projectiles and effects, in their leaves */

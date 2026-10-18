@@ -171,7 +171,7 @@ static void load_game(const char *path)
 	fclose(f);
 	qg_header h;
 	if ((size_t) len < sizeof h || memcmp(d, QGAME_MAGIC, 4)) {
-		fprintf(stderr, "pktview: %s is not a QGM5 file\n", path);
+		fprintf(stderr, "pktview: %s is not a QGM6 file\n", path);
 		exit(1);
 	}
 	memcpy(&h, d, sizeof h);
@@ -412,9 +412,38 @@ static void tile(const uint32_t *w, int n, int tw, int th, int semi)
 	polys_drawn++;
 }
 
+/* a CPU to VRAM copy in progress (GP0(A0h), its texels in this packet and
+   the next ones: the 2D gun's slot, formats/qgame.h): where the next
+   halfword goes, how many are left */
+static int cpu_x, cpu_y, cpu_x0, cpu_w, cpu_left;
+
+static void cpu_words(const uint32_t *w, int n)
+{
+	for (int i = 0; i < n && cpu_left > 0; i++)
+		for (int k = 0; k < 2 && cpu_left > 0; k++, cpu_left--) {
+			vram[cpu_y & 511][cpu_x & 1023] = (uint16_t) (w[i] >> (16 * k));
+			if (++cpu_x == cpu_x0 + cpu_w) {
+				cpu_x = cpu_x0;
+				cpu_y++;
+			}
+		}
+}
+
 static void packet(const uint32_t *w, int n)
 {
+	if (cpu_left > 0) {                  /* (the copy's texels go on) */
+		cpu_words(w, n);
+		return;
+	}
 	uint32_t code = w[0] >> 24;
+	if (code == 0xa0 && n >= 3) {        /* CPU to VRAM */
+		cpu_x = cpu_x0 = (int) (w[1] & 1023);
+		cpu_y = (int) ((w[1] >> 16) & 511);
+		cpu_w = (int) (w[2] & 0xffff);
+		cpu_left = cpu_w * (int) (w[2] >> 16);
+		cpu_words(w + 3, n - 3);
+		return;
+	}
 
 	if ((code & 0xf8) == 0xe0) {         /* environment commands, one per word */
 		for (int i = 0; i < n; i++) {
@@ -550,10 +579,11 @@ int main(int argc, char **argv)
 			if (rows > 0 && rows <= H)
 				clip_y1 = rows - 1;
 		} else if (view && line[0] == 'P' && line[1] == ' ') {
-			uint32_t w[16];
+			uint32_t w[256];                  /* (a linked packet's most: 255 words,
+			                                     the 2D gun's texel copies) */
 			int n = 0;
 			char *s = line + 1;
-			while (n < 16) {
+			while (n < 256) {
 				char *e;
 				unsigned long x = strtoul(s, &e, 16);
 				if (e == s) break;

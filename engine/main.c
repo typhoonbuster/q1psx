@@ -88,6 +88,9 @@ static int      loaded[QL_AXES] = { -1, -1, -1, -1 };   /* the settings' levels 
 #ifndef Q1PSX_BENCH_EFFECTS
 #define Q1PSX_BENCH_EFFECTS 2
 #endif
+#ifndef Q1PSX_BENCH_VIEWMODEL
+#define Q1PSX_BENCH_VIEWMODEL 1  /* the gun: 0 none, 1 3D, 2 2D (VIEWMODEL=2 scripts/bench.sh) */
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
@@ -103,6 +106,7 @@ static void apply_settings(void)
 	settings.level[QL_EFFECTS]  = Q1PSX_BENCH_EFFECTS;
 	game_set_effects(Q1PSX_BENCH_EFFECTS);
 	r_set_options(Q1PSX_BENCH_DRAWDIST, Q1PSX_BENCH_FLAT);
+	game_draw_viewmodel = Q1PSX_BENCH_VIEWMODEL;
 #else
 	settings_apply();
 #endif
@@ -518,8 +522,9 @@ static void run_frame(int interactive, int dump)
 	PLAY_STEP("render");
 #ifdef Q1PSX_BENCH
 	if (dump) {
-		anim_invalidate();                  /* a dump shows the textures' frames and the */
-		hud_invalidate();                   /* whole HUD (pktview sees only dumped frames) */
+		anim_invalidate();                  /* a dump shows the textures' frames, the */
+		hud_invalidate();                   /* whole HUD and the 2D gun's texels (pktview */
+		game_ws_invalidate();               /* sees only dumped frames) */
 	}
 #endif
 	frame_work();

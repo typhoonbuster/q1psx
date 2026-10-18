@@ -4040,3 +4040,85 @@ Both are in Graphics (and the debug map menu), off by default.
   loops run alike on both (flat packets are 3 words shorter: the counts
   would show a copy not entered).
 
+## §38 — The 2D weapons (2026-10-18)
+
+Next, an optimization to choose in the menu: the guns as 2D sprites, a flat picture of the 3D
+render being much lighter to animate than the 3D render. Graphics' "Draw weapon" (and the debug map menu's) is now
+off / 3D / 2D, 3D by default.
+
+- **The cook draws the frames** (tools/qcook/game.c, the 2D weapons'
+  section): every frame of the eight v_*.mdl as the eye sees it in the
+  status bar's viewport (320 x 192, the projection's centre (160, 96),
+  H 160: render.c), the gun at rest (at the eye, the viewport's 2 units
+  up), drawn as Quake draws an alias model: z-buffered, the triangles
+  wound backwards dropped (the winding read off the model, as cook_mdl
+  does), clipped at 5 units (ALIAS_Z_CLIP_PLANE), the vertices lit by the
+  light table of yaw 0 at a fixed light (QG_WS_L0 = 86: the engine scales
+  the colour, light x 128 / 86, up to the 3D gun's bound 170), the full
+  skin's texels perspective-correct. Then halved (2 x 2 samples, two
+  covered make a texel: the 3D guns' skins are halved too), trimmed with
+  a transparent margin, and a weapon's frames quantized together to 255
+  colours of 15 bits (median cut; index 0 transparent, the others with
+  the STP bit so black stays opaque).
+- **Memory.** The question: why the textures fit and the sprites would
+  not: the 3D gun is one skin a weapon (halved, in VRAM) and its frames
+  are vertex positions (61 KB for the eight); a 2D gun is a picture a
+  frame. Over the 60 frames: 333 KB at the screen's resolution (146 of
+  them the axe's, whose swings sweep the screen), 94 K texels halved.
+  GAME.DAT (`QGM5`) carries them as ready display-list packets (102 KB):
+  each frame's texels a chain of packets (GP0(A0h) to the slot, then
+  GP0(01h): the texture cache cleared), each weapon's CLUT one packet to
+  (0, 507), a row free under the aux CLUTs. The loader makes the links
+  absolute; the game arena grew to 224 KB (the overflow, the dynamic
+  lights' tables past its end, wrote through a NULL into the BIOS: the
+  arena now stops with a message instead).
+- **VRAM: one slot** (68 x 66 texels, the largest 2D frame) placed among
+  the game's pictures at an even u (a halfword of 8bpp texels).
+- **The engine** (game.c `ws_draw`): when the frame shown changes, its
+  chain (and on a weapon's change, its CLUT's) is hung as it is at the
+  head of the ordering table (OT_SKY: copied before anything draws, in
+  the GPU's own order: no race with the frame the GPU is drawing); a
+  chain is never hung in two frames in a row, so the GPU never follows a
+  link the CPU rewrites. Then one POLY_FT4, twice the texels' size, in a
+  bucket between the world and the overlay (OT_WEAPON: under the tint and
+  the HUD, clipped to the viewport). The 3D gun's moves on the quad: the
+  bob up and ahead (a shift, and a scale about the view's centre at the
+  gun's depth at rest, frame 0's vertices' mean), the full-screen
+  viewport's 2 units, the kick's and the damage's pitch (the camera's
+  pitch over the gun's: a shift), the lean's roll (a turn about the view's
+  centre); its light as the 3D gun's. The shading does not follow the
+  yaw (Quake's shadedots by the entity's yaw): the frames are shaded at
+  yaw 0.
+- **Quake's R_DrawViewModel draws no gun under the Ring of Shadows**
+  (`cl.items & IT_INVISIBILITY`): neither does the port now, 3D or 2D.
+- **The first test** (the gun moving far too much when walking, wrong pixel
+  borders, nothing in the release build's menu):
+  - the bob was counted twice: V_CalcRefdef raises the view by the bob as
+    it raises the gun (`r_refdef.vieworg[2] += cl.viewheight + bob`, the
+    port's game_view_pos too), so on screen the gun moves only by its 0.4
+    bob ahead; the quad had the whole bob's shift as well (30 to 60 px at
+    bob 4). Now the forward scale alone (about +-7 px, as the 3D gun);
+  - the quad was drawn over the frame's whole texels: a texel the GPU
+    reads past a scaled quad's edge was the slot's leftover from a bigger
+    frame. The frame's last column and row (its transparent margin) are
+    now left out of the quad;
+  - the full-screen HUD (240 rows) shows the gun 24 px lower and 2 units
+    lower still: the frames were cut at the status bar's 192 rows. They
+    are rendered on 216 rows now (the full screen's last needed row);
+  - a frame over 80 texels on a side stays 3D (the axe's four swings,
+    126 x 110 at most: the slot would not fit the game's pages, the
+    others' largest is 68 x 66);
+  - the weapon's CLUT goes to rows 507 and 508 in turn (a CLUT cache keyed
+    by the address never keeps the last weapon's);
+  - the release build's Graphics page has the rows (the scripted release
+    flow, `-DQ1PSX_PADSCRIPT=ON`, now sets the 2D gun, the draw distance
+    and the flat shading through it: its `settings:` lines show them): the
+    image run was older than them.
+- **Measured** (the game bench, PCSX-Redux, `PROFILE=0`, `VIEWMODEL=2`
+  against the 3D gun): the axe -6.2 %, the shotgun -4.2 %, the super
+  shotgun -11.6 % (-89 k cycles a frame), the nailguns -3.1 / -5.2 %, the
+  launchers -2.0 / -2.1 %, the lightning gun -5.0 %, the HUD views -2.7 %;
+  -4.4 % over the bench. The pictures match the 3D gun's (pktview, which
+  now reads a packet's 255 words and follows a CPU-to-VRAM copy across
+  packets). DuckStation: every map played with the 2D gun, no GP0 error.
+
