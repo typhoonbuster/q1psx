@@ -81,6 +81,7 @@ solved, two checks are used:
 | 10.2 | Save/load via memory card | required | required (real memory card) |
 | 13.x | Full cycle-accurate pass + CD-R/flashcart + NTSC/PAL TV | PCSX-Redux | required |
 
+| 11.6 | The liquids lit (§36): the cooked worlds' liquid records at light 192 (scratch script over `*_high.wld`); `MAP=START BENCH_MAPS=1 VIEW=1545,2400,96,90,30 scripts/bench.sh`: the lava textured (`START.v12.png`); the game bench's `gwater` dump carries `P 62325082` (the water's colour) | headless bench | required (the water, the slime and the lava from above and from under) |
 _(to be completed as phases progress)_
 
 ## Real-hardware test log

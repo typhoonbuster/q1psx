@@ -1909,19 +1909,20 @@ void game_render(void)
 	}
 }
 
-/* V_SetContentsColor: cshift_water, cshift_slime (solid too), cshift_lava
-   by the view point's contents, a 50 % blend (Quake's 128 / 255 for the
-   water; the slime's and lava's 150 are shown at 50 % too) */
+/* V_SetContentsColor (WinQuake's): by the view point's contents, nothing
+   in the empty and the solid, cshift_lava, cshift_slime, cshift_water for
+   any other; a 50 % blend (Quake's 128 / 255 for the water; the slime's
+   and lava's 150 are shown at 50 % too) */
 void game_view_tint(void)
 {
 	if (r_state.view_leaf) {
 		const qw_leaf *l = (const qw_leaf *) (r_state.view_leaf | 0x80000000u);
 		switch (l->contents) {
-		case QW_CONTENTS_WATER: vid_tint(130, 80, 50); break;
-		case QW_CONTENTS_SOLID:
-		case QW_CONTENTS_SLIME: vid_tint(0, 25, 5);    break;
+		case QW_CONTENTS_EMPTY:
+		case QW_CONTENTS_SOLID: break;
 		case QW_CONTENTS_LAVA:  vid_tint(255, 80, 0);  break;
-		default: break;
+		case QW_CONTENTS_SLIME: vid_tint(0, 25, 5);    break;
+		default:                vid_tint(130, 80, 50); break;
 		}
 	}
 	/* V_UpdatePalette's other shifts, in its order: the damage, the bonus,

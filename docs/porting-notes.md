@@ -3931,3 +3931,36 @@ ticks a second, in the settings.
   60 Hz path's own cost went down (the sticks' dead zone skipped on a
   digital pad); pmove's dt factors cost about 80 cycles a tick.
 
+## §36 — The liquids' light and the view's colour (third play test, 2026-10-18)
+
+Reported: the lava's surface untextured, and the tint when swimming in water the one of lava.
+
+- **The liquids were black.** Quake's turbulent textures (`*` names:
+  water, slime, lava, the teleporters) are TEX_SPECIAL: no lightmap. The
+  software renderer draws them unlit, the texels as they are
+  (D_DrawTurbulent8: no colormap); GLQuake too. The cook lit every face
+  from its lightmap (face_light_at), and a face without one is black in a
+  lit map: every liquid record carried light 0, the GPU's modulation made
+  them black. A liquid's vertices now take 128 at the cook's light gain
+  (192 at 1.5: the texture as a wall at Quake's normal light 128 shows
+  it). Checked on the cooked worlds (start's 87 liquid records, e1m1's
+  285, e1m3's 112, e1m7's 44: all at 192) and on a view over start's lava
+  (`MAP=START BENCH_MAPS=1 VIEW=1545,2400,96,90,30`).
+- **The leaf light leaves the liquids out.** A model is lit by its leaf's
+  average face light (the cook); the liquids counted there as 0 and
+  darkened the leaves with water in them. R_LightPoint skips them
+  (SURF_DRAWTILED: "no lightmaps"): so does the cook now.
+- **The view's colour by contents** follows WinQuake's V_SetContentsColor:
+  none in the empty and in the solid, cshift_lava, cshift_slime, and
+  cshift_water for any other contents. The port had QuakeWorld's
+  (the solid as slime, nothing for the other contents).
+- **The water's colour is Quake's.** `cshift_water = { {130,80,50}, 128 }`
+  in WinQuake's view.c (shared by the software renderer and GLQuake) and
+  in QuakeWorld's: V_UpdatePalette moves every palette colour half-way to
+  (130, 80, 50), a brown-orange; the lava's is (255, 80, 0) at 150, the
+  slime's (0, 25, 5) at 150. The port draws the water's as a 50 % flat
+  over the view (`P 62325082`: B/2 + (130, 80, 50)/2 in the dump), the
+  same colour. A blue one was expected: the values were checked in
+  the three versions and a comparison sent (one underwater frame of start
+  with Quake's three shifts); kept as Quake has it, a decision left open.
+

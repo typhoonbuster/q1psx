@@ -520,7 +520,8 @@ static void face_light_setup(const bsp_t *b, int f, const poly_t *pl, facelight 
    the styles (each at its normal brightness), 0..255. It modulates the
    texture as the GPU does: 128 leaves the texel as is, 255 about doubles it
    - the same scale as Quake's software colormap (light 127 = row 32). A face
-   without a lightmap in a lit map is black, as in Quake. */
+   without a lightmap in a lit map is black, as in Quake; the liquids, which
+   Quake draws unlit (D_DrawTurbulent8), take 128 instead (the caller). */
 static uint8_t face_light_at(const facelight *fl, double s, double t)
 {
 	if (!fl->nmaps)
@@ -874,6 +875,16 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 		for (int k = 0; k < p->pl.n; k++) {
 			uv[k][0] = (p->pl.v[k].s - p->s_off) * s->rep_w / m->w;
 			uv[k][1] = (p->pl.v[k].t - p->t_off) * s->rep_h / m->h;
+			if (s->flags & QWF_LIQUID) {
+				/* a liquid (Quake's turbulent "*" textures, TEX_SPECIAL:
+				   no lightmap) is drawn unlit, its texture as it is
+				   (D_DrawTurbulent8): 128 at the cook's gain, as a wall
+				   at that light. Not in the leaf light: R_LightPoint
+				   skips it (SURF_DRAWTILED) */
+				long l = lround(128 * light_gain);
+				light[k] = (uint8_t) (l > 255 ? 255 : l);
+				continue;
+			}
 			light[k] = face_light_at(&fl, p->pl.v[k].s, p->pl.v[k].t);
 			face_lsum[f] += light[k];
 			face_lcnt[f]++;

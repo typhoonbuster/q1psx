@@ -1211,4 +1211,12 @@ followed by R0-R4.
   gravity's midpoint over a long tick so a jump keeps its height), the
   view turns every vblank and the camera is drawn between two ticks. The
   simulation's cost a vblank -31 % at 32 Hz, -64 % at 10.
+- **The liquids lit, the view's colour by contents** (third play test).
+  §36: the liquids (water, slime, lava, teleporters), unlit in Quake, were
+  cooked black (no lightmap): their vertices now take Quake's normal light
+  at the cook's gain, and the leaves' light leaves them out as
+  R_LightPoint does. The view's colour follows WinQuake's
+  V_SetContentsColor (nothing in the solid, the water's for any other
+  contents); the water's colour is Quake's own (130, 80, 50). Every map
+  recooked.
 
