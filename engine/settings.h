@@ -26,6 +26,7 @@ typedef struct {
 	int music;       /* the CD music's, tenths (bgmvolume 1)                 */
 	int fps_cap;     /* fps_caps[] index: 60 (none), 45, 30, 15              */
 	int tick;        /* tick_rates[] index: the game's ticks a second        */
+	int viewmodel;   /* the weapon drawn (Quake's r_drawviewmodel)           */
 } settings_t;
 
 extern settings_t settings;

@@ -33,6 +33,7 @@ extern int game_dt;
    drawn between the last two (the view model follows it) */
 extern int     game_tick_hz;
 extern int32_t game_view_lerp[3];
+extern int     game_draw_viewmodel;   /* the weapon drawn (r_drawviewmodel) */
 extern int     game_view_cut;   /* set by a spawn outside a tick: the scheduler
                                    takes the view afresh, no lerp across it */
 

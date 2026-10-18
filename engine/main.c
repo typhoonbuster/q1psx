@@ -568,8 +568,8 @@ static const char *map_tag(int m)
 }
 
 /* The options under the map list: L2 / R2 pick one, L1 / R1 change it. */
-enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_DLIGHTS, OPT_FPS, OPT_TICK,
-       OPT_COUNT };
+enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_DLIGHTS, OPT_WEAPON, OPT_FPS,
+       OPT_TICK, OPT_COUNT };
 static int opt_sel;
 
 static void opt_step(int d)
@@ -583,6 +583,7 @@ static void opt_step(int d)
 	case OPT_BUDGET: settings.budget = (settings.budget + num_warp_budget + d) % num_warp_budget; break;
 	case OPT_HUD:    settings.hud = (settings.hud + HUD_STYLES + d) % HUD_STYLES; break;
 	case OPT_DLIGHTS: settings.dlights ^= 1; break;
+	case OPT_WEAPON: settings.viewmodel ^= 1; break;
 	case OPT_FPS:    settings.fps_cap = (settings.fps_cap + num_fps_caps + d) % num_fps_caps; break;
 	default:         settings.tick = (settings.tick + num_tick_rates + d) % num_tick_rates; break;
 	}
@@ -592,8 +593,8 @@ static void opt_step(int d)
 static void opt_draw(void)
 {
 	static const char *const label[OPT_COUNT] = {
-		"fidelity", "textures", "dither", "warp", "threshold", "budget", "hud", "dlights", "fps cap",
-		"tick rate",
+		"fidelity", "textures", "dither", "warp", "threshold", "budget", "hud", "dlights", "weapon",
+		"fps cap", "tick rate",
 	};
 	char line[48], val[16];
 	for (int o = 0; o < OPT_COUNT; o++) {
@@ -606,6 +607,7 @@ static void opt_draw(void)
 		case OPT_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
 		case OPT_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
 		case OPT_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
+		case OPT_WEAPON: snprintf(val, sizeof val, "%s", settings.viewmodel ? "on" : "off"); break;
 		case OPT_FPS:    snprintf(val, sizeof val, "%d", fps_caps[settings.fps_cap]); break;
 		default:         snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
 		}

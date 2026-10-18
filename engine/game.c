@@ -22,6 +22,7 @@ int      game_dt = 1;
 int      game_tick_hz = 60;
 int32_t  game_view_lerp[3];
 int      game_view_cut = 1;
+int      game_draw_viewmodel = 1;
 
 #define SUB CLIP_SUB                            /* 8 position sub-units per world unit */
 #undef TICKS                                    /* (ents.h's: the same, with 60) */
@@ -1826,7 +1827,7 @@ void game_render(void)
 	/* the view model: at the eye, bobbing (V_CalcRefdef), lit by the eye's
 	   leaf; a little lower with the full-screen viewport than with the
 	   status bar's (Quake's viewsize fudge) */
-	if (!pl.dead && !level_intermission) {
+	if (game_draw_viewmodel && !pl.dead && !level_intermission) {   /* r_drawviewmodel */
 		int32_t f[3], r[3], u[3], org[3];
 		int bob = calc_bob();
 		view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
