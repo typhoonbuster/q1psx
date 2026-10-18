@@ -1,6 +1,6 @@
 /*
  * qcook — game data: the models, sprites and HUD pictures the engine needs
- * on every map, cooked from the pak into one QGM1 file (formats/qgame.h).
+ * on every map, cooked from the pak into one QGM5 file (formats/qgame.h).
  *
  *   qcook game --pak <pak0.pak> --out <game.dat>
  *
@@ -103,6 +103,8 @@ typedef struct {
 	int         w, h;
 	uint8_t    *px;
 	int         border;
+	int         even;          /* its u must be even (a halfword of 8bpp texels:
+	                              the engine copies into it) */
 	int         page, u, v;    /* u, v: the image's own origin (past the border) */
 } image;
 
@@ -182,8 +184,9 @@ static void place_images(void)
 		for (int p = 0; p < GP_PAGES; p++)
 			for (int i = 0; i < nfree[p]; i++) {
 				const rect *f = &freer[p][i];
-				if (bw > f->w || bh > f->h) continue;
-				int ds = f->w - bw, dl = f->h - bh;
+				int ex = im->even ? ((f->x + b) & 1) : 0;   /* (to an even u) */
+				if (bw + ex > f->w || bh > f->h) continue;
+				int ds = f->w - bw - ex, dl = f->h - bh;
 				if (ds > dl) { int t = ds; ds = dl; dl = t; }
 				if (ds < bs || (ds == bs && dl < bl)) { bs = ds; bl = dl; bp = p; bi = i; }
 			}
@@ -191,6 +194,8 @@ static void place_images(void)
 			die("%s (%dx%d): the game's %d VRAM pages are full (%ld K texels placed of %ld K)",
 			    im->what, bw, bh, GP_PAGES, area / 1024, total / 1024);
 		rect at = { freer[bp][bi].x, freer[bp][bi].y, bw, bh };
+		if (im->even)
+			at.x += (at.x + b) & 1;
 		im->page = bp; im->u = at.x + b; im->v = at.y + b;
 		area += (long) bw * bh;
 		/* split the free rectangles it overlaps */
@@ -1703,6 +1708,370 @@ static void finales_cook(const uint8_t *pak, long pak_len, gbuf *table, gbuf *te
 	#undef GSTR
 }
 
+/* -------------------------------------------------------- the 2D weapons -- */
+
+/* The view models as pictures (Graphics: "Draw weapon: 2D", the
+   idea: a flat image costs a quad where the model costs its triangles).
+   Every frame of every v_*.mdl rendered as the eye sees it in the status
+   bar's viewport (320 x 192, the projection's centre (160, 96), H 160:
+   render.c), the gun at rest (at the eye, the viewport's 2 units up: the
+   engine adds the bob, the kick and the lean), the way Quake draws an
+   alias model: z-buffered, the triangles wound backwards dropped (the
+   model's own winding, as cook_mdl reads it), clipped at 5 units
+   (ALIAS_Z_CLIP_PLANE), each vertex lit by the light table of yaw 0 at
+   QG_WS_L0 (the engine scales the colour for its own light), the texels
+   of the full skin, perspective-correct. Then halved (2 x 2 samples: two
+   covered make a texel, their mean its colour; the view models' skins are
+   halved too), trimmed to its texels with a transparent margin of one,
+   and a weapon's frames quantized together to 255 colours in the GPU's
+   15 bits (median cut; index 0 transparent, the others with the STP bit:
+   black stays opaque). */
+
+#define WS_W     320
+#define WS_H     192
+#define WS_CX    160
+#define WS_CY    96
+#define WS_PROJ  160.0
+#define WS_NEAR  5.0
+#define WS_UP    2.0          /* the status bar's viewport fudge (game.c) */
+
+typedef struct { double x, y, z, s, t, l; } wsv;   /* view space (x right, y down, z ahead) */
+
+typedef struct {
+	int      x, y, w, h;      /* full-res top-left from the centre; half-res size */
+	uint16_t *rgb;            /* w x h, 15-bit colour | 0x8000, 0 transparent */
+	uint8_t  *px;             /* the indices, after quantizing */
+} ws_frame;
+
+typedef struct {
+	int       nframes;
+	ws_frame *frames;
+	uint16_t  clut[256];
+	double    anchor;
+} ws_weapon;
+
+static ws_weapon wsw[QG_WEAPONS];
+static image    *ws_slot;
+
+static float    ws_iz[WS_H][WS_W];          /* 1 / z, 0 empty */
+static float    ws_rgb[WS_H][WS_W][3];
+
+static int ws_clip(const wsv *in, int n, wsv *out)
+{
+	int m = 0;
+	for (int i = 0; i < n; i++) {
+		const wsv *a = &in[i], *b = &in[(i + 1) % n];
+		int ina = a->z >= WS_NEAR, inb = b->z >= WS_NEAR;
+		if (ina)
+			out[m++] = *a;
+		if (ina != inb) {
+			double f = (WS_NEAR - a->z) / (b->z - a->z);
+			wsv c = { a->x + f * (b->x - a->x), a->y + f * (b->y - a->y), WS_NEAR,
+			          a->s + f * (b->s - a->s), a->t + f * (b->t - a->t), a->l + f * (b->l - a->l) };
+			out[m++] = c;
+		}
+	}
+	return m;
+}
+
+static void ws_tri(const wsv *v0, const wsv *v1, const wsv *v2, const mdl_t *m)
+{
+	const wsv *v[3] = { v0, v1, v2 };
+	double sx[3], sy[3], iz[3], sz[3], tz[3], l[3];
+	for (int k = 0; k < 3; k++) {
+		iz[k] = 1.0 / v[k]->z;
+		sx[k] = WS_CX + WS_PROJ * v[k]->x * iz[k];
+		sy[k] = WS_CY + WS_PROJ * v[k]->y * iz[k];
+		sz[k] = v[k]->s * iz[k];
+		tz[k] = v[k]->t * iz[k];
+		l[k]  = v[k]->l;
+	}
+	double area = (sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0]);
+	if (fabs(area) < 1e-9)
+		return;
+	int x0 = (int) floor(fmin(sx[0], fmin(sx[1], sx[2]))), x1 = (int) ceil(fmax(sx[0], fmax(sx[1], sx[2])));
+	int y0 = (int) floor(fmin(sy[0], fmin(sy[1], sy[2]))), y1 = (int) ceil(fmax(sy[0], fmax(sy[1], sy[2])));
+	if (x0 < 0) x0 = 0;
+	if (y0 < 0) y0 = 0;
+	if (x1 > WS_W - 1) x1 = WS_W - 1;
+	if (y1 > WS_H - 1) y1 = WS_H - 1;
+	for (int y = y0; y <= y1; y++)
+		for (int x = x0; x <= x1; x++) {
+			double px = x + 0.5, py = y + 0.5;
+			double w0 = ((sx[1] - px) * (sy[2] - py) - (sx[2] - px) * (sy[1] - py)) / area;
+			double w1 = ((sx[2] - px) * (sy[0] - py) - (sx[0] - px) * (sy[2] - py)) / area;
+			double w2 = 1 - w0 - w1;
+			if (w0 < 0 || w1 < 0 || w2 < 0)
+				continue;
+			double izp = w0 * iz[0] + w1 * iz[1] + w2 * iz[2];
+			if (izp <= ws_iz[y][x])
+				continue;
+			double s = (w0 * sz[0] + w1 * sz[1] + w2 * sz[2]) / izp;
+			double t = (w0 * tz[0] + w1 * tz[1] + w2 * tz[2]) / izp;
+			double lt = w0 * l[0] + w1 * l[1] + w2 * l[2];   /* (screen-linear, as the GPU's) */
+			int si = (int) floor(s), ti = (int) floor(t);
+			si %= m->skinw;
+			if (si < 0) si += m->skinw;
+			if (ti < 0) ti = 0;
+			if (ti >= m->skinh) ti = m->skinh - 1;
+			int c = m->skin[(size_t) ti * m->skinw + si];
+			ws_iz[y][x] = (float) izp;
+			for (int k = 0; k < 3; k++)
+				ws_rgb[y][x][k] = (float) (palette[c * 3 + k] * lt / 128);
+		}
+}
+
+/* one frame: the full-res render, then halved and trimmed */
+static void ws_render(const mdl_t *m, int f, double wind, const uint8_t *dots0, ws_frame *out)
+{
+	memset(ws_iz, 0, sizeof ws_iz);
+	wsv *vv = xmalloc((size_t) m->nverts * sizeof *vv);
+	double (*mp)[3] = xmalloc((size_t) m->nverts * sizeof *mp);
+	for (int i = 0; i < m->nverts; i++) {
+		const tvert *tv = &m->frames[f][i];
+		for (int k = 0; k < 3; k++)
+			mp[i][k] = tv->v[k] * m->scale[k] + m->origin[k];
+		mp[i][2] += WS_UP;
+		vv[i].x = -mp[i][1];                     /* model x ahead, y left, z up */
+		vv[i].y = -mp[i][2];
+		vv[i].z =  mp[i][0];
+		int ni = tv->n < QG_NORMALS ? tv->n : 0;
+		vv[i].l = (dots0[ni] * QG_WS_L0) >> 7;   /* (light_recs' integer light) */
+	}
+	for (int t = 0; t < m->ntris; t++) {
+		const int *tr = m->tris[t];
+		double a[3], b[3], n[3];
+		for (int k = 0; k < 3; k++) {
+			a[k] = mp[tr[2]][k] - mp[tr[1]][k];
+			b[k] = mp[tr[3]][k] - mp[tr[1]][k];
+		}
+		n[0] = a[1] * b[2] - a[2] * b[1];
+		n[1] = a[2] * b[0] - a[0] * b[2];
+		n[2] = a[0] * b[1] - a[1] * b[0];
+		double d = -(n[0] * mp[tr[1]][0] + n[1] * mp[tr[1]][1] + n[2] * mp[tr[1]][2]);   /* eye at 0 */
+		if (wind < 0) d = -d;
+		if (d <= 0)
+			continue;                            /* wound backwards: Quake skips it */
+		wsv in[3], cl[4];
+		for (int k = 0; k < 3; k++) {
+			int vi = tr[k + 1];
+			in[k] = vv[vi];
+			in[k].s = m->st[vi][1] + (m->st[vi][0] && !tr[0] ? m->skinw / 2 : 0);   /* onseam */
+			in[k].t = m->st[vi][2];
+		}
+		int nc = ws_clip(in, 3, cl);
+		for (int k = 1; k + 1 < nc; k++)
+			ws_tri(&cl[0], &cl[k], &cl[k + 1], m);
+	}
+	free(vv);
+	free(mp);
+	if (getenv("QCOOK_WSDUMP")) {                /* (debug: the full-res render, PPM) */
+		char path[512];
+		static int nd;
+		snprintf(path, sizeof path, "%s/ws%02d.ppm", getenv("QCOOK_WSDUMP"), nd++);
+		FILE *fp = fopen(path, "wb");
+		if (fp) {
+			fprintf(fp, "P6 %d %d 255\n", WS_W, WS_H);
+			for (int y = 0; y < WS_H; y++)
+				for (int x = 0; x < WS_W; x++) {
+					uint8_t c[3];
+					for (int k = 0; k < 3; k++)
+						c[k] = ws_iz[y][x] > 0 ? (uint8_t) fmin(255, ws_rgb[y][x][k]) : (uint8_t) (k == 2 ? 90 : 40);
+					fwrite(c, 1, 3, fp);
+				}
+			fclose(fp);
+		}
+	}
+
+	/* halved: a texel from its 2 x 2 samples, two covered at least */
+	static uint16_t half[WS_H / 2][WS_W / 2];
+	int bx0 = WS_W, by0 = WS_H, bx1 = -1, by1 = -1;
+	for (int y = 0; y < WS_H / 2; y++)
+		for (int x = 0; x < WS_W / 2; x++) {
+			double c[3] = { 0, 0, 0 };
+			int n = 0;
+			for (int dy = 0; dy < 2; dy++)
+				for (int dx = 0; dx < 2; dx++)
+					if (ws_iz[2 * y + dy][2 * x + dx] > 0) {
+						for (int k = 0; k < 3; k++) c[k] += ws_rgb[2 * y + dy][2 * x + dx][k];
+						n++;
+					}
+			half[y][x] = 0;
+			if (n < 2)
+				continue;
+			int r = (int) lround(c[0] / n), g = (int) lround(c[1] / n), bl = (int) lround(c[2] / n);
+			if (r > 255) r = 255;
+			if (g > 255) g = 255;
+			if (bl > 255) bl = 255;
+			half[y][x] = (uint16_t) (0x8000 | (r >> 3) | (g >> 3) << 5 | (bl >> 3) << 10);
+			if (x < bx0) bx0 = x;
+			if (x > bx1) bx1 = x;
+			if (y < by0) by0 = y;
+			if (y > by1) by1 = y;
+		}
+	if (bx1 < 0) {                               /* nothing in front of the eye */
+		out->x = out->y = 0;
+		out->w = 2;
+		out->h = 1;
+		out->rgb = xcalloc(2, sizeof *out->rgb);
+		return;
+	}
+	bx0--; by0--; bx1++; by1++;                  /* the transparent margin */
+	int w = bx1 - bx0 + 1, h = by1 - by0 + 1;
+	w += w & 1;                                  /* (whole halfwords) */
+	out->x = 2 * bx0 - WS_CX;
+	out->y = 2 * by0 - WS_CY;
+	out->w = w;
+	out->h = h;
+	out->rgb = xcalloc((size_t) w * h, sizeof *out->rgb);
+	for (int y = 0; y < h; y++)
+		for (int x = 0; x < w; x++) {
+			int sx = bx0 + x, sy = by0 + y;
+			if (sx >= 0 && sx < WS_W / 2 && sy >= 0 && sy < WS_H / 2)
+				out->rgb[y * w + x] = half[sy][sx];
+		}
+}
+
+/* median cut over a weapon's frames' 15-bit colours */
+typedef struct { uint16_t c; uint32_t n; } ws_hist;
+static int ws_axis;
+static int ws_by_axis(const void *a, const void *b)
+{
+	int ca = (((const ws_hist *) a)->c >> (5 * ws_axis)) & 31, cb = (((const ws_hist *) b)->c >> (5 * ws_axis)) & 31;
+	return ca - cb;
+}
+
+static void ws_quantize(ws_weapon *w)
+{
+	static uint32_t cnt[32768];
+	memset(cnt, 0, sizeof cnt);
+	for (int f = 0; f < w->nframes; f++)
+		for (int i = 0; i < w->frames[f].w * w->frames[f].h; i++)
+			if (w->frames[f].rgb[i])
+				cnt[w->frames[f].rgb[i] & 0x7fff]++;
+	ws_hist *hs = xmalloc(32768 * sizeof *hs);
+	int nh = 0;
+	for (int c = 0; c < 32768; c++)
+		if (cnt[c]) { hs[nh].c = (uint16_t) c; hs[nh].n = cnt[c]; nh++; }
+	typedef struct { int a, b; } box;            /* hs[a .. b) */
+	box boxes[255];
+	int nb = 1;
+	boxes[0] = (box) { 0, nh };
+	while (nb < 255) {
+		int best = -1, bax = 0;
+		double bscore = 0;
+		for (int i = 0; i < nb; i++) {
+			if (boxes[i].b - boxes[i].a < 2) continue;
+			int lo[3] = { 31, 31, 31 }, hi[3] = { 0, 0, 0 };
+			uint32_t pop = 0;
+			for (int j = boxes[i].a; j < boxes[i].b; j++) {
+				for (int k = 0; k < 3; k++) {
+					int v = (hs[j].c >> (5 * k)) & 31;
+					if (v < lo[k]) lo[k] = v;
+					if (v > hi[k]) hi[k] = v;
+				}
+				pop += hs[j].n;
+			}
+			int ax = 0;
+			for (int k = 1; k < 3; k++)
+				if (hi[k] - lo[k] > hi[ax] - lo[ax]) ax = k;
+			double score = (double) (hi[ax] - lo[ax]) * sqrt((double) pop);
+			if (hi[ax] > lo[ax] && score > bscore) { bscore = score; best = i; bax = ax; }
+		}
+		if (best < 0) break;
+		box *bx = &boxes[best];
+		ws_axis = bax;
+		qsort(hs + bx->a, (size_t) (bx->b - bx->a), sizeof *hs, ws_by_axis);
+		uint32_t pop = 0, half = 0;
+		for (int j = bx->a; j < bx->b; j++) pop += hs[j].n;
+		int cut = bx->a + 1;
+		for (int j = bx->a; j < bx->b - 1; j++) {
+			half += hs[j].n;
+			cut = j + 1;
+			if (2 * half >= pop) break;
+		}
+		boxes[nb++] = (box) { cut, bx->b };
+		bx->b = cut;
+	}
+	static int16_t idx[32768];
+	memset(w->clut, 0, sizeof w->clut);
+	for (int i = 0; i < nb; i++) {
+		double s[3] = { 0, 0, 0 }, n = 0;
+		for (int j = boxes[i].a; j < boxes[i].b; j++) {
+			for (int k = 0; k < 3; k++) s[k] += (double) ((hs[j].c >> (5 * k)) & 31) * hs[j].n;
+			n += hs[j].n;
+			idx[hs[j].c] = (int16_t) (i + 1);
+		}
+		int c[3];
+		for (int k = 0; k < 3; k++) c[k] = (int) lround(s[k] / n);
+		w->clut[i + 1] = (uint16_t) (0x8000 | c[0] | c[1] << 5 | c[2] << 10);
+	}
+	for (int f = 0; f < w->nframes; f++) {
+		ws_frame *fr = &w->frames[f];
+		fr->px = xcalloc((size_t) fr->w * fr->h, 1);
+		for (int i = 0; i < fr->w * fr->h; i++)
+			fr->px[i] = fr->rgb[i] ? (uint8_t) idx[fr->rgb[i] & 0x7fff] : 0;
+	}
+	free(hs);
+}
+
+/* every weapon's frames, and the slot the largest needs among the images */
+static void ws_prepare(void)
+{
+	uint8_t dots0[QG_NORMALS];
+	for (int n = 0; n < QG_NORMALS; n++) {       /* (the light table of yaw 0, below) */
+		double nx = anorms[n][0];
+		dots0[n] = (uint8_t) lround((1 + 0.5 * (nx > 0 ? nx : 0)) * 128);
+	}
+	int mw = 2, mh = 1;
+	long texels = 0;
+	for (int wpn = 0; wpn < QG_WEAPONS; wpn++) {
+		const mdl_t *m = &srcs[QGM_V_AXE + wpn].mdl;
+		double wind = 0;                         /* the file's winding (cook_mdl's) */
+		for (int t = 0; t < m->ntris; t++) {
+			double v[3][3], n[3] = { 0, 0, 0 };
+			for (int k = 0; k < 3; k++) {
+				const tvert *tv = &m->frames[0][m->tris[t][k + 1]];
+				for (int a = 0; a < 3; a++) v[k][a] = tv->v[a] * m->scale[a] + m->origin[a];
+				int ni = tv->n < QG_NORMALS ? tv->n : 0;
+				for (int a = 0; a < 3; a++) n[a] += anorms[ni][a];
+			}
+			double a[3], b[3], c[3];
+			for (int k = 0; k < 3; k++) { a[k] = v[1][k] - v[0][k]; b[k] = v[2][k] - v[0][k]; }
+			c[0] = a[1] * b[2] - a[2] * b[1];
+			c[1] = a[2] * b[0] - a[0] * b[2];
+			c[2] = a[0] * b[1] - a[1] * b[0];
+			double l = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+			if (l > 0) wind += (c[0] * n[0] + c[1] * n[1] + c[2] * n[2]) / l;
+		}
+		ws_weapon *w = &wsw[wpn];
+		w->nframes = m->nframes;
+		w->frames = xcalloc((size_t) m->nframes, sizeof *w->frames);
+		double zs = 0;
+		int zn = 0;
+		for (int i = 0; i < m->nverts; i++) {
+			double x = m->frames[0][i].v[0] * m->scale[0] + m->origin[0];
+			if (x >= WS_NEAR) { zs += x; zn++; }
+		}
+		w->anchor = zn ? zs / zn : 20;
+		for (int f = 0; f < m->nframes; f++) {
+			ws_render(m, f, wind, dots0, &w->frames[f]);
+			if (w->frames[f].w > mw) mw = w->frames[f].w;
+			if (w->frames[f].h > mh) mh = w->frames[f].h;
+			texels += (long) w->frames[f].w * w->frames[f].h;
+		}
+		ws_quantize(w);
+		if (getenv("QCOOK_WS"))
+			for (int f = 0; f < m->nframes; f++)
+				printf("ws %s frame %d at %d,%d %dx%d\n", MODELS[QGM_V_AXE + wpn].file, f,
+				       w->frames[f].x, w->frames[f].y, w->frames[f].w, w->frames[f].h);
+	}
+	if (mw > 255 || mh > 255) die("2D weapons: a frame of %dx%d texels", mw, mh);
+	ws_slot = add_image("2D weapon slot", mw, mh, 0);
+	ws_slot->even = 1;
+	printf("qcook: 2D weapons, %ld K texels in 8 weapons' frames, a slot of %dx%d\n", texels / 1024, mw, mh);
+}
+
 int cmd_game(int argc, char **argv)
 {
 	const char *pak_path = NULL, *out_path = NULL;
@@ -1732,6 +2101,7 @@ int cmd_game(int argc, char **argv)
 		if (!ms->data) die("%s missing in %s", MODELS[i].file, pak_path);
 		model_prepare(ms);
 	}
+	ws_prepare();
 	place_images();
 
 	/* then the geometry and the tables */
@@ -1826,6 +2196,77 @@ int cmd_game(int argc, char **argv)
 		if (ftxt.len) gput(&f, ftxt.p, ftxt.len);
 		galign(&f, 4);
 	}
+	{	/* the 2D weapons: their table, their frames', then their packets: a
+		   weapon's CLUT, a frame's texels (GP0(A0h) to the slot, then
+		   GP0(01h)); a tag's link the next packet's offset in the block,
+		   the chain's last 0xffffff */
+		static qg_wsprite wt[QG_WEAPONS];
+		gbuf pix;
+		memset(&pix, 0, sizeof pix);
+		int nfr = 0;
+		for (int w = 0; w < QG_WEAPONS; w++)
+			nfr += wsw[w].nframes;
+		qg_wframe *fr = xcalloc((size_t) nfr, sizeof *fr);
+		int gp = QTEX_MAP_PAGES + ws_slot->page;
+		int sx = QTEX_PAGE_X0 + (gp % QTEX_PAGE_COLS) * (PT / 2) + ws_slot->u / 2;   /* (u even) */
+		int sy = (gp / QTEX_PAGE_COLS) * PT + ws_slot->v;
+		int k = 0;
+		for (int w = 0; w < QG_WEAPONS; w++) {
+			wt[w].first  = (uint16_t) k;
+			wt[w].count  = (uint16_t) wsw[w].nframes;
+			wt[w].anchor = (uint16_t) lround(wsw[w].anchor * 16);
+			wt[w].ofs_clut = (uint32_t) pix.len;
+			uint32_t pk[4] = { 131u << 24 | 0xffffffu, 0xA0000000u,
+			                   (uint32_t) QG_WCLUT_Y << 16 | QG_WCLUT_X, 1u << 16 | 256 };
+			gput(&pix, pk, sizeof pk);
+			gput(&pix, wsw[w].clut, sizeof wsw[w].clut);
+			for (int i = 0; i < wsw[w].nframes; i++, k++) {
+				const ws_frame *f = &wsw[w].frames[i];
+				fr[k].x = (int16_t) f->x;
+				fr[k].y = (int16_t) f->y;
+				fr[k].w = (uint8_t) f->w;
+				fr[k].h = (uint8_t) f->h;
+				fr[k].ofs = (uint32_t) pix.len;
+				size_t bytes = (size_t) f->w * f->h, words = (bytes + 3) / 4;
+				uint32_t *data = xcalloc(words, 4);
+				memcpy(data, f->px, bytes);
+				size_t done = 0;
+				int first = 1;
+				while (done < words || first) {
+					size_t room = first ? 252 : 255, n = words - done < room ? words - done : room;
+					size_t len = n + (first ? 3 : 0);
+					uint32_t tag = (uint32_t) len << 24 | (uint32_t) (pix.len + 4 * (1 + len));   /* (the next's) */
+					gput(&pix, &tag, 4);
+					if (first) {
+						uint32_t a0[3] = { 0xA0000000u, (uint32_t) sy << 16 | (uint32_t) sx,
+						                   (uint32_t) f->h << 16 | (uint32_t) (f->w / 2) };
+						gput(&pix, a0, sizeof a0);
+						first = 0;
+					}
+					gput(&pix, data + done, 4 * n);
+					done += n;
+				}
+				free(data);
+				fr[k].ofs_last = (uint32_t) pix.len;
+				uint32_t cc[2] = { 1u << 24 | 0xffffffu, 0x01000000u };   /* the texture cache cleared */
+				gput(&pix, cc, sizeof cc);
+			}
+		}
+		h.ofs_wsprites = (uint32_t) f.len; gput(&f, wt, sizeof wt);
+		h.num_wframes  = (uint32_t) nfr;
+		h.ofs_wframes  = (uint32_t) f.len; gput(&f, fr, (size_t) nfr * sizeof *fr);
+		h.ofs_wpix     = (uint32_t) f.len; h.len_wpix = (uint32_t) pix.len;
+		gput(&f, pix.p, pix.len);
+		galign(&f, 4);
+		h.wslot.tpage = page_tpage(ws_slot->page);
+		h.wslot.u = (uint8_t) ws_slot->u;
+		h.wslot.v = (uint8_t) ws_slot->v;
+		h.wslot.w = (uint16_t) ws_slot->w;
+		h.wslot.h = (uint16_t) ws_slot->h;
+		printf("qcook: 2D weapons: %d frames, %u B of packets, the slot at page %d (%d, %d), VRAM (%d, %d)\n",
+		       nfr, (unsigned) pix.len, ws_slot->page, ws_slot->u, ws_slot->v, sx, sy);
+	}
+
 	{	/* the pages' free rectangles (the streamed skins' room) */
 		h.ofs_free = (uint32_t) f.len;
 		uint32_t texels = 0;

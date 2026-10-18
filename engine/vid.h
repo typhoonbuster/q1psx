@@ -25,6 +25,7 @@
 #define VID_OT_LEN     8
 #define OT_SKY         7
 #define OT_WORLD       4
+#define OT_WEAPON      2     /* the 2D gun: after the world, under the overlay */
 #define OT_OVERLAY     0
 
 #define VID_ARENA_BYTES (96 * 1024)

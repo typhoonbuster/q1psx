@@ -27,6 +27,9 @@ const int num_tick_rates   = (int) sizeof tick_rates;
 const uint16_t draw_dists[]  = { 0, 2048, 1536, 1024, 768 };
 const int num_draw_dists     = (int) (sizeof draw_dists / sizeof draw_dists[0]);
 const char *const flat_name[R_FLAT_MODES] = { "off", "far", "all" };
+/* the gun: none, the model, or its frames as pictures (formats/qgame.h:
+   a quad instead of its triangles) */
+const char *const viewmodel_name[3] = { "off", "3D", "2D" };
 
 settings_t settings;
 int settings_fid_mask = (1 << FIDELITY_LEVELS) - 1;

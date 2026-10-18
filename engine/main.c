@@ -78,6 +78,9 @@ static int      fid_loaded = -1;/* the settings.fidelity of the last load      *
 #ifndef Q1PSX_BENCH_FLAT
 #define Q1PSX_BENCH_FLAT 0       /* the flat shading, R_FLAT_* (FLAT=1 scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_VIEWMODEL
+#define Q1PSX_BENCH_VIEWMODEL 1  /* the gun: 0 none, 1 3D, 2 2D (VIEWMODEL=2 scripts/bench.sh) */
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
@@ -88,6 +91,7 @@ static void apply_settings(void)
 	vid_set_dither(1);
 	settings.tex4 = Q1PSX_BENCH_TEX4;
 	r_set_options(Q1PSX_BENCH_DRAWDIST, Q1PSX_BENCH_FLAT);
+	game_draw_viewmodel = Q1PSX_BENCH_VIEWMODEL;
 #else
 	settings_apply();
 #endif
@@ -514,8 +518,9 @@ static void run_frame(int interactive, int dump)
 	PLAY_STEP("render");
 #ifdef Q1PSX_BENCH
 	if (dump) {
-		anim_invalidate();                  /* a dump shows the textures' frames and the */
-		hud_invalidate();                   /* whole HUD (pktview sees only dumped frames) */
+		anim_invalidate();                  /* a dump shows the textures' frames, the */
+		hud_invalidate();                   /* whole HUD and the 2D gun's texels (pktview */
+		game_ws_invalidate();               /* sees only dumped frames) */
 	}
 #endif
 	frame_work();
@@ -602,7 +607,7 @@ static void opt_step(int d)
 	case OPT_BUDGET: settings.budget = (settings.budget + num_warp_budget + d) % num_warp_budget; break;
 	case OPT_HUD:    settings.hud = (settings.hud + HUD_STYLES + d) % HUD_STYLES; break;
 	case OPT_DLIGHTS: settings.dlights ^= 1; break;
-	case OPT_WEAPON: settings.viewmodel ^= 1; break;
+	case OPT_WEAPON: settings.viewmodel = (settings.viewmodel + 3 + d) % 3; break;
 	case OPT_FPS:    settings.fps_cap = (settings.fps_cap + num_fps_caps + d) % num_fps_caps; break;
 	case OPT_TICK:   settings.tick = (settings.tick + num_tick_rates + d) % num_tick_rates; break;
 	case OPT_DRAWDIST: settings.drawdist = (settings.drawdist + num_draw_dists + d) % num_draw_dists; break;
@@ -628,7 +633,7 @@ static void opt_draw(void)
 		case OPT_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
 		case OPT_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
 		case OPT_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
-		case OPT_WEAPON: snprintf(val, sizeof val, "%s", settings.viewmodel ? "on" : "off"); break;
+		case OPT_WEAPON: snprintf(val, sizeof val, "%s", viewmodel_name[settings.viewmodel]); break;
 		case OPT_FPS:    snprintf(val, sizeof val, "%d", fps_caps[settings.fps_cap]); break;
 		case OPT_TICK:   snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
 		case OPT_DRAWDIST:

@@ -97,6 +97,7 @@ set(Q1PSX_BENCH_T 8 CACHE STRING "Affine-warp threshold the bench renders with (
 set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
 set(Q1PSX_BENCH_DRAWDIST 0 CACHE STRING "The draw distance the bench renders with, world units (0: off)")
 set(Q1PSX_BENCH_FLAT 0 CACHE STRING "The flat shading the bench renders with: 0 off, 1 far, 2 all")
+set(Q1PSX_BENCH_VIEWMODEL 1 CACHE STRING "The gun the bench draws: 0 none, 1 the 3D model, 2 the 2D pictures")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
@@ -110,6 +111,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
 		Q1PSX_BENCH_DRAWDIST=${Q1PSX_BENCH_DRAWDIST} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
+		Q1PSX_BENCH_VIEWMODEL=${Q1PSX_BENCH_VIEWMODEL}
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
 		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS})
