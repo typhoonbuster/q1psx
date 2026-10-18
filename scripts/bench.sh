@@ -3,9 +3,12 @@
 # Build the benchmark variant (CMake preset "bench" -> build-bench/) and run it
 # headless; print the "bench ..." lines.
 #
-# Usage:  [FID=0..3] [T=px] [TEX4=0|1] [VIEWS=0|1] [BENCH_MAPS=0|1] [BENCH_GAME=0|1] [PROFILE=0|1]
+# Usage:  [TEXTURES=0..3] [GEOMETRY=0|2|3] [MODELS=0..2] [EFFECTS=0..3] [T=px] [TEX4=0|1]
+#         [VIEWS=0|1] [BENCH_MAPS=0|1] [BENCH_GAME=0|1] [PROFILE=0|1]
 #         scripts/bench.sh [max-seconds]
-#         FID picks the fidelity level the bench loads (default 2, high).
+#         TEXTURES, GEOMETRY, MODELS, EFFECTS pick the quality levels the
+#         bench loads and runs at (formats/qlevels.h: 0 low, 1 medium, 2 high,
+#         3 ultra; default 2, high, each).
 #         T is the affine-warp threshold, fixed (default 8 px, the game's).
 #         TEX4=1 loads the 4-bit textures.
 #         DRAWDIST=<world units> renders with that draw distance (the fog,
@@ -48,7 +51,10 @@ BENCH_GAME=${BENCH_GAME:-0}
 # PCSX-Redux (builds since 2026-10) runs headless at about real-time speed and
 # writes the console at ~5 KB/s: the game scenario's 15 dumps need ~6 minutes
 SECS=${1:-$([ "$BENCH_GAME" = 1 ] && echo 420 || echo 60)}
-FID=${FID:-2}
+TEXTURES=${TEXTURES:-2}
+GEOMETRY=${GEOMETRY:-2}
+MODELS=${MODELS:-2}
+EFFECTS=${EFFECTS:-2}
 T=${T:-8}
 TEX4=${TEX4:-0}
 DRAWDIST=${DRAWDIST:-0}
@@ -67,9 +73,8 @@ NOENTS=${NOENTS:-0}
 ENTS=${ENTS:-0}
 MONSTERS=${MONSTERS:-0}
 SAMPLE=${SAMPLE:-0}
-FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
-
-cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
+cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="$GEOMETRY" \
+      -DQ1PSX_BENCH_MODELS="$MODELS" -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" \
@@ -94,11 +99,12 @@ grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 
 # Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
 # output can be checked without a screen (the game's dumps need GAME.DAT's
-# images too); a single map's bench (MAP=...) with that map's textures.
+# images too: the models level's file); a single map's bench (MAP=...) with
+# that map's textures.
 make -s -C "$ROOT/tools/pktview"
 mkdir -p "$ROOT/build-bench/views"
 TEXEXT=tex; [ "$TEX4" = 1 ] && TEXEXT=tx4
 TEXMAP=start; [ -n "$MAP" ] && TEXMAP=$(echo "$MAP" | tr 'A-Z' 'a-z')
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
-	"$ROOT/cooked/id1/${TEXMAP}_$FIDNAME.$TEXEXT" "$ROOT/build-bench/views/" \
-	"$ROOT/cooked/id1/game.dat" "$ROOT/cooked/id1/stream.dat" | sed 's/^/  /'
+	"$ROOT/cooked/id1/${TEXMAP}_t$TEXTURES.$TEXEXT" "$ROOT/build-bench/views/" \
+	"$ROOT/cooked/id1/game_$MODELS.dat" "$ROOT/cooked/id1/stream.dat" | sed 's/^/  /'

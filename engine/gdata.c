@@ -11,23 +11,57 @@
 
 gdata_t gdata;
 
-int gdata_load(void)
+static uint32_t geo_room;          /* the geometry block's size: the largest level's */
+
+/* GAME_<level>.DAT into the level arena (a staging area), checked */
+static const uint8_t *gdata_file(int level, uint32_t *size)
+{
+	char name[20];
+	snprintf(name, sizeof name, "\\GAME_%d.DAT;1", level);
+	const uint8_t *f = cd_load(name, size, NULL);
+	const qg_header *h = (const qg_header *) f;
+	if (!f || *size < sizeof(qg_header) || memcmp(f, QGAME_MAGIC, 4)) {
+		printf("gdata: no usable %s on the disc\n", name);
+		return 0;
+	}
+	if (h->num_models != QGM_COUNT || h->num_pics != QGP_COUNT || h->num_aux != QGA_COUNT ||
+	    h->ofs_geo + h->len_geo > *size) {
+		printf("gdata: %s does not match this engine\n", name);
+		return 0;
+	}
+	return f;
+}
+
+int gdata_set_models(int level)
+{
+	if (!gdata.ok || level == gdata.level)
+		return 1;
+	uint32_t mark = mem_level_mark(), size;
+	const uint8_t *f = gdata_file(level, &size);
+	const qg_header *h = (const qg_header *) f;
+	if (!f || h->len_geo > geo_room) {
+		mem_level_release(mark);
+		return 0;
+	}
+	memcpy((qg_model *) gdata.models, f + h->ofs_models, QGM_COUNT * sizeof(qg_model));
+	memcpy(gdata.geo, f + h->ofs_geo, h->len_geo);
+	gdata.level = level;
+	mem_level_release(mark);
+	printf("gdata: the models at level %d, %u B of geometry\n", level, h->len_geo);
+	return 1;
+}
+
+int gdata_load(int level)
 {
 	uint32_t mark = mem_level_mark(), size;
 	memset(&gdata, 0, sizeof gdata);
-	const uint8_t *f = cd_load("\\GAME.DAT;1", &size, NULL);
-	if (!f || size < sizeof(qg_header) || memcmp(f, QGAME_MAGIC, 4)) {
-		printf("gdata: no usable GAME.DAT on the disc\n");
+	const uint8_t *f = gdata_file(level, &size);
+	if (!f) {
 		mem_level_release(mark);
 		return 0;
 	}
 	const qg_header *h = (const qg_header *) f;
-	if (h->num_models != QGM_COUNT || h->num_pics != QGP_COUNT || h->num_aux != QGA_COUNT ||
-	    h->ofs_geo + h->len_geo > size) {
-		printf("gdata: GAME.DAT does not match this engine\n");
-		mem_level_release(mark);
-		return 0;
-	}
+	geo_room = h->len_geo_max > h->len_geo ? h->len_geo_max : h->len_geo;
 
 	/* images to VRAM: the CLUT row, then the pages' used rows */
 	const qtex_rect *r = (const qtex_rect *) (f + h->ofs_rects);
@@ -40,7 +74,7 @@ int gdata_load(void)
 	                              QG_LIGHT_YAWS * QG_NORMALS + 256 * 4 + QGA_COUNT * sizeof(qg_aux));
 	uint32_t wtab = QG_WEAPONS * sizeof(qg_wsprite) + h->num_wframes * sizeof(qg_wframe);
 	uint8_t *t = mem_game_alloc(tables);
-	uint8_t *g = mem_game_alloc(h->len_geo);
+	uint8_t *g = mem_game_alloc(geo_room);       /* (room for any level's models) */
 	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
 	uint8_t *wt = mem_game_alloc(wtab);
 	uint8_t *wp = mem_game_alloc(h->len_wpix);
@@ -63,7 +97,7 @@ int gdata_load(void)
 	}
 	/* the 2D weapons: their tables, their packets with absolute links (KUSEG,
 	   as the ordering table's); a chain's last stays 0xffffff (game.c hangs
-	   it in the ordering table) */
+	   it in the ordering table); the same in every model level's file */
 	memcpy(wt, f + h->ofs_wsprites, QG_WEAPONS * sizeof(qg_wsprite));
 	memcpy(wt + QG_WEAPONS * sizeof(qg_wsprite), f + h->ofs_wframes, h->num_wframes * sizeof(qg_wframe));
 	memcpy(wp, f + h->ofs_wpix, h->len_wpix);
@@ -81,14 +115,15 @@ int gdata_load(void)
 			at = next;
 		}
 	}
-	if (fr) {
+	if (fr) {                                    /* (the same in every level's file) */
 		memcpy(fr, f + h->ofs_free, h->num_free * sizeof(qg_free));
 		gdata.free     = (const qg_free *) fr;
 		gdata.num_free = h->num_free;
 	}
-	gdata.geo  = g;
-	gdata.clut = h->clut;
-	gdata.ok   = 1;
+	gdata.geo   = g;
+	gdata.clut  = h->clut;
+	gdata.level = level;
+	gdata.ok    = 1;
 	mem_level_release(mark);
 	printf("gdata: %u models, %u pictures, %u VRAM rects, %u B of geometry -> game arena %u KB\n",
 	       h->num_models, h->num_pics, h->num_rects, h->len_geo, mem_game_used() / 1024);

@@ -74,9 +74,15 @@ Three editions:
 
 | Preset | Directory | What it is |
 |---|---|---|
-| `default` | `build/` | The development build: a map menu (SELECT + START), the debug overlay (START), every fidelity level on the disc |
-| `release` | `build-release/` | Quake's own menu (START), no debug tools; the maps at low, medium and high fidelity |
-| `release-ultra` | `build-release-ultra/` | The same at the ultra fidelity alone |
+| `default` | `build/` | The development build: a map menu (SELECT + START), the debug overlay (START), every quality level on the disc |
+| `release` | `build-release/` | Quake's own menu (START), no debug tools; textures low to high, map geometry low and high |
+| `release-ultra` | `build-release-ultra/` | The same with the ultra textures and geometry alone |
+
+Four quality settings, chosen in Graphics (`docs/porting-notes.md` §39):
+textures (their resolution), map geometry (crack repair, the light grid),
+models (the items', torches' and rocket's triangles; the guns stay
+Quake's) and effects (the particles). Every model and effects level is on
+every disc.
 
 ```bash
 cmake --preset release && cmake --build ./build-release

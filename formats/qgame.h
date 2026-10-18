@@ -1,7 +1,9 @@
 /*
- * q1psx — cooked game data "QGM1": the models, sprites and HUD pictures the
- * engine needs on every map. Written by `qcook game`, loaded once at boot by
- * engine/gdata.c (GAME.DAT on the disc).
+ * q1psx — cooked game data "QGM7": the models, sprites and HUD pictures the
+ * engine needs on every map. Written by `qcook game`, one file per model
+ * level (GAME_<n>.DAT on the disc, formats/qlevels.h: the models'
+ * triangles differ, the pictures and skins do not), loaded at boot by
+ * engine/gdata.c, its models again when the level changes.
  *
  * Models
  *   A Quake MDL becomes a set of face records in the world's format
@@ -45,13 +47,15 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM6"
+#define QGAME_MAGIC "QGM7"
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
 
 #define QG_WCLUT_X  0
-#define QG_WCLUT_Y  507          /* the 2D weapon's CLUT: a free row under the aux CLUTs */
+#define QG_WCLUT_Y  507          /* the 2D weapon's CLUT: two free rows under the aux
+                                    CLUTs, 507 and 508, in turn at each weapon (the
+                                    GPU's CLUT cache never keeps the last one's) */
 
 #define QG_LIGHT_YAWS 16         /* light tables: one per 22.5 degrees of yaw */
 #define QG_NORMALS   162         /* Quake's vertex normals (anorms.h)         */
@@ -87,11 +91,13 @@ typedef struct {
 } qg_model;                      /* 32 bytes */
 
 /* A map's own models (the items', the flames', the explosive boxes'): its
-   world file's models section (qw_header ofs_models), each the cooked
-   model (frames and records as GAME.DAT's, offsets in the section's
-   geometry block) and the entries of the map's texture table its records'
-   tex 0 .. num_tex - 1 stand for (a skin among the map's textures, or a
-   BSP item's few). Only the models the map's entities use are cooked. */
+   models file (qmm_header below), each the cooked model (frames and
+   records as GAME.DAT's, offsets in the file's geometry block) and the
+   entries of the map's texture table its records' tex 0 .. num_tex - 1
+   stand for (a skin among the map's textures, or a BSP item's few). Only
+   the models the map's entities use are cooked. Their UVs are the world
+   file's kind (formats/qtex.h qtex_uvmap: the finest texture level's,
+   tile-relative), mapped at load like the world's. */
 enum {
 	QIM_G_SHOT, QIM_G_NAIL, QIM_G_NAIL2, QIM_G_ROCK, QIM_G_ROCK2, QIM_G_LIGHT,
 	QIM_ARMOR1, QIM_ARMOR2, QIM_ARMOR3,             /* armor.mdl's three skins */
@@ -111,6 +117,14 @@ typedef struct {
 	uint16_t tex[QW_MODEL_TEX];  /* the map texture table's entries              */
 	qg_model m;
 } qw_model;                      /* 48 bytes */
+
+/* "QMM1": a map's own models at one model level (<MAP>_M<n>.MDL) */
+#define QMAPMDL_MAGIC "QMM1"
+typedef struct {
+	char     magic[4];
+	uint32_t num_models, ofs_models;   /* qw_model[num_models]                  */
+	uint32_t ofs_geo, len_geo;         /* their geometry block                  */
+} qmm_header;
 
 /* pictures, in this order in the file (gfx.wad lumps) */
 enum {
@@ -164,7 +178,10 @@ typedef struct {
 	int16_t  x, y;               /* its top-left, screen pixels from the
 	                                projection's centre (160, 96: the status
 	                                bar's viewport, the gun 2 units up)         */
-	uint8_t  w, h;               /* texels (drawn twice the size)               */
+	uint8_t  w, h;               /* texels, the last column and row transparent
+	                                (drawn without them, twice the size: the
+	                                GPU never reads past the frame's texels);
+	                                0: the frame is drawn 3D (larger than 80)   */
 	uint16_t pad;
 	uint32_t ofs;                /* its texels' first packet in the pixel block */
 	uint32_t ofs_last;           /* and its last (GP0(01h))                     */
@@ -204,7 +221,7 @@ typedef struct {
 } qg_aux;                        /* 12 bytes */
 
 typedef struct {
-	char     magic[4];           /* "QGM1"                                       */
+	char     magic[4];           /* "QGM7"                                       */
 	uint32_t num_rects, ofs_rects;   /* qtex_rect[]: the CLUT row, then the pages' used rows */
 	uint32_t num_models, ofs_models; /* qg_model[QGM_COUNT]                      */
 	uint32_t num_pics, ofs_pics;     /* qg_pic[QGP_COUNT]                        */
@@ -224,6 +241,9 @@ typedef struct {
 	uint32_t num_wframes, ofs_wframes;   /* qg_wframe[num_wframes]               */
 	uint32_t ofs_wpix, len_wpix; /* the 2D weapons' packets: texels and CLUTs   */
 	qg_pic   wslot;              /* the VRAM slot a frame is copied to (u even) */
+	uint32_t level;              /* the model level (formats/qlevels.h)          */
+	uint32_t len_geo_max;        /* the largest geometry block of all the levels'
+	                                files: the engine's room for any of them     */
 	uint32_t num_free, ofs_free; /* qg_free[num_free]: what the images leave of
 	                                the game's pages (the streamed skins' room,
 	                                engine/stream.c)                           */

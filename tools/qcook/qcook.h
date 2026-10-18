@@ -1,15 +1,17 @@
 /*
  * q1psx — asset cooker (host tool), shared declarations.
  *
- *   qcook.c   command line, pak access, BSP lump parsing
- *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX3 output
- *   world.c   face splitting, face records, nodes/leaves/PVS, QWV2 output
- *   game.c    models, sprites, HUD pictures -> QGM1 (formats/qgame.h)
+ *   qcook.c   command line, pak access, BSP lump parsing, the levels
+ *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX6 output
+ *   world.c   face splitting, face records, nodes/leaves/PVS, QWVD output
+ *   game.c    models, sprites, HUD pictures -> QGM6 (formats/qgame.h)
+ *   items.c   the map's own models -> QMM1 (formats/qgame.h)
+ *   decim.c   an alias model's triangles reduced (the model levels)
  *   ents.c    the entity lump: parsed for the world's entity table, the
  *             sound bank and the player start
  *   sound.c   the map's sound bank -> QSND (formats/qsound.h)
  *
- * See docs/architecture.md §6-§7 and formats/qworld.h / formats/qtex.h.
+ * See docs/architecture.md §6-§7, formats/qworld.h / qtex.h / qlevels.h.
  */
 
 #ifndef QCOOK_H
@@ -17,6 +19,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+#include "../../formats/qlevels.h"
 
 /* ------------------------------------------------------------------ util -- */
 
@@ -36,22 +40,27 @@ const uint8_t *pak_find(const uint8_t *pak, long pak_len, const char *name, uint
 
 /* ----------------------------------------------------------------- game -- */
 
-/* `qcook game`: models, sprites and HUD pictures -> one QGM1 file (game.c) */
+/* `qcook game`: models, sprites and HUD pictures -> one QGM6 file per model
+   level (game.c) */
 int cmd_game(int argc, char **argv);
 
-/* ------------------------------------------------------------- fidelity -- */
+/* --------------------------------------------------------------- levels -- */
 
+/* formats/qlevels.h: the names, and an axis's level by name (dies if the
+   axis has no such level) */
+extern const char *const level_name[QL_LEVELS];
+int level_find(const char *name, int mask, const char *axis);
+
+/* A texture level: the world's textures at native >> tex_shift, no side of
+   one repetition over tex_max texels. The finest (QL_ULTRA) is the layout
+   the world and the map's models are cooked for (formats/qtex.h
+   qtex_uvmap). */
 typedef struct {
-	const char *name;
-	int  tex_shift;     /* texture resolution = native >> tex_shift          */
-	int  tex_max;       /* max texels per side of one repetition, scaled     */
-	int  tile_min;      /* axes that are not powers of two (no hardware
-	                       wrap): repeat the texture in its VRAM tile until
-	                       the tile is >= this many texels, so one polygon
-	                       covers several repetitions. 0 = never.            */
-} fidelity_t;
+	int tex_shift;
+	int tex_max;
+} tex_level_t;
 
-const fidelity_t *fidelity_find(const char *name);
+extern const tex_level_t tex_levels[QL_LEVELS];
 
 /* ------------------------------------------------------------------ bsp -- */
 
@@ -126,14 +135,17 @@ void ents_drawn_models(const bsp_t *b, uint8_t *drawn);
 /* ------------------------------------------------------- a map's models -- */
 
 /* game.c: an alias model cooked for a map: its skin reduced (1 / skin_div)
-   with a border, then its records once the skin has a place in the map's
-   texture pages (u0, v0: the bordered image's corner, page-relative) */
+   with a border of `qc_mdl_border` texels, then its records, their UVs
+   from the skin's own corner inside the border (the world file's kind:
+   formats/qtex.h qtex_uvmap), its triangles reduced at a model level
+   below high (decim.c) */
 typedef struct qc_mdl qc_mdl;
+extern const int qc_mdl_border;
 void    qc_set_palette(const uint8_t *pal);
 qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int skin, int skin_div, int flat);
 void    qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px);
 int     qc_mdl_flags(const qc_mdl *q);
-void    qc_mdl_cook(qc_mdl *q, int u0, int v0, buf_t *geo, void *qg_model_out);
+void    qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out);
 /* the compact format of the streamed models (formats/qstream.h): the
    whole asset (qst_model, frames, records, skin) appended to `out` */
 void    qc_mdl_cook_compact(qc_mdl *q, buf_t *out);
@@ -162,14 +174,19 @@ void sound_encode_stream(const char *name, const uint8_t *pak, long pak_len, con
 
 /* ------------------------------------------------------------- textures -- */
 
-/* Where a miptex lives in VRAM once packed, plus the words a polygon needs. */
+/* A texture slot: its size at the set's level and, once packed, where it
+   lives in VRAM plus the words a polygon needs. */
 typedef struct {
-	int      present;        /* packed (has pixels and is not sky)        */
-	int      index;          /* its miptex index = qw_tex table index     */
+	int      present;        /* drawn (has pixels and is not sky); packed in
+	                            a set that was placed                     */
+	int      index;          /* its slot = qw_tex table index             */
 	int      rep_w, rep_h;   /* texels of one texture repetition, scaled  */
 	int      win_x, win_y;   /* axis wraps in hardware (power of two)     */
-	int      reps_x, reps_y; /* repetitions laid side by side in the tile
-	                            (1 on a wrapped axis)                     */
+	double   res_u, res_v;   /* the set's texels per source texel (a
+	                            miptex's per Quake texel, a skin's per skin
+	                            texel): the UVs' scale                    */
+	int      inner;          /* a skin's border: its texels start this far
+	                            inside the tile                           */
 	int      u0, v0;         /* top-left texel inside its texture page    */
 	int      page;           /* texture page index (0 .. QTEX_PAGES - 1)  */
 	int      tile_w, tile_h; /* texels of the whole tile                  */
@@ -204,43 +221,69 @@ typedef struct {
 } tex_set;
 
 /* A texture the map's own models bring (tools/qcook/items.c): a BSP item's
-   miptex (it tiles: scaled to the fidelity, its power-of-two axes wrap), or
-   a model's skin, placed as it is. */
+   miptex (it tiles: scaled to the level, its power-of-two axes wrap), or
+   a model's skin, placed as it is (bordered: its texels `border` inside,
+   at 1 / div of the model's skin). */
 typedef struct {
 	bsp_miptex mt;
 	int        skin;
-	int        shift;   /* a miptex's: levels below the fidelity's (the pages full) */
+	int        div, border;   /* a skin's                                     */
+	int        shift;   /* a miptex's: levels below the set's (the pages full) */
 } tex_extra;
 
-/* Writes the QTX3 set to out_path and, when out4_path is not NULL, the
-   same tiles in 4bpp (QTX4, 16 colours per texture) to out4_path. The
-   extras come after the map's miptex in the slots (and the table).
-   1 when done; 0 when the tiles overflow the map's pages and may_fail
-   (nothing written), else it dies. */
-int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
-              const uint8_t palette[768], const fidelity_t *fid, const char *out_path,
+/* The map's texture set at a level: every slot sized (the miptex, the
+   extras after them, the animations' display slots last). With out_path
+   NULL that is all (the layout the world and the map's models are cut
+   and mapped for: the finest level's, `canon` NULL). Otherwise the tiles
+   are packed into the map's pages and written as a QTX6 set to out_path
+   and, when out4_path is not NULL, the same tiles in 4bpp (QTX7, 16
+   colours per texture) to out4_path; their tables map the layout `canon`
+   onto this set (formats/qtex.h qtex_uvmap). 1 when done; 0 when the
+   tiles overflow the map's pages and may_fail (nothing written), else it
+   dies. */
+int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra *extra,
+              int nextra, const uint8_t palette[768], int level, const char *out_path,
               const char *out4_path, int anims, int may_fail);
 
 /* ------------------------------------------------------ the map's models -- */
 
 /* items.c: the models the map's entities use (their extras for tex_build),
-   cooked once their textures are placed, written as the world file's
-   models section */
+   cooked for the layout `canon` at a model level, written as the map's
+   models file (formats/qgame.h qmm_header) */
 /* squeeze 0 as they are; when the map's pages overflow: 1 the boxes'
    textures a level down, 2 the skins at half (the flames' kept), 3 the
    flames' too, 4 the boxes' a level further */
 #define ITEMS_SQUEEZE_MAX 4
 void items_prepare(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
                    long pak0_len, const uint8_t *palette, int squeeze, tex_extra **extra, int *nextra);
-void items_cook(const tex_set *ts, int first_extra);
-void items_write(buf_t *f, uint32_t *ofs_models, uint32_t *num_models, uint32_t *ofs_mgeo,
-                 uint32_t *len_mgeo);
+void items_cook(const tex_set *canon, int first_extra, int model_level);
+void items_write(const char *out_path);
+
+/* ------------------------------------------------------------- decim.c -- */
+
+/* An alias model's triangles reduced for a model level below high
+   (decim.c): edges collapsed onto one of their ends (no vertex moves:
+   every frame stays Quake's), cheapest first by how far the removed
+   vertex's surface and texture move over all the frames, the seam and the
+   open edges kept, until only `keep` of the triangles are left or the
+   next would cost more than `max_err` (model units). `tri` holds n MDL
+   triangles (facesfront, v0, v1, v2), rewritten in place; returns the
+   triangles left (the first ones of `tri`). */
+typedef struct {
+	int            nverts, nframes;
+	const double  *pos;        /* [nframes][nverts][3], model units          */
+	const double  *uv;         /* [nverts][2], skin texels (the front face's) */
+	double         uv_scale;   /* skin texels -> units in the error          */
+	const uint8_t *seam;       /* [nverts]: MDL onseam (a back face adds half
+	                              the skin's width)                         */
+	double         skin_w;
+} dmesh;
+int decimate(const dmesh *m, int (*tri)[4], int n, double keep, double max_err);
 
 /* ---------------------------------------------------------------- world -- */
 
 extern double light_gain;   /* vertex light scale (qcook --light-gain), 1 = Quake */
-void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
-                 const char *out_path);
+void world_build(const bsp_t *b, const tex_set *canon, int geo_level, const char *out_path);
 
 /* `qcook check`: reload a QWV2 file and verify every invariant. */
 int  world_check(const char *path);

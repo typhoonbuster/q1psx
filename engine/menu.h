@@ -19,8 +19,9 @@
 typedef struct {
 	void (*new_game)(void);     /* SetNewParms and "map start" */
 	int  (*in_game)(void);      /* sv.active: a game the player has begun */
-	int  (*loaded_fid)(void);   /* the fidelity and texture depth the level */
-	int  (*loaded_tex4)(void);  /*   on screen was loaded with             */
+	int  (*reload_due)(void);   /* the settings ask for other files than the
+	                               level on screen was loaded from (levels,
+	                               texture depth): they wait for a load */
 } menu_hooks_t;
 
 void menu_init(const menu_hooks_t *hooks);

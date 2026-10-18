@@ -146,7 +146,7 @@ static void load_tex(const char *path)
 		nrects = h.num_rects;
 		first  = sizeof h;
 	} else {
-		fprintf(stderr, "pktview: not a QTX3 / QTX4 file\n");
+		fprintf(stderr, "pktview: not a QTX6 / QTX7 file\n");
 		exit(1);
 	}
 	for (uint32_t i = 0; i < nrects; i++) {
@@ -172,7 +172,7 @@ static void load_game(const char *path)
 	fclose(f);
 	qg_header h;
 	if ((size_t) len < sizeof h || memcmp(d, QGAME_MAGIC, 4)) {
-		fprintf(stderr, "pktview: %s is not a QGM1 file\n", path);
+		fprintf(stderr, "pktview: %s is not a QGM6 file\n", path);
 		exit(1);
 	}
 	memcpy(&h, d, sizeof h);

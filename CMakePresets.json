@@ -18,23 +18,25 @@
 		{
 			"name":          "release",
 			"inherits":      "default",
-			"displayName":   "Release build: Quake's menu, low to high fidelity, no debug tools",
+			"displayName":   "Release build: Quake's menu, textures and geometry low to high, no debug tools",
 			"binaryDir":     "${sourceDir}/build-release",
 			"cacheVariables": {
-				"Q1PSX_PROFILE":     "OFF",
-				"Q1PSX_RELEASE":     "ON",
-				"Q1PSX_FIDELITIES":  "low;medium;high"
+				"Q1PSX_PROFILE":          "OFF",
+				"Q1PSX_RELEASE":          "ON",
+				"Q1PSX_TEXTURE_LEVELS":   "low;medium;high",
+				"Q1PSX_GEOMETRY_LEVELS":  "low;high"
 			}
 		},
 		{
 			"name":          "release-ultra",
 			"inherits":      "default",
-			"displayName":   "Release build at the ultra fidelity alone",
+			"displayName":   "Release build with the ultra textures and geometry alone",
 			"binaryDir":     "${sourceDir}/build-release-ultra",
 			"cacheVariables": {
-				"Q1PSX_PROFILE":     "OFF",
-				"Q1PSX_RELEASE":     "ON",
-				"Q1PSX_FIDELITIES":  "ultra"
+				"Q1PSX_PROFILE":          "OFF",
+				"Q1PSX_RELEASE":          "ON",
+				"Q1PSX_TEXTURE_LEVELS":   "ultra",
+				"Q1PSX_GEOMETRY_LEVELS":  "ultra"
 			}
 		},
 		{

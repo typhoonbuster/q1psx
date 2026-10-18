@@ -104,8 +104,14 @@ static const uint8_t ramp3[8] = { 0x6d, 0x6b, 6, 5, 4, 3, 3, 3 };
 
 enum { PT_STATIC, PT_GRAV, PT_SLOWGRAV, PT_FIRE, PT_EXPLODE, PT_EXPLODE2 };
 
-#define MAX_PARTICLES 256
+#define MAX_PARTICLES 512   /* the ultra effects' pool; the others use 256 */
 #define PV_SHIFT 8       /* particle velocity: 1/SUB units per tick x 256 */
+
+/* The effects level (formats/qlevels.h): the particles each effect makes,
+   in eighths of the port's own counts (high: 8; Quake's are several times
+   those, r_part.c's 2048-particle pool), a rocket's or a grenade's trail
+   every tick or every 2nd / 4th, and the pool. */
+static int fx_scale = 8, fx_trail_mask, fx_trail_n, part_cap = 256;
 
 typedef struct {
 	int32_t org[3];        /* 1/SUB units                                  */
@@ -117,7 +123,7 @@ typedef struct {
 	const qw_leaf *leaf;
 } particle_t;
 
-static particle_t particles[MAX_PARTICLES];
+static particle_t particles[MAX_PARTICLES];   /* (the game arena has no room left: the 2D guns) */
 static uint16_t   part_active, part_free;   /* the lists' heads, index + 1 (R_ClearParticles) */
 
 /* u/s -> particle velocity */
@@ -133,8 +139,30 @@ static void particles_clear(void)
 {
 	part_active = 0;
 	part_free   = 1;
-	for (int i = 0; i < MAX_PARTICLES; i++)
-		particles[i].next = (uint16_t) (i + 2 <= MAX_PARTICLES ? i + 2 : 0);
+	for (int i = 0; i < part_cap; i++)
+		particles[i].next = (uint16_t) (i + 2 <= part_cap ? i + 2 : 0);
+}
+
+void game_set_effects(int level)
+{
+	static const uint8_t scale[QL_LEVELS] = { 2, 4, 8, 16 };
+	static const uint8_t trail[QL_LEVELS] = { 3, 1, 0, 0 };
+	if (level < 0 || level >= QL_LEVELS)
+		level = QL_HIGH;
+	fx_scale      = scale[level];
+	fx_trail_mask = trail[level];
+	int cap = level == QL_ULTRA ? MAX_PARTICLES : 256;
+	if (cap != part_cap) {                   /* (the pool's size: those alive go) */
+		part_cap = cap;
+		particles_clear();
+	}
+}
+
+/* an effect's count at the level (at least one when the port makes any) */
+static int fx_count(int count)
+{
+	int n = count * fx_scale >> 3;
+	return n || !count ? n : 1;
 }
 
 /* the free list's head onto the active list's (r_part.c: none left, none made) */
@@ -150,11 +178,13 @@ static particle_t *particle_new(void)
 	return p;
 }
 
-/* R_RunParticleEffect: `count` sparks of `colour` (its 8-shade ramp) */
-/* R_RunParticleEffect, its dir straight up at vz units a second (the
-   protocol's: dir x16 clamped to a char, back /16, x15) */
+/* R_RunParticleEffect: `count` sparks of `colour` (its 8-shade ramp), as
+   many as the effects level makes of them, their dir straight up at vz
+   units a second (the protocol's: dir x16 clamped to a char, back /16,
+   x15) */
 static void particle_effect_dir(const int32_t org[3], const qw_leaf *leaf, int colour, int count, int vz)
 {
+	count = fx_count(count);
 	for (int i = 0; i < count; i++) {
 		particle_t *p = particle_new();
 		if (!p) return;
@@ -178,19 +208,22 @@ static void particle_effect(const int32_t org[3], const qw_leaf *leaf, int colou
 static const qw_leaf *leaf_at(const int32_t org[3]);
 
 /* R_LavaSplash (TE_LAVASPLASH: Chthon rising, falling): a 32 x 32 grid
-   of particles thrown up from a 256-unit square, scaled down to 8 x 8 */
+   of particles thrown up from a 256-unit square, scaled down to 8 x 8
+   (high; the effects level's count of 64 as a square grid) */
 void game_lava_splash(const int32_t org[3])
 {
 	const qw_leaf *leaf = leaf_at(org);
-	for (int i = -4; i < 4; i++)
-		for (int j = -4; j < 4; j++) {
+	int side = (int) q_isqrt64((uint64_t) fx_count(64)), lo = -side / 2;
+	for (int i = lo; i < lo + side; i++)
+		for (int j = lo; j < lo + side; j++) {
 			particle_t *p = particle_new();
 			if (!p) return;
 			p->die    = game_tick_count + TICKS(200) + (int) (q_rand() & 31) * TICKS(2);
 			p->colour = (uint8_t) (224 + (q_rand() & 7));
 			p->type   = PT_SLOWGRAV;
 			p->leaf   = leaf;
-			int32_t dir[3] = { j * 32 + (int32_t) (q_rand() & 31), i * 32 + (int32_t) (q_rand() & 31), 256 };
+			int32_t cell = 256 / side;
+			int32_t dir[3] = { j * cell + (int32_t) (q_rand() & 31), i * cell + (int32_t) (q_rand() & 31), 256 };
 			p->org[0] = org[0] + dir[0] * SUB;
 			p->org[1] = org[1] + dir[1] * SUB;
 			p->org[2] = org[2] + (int32_t) (q_rand() & 63) * SUB;
@@ -202,10 +235,12 @@ void game_lava_splash(const int32_t org[3])
 		}
 }
 
-/* R_ParticleExplosion, scaled down from 1024 to 48 */
+/* R_ParticleExplosion, scaled down from 1024 to 48 (high; 12 to 96 by the
+   effects level) */
 static void particle_explosion(const int32_t org[3], const qw_leaf *leaf)
 {
-	for (int i = 0; i < 48; i++) {
+	int n = fx_count(48);
+	for (int i = 0; i < n; i++) {
 		particle_t *p = particle_new();
 		if (!p) return;
 		p->die    = game_tick_count + TICKS(500);
@@ -221,8 +256,10 @@ static void particle_explosion(const int32_t org[3], const qw_leaf *leaf)
 }
 
 /* R_RocketTrail types 0 (rocket: fire) and 1 (grenade: smoke): one
-   particle per tick, not one per 3 units */
-static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int type, const int32_t vel[3])
+   particle per tick (high; ultra two, medium and low one every 2nd and
+   4th tick), not one per 3 units; R_RocketTrail's other types too
+   (blood, the scrag's tracer) */
+static void particle_trail_one(const int32_t org[3], const qw_leaf *leaf, int type, const int32_t vel[3])
 {
 	static int tracercount;
 	particle_t *p = particle_new();
@@ -259,6 +296,14 @@ static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int type, 
 	}
 }
 
+static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int type, const int32_t vel[3])
+{
+	if (fx_trail_n++ & fx_trail_mask)
+		return;
+	particle_trail_one(org, leaf, type, vel);
+	if (fx_scale > 8)
+		particle_trail_one(org, leaf, type, vel);
+}
 
 /* R_DrawParticles' run: the active list walked, a dead particle (its time
    or its ramp's end) unlinked onto the free list; one 60th of a second
@@ -1646,13 +1691,16 @@ void game_teleport(const int32_t org[3], const int16_t mangle[3])
 	pl.teleport_time = game_tick_count + TICKS(70);
 }
 
-/* R_TeleportSplash, every other point of its grid (the pool is smaller) */
+/* R_TeleportSplash, every other point of its grid (the pool is smaller);
+   by the effects level every 4th point across (low), every 4th up (medium),
+   every other up (ultra: Quake's own height spacing) */
 void game_teleport_splash(const int32_t org[3])
 {
 	const qw_leaf *leaf = leaf_at(org);
-	for (int i = -16; i < 16; i += 8)
-		for (int j = -16; j < 16; j += 8)
-			for (int k = -24; k < 32; k += 8) {
+	int ij = fx_scale < 4 ? 16 : 8, kk = fx_scale == 4 ? 16 : fx_scale > 8 ? 4 : 8;
+	for (int i = -16; i < 16; i += ij)
+		for (int j = -16; j < 16; j += ij)
+			for (int k = -24; k < 32; k += kk) {
 				particle_t *p = particle_new();
 				if (!p)
 					return;
@@ -2133,47 +2181,56 @@ static const int weapon_model[W_COUNT] = { QGM_V_AXE, QGM_V_SHOT, QGM_V_SHOT2, Q
    twice its texels' size after the world. Its texels' packets (and the
    weapon's CLUT's) are hung, as they are, at the head of the ordering
    table when the frame shown changes: copied to the slot before anything
-   draws. The 3D gun's moves on the quad: the bob up and ahead (a shift,
-   and a scale about the view's centre at the gun's depth at rest), the
-   viewport's 2 units, the kick's and the damage's pitch (the camera's
-   pitch less the gun's: a shift), the lean's roll (a turn about the
-   view's centre); its light as the 3D gun's, the colour light x 128 /
-   QG_WS_L0. A chain is never hung again in the next frame (only when the
-   frame or the weapon changes), so the GPU never follows a link this
-   frame rewrites. */
-static int ws_shown = -1, ws_clut = -1;
+   draws. The 3D gun's moves relative to the camera on the quad: the bob's
+   forward part (V_CalcRefdef raises the view and the gun alike by the bob:
+   only the gun's 0.4 bob ahead shows, a scale about the view's centre at
+   the gun's depth at rest), the full screen's 2 units lower, the kick's
+   and the damage's pitch (the camera's pitch over the gun's: a shift),
+   the lean's roll (a turn about the view's centre); its light as the 3D
+   gun's, the colour light x 128 / QG_WS_L0. A chain is never hung again
+   in the next frame (only when the frame or the weapon changes), so the
+   GPU never follows a link this frame rewrites. The weapon's CLUT goes to
+   row 507 or 508 in turn (the GPU's CLUT cache keyed by the address never
+   serves the last weapon's); the quad leaves out the frame's last column
+   and row (transparent: a texel the GPU reads past its quad's edge is the
+   frame's own, never the slot's leftovers from a bigger frame). */
+static int ws_shown = -1, ws_clut = -1, ws_clut_row;
 
 void game_ws_invalidate(void)
 {
 	ws_shown = ws_clut = -1;
 }
 
-static void ws_draw(int wpn, int frame, int32_t bob, int light)
+static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3D */
 {
 	const qg_wsprite *ws = &gdata.wsprites[wpn];
 	if (frame < 0 || frame >= ws->count)
 		frame = 0;
 	int key = ws->first + frame;
 	const qg_wframe *fr = &gdata.wframes[key];
+	if (!fr->w)                                   /* (an axe's swing: the cook's 3D) */
+		return 0;
 	if (key != ws_shown) {                        /* (hung first: drawn after the CLUT's) */
 		addPrims(&vid_frame.ot[OT_SKY], gdata.wpix + fr->ofs, gdata.wpix + fr->ofs_last);
 		ws_shown = key;
 	}
 	if (wpn != ws_clut) {
-		uint8_t *c = gdata.wpix + ws->ofs_clut;
+		uint32_t *c = (uint32_t *) (gdata.wpix + ws->ofs_clut);
+		ws_clut_row ^= 1;
+		c[2] = (uint32_t) (QG_WCLUT_Y + ws_clut_row) << 16 | QG_WCLUT_X;   /* GP0(A0h)'s position */
 		addPrims(&vid_frame.ot[OT_SKY], c, c);
 		ws_clut = wpn;
 	}
 	POLY_FT4 *q = vid_alloc(sizeof *q);
 	if (!q)
-		return;
+		return 1;
 	int cy = r_viewport_rows() / 2;
 	int32_t a16 = ws->anchor;                     /* the gun's depth, 1/16 units */
 	int32_t b16 = bob * 16 / SUB;
 	int32_t s12 = a16 * 4096 / (a16 + b16 * 2 / 5);           /* ahead: the scale */
-	int32_t dy16 = -R_SCREEN_H * 16 * b16 / a16;              /* up: the shift, 1/16 px */
-	if (cy == VID_H / 2)                                      /* (no 2-unit fudge there) */
-		dy16 += R_SCREEN_H * 16 * 2 * 16 / a16;
+	int32_t dy16 = 0;                                         /* (1/16 px) */
+	if (cy == VID_H / 2)                                      /* (no 2-unit fudge there: */
+		dy16 = R_SCREEN_H * 16 * 2 * 16 / a16;                /*  2 units lower) */
 	int yaw, pitch, roll;
 	game_view_angles(&yaw, &pitch, &roll);
 	int k = pitch - pl.pm.pitch;                  /* the camera's pitch over the gun's */
@@ -2181,8 +2238,8 @@ static void ws_draw(int wpn, int frame, int32_t bob, int light)
 	int32_t cr = r_cos(roll), sr = r_sin(roll);
 	int16_t xy[4][2];
 	for (int c = 0; c < 4; c++) {
-		int32_t x16 = (fr->x + (c & 1) * 2 * fr->w) * 16;
-		int32_t y16 = (fr->y + (c >> 1) * 2 * fr->h) * 16 + dy16;
+		int32_t x16 = (fr->x + (c & 1) * 2 * (fr->w - 1)) * 16;
+		int32_t y16 = (fr->y + (c >> 1) * 2 * (fr->h - 1)) * 16 + dy16;
 		x16 = x16 * s12 >> 12;
 		y16 = (y16 * s12 >> 12) + kick16;
 		int32_t rx = (cr * x16 + sr * y16) >> 12, ry = (cr * y16 - sr * x16) >> 12;
@@ -2194,11 +2251,12 @@ static void ws_draw(int wpn, int frame, int32_t bob, int light)
 	if (col > 255) col = 255;
 	setRGB0(q, col, col, col);
 	setXY4(q, xy[0][0], xy[0][1], xy[1][0], xy[1][1], xy[2][0], xy[2][1], xy[3][0], xy[3][1]);
-	int u0 = gdata.wslot.u, v0 = gdata.wslot.v, u1 = u0 + fr->w, v1 = v0 + fr->h;
+	int u0 = gdata.wslot.u, v0 = gdata.wslot.v, u1 = u0 + fr->w - 1, v1 = v0 + fr->h - 1;
 	setUV4(q, u0, v0, u1, v0, u0, v1, u1, v1);
 	q->tpage = gdata.wslot.tpage;
-	q->clut  = (uint16_t) getClut(QG_WCLUT_X, QG_WCLUT_Y);
+	q->clut  = (uint16_t) getClut(QG_WCLUT_X, QG_WCLUT_Y + ws_clut_row);
 	vid_link(OT_WEAPON, q);
+	return 1;
 }
 
 void game_render(void)
@@ -2256,8 +2314,8 @@ void game_render(void)
 		if (light < 24) light = 24;                   /* always some light on the gun */
 		light += dl_add_at(org, game_tick_count) * 3 / 2;   /* (x the cook's light gain) */
 		if (light > 170) light = 170;                 /* (rlist.c ent_model's bound) */
-		if (game_draw_viewmodel == 2) {
-			ws_draw(pl.weapon, pl.weaponframe, bob, light);
+		if (game_draw_viewmodel == 2 && ws_draw(pl.weapon, pl.weaponframe, bob, light)) {
+			/* (the 2D gun) */
 		} else {
 			r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
 			                      pl.pm.yaw, -pl.pm.pitch, 0, light);

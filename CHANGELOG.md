@@ -1234,8 +1234,38 @@ followed by R0-R4.
   the 3D gun's bob, kick, lean and light: the game bench -4.4 % (the
   super shotgun's frame -11.6 %). The gun is no longer drawn under the
   Ring of Shadows (R_DrawViewModel).
+- **The 2D weapons, the first test** (§38): the walk's bob counted
+  once (the view rises with the gun: only its forward part shows), the
+  quad without the frame's transparent last column and row (no leftover
+  texels at its edges), the frames rendered on 216 rows for the
+  full-screen HUD, the axe's swings left 3D (their size), the CLUT in two
+  rows in turn; the scripted release flow sets the new Graphics rows.
 
-- **Streaming, the monsters, the SPU pool** (2026-10-18). §39: a
+- **Four quality settings instead of one fidelity, and what each option
+  costs** (2026-10-18: textures, models, map geometry and effects apart, a hint on every option). §39: textures (the resolution),
+  map geometry (low: no T-junction repair, -2.3 % polygons; ultra: the
+  faces cut every 128 texels for the vertex light, +37 %), models (the
+  map's items and the projectiles simplified by edge collapses, -9 % /
+  -5 % of their triangles; the guns stay Quake's) and effects (the
+  particles, a quarter to twice the port's). The world file no longer
+  depends on the textures: one per geometry level (`<MAP>_G<n>.WLD`,
+  QWVD), its UVs the finest texture level's, mapped at load onto the
+  texture set's tiles (`<MAP>_T<n>.TEX`, QTX6 / QTX7: the texture table,
+  the UV maps, the animations); the map's models per model level
+  (`<MAP>_M<n>.MDL`, QMM1), the game data too (`GAME_<n>.DAT`, QGM6).
+  At high every map but three draws the same polygons as before (the
+  textures over 128 texels: a texel of rounding on a few vertices), and
+  the disc carries every combination in less room (the maps' cooked data
+  103 MB for every level, 125 before; the release disc 747 MB, 774
+  before). The Graphics page and the debug map menu show, under the rows,
+  what the highlighted value gains and costs, in the port's measures
+  (PCSX-Redux frame cycles against high: geometry low -0.7 %, ultra +2.6 %
+  with the heaviest view +24 %; models low -1.0 %; effects low -0.4 %,
+  ultra +0.7 %, a rocket's blast +1.9 %; the textures' gain the console's
+  GPU and the loads); the debug menu's rows no longer run into its help
+  line. Every map loads at every geometry level, at ultra textures and
+  geometry too (release-ultra's), and plays on DuckStation.
+- **Streaming, the monsters, the SPU pool** (2026-10-18). §40: a
   disc file a map (`STREAM.DAT`, `QST1`) holds what the map may need and
   not always: the nine monsters' models, heads, projectiles and sounds,
   the gibs, the backpack, the items' models, every positional sound. The
@@ -1250,4 +1280,7 @@ followed by R0-R4.
   traces and the touch passes, visible()'s line of sight, CheckBottom's
   box node, the residual-solid walk from a node (the asm only): E1M3's
   47 monsters awake 830 k cycles a tick to 287 k, the player's moves on
-  E1M3 -50 %, start's -7 %, every trace's result kept.
+  E1M3 -50 %, start's -7 %, every trace's result kept. Merged with the
+  quality settings: the streamed items at Quake's detail (the models level
+  reduces the projectiles), the game data `QGM7`, the monsters' particles
+  at the effects level.

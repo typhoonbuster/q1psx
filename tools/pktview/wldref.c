@@ -96,12 +96,21 @@ static uint8_t *slurp(const char *path, long *len)
 	return d;
 }
 
+/* the map's texture table (the set's), the UV maps, and the record being
+   drawn's window (GP0 E2h) */
+static const qw_tex     *textures;
+static const qtex_uvmap *uvmap;
+static uint32_t          num_slots;
+static const qw_vert    *pool;     /* the map's vertex pool */
+static uint32_t          twin;
+
 static void load_tex(const char *path)
 {
 	long len;
 	uint8_t *d = slurp(path, &len);
 	qtex_header h;
 	memcpy(&h, d, sizeof h);
+	if (memcmp(h.magic, QTEX_MAGIC, 4)) { fprintf(stderr, "wldref: not a %s file\n", QTEX_MAGIC); exit(1); }
 	memcpy(&vram[QTEX_CLUT_Y][QTEX_CLUT_X], h.clut, sizeof h.clut);
 	for (uint32_t i = 0; i < h.num_rects; i++) {
 		qtex_rect r;
@@ -109,13 +118,35 @@ static void load_tex(const char *path)
 		for (int y = 0; y < r.h; y++)
 			memcpy(&vram[r.y + y][r.x], d + r.data_ofs + (size_t) y * r.w * 2, r.w * 2u);
 	}
-	free(d);
+	num_slots = h.num_slots;
+	textures  = (const qw_tex *) (d + h.ofs_slots);           /* (kept: d stays) */
+	uvmap     = (const qtex_uvmap *) (d + h.ofs_slots + h.num_slots * sizeof(qw_tex));
 }
 
-/* the map's texture table, and the record being drawn's window (GP0 E2h) */
-static const qw_tex *textures;
-static const qw_vert *pool;     /* the map's vertex pool */
-static uint32_t      twin;
+/* the world's UVs onto the set's tiles, as engine/world.c map_uvs does */
+static void map_uvs(uint8_t *r, const uint8_t *end)
+{
+	while (r < end) {
+		qw_record rec;
+		memcpy(&rec, r, sizeof rec);
+		if (!rec.size)
+			break;
+		const qtex_uvmap *m = &uvmap[rec.tex < num_slots ? rec.tex : 0];
+		uint8_t *q = r + rec.polys;
+		for (int i = 0; i < rec.num_quads + rec.num_tris; i++, q += 12) {
+			int n = i < rec.num_quads ? 4 : 3;
+			for (int k = 0; k < n; k++) {
+				uint16_t w;
+				memcpy(&w, q + 4 + 2 * k, 2);
+				uint32_t u = m->u0 + (((w & 0xffu) * m->su + m->rnd) >> 15);
+				uint32_t v = m->v0 + (((uint32_t) (w >> 8) * m->sv + m->rnd) >> 15);
+				w = (uint16_t) (u | v << 8);
+				memcpy(q + 4 + 2 * k, &w, 2);
+			}
+		}
+		r += rec.size;
+	}
+}
 
 static void use_tex(const qw_record *r, int *tpage, int *clut)
 {
@@ -475,7 +506,8 @@ int main(int argc, char **argv)
 	qw_header h;
 	memcpy(&h, d, sizeof h);
 	if (memcmp(h.magic, QWORLD_MAGIC, 4)) { fprintf(stderr, "wldref: not a %s file\n", QWORLD_MAGIC); return 1; }
-	textures = (const qw_tex *) (d + h.ofs_tex);
+	if (h.num_tex != num_slots) { fprintf(stderr, "wldref: the world names %u textures, the set %u\n", h.num_tex, num_slots); return 1; }
+	map_uvs(d + h.ofs_faces, d + h.ofs_faces + h.len_faces);
 	pool     = (const qw_vert *) (d + h.ofs_verts);
 	P_planes = (const qw_plane *) (d + h.ofs_clip + sizeof(qw_clip_header));
 	const qw_view *views = (const qw_view *) (d + h.ofs_views);

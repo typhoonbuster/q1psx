@@ -1,7 +1,7 @@
 /*
- * q1psx — cooked world "QWVB" (architecture.md §6), one per map and fidelity
- * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
- * renderer (engine/r_*.s).
+ * q1psx — cooked world "QWVD" (architecture.md §6), one per map and geometry
+ * level (formats/qlevels.h). Written by `qcook`, loaded by engine/world.c,
+ * walked by the asm renderer (engine/r_*.s).
  *
  * Units
  *   "vertex units" = Quake world units x 4 (QW_VSCALE), stored as int16.
@@ -17,9 +17,16 @@
  *     whose size is a power of two repeats in hardware: the GPU texture
  *     window (GP0 E2h) wraps it, so that axis is only cut every 256 texels.
  *     Other axes are cut at every repetition (UVs inside the VRAM tile).
- *     Each record names its texture in the per-map table (qw_tex), which
- *     holds the CLUT, tpage and texture-window words. Pieces are grouped
- *     into "face records" of <= 63 vertices.
+ *     The cuts and the UVs are those of the finest texture level, so one
+ *     world file serves every texture level: the texture set (formats/
+ *     qtex.h) brings the table each record names its texture in (qw_tex:
+ *     the CLUT, tpage and texture-window words) and the map from these UVs
+ *     to its own tiles (qtex_uvmap), which the loader applies once. Pieces
+ *     are grouped into "face records" of <= 63 vertices.
+ *   - The ultra level also cuts the faces on a grid of QL_LIGHT_GRID
+ *     texels (their vertex light follows the lightmap more closely); the
+ *     low level leaves the T-junctions unrepaired (fewer polygons, a crack
+ *     may show where a face's edge meets another's vertex).
  *   - A face record is drawn when its face_id was stamped this frame by a
  *     visible leaf's marksurfaces (Quake's visframe scheme).
  *   - Brush models (Quake's submodels *1.., doors, plats, buttons, walls):
@@ -43,7 +50,9 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWVC"
+#include "qtex.h"          /* qw_tex, qw_anim: the texture set's tables */
+
+#define QWORLD_MAGIC "QWVD"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
@@ -88,7 +97,8 @@ typedef struct {
 	uint32_t root;                 /* node index of the world model root      */
 	uint32_t max_depth;            /* deepest node chain (<= QW_MAX_DEPTH)    */
 	uint32_t num_visleafs;          /* PVS row = (num_visleafs + 7) / 8 bytes */
-	uint32_t ofs_tex, num_tex;     /* qw_tex[num_tex], indexed by record.tex  */
+	uint32_t num_tex;              /* the texture slots record.tex indexes: the
+	                                  texture set's table (formats/qtex.h)    */
 	uint32_t ofs_verts, num_verts; /* qw_vert[num_verts]: the map's vertex pool,
 	                                  shared by every record (16-bit indices) */
 	uint32_t ofs_ambient;          /* uint8_t[num_leaves][2]: the leaf's water and
@@ -102,36 +112,11 @@ typedef struct {
 	uint32_t worldtype;            /* worldspawn's: 0 medieval, 1 metal, 2 base */
 	uint32_t title;                /* string: worldspawn's message, the map's name */
 	uint32_t max_bm_depth;         /* deepest brush model subtree (<= QW_MAX_BM_DEPTH) */
-	uint32_t ofs_models, num_models;   /* qw_model[] (formats/qgame.h): the map's
-	                                  own models (items, flames)              */
-	uint32_t ofs_mgeo, len_mgeo;   /* their geometry block                    */
-	uint32_t ofs_anims, num_anims; /* qw_anim[]: the animated textures        */
 } qw_header;
 
-/* An animated texture (Quake's "+0name" .. "+9name" and the alternates
-   "+aname" .. "+jname", R_TextureAnimation): every frame is a tile of the
-   map's texture pages, and the faces of the chain draw with a display tile
-   of their own; the engine copies the frame of the moment into it (a
-   frame every 0.2 s; the alternates while a brush model listed has its
-   frame set: a pressed button, a toggled wall). Tiles in texels of the
-   8-bit pages (page p at x 320 + 128 (p % 5), y 256 (p / 5); in the 4-bit
-   set, x 320 + 64 p, y 0, the same texels), with their texture-table index
-   (the 4-bit set's CLUT for it, 16 a row from (0, 480)). */
-#define QW_ANIM_FRAMES 10
-#define QW_ANIM_MODELS 8
-typedef struct {
-	uint8_t  page, pad;
-	uint16_t slot;             /* its qw_tex index                        */
-	uint16_t u0, v0, w, h;     /* texels in its page                      */
-} qw_anim_tile;                /* 12 bytes */
-
-typedef struct {
-	qw_anim_tile display;
-	uint8_t      num_frames, num_alt, num_models, pad;
-	qw_anim_tile frames[QW_ANIM_FRAMES];
-	qw_anim_tile alt[QW_ANIM_FRAMES];
-	uint16_t     models[QW_ANIM_MODELS];   /* brush models drawing it (their frame) */
-} qw_anim;                     /* 272 bytes */
+/* (The map's own models, the items', are in their own file, one per model
+   level: formats/qgame.h qmm_header. The animated textures' tiles are the
+   texture set's: formats/qtex.h qw_anim.) */
 
 /* A brush model: Quake's submodel. Bounds in the physics' units, spread by
    a unit like Mod_LoadSubmodels; the root is its hull-0 BSP (its nodes in
@@ -211,14 +196,6 @@ typedef struct {
 } qw_ent;                  /* 56 bytes */
 
 _Static_assert(sizeof(qw_bmodel) == 40 && sizeof(qw_ent) == 56, "qworld.h: the cooked tables' sizes");
-
-/* One per Quake miptex (unused ones are zero). */
-typedef struct {
-	uint16_t clut;         /* GPU CLUT word                                   */
-	uint16_t tpage;        /* GPU tpage word (8bpp)                           */
-	uint32_t window;       /* GP0 E2h texture-window command; 0xE2000000 = no
-	                          wrap (the axes that are not powers of two)      */
-} qw_tex;                  /* 8 bytes */
 
 /* Nodes and leaves share their bbox layout (the renderer's frustum test
    takes either): c at +0, h at +8, each followed by a 16-bit field, so VZ is
@@ -300,8 +277,10 @@ typedef struct {
    per-record vertex cache). Quad corners are in PS1 order: the GPU draws
    triangles (0,1,2) and (1,2,3). uv[k] = u | v << 8 in texels: on a wrapped
    axis a virtual 0..255 coordinate the texture window folds onto the
-   texture, otherwise page-relative. The renderer ORs the CLUT into uv[0]
-   and the tpage into uv[1]. */
+   texture, otherwise page-relative. On the disc they are the finest
+   texture level's, tile-relative (formats/qtex.h qtex_uvmap); the loader
+   makes them the loaded set's, page-relative. The renderer ORs the CLUT
+   into uv[0] and the tpage into uv[1]. */
 typedef struct {
 	uint8_t  idx[4];
 	uint16_t uv[4];

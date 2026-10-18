@@ -1,6 +1,6 @@
 /*
  * q1psx — the streamed assets' manager. See engine/stream.h and
- * docs/porting-notes.md §39.
+ * docs/porting-notes.md §40.
  */
 
 #include <stdint.h>

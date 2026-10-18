@@ -64,14 +64,16 @@ target_compile_options(q1psx PRIVATE
 
 # The release editions (presets "release" and "release-ultra"): Quake's own
 # menu over the game (engine/menu.c), no debug overlay, no map menu, no
-# cheats; and the fidelity levels the disc carries: low to high on the
-# "release" disc, ultra alone on the "release-ultra" one (the default and
-# bench builds carry all four).
+# cheats; and the texture and geometry levels the disc carries
+# (formats/qlevels.h): low to high on the "release" disc, ultra alone on the
+# "release-ultra" one (the default and bench builds carry them all). Every
+# disc carries every model level (GAME_<n>.DAT, <MAP>_M<n>.MDL: small).
 option(Q1PSX_RELEASE "Quake's menu, no debug tools" OFF)
 if(Q1PSX_RELEASE)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_RELEASE=1)
 endif()
-set(Q1PSX_FIDELITIES "low;medium;high;ultra" CACHE STRING "The fidelity levels put on the disc")
+set(Q1PSX_TEXTURE_LEVELS "low;medium;high;ultra" CACHE STRING "The texture levels put on the disc")
+set(Q1PSX_GEOMETRY_LEVELS "low;high;ultra" CACHE STRING "The geometry levels put on the disc")
 # A scripted pad (engine/pad.c pad_script): the release flow checked headless
 option(Q1PSX_PADSCRIPT "Replace the pad by a scripted sequence of presses" OFF)
 if(Q1PSX_PADSCRIPT)
@@ -88,7 +90,10 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_C=${Q1PSX_DLIGHT_C})
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
 # no debug overlay. See docs/architecture.md §9.
 option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
-set(Q1PSX_BENCH_FID 2 CACHE STRING "Fidelity level the bench loads (0 low .. 3 ultra)")
+set(Q1PSX_BENCH_TEXTURES 2 CACHE STRING "Texture level the bench loads (0 low .. 3 ultra)")
+set(Q1PSX_BENCH_GEOMETRY 2 CACHE STRING "Geometry level the bench loads (0 low, 2 high, 3 ultra)")
+set(Q1PSX_BENCH_MODELS 2 CACHE STRING "Model level the bench loads (0 low .. 2 high)")
+set(Q1PSX_BENCH_EFFECTS 2 CACHE STRING "Effects level the bench runs at (0 low .. 3 ultra)")
 set(Q1PSX_BENCH_SAMPLE 0 CACHE STRING "1: the bench samples the PC (engine/prof.c) over each view's frames")
 set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics checks only")
 set(Q1PSX_BENCH_MAPS 0 CACHE STRING "1: bench every map on the disc (spawn views) instead")
@@ -106,7 +111,9 @@ set(Q1PSX_BENCH_MONSTERS 0 CACHE STRING "1: the monsters' scenarios (one of each
 set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map, dumped")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 if(Q1PSX_BENCH)
-	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_FID=${Q1PSX_BENCH_FID}
+	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_TEXTURES=${Q1PSX_BENCH_TEXTURES}
+		Q1PSX_BENCH_GEOMETRY=${Q1PSX_BENCH_GEOMETRY} Q1PSX_BENCH_MODELS=${Q1PSX_BENCH_MODELS}
+		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
@@ -157,12 +164,14 @@ else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
 endif()
 
-# Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h + qworld.h). Every
-# cooked map ships at every fidelity level: <MAP>_<N>.TEX / .TX4 / .WLD with
-# N = 0..3 for low/medium/high/ultra (.TX4: the 4-bit textures), plus the
-# game data GAME.DAT (formats/qgame.h: weapon models, projectiles, the HUD).
-# The cook re-runs whenever the cooker or a format header changes, so the
-# disc never carries stale data.
+# Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h, qworld.h,
+# qgame.h, qlevels.h). Every cooked map ships at the edition's levels of
+# each axis: <MAP>_T<N>.TEX / .TX4 (textures, .TX4 the 4-bit ones),
+# <MAP>_G<N>.WLD (geometry), <MAP>_M<N>.MDL (its own models) with N = 0..3
+# for low/medium/high/ultra, its sound bank <MAP>.SND, plus the game data
+# GAME_<N>.DAT per model level (weapon models, projectiles, the HUD). The
+# cook re-runs whenever the cooker or a format header changes, so the disc
+# never carries stale data.
 if(_pak0_path AND EXISTS "${_pak0_path}")
 	file(GLOB _qcook_deps CONFIGURE_DEPENDS
 		${PROJECT_SOURCE_DIR}/tools/qcook/*.c
@@ -185,22 +194,28 @@ endif()
 
 set(COOKED_ENTRIES "")
 set(GAME_ENTRY "")
-if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/game.dat")
-	set(GAME_ENTRY "<file name=\"GAME.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/game.dat\" />")
-endif()
+file(GLOB _games CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/game_*.dat)
+list(SORT _games)
+foreach(_src ${_games})                                 # game_2.dat -> GAME_2.DAT
+	get_filename_component(_base "${_src}" NAME)
+	string(TOUPPER "${_base}" _name)
+	string(APPEND GAME_ENTRY "<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t")
+endforeach()
 # the streamed assets (formats/qstream.h: read while the game runs, engine/stream.c)
 set(STREAM_ENTRY "")
 if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/stream.dat")
 	set(STREAM_ENTRY "<file name=\"STREAM.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/stream.dat\" />")
 endif()
 set(_maps "")
+set(_level_names low medium high ultra)
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tex
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tx4
+                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.mdl
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.snd)
 list(SORT _cooked)
 foreach(_src ${_cooked})
-	get_filename_component(_base "${_src}" NAME_WE)     # e1m1_high
+	get_filename_component(_base "${_src}" NAME_WE)     # e1m1_g2
 	get_filename_component(_ext "${_src}" EXT)          # .wld
 	if(_ext STREQUAL ".snd")                            # e1m1.snd -> E1M1.SND (formats/qsound.h)
 		string(TOUPPER "${_base}${_ext}" _name)
@@ -208,17 +223,19 @@ foreach(_src ${_cooked})
 			"<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t\t")
 		continue()
 	endif()
-	string(REGEX MATCH "^(.+)_(low|medium|high|ultra)$" _m "${_base}")
+	string(REGEX MATCH "^(.+)_([tgm])([0-3])$" _m "${_base}")
 	if(NOT _m)
 		continue()
 	endif()
 	set(_map "${CMAKE_MATCH_1}")
-	if(NOT "${CMAKE_MATCH_2}" IN_LIST Q1PSX_FIDELITIES)
+	list(GET _level_names ${CMAKE_MATCH_3} _level)
+	if(CMAKE_MATCH_2 STREQUAL "t" AND NOT "${_level}" IN_LIST Q1PSX_TEXTURE_LEVELS)
 		continue()                                      # (another edition's level)
 	endif()
-	set(_fids low medium high ultra)
-	list(FIND _fids "${CMAKE_MATCH_2}" _n)
-	string(TOUPPER "${_map}_${_n}${_ext}" _name)        # E1M1_2.WLD
+	if(CMAKE_MATCH_2 STREQUAL "g" AND NOT "${_level}" IN_LIST Q1PSX_GEOMETRY_LEVELS)
+		continue()
+	endif()
+	string(TOUPPER "${_base}${_ext}" _name)             # E1M1_G2.WLD
 	string(APPEND COOKED_ENTRIES
 		"<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t\t")
 	list(APPEND _maps "${_map}")
@@ -228,7 +245,8 @@ list(LENGTH _maps _nmaps)
 if(_nmaps EQUAL 0)
 	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")
 else()
-	message(STATUS "q1psx: bundling ${_nmaps} cooked maps at ${Q1PSX_FIDELITIES}")
+	message(STATUS "q1psx: bundling ${_nmaps} cooked maps, textures ${Q1PSX_TEXTURE_LEVELS}, "
+	               "geometry ${Q1PSX_GEOMETRY_LEVELS}")
 endif()
 
 # The music: cooked/music/trackNN.wav (scripts/cook.sh, from the rerelease's
@@ -253,5 +271,5 @@ psn00bsdk_add_cd_image(
 	iso        # target
 	q1psx      # -> q1psx.bin + q1psx.cue
 	${PROJECT_SOURCE_DIR}/iso/iso.xml
-	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/cooked/id1/game.dat   # (a manual cook too)
+	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${_games}   # (a manual cook too)
 )

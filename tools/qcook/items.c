@@ -1,13 +1,16 @@
 /*
- * q1psx — `qcook map`: the map's own models (formats/qgame.h qw_model,
- * QIM_*): the BSP item boxes its entities spawn with (items.qc's setmodel:
- * health, ammo; misc.qc's explosive boxes, maps/b_*.bsp), cut into records
- * over their own textures (tex_build's extras, tiling like the world's).
- * Only what the entities use is cooked. The alias models (the weapons,
- * armour, keys, runes, powerups, the flames, the fireballs) are streamed
- * by their distance (STREAM.DAT, tools/qcook/stream.c): the alias path
- * here (their skins among the map's textures, through game.c) stays for
- * a map that would keep one.
+ * q1psx — `qcook map --models`: the map's own models (formats/qgame.h
+ * qw_model, QIM_*), one file per model level: the BSP item boxes its
+ * entities spawn with (items.qc's setmodel: health, ammo; misc.qc's
+ * explosive boxes, maps/b_*.bsp), cut into records over their own textures
+ * (tex_build's extras, tiling like the world's). Their UVs are the
+ * layout's (formats/qtex.h qtex_uvmap), mapped at load. Only what the
+ * entities use is cooked. The alias models (the weapons, armour, keys,
+ * runes, powerups, the flames, the fireballs) are streamed by their
+ * distance (STREAM.DAT, tools/qcook/stream.c, at Quake's detail): the
+ * alias path here (their skins reduced among the map's textures, their
+ * triangles reduced below the high level, through game.c) stays for a
+ * map that would keep one.
  */
 
 #include <math.h>
@@ -132,7 +135,7 @@ static void need_for(const ent_list *l, const ent_rec *e, int worldtype)
 
 /* an extra texture; a box's identical to one already there (the same
    name, size and texels: the ammo boxes' rockettop) shared; its index */
-static int add_extra(const bsp_miptex *mt, int skin, int shift)
+static int add_extra(const bsp_miptex *mt, int skin, int div, int shift)
 {
 	if (!skin)
 		for (int i = 0; i < nextras; i++)
@@ -141,9 +144,11 @@ static int add_extra(const bsp_miptex *mt, int skin, int shift)
 				return i;
 	extras = realloc(extras, (size_t) (nextras + 1) * sizeof *extras);
 	if (!extras) die("out of memory");
-	extras[nextras].mt    = *mt;
-	extras[nextras].skin  = skin;
-	extras[nextras].shift = shift;
+	extras[nextras].mt     = *mt;
+	extras[nextras].skin   = skin;
+	extras[nextras].div    = div;
+	extras[nextras].border = skin ? qc_mdl_border : 0;
+	extras[nextras].shift  = shift;
 	return nextras++;
 }
 
@@ -189,7 +194,7 @@ void items_prepare(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8
 			qc_mdl_skin(mdls[q], &mt.w, &mt.h, &px);
 			for (int k = 0; k < 4; k++)
 				mt.mip[k] = px;
-			extra_of[q] = add_extra(&mt, 1, 0);
+			extra_of[q] = add_extra(&mt, 1, div, 0);
 			continue;
 		}
 		/* a box: its model's textures */
@@ -205,7 +210,7 @@ void items_prepare(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8
 				if (k >= QW_MODEL_TEX)
 					die("%s: more than %d textures", QIMS[q].file, QW_MODEL_TEX);
 				box_miptex[q][k] = mt;
-				bsp_extra[q][k]  = add_extra(&ib->miptex[mt], 0, (squeeze >= 1) + (squeeze >= 4));
+				bsp_extra[q][k]  = add_extra(&ib->miptex[mt], 0, 1, (squeeze >= 1) + (squeeze >= 4));
 				bsp_ntex[q]++;
 			}
 		}
@@ -297,7 +302,7 @@ static void brec_flush(brec *r, int tex, int *nrec)
 
 /* a box: per texture, its faces as triangle fans; the texture coordinates
    of a face shifted by whole repetitions so they start in the first (the
-   texture window folds the rest), at the slot's scale */
+   texture window folds the rest), at the layout's scale */
 static void cook_box(int q, const tex_set *ts, int first_extra, qw_model *out)
 {
 	const bsp_t *ib = &bsps[q];
@@ -335,8 +340,8 @@ static void cook_box(int q, const tex_set *ts, int first_extra, qw_model *out)
 			double s0 = floor(smin / mt->w) * mt->w, t0 = floor(tmin / mt->h) * mt->h;
 			uint16_t uv[16];
 			for (int e = 0; e < bf->numedges; e++) {
-				long u = lround((st[e][0] - s0) * s->rep_w / mt->w) + (s->win_x ? 0 : s->u0);
-				long v = lround((st[e][1] - t0) * s->rep_h / mt->h) + (s->win_y ? 0 : s->v0);
+				long u = lround((st[e][0] - s0) * s->rep_w / mt->w);
+				long v = lround((st[e][1] - t0) * s->rep_h / mt->h);
 				if (u < 0) u = 0;
 				if (u > 255) u = 255;
 				if (v < 0) v = 0;
@@ -382,14 +387,10 @@ static void cook_box(int q, const tex_set *ts, int first_extra, qw_model *out)
 		if (d > rad) rad = d;
 	}
 	m->radius = (uint16_t) ceil(rad);
-	m->flags  = QGF_MAP | QGF_FLAT;
-	if (ts->num > 0 && out->num_tex) {
-		const tex_slot *s = &ts->slots[out->tex[0]];
-		m->tex.clut = s->clut; m->tex.tpage = s->tpage; m->tex.window = s->window;
-	}
+	m->flags  = QGF_MAP | QGF_FLAT;       /* (its texture words: the loader's, from the set) */
 }
 
-void items_cook(const tex_set *ts, int first_extra)
+void items_cook(const tex_set *ts, int first_extra, int model_level)
 {
 	geo.len = table.len = 0;
 	nmodels = 0;
@@ -407,12 +408,9 @@ void items_cook(const tex_set *ts, int first_extra)
 			if (!s->present)
 				continue;
 			buf_align4(&geo);
-			qc_mdl_cook(mdls[q], s->u0, s->v0, &geo, &out.m);
+			qc_mdl_cook(mdls[q], model_level, &geo, &out.m);
 			out.num_tex = 1;
 			out.tex[0]  = (uint16_t) (first_extra + extra_of[q]);
-			out.m.tex.clut   = s->clut;
-			out.m.tex.tpage  = s->tpage;
-			out.m.tex.window = 0xE2000000u;
 			out.m.flags |= QGF_MAP;
 			if (qc_mdl_flags(mdls[q]) & 8)            /* EF_ROTATE */
 				out.m.flags |= QGF_ROTATE;
@@ -424,16 +422,21 @@ void items_cook(const tex_set *ts, int first_extra)
 		printf("qcook:   %d own models (items, flames), %u B of geometry\n", nmodels, (unsigned) geo.len);
 }
 
-void items_write(buf_t *f, uint32_t *ofs_models, uint32_t *num_models, uint32_t *ofs_mgeo,
-                 uint32_t *len_mgeo)
+void items_write(const char *out_path)
 {
-	buf_align4(f);
-	*ofs_models = (uint32_t) f->len;
-	*num_models = (uint32_t) nmodels;
-	buf_put(f, table.p, table.len);
-	buf_align4(f);
-	*ofs_mgeo = (uint32_t) f->len;
-	*len_mgeo = (uint32_t) geo.len;
-	buf_put(f, geo.p, geo.len);
-	buf_align4(f);
+	qmm_header h;
+	memset(&h, 0, sizeof h);
+	memcpy(h.magic, QMAPMDL_MAGIC, 4);
+	h.num_models = (uint32_t) nmodels;
+	h.ofs_models = (uint32_t) sizeof h;
+	h.ofs_geo    = h.ofs_models + (uint32_t) table.len;
+	h.len_geo    = (uint32_t) geo.len;
+	FILE *f = fopen(out_path, "wb");
+	if (!f)
+		die("cannot write %s", out_path);
+	fwrite(&h, sizeof h, 1, f);
+	fwrite(table.p, 1, table.len, f);
+	fwrite(geo.p, 1, geo.len, f);
+	fclose(f);
+	printf("qcook: %s — %d models, %u B\n", out_path, nmodels, (unsigned) (sizeof h + table.len + geo.len));
 }

@@ -107,7 +107,7 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
 | Level arena | 1152 KB | world render data + clip hulls + PVS (the biggest map 696 KB) |
-| Game arena | 224 KB | the game data every map needs (`GAME.DAT`: weapon and projectile models, 66 KB; the 2D weapons' packets, 102 KB), filled once at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
+| Game arena | 224 KB | the game data every map needs (`GAME_<n>.DAT`, n the model level: weapon and projectile models, 63 KB at high, the block sized for the largest level so another level's models replace them in place before a map's load; the 2D weapons' packets, 102 KB), filled at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
 The level arena is a bump allocator that is reset on map load. There is no
@@ -163,7 +163,7 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 - The game's images (pages 6..9) are packed by MaxRects with a 2-texel
   border of replicated edge texels around every skin and sprite sheet:
   the GPU's texture coordinates stray a texel past a triangle's edge.
-- 4-bit textures (menu option, `<MAP>_<N>.TX4`, `docs/porting-notes.md`
+- 4-bit textures (menu option, `<MAP>_T<N>.TX4`, `docs/porting-notes.md`
   §20): the same tiles at the same texel positions, pages at x = 320 + 64 p
   on the first half (y = 0), and one 16-entry CLUT per texture from
   (0, 481), 20 per row.
@@ -186,8 +186,11 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 
 ## 6. World format (cooked by `qcook`)
 
-One file per map and fidelity level. Every section is 4-byte aligned and laid
-out in the order the walker reads it.
+One file per map and geometry level (`<MAP>_G<n>.WLD`; the quality levels:
+`formats/qlevels.h`, `docs/porting-notes.md` §39). The texture set comes per
+texture level (`<MAP>_T<n>.TEX`, §7) and the map's own models per model level
+(`<MAP>_M<n>.MDL`), so any texture level goes with any geometry level. Every
+section is 4-byte aligned and laid out in the order the walker reads it.
 
 - **Nodes** (32 B each): plane (`int16 n[3]`, `uint8 type`, `int32 dist`),
   `int16 child[2]`, `int16 bbox[6]`, and offsets to the node's **two face
@@ -223,12 +226,19 @@ out in the order the walker reads it.
   tag/code. Triangles use the FT3 layout.
 - **Cook-time polygon splitting**: every Quake face is cut
   1. along its **texture-repeat boundaries**, so each piece's UVs sit inside a
-     single texture tile — no texture window, no `DR_TWIN`, no power-of-two
-     constraint;
-  2. down to a **maximum piece size** in world units.
+     single texture tile (a power-of-two axis wraps in the texture window:
+     cut every 256 texels), at the **finest texture level's** sizes, so the
+     pieces fit every texture level and the world file is shared by all of
+     them;
+  2. at the ultra geometry level, again every 128 texels from the cell's
+     corner (`QL_LIGHT_GRID`), so the vertex light follows the lightmap
+     closer (+37 % polygons on start).
 
-  The piece size is a fidelity knob (bigger = fewer polygons but more affine
-  warp) and is tuned with the harness.
+  The UVs on the disc are the finest level's, tile-relative; the loader maps
+  them once onto the loaded set's tiles (`qtex_uvmap`: an offset and a
+  scale per texture slot). The low geometry level leaves the T-junctions
+  unrepaired (-2.3 % polygons, cracks possible). The affine warp itself is
+  the renderer's subdivision threshold (a menu setting, §8).
 
 ## 7. Textures
 
@@ -236,12 +246,14 @@ out in the order the walker reads it.
 - **Native size up to 256 per tile**: removing the texture window removes the
   64 px cap and the power-of-two snapping. `ultra` becomes real (native
   textures).
-- Fidelity scales textures down by a factor (`high` = native ≤ 128, `low` =
-  ½ or ¼). The split boundaries follow the original texel grid, so tiling
-  stays correct at any scale.
-- Packed per map by `qcook` (shelf packer). VRAM coordinates and
-  `tpage`/`clut` words are written into the world file's pre-packed
-  polygons.
+- The texture level scales textures down by a factor (`high` = native ≤
+  128, `medium` ½, `low` ¼, `ultra` native ≤ 256). The split boundaries
+  follow the original texel grid, so tiling stays correct at any scale.
+- Packed per map and texture level by `qcook` (first fit on an 8-texel
+  grid). The set (`<MAP>_T<n>.TEX`, QTX6) carries the map's texture table:
+  each slot's `clut`/`tpage`/texture-window words, its UV map from the
+  world's finest-level UVs, the animated textures' tiles; the loader
+  writes the mapped UVs into the world's pre-packed polygons.
 
 ## 8. Renderer pipeline (asm)
 
@@ -275,8 +287,9 @@ scratchpad for the duration of `r_frame`. Its GTE matrices:
      leaf's render list (particles, model entities) is drawn when the walk
      visits the leaf, with the same record loop; the view model first of
      all, on top.
-5. **Slow path** (polygons whose affine error may exceed the fidelity
-   level's threshold, or that come too near; `docs/porting-notes.md` §19):
+5. **Slow path** (polygons whose affine error may exceed the warp
+   threshold, a menu setting, or that come too near; `docs/porting-notes.md`
+   §19):
    - a per-polygon conservative test (`CAREFUL`) in the record loop keeps
      the rest on the fast path;
    - corners from the record's vertex cache; a corner the GTE could not

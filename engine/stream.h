@@ -1,6 +1,6 @@
 /*
  * q1psx — the streamed assets (formats/qstream.h, docs/porting-notes.md
- * §39): what a map loads only when the player comes near what uses it.
+ * §40): what a map loads only when the player comes near what uses it.
  *
  * Four pools, each a cache of the one above it:
  *   the disc     STREAM.DAT, every asset a sector apart;

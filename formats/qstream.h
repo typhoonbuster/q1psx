@@ -1,6 +1,6 @@
 /*
  * q1psx — the streamed assets "QST1": every resource a map loads only when
- * the player comes near what uses it (docs/porting-notes.md §39). Written
+ * the player comes near what uses it (docs/porting-notes.md §40). Written
  * by `qcook stream`, one file on the disc (STREAM.DAT) for every map;
  * engine/stream.c reads its directory once at boot, then each asset on
  * demand, straight from the disc into its RAM pool, while the game runs.

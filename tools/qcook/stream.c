@@ -47,7 +47,7 @@ static const stream_model MODELS[] = {
 	{ "progs/h_guard.mdl",  G_ARMY,     4, 0, 0, 0, 0 },
 	{ "progs/dog.mdl",      G_DOG,      2, 0, 0, 0, 0 },     /* monster_dog */
 	{ "progs/h_dog.mdl",    G_DOG,      4, 0, 0, 0, 0 },
-	{ "progs/ogre.mdl",     G_OGRE,     2, 0, 0, 0, 0 },     /* monster_ogre (its grenade: GAME.DAT) */
+	{ "progs/ogre.mdl",     G_OGRE,     2, 0, 0, 0, 0 },     /* monster_ogre (its grenade: GAME_<n>.DAT) */
 	{ "progs/h_ogre.mdl",   G_OGRE,     4, 0, 0, 0, 0 },
 	{ "progs/knight.mdl",   G_KNIGHT,   2, 0, 0, 0, 0 },     /* monster_knight */
 	{ "progs/h_knight.mdl", G_KNIGHT,   4, 0, 0, 0, 0 },

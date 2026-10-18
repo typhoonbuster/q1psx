@@ -1,10 +1,12 @@
 /*
- * qcook — world: QWV2 file (formats/qworld.h).
+ * qcook — world: QWVD file (formats/qworld.h), one per geometry level.
  *
  * Faces are attached to their BSP node (front block / back block), cut on
- * texture-repeat boundaries so every piece's UVs stay inside one VRAM tile,
- * triangulated into PS1 quads (+ a triangle when odd) and grouped into face
- * records of <= 63 shared vertices.
+ * texture-repeat boundaries so every piece's UVs stay inside one VRAM tile
+ * (the finest texture level's layout: every texture level maps the UVs onto
+ * its own tiles, formats/qtex.h qtex_uvmap), at the ultra level on a light
+ * grid as well, triangulated into PS1 quads (+ a triangle when odd) and
+ * grouped into face records of <= 63 shared vertices.
  */
 
 #include <math.h>
@@ -267,10 +269,11 @@ static void rec_flush(out_t *o, rec_t *r, const tex_slot *s)
 }
 
 /* A wrapped axis gets its virtual 0..256 coordinate (the texture window
-   folds it onto the texture); another axis its page position. */
-static uint16_t uvword(const tex_slot *s, double u, double v)
+   folds it onto the texture); another axis its position in the tile (the
+   loader adds the tile's: formats/qtex.h qtex_uvmap). */
+static uint16_t uvword(double u, double v)
 {
-	long uu = (s->win_x ? 0 : s->u0) + lround(u), vv = (s->win_y ? 0 : s->v0) + lround(v);
+	long uu = lround(u), vv = lround(v);
 	if (uu < 0) uu = 0;
 	if (uu > 255) uu = 255;
 	if (vv < 0) vv = 0;
@@ -436,14 +439,14 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 			qw_quad *q = &r->q[r->nq++];
 			for (int k = 0; k < 4; k++) {
 				q->idx[k] = (uint8_t) (idx[pairs[e][k]] * 4);
-				q->uv[k]  = uvword(s, uv[pairs[e][k]][0], uv[pairs[e][k]][1]);
+				q->uv[k]  = uvword(uv[pairs[e][k]][0], uv[pairs[e][k]][1]);
 			}
 		}
 		for (int e = 0; e < nsingle; e++) {
 			qw_tri *t = &r->t[r->nt++];
 			for (int q = 0; q < 3; q++) {
 				t->idx[q] = (uint8_t) (idx[ears[single[e]][q]] * 4);
-				t->uv[q]  = uvword(s, uv[ears[single[e]][q]][0], uv[ears[single[e]][q]][1]);
+				t->uv[q]  = uvword(uv[ears[single[e]][q]][0], uv[ears[single[e]][q]][1]);
 			}
 			t->pad = 0;
 			t->pad2 = 0;
@@ -459,7 +462,7 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 		int c[4] = { 0, i, i + 2, i + 1 };
 		for (int k = 0; k < 4; k++) {
 			q->idx[k] = (uint8_t) (idx[c[k]] * 4);
-			q->uv[k]  = uvword(s, uv[c[k]][0], uv[c[k]][1]);
+			q->uv[k]  = uvword(uv[c[k]][0], uv[c[k]][1]);
 		}
 	}
 	if (i + 1 < pc->n) {                       /* one triangle left */
@@ -467,7 +470,7 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 		int c[3] = { 0, i, i + 1 };
 		for (int k = 0; k < 3; k++) {
 			t->idx[k] = (uint8_t) (idx[c[k]] * 4);
-			t->uv[k]  = uvword(s, uv[c[k]][0], uv[c[k]][1]);
+			t->uv[k]  = uvword(uv[c[k]][0], uv[c[k]][1]);
 		}
 		t->pad = 0;
 		t->pad2 = 0;
@@ -619,6 +622,8 @@ static int      pc_num, pc_cap;
 static int     *pc_first, *pc_count;   /* per face */
 static uint32_t tj_inserted, tj_pieces;
 
+static int light_grid;                   /* the ultra level's extra cuts, texels (0: none) */
+
 static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 {
 	pc_first[f] = pc_num;
@@ -657,10 +662,14 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 	/* Cells, in Quake texels. A wrapped axis: 256 cooked texels (a byte of
 	   UV), from an origin on a repetition boundary so the virtual
 	   coordinate keeps the texture's phase; the face's own origin, so it
-	   is cut as little as possible. Another axis: the VRAM tile (reps
-	   repetitions) on the global grid. */
-	const double W  = s->win_x ? 256.0 * m->w / s->rep_w : (double) m->w * s->reps_x;
-	const double H  = s->win_y ? 256.0 * m->h / s->rep_h : (double) m->h * s->reps_y;
+	   is cut as little as possible. Another axis: the VRAM tile (one
+	   repetition) on the global grid. The light grid (ultra) cuts the
+	   cells again every QL_LIGHT_GRID texels from their corner (luxel
+	   boundaries: a texture's size is a multiple of 16), the UVs still
+	   from the cell's corner, so the vertex light follows the lightmap
+	   closer. (On the global grid instead: start +52 % polygons, not +37.) */
+	const double W  = s->win_x ? 256.0 * m->w / s->rep_w : (double) m->w;
+	const double H  = s->win_y ? 256.0 * m->h / s->rep_h : (double) m->h;
 	const double s0 = s->win_x ? floor(smin / m->w) * m->w : 0;
 	const double t0 = s->win_y ? floor(tmin / m->h) * m->h : 0;
 	long i0 = (long) floor((smin - s0) / W), i1 = (long) floor((smax - 1e-4 - s0) / W);
@@ -671,26 +680,45 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 		clip_poly(&pl, &a, 0, s0 + i * W, +1);
 		clip_poly(&a, &c, 0, s0 + (i + 1) * W, -1);
 		for (long j = j0; j <= j1; j++) {
-			poly_t d, pc;
+			poly_t d, cell;
 			clip_poly(&c, &d, 1, t0 + j * H, +1);
-			clip_poly(&d, &pc, 1, t0 + (j + 1) * H, -1);
-			poly_weld(&pc);
-			if (pc.n < 3 || poly_area(&pc) < 1.0 / 64)
-				continue;
-			if (pc_num == pc_cap) {
-				pc_cap = pc_cap ? 2 * pc_cap : 4096;
-				pc_list = realloc(pc_list, (size_t) pc_cap * sizeof *pc_list);
-				if (!pc_list)
-					die("out of memory (pieces)");
+			clip_poly(&d, &cell, 1, t0 + (j + 1) * H, -1);
+			/* the light grid's lines inside the cell (none: the cell whole) */
+			double cs0 = s0 + i * W, cs1 = cs0 + W, ct0 = t0 + j * H, ct1 = ct0 + H;
+			double gs0 = cs0, gs1 = cs1, gt0 = ct0, gt1 = ct1, G = light_grid;
+			if (G > 0) {                 /* (the cell's sub-cells the face reaches) */
+				gs0 = cs0 + floor(((smin > cs0 ? smin : cs0) - cs0) / G) * G;
+				gt0 = ct0 + floor(((tmin > ct0 ? tmin : ct0) - ct0) / G) * G;
+				gs1 = smax < cs1 ? smax : cs1;
+				gt1 = tmax < ct1 ? tmax : ct1;
+			} else {
+				G = 1e30;
 			}
-			piece_t *p = &pc_list[pc_num++];
-			p->face  = f;
-			p->model = face_model[f];
-			p->fixed = 0;
-			p->s_off = s0 + i * W;
-			p->t_off = t0 + j * H;
-			p->pl    = pc;
-			pc_count[f]++;
+			for (double gs = gs0; gs < gs1 - 1e-4; gs += G)
+				for (double gt = gt0; gt < gt1 - 1e-4; gt += G) {
+					poly_t e, g, h2, pc;
+					clip_poly(&cell, &e, 0, gs > cs0 ? gs : cs0, +1);
+					clip_poly(&e, &g, 0, gs + G < cs1 ? gs + G : cs1, -1);
+					clip_poly(&g, &h2, 1, gt > ct0 ? gt : ct0, +1);
+					clip_poly(&h2, &pc, 1, gt + G < ct1 ? gt + G : ct1, -1);
+					poly_weld(&pc);
+					if (pc.n < 3 || poly_area(&pc) < 1.0 / 64)
+						continue;
+					if (pc_num == pc_cap) {
+						pc_cap = pc_cap ? 2 * pc_cap : 4096;
+						pc_list = realloc(pc_list, (size_t) pc_cap * sizeof *pc_list);
+						if (!pc_list)
+							die("out of memory (pieces)");
+					}
+					piece_t *p = &pc_list[pc_num++];
+					p->face  = f;
+					p->model = face_model[f];
+					p->fixed = 0;
+					p->s_off = cs0;
+					p->t_off = ct0;
+					p->pl    = pc;
+					pc_count[f]++;
+				}
 		}
 	}
 }
@@ -962,11 +990,10 @@ static int clip_depth(const bsp_t *b, int n)
 	return 1 + (a > c ? a : c);
 }
 
-void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
-                 const char *out_path)
+void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *out_path)
 {
-	(void) fid;
 	const bsp_model *wm = &b->models[0];
+	light_grid = geo_level == QL_ULTRA ? QL_LIGHT_GRID : 0;
 	if (b->num_models > 254)
 		die("%d models: more than 254", b->num_models);
 
@@ -1054,7 +1081,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		if (face_model[f] >= 0)
 			face_pieces(b, ts, f);
 	}
-	tj_repair(b);
+	if (geo_level != QL_LOW)                 /* (low: fewer polygons, a crack may show) */
+		tj_repair(b);
 	int root = wm->headnode[0];
 
 	/* each model's hull-0 tree (reach[n] = model + 1): the world's is
@@ -1460,23 +1488,11 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		buf_put(&f, &v, sizeof v);
 	}
 
-	/* texture table: CLUT, tpage and texture window per miptex */
 	h.ofs_ambient = (uint32_t) f.len;           /* the leaves' water / sky levels */
 	for (int i = 0; i < b->num_leaves; i++)
 		buf_put(&f, b->leaves[i].ambient, 2);
 	buf_align4(&f);
-	h.ofs_tex = (uint32_t) f.len;
-	h.num_tex = (uint32_t) ts->num;
-	for (int i = 0; i < ts->num; i++) {
-		qw_tex t;
-		memset(&t, 0, sizeof t);
-		if (ts->slots[i].present) {
-			t.clut   = ts->slots[i].clut;
-			t.tpage  = ts->slots[i].tpage;
-			t.window = ts->slots[i].window;
-		}
-		buf_put(&f, &t, sizeof t);
-	}
+	h.num_tex = (uint32_t) ts->num;              /* (the texture set's table) */
 
 	/* clip hulls 1 and 2 (all BSP planes, all clipnodes) */
 	{
@@ -1530,39 +1546,6 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	h.ofs_strings = (uint32_t) f.len;
 	h.len_strings = (uint32_t) estr.len;
 	buf_put(&f, estr.p, estr.len);
-	buf_align4(&f);
-	items_write(&f, &h.ofs_models, &h.num_models, &h.ofs_mgeo, &h.len_mgeo);
-
-	/* the animated textures: their tiles, and the brush models drawing a
-	   chain with alternates (the engine looks at their frame) */
-	buf_align4(&f);
-	h.ofs_anims = (uint32_t) f.len;
-	h.num_anims = (uint32_t) ts->num_anims;
-	for (int c = 0; c < ts->num_anims; c++) {
-		const tex_anim *a = &ts->anims[c];
-		qw_anim q;
-		memset(&q, 0, sizeof q);
-		#define TILE_OF(t, sl) do { const tex_slot *s_ = &ts->slots[sl]; (t).page = (uint8_t) s_->page; \
-			(t).slot = (uint16_t) (sl); (t).u0 = (uint16_t) s_->u0; (t).v0 = (uint16_t) s_->v0; \
-			(t).w = (uint16_t) s_->tile_w; (t).h = (uint16_t) s_->tile_h; } while (0)
-		TILE_OF(q.display, a->display);
-		q.num_frames = (uint8_t) a->nframes;
-		q.num_alt    = (uint8_t) a->nalt;
-		for (int k = 0; k < a->nframes; k++) TILE_OF(q.frames[k], a->frames[k]);
-		for (int k = 0; k < a->nalt; k++)    TILE_OF(q.alt[k], a->alt[k]);
-		#undef TILE_OF
-		for (int m = 1; a->nalt && m < b->num_models && q.num_models < QW_ANIM_MODELS; m++) {
-			const bsp_model *bm = &b->models[m];
-			int uses = 0;
-			for (int fc = bm->firstface; fc < bm->firstface + bm->numfaces && !uses; fc++) {
-				int mt = face_miptex(b, fc);
-				uses = mt >= 0 && ts->remap[mt] == a->display;
-			}
-			if (uses)
-				q.models[q.num_models++] = (uint16_t) m;
-		}
-		buf_put(&f, &q, sizeof q);
-	}
 	memcpy(f.p, &h, sizeof h);
 
 	FILE *fp = fopen(out_path, "wb");
@@ -1579,8 +1562,10 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	       o.records, o.pieces, o.quads, o.tris, o.verts,
 	       o.records ? (double) o.verts / o.records : 0.0, o.npool, o.faces_split,
 	       h.max_depth, nviews);
-	printf("qcook:   T-junctions: %u vertices inserted into %u pieces; %u pieces ear-clipped\n",
-	       tj_inserted, tj_pieces, o.pieces_eared);
+	printf("qcook:   T-junctions: %u vertices inserted into %u pieces; %u pieces ear-clipped%s\n",
+	       tj_inserted, tj_pieces, o.pieces_eared, geo_level == QL_LOW ? " (not repaired: low)" : "");
+	if (light_grid)
+		printf("qcook:   light grid: cut every %d texels\n", light_grid);
 	if (has_spawn)
 		printf("qcook:   spawn %d %d %d yaw %d\n", h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
 	{
@@ -1630,13 +1615,11 @@ int world_check(const char *path)
 	SECTION(h.ofs_vis, h.len_vis);
 	SECTION(h.ofs_faces, h.len_faces);
 	SECTION(h.ofs_views, h.num_views * sizeof(qw_view));
-	SECTION(h.ofs_tex, h.num_tex * sizeof(qw_tex));
 	SECTION(h.ofs_verts, h.num_verts * sizeof(qw_vert));
 	SECTION(h.ofs_ambient, h.num_leaves * 2);
 	SECTION(h.ofs_bmodels, h.num_bmodels * sizeof(qw_bmodel));
 	SECTION(h.ofs_ents, h.num_ents * sizeof(qw_ent));
 	SECTION(h.ofs_strings, h.len_strings);
-	SECTION(h.ofs_anims, h.num_anims * sizeof(qw_anim));
 	if (h.max_depth > QW_MAX_DEPTH)
 		FAIL("depth %u > %d", h.max_depth, QW_MAX_DEPTH);
 	if (h.max_bm_depth > QW_MAX_BM_DEPTH)
