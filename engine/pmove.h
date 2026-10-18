@@ -1,7 +1,8 @@
 /*
  * q1psx — player movement (R4).
  *
- * A fixed-point, 60 Hz port of Quake's player physics:
+ * A fixed-point port of Quake's player physics, over ticks of 1 to 6
+ * 60ths of a second (the game's tick rate):
  *   - friction and acceleration toward a wished direction;
  *   - gravity and jumping;
  *   - sliding along walls (SV_FlyMove / ClipVelocity);
@@ -52,7 +53,10 @@ typedef struct {
 /* One tick of intent. fwd / side are analog, -PM_AXIS .. PM_AXIS (a stick;
    a d-pad direction is +-PM_AXIS): the wished speed follows |(fwd, side)|,
    capped at full speed, as Quake's wishspeed = |wishvel|. up is -1, 0, +1
-   (noclip, and the swim's upmove). */
+   (noclip, and the swim's upmove). dt is the tick's length in 60ths of a
+   second, 1 .. PM_DT_MAX (the game's tick rate: 1 at 60 Hz, 2 at 30, 3 at
+   20, 6 at 10, 1 or 2 at 32): the rates (friction, acceleration, gravity,
+   the move) act over dt / 60 s, as Quake's over host_frametime. */
 #define PM_AXIS 128       /* full deflection (2^7)                       */
 
 typedef struct {
@@ -60,7 +64,9 @@ typedef struct {
 	int jump;             /* held (PlayerJump: the pogo is stopped by jumpreleased) */
 	int walk;             /* held: half speed                          */
 	int waterjump;        /* this tick: CheckWaterJump found the ledge (the game) */
+	int dt;               /* 60ths of a second (1 .. PM_DT_MAX)        */
 } pmove_cmd_t;
+#define PM_DT_MAX 6
 
 /* engine/p_defs.inc mirrors both layouts for the asm port (engine/pmove.s) */
 _Static_assert(__builtin_offsetof(pmove_t, vel) == 12 && __builtin_offsetof(pmove_t, yaw) == 24 &&
@@ -69,14 +75,15 @@ _Static_assert(__builtin_offsetof(pmove_t, vel) == 12 && __builtin_offsetof(pmov
                __builtin_offsetof(pmove_t, waterjump) == 64 && __builtin_offsetof(pmove_t, movedir) == 72 &&
                __builtin_offsetof(pmove_t, touched) == 80 && sizeof(pmove_t) == 84, "p_defs.inc PM_*");
 _Static_assert(__builtin_offsetof(pmove_cmd_t, up) == 8 && __builtin_offsetof(pmove_cmd_t, walk) == 16 &&
-               __builtin_offsetof(pmove_cmd_t, waterjump) == 20 && sizeof(pmove_cmd_t) == 24, "p_defs.inc CMD_*");
+               __builtin_offsetof(pmove_cmd_t, waterjump) == 20 && __builtin_offsetof(pmove_cmd_t, dt) == 24 &&
+               sizeof(pmove_cmd_t) == 28, "p_defs.inc CMD_*");
 
 #define PM_EYE_HEIGHT 22  /* view origin above the box origin (Quake), units */
 #define PM_MINS_Z    (-24) /* the box (hull 1, 32 x 32 x 56): SV_CheckWater's feet */
 #define PM_MAXS_Z      32
 
-/* Advance the player one 60 Hz tick. The PS1 build links the asm port
-   (engine/pmove.s); engine/pmove.c is its C reference. */
+/* Advance the player one tick (cmd->dt 60ths of a second). The PS1 build
+   links the asm port (engine/pmove.s); engine/pmove.c is its C reference. */
 void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd);
 
 #endif

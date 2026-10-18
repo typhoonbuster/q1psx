@@ -33,7 +33,7 @@ static const uint8_t sp_rows[]    = { 0 };
 #define MAIN_ITEMS         (int) sizeof main_rows
 #define SINGLEPLAYER_ITEMS (int) sizeof sp_rows
 enum { O_RESET, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
-enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_FPS, G_COUNT };
+enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_FPS, G_TICK, G_COUNT };
 #define SLIDER_RANGE       10
 #define GREY               56          /* a greyed entry's shade (128: as it is) */
 
@@ -176,7 +176,8 @@ static void graphics_draw(void)
 	static const char *const label[G_COUNT] = {
 		"              Fidelity", "              Textures", "             Dithering",
 		"          Warp control", "             Threshold", "                Budget",
-		"                   HUD", "        Dynamic lights", "        Frame rate cap" };
+		"                   HUD", "        Dynamic lights", "        Frame rate cap",
+		"             Tick rate" };
 	uint8_t rows[G_COUNT];
 	int n = graphics_rows(rows);
 	char val[24];
@@ -196,7 +197,8 @@ static void graphics_draw(void)
 		case G_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
 		case G_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
 		case G_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
-		default:       snprintf(val, sizeof val, "%d fps", fps_caps[settings.fps_cap]); break;
+		case G_FPS:    snprintf(val, sizeof val, "%d fps", fps_caps[settings.fps_cap]); break;
+		default:       snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
 		}
 		m_print(220, y, val, shade);
 	}
@@ -353,7 +355,8 @@ static void graphics_adjust(int g, int d)
 	case G_BUDGET: settings.budget = wrap(settings.budget, d, num_warp_budget); break;
 	case G_HUD:    settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
 	case G_DLIGHTS: settings.dlights ^= 1; break;
-	default:       settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;
+	case G_FPS:    settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;
+	default:       settings.tick = wrap(settings.tick, d, num_tick_rates); break;
 	}
 	settings_apply();                             /* the fidelity and the textures: at a load */
 }

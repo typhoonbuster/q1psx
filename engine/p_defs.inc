@@ -70,7 +70,7 @@
 .set PS_SFM,     0x03C     #   split fraction,
 .set PS_SF2,     0x040     #   sub-sweep f2
 
-# ---- pmove_t (84 B) / pmove_cmd_t (24 B) --------------------------------------
+# ---- pmove_t (84 B) / pmove_cmd_t (28 B) --------------------------------------
 .set PMT_SIZE,      84
 .set CMD_FWD,        0
 .set CMD_SIDE,       4
@@ -78,6 +78,7 @@
 .set CMD_JUMP,      12     # held
 .set CMD_WALK,      16
 .set CMD_WATERJUMP, 20     # this tick: the game's CheckWaterJump found the ledge
+.set CMD_DT,        24     # the tick's length, 60ths of a second (1 .. PM_DT_MAX)
 
 # ---- scratchpad, pmove.s ------------------------------------------------------
 # pmove_step copies the pmove_t here (same layout) and back at the end.
@@ -127,6 +128,15 @@
 .set PS_BMI,      0x1EC     # the clip_bmodels entry being tried, and the end
 .set PS_BMEND,    0x1F0
 .set PS_BMIDX,    0x250     # its index + 1 (the trace's ent)
+.set PS_DT,       0x254     # pmove_step: the tick's length (CMD_DT), and what
+.set PS_DT4,      0x258     #   the rates take from it: x PM_FRICTION,
+.set PS_DT8,      0x25C     #   x CLIP_SUB (the move),
+.set PS_DT10,     0x260     #   x PM_ACCEL,
+.set PS_DTG,      0x264     #   x PM_GRAVITY,
+.set PS_WSCALE,   0x268     #   the water's friction over the tick (0.16),
+.set PS_DRAG,     0x26C     #   the drag table's row (pm_water_drag),
+.set PS_GMIDDT,   0x270     #   gravity's midpoint term (pm_grav_mid),
+.set PS_GMID,     0x274     # that term if gravity acts this tick, else 0
 .set PS_BMIN,     0x1F4     # the swept box[3], a unit wider (SV_MoveBounds)
 .set PS_BMAX,     0x200
 .set PS_BSTART,   0x20C     # the sweep in the model's space[3]

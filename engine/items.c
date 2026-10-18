@@ -477,10 +477,11 @@ static void toss_tick(edict_t *e)
 {
 	if (e->flags & 512)                           /* FL_ONGROUND: no move */
 		return;
-	e->velocity[2] -= ent_time % 3 == 2 ? 14 : 13;
+	for (int t = ent_time - game_dt + 1; t <= ent_time; t++)   /* each 60th of the tick */
+		e->velocity[2] -= t % 3 == 2 ? 14 : 13;
 	int32_t end[3];
 	for (int k = 0; k < 3; k++)
-		end[k] = e->origin[k] + e->velocity[k] * CLIP_SUB / 60;
+		end[k] = e->origin[k] + e->velocity[k] * CLIP_SUB * game_dt / 60;
 	trace_t tr;
 	clip_trace(0, e->origin, end, &tr);
 	ent_setorigin(e, tr.endpos);

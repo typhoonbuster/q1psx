@@ -59,6 +59,7 @@ int main(int argc, char **argv)
 
 	pmove_cmd_t c;
 	memset(&c, 0, sizeof c);
+	c.dt = 1;                                   /* 60 Hz ticks */
 	for (int t = 0; t < 30; t++) pmove_step(&pm, &c);
 	printf("settle pos %d %d %d ground %d\n", pm.pos[0] / CLIP_SUB, pm.pos[1] / CLIP_SUB, pm.pos[2] / CLIP_SUB,
 	       pm.onground);

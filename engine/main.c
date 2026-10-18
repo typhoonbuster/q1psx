@@ -133,8 +133,10 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 #endif
 
 	int lx = p->lx, ly = p->ly, rx = p->rx, ry = p->ry;
-	stick(&lx, &ly);
-	stick(&rx, &ry);
+	if (p->analog) {                          /* (the sticks: an analog pad's only) */
+		stick(&lx, &ly);
+		stick(&rx, &ry);
+	}
 
 	int yaw = 0, pitch = 0;
 	if (p->analog) {
@@ -186,18 +188,93 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 	if (pl.pm.pitch < -1012) pl.pm.pitch = -1012;
 }
 
-/* The simulation is tick-based (Quake): one 60 Hz tick per vblank elapsed,
-   each with the pad as that vblank's poll saw it (pad_frame): a frame that
-   took two vblanks advances the game twice, on the two polls. */
-static void player_update(const pad_t *ticks, int n)
+/* The simulation is tick-based (Quake). Every vblank's poll (pad_frame) turns
+   the view (Quake's client turns each frame: CL_AdjustAngles); a tick runs
+   every 60 / game_tick_hz polls on average (an accumulator: at 32 Hz, 2, 2,
+   ... 1 polls), over the polls since the last one (game_dt 60ths of a
+   second), with the last poll's held buttons and every press since. At
+   60 Hz, a tick per poll. Below, the camera is drawn between the last two
+   ticks' views (CL_LerpPoint), late by the longest tick less a poll; a jump
+   of more than 64 units (a teleporter, a new level) is not lerped. */
+static void player_update(const pad_t *polls, int n)
 {
+	static int        hz = 60, acc, since, span = 1;
+	static int32_t    prev[3], last[3];
+	static game_cmd_t presses = { .weapon_group = -1 };
 	uint32_t t0 = prof_now();
+	if (hz != game_tick_hz || game_view_cut) {  /* a new rate, a new spawn: afresh */
+		game_view_cut = 0;
+		hz = game_tick_hz;
+		acc = since = 0;
+		span = 1;
+		memset(&presses, 0, sizeof presses);
+		presses.weapon_group = -1;
+		memset(game_view_lerp, 0, sizeof game_view_lerp);
+		game_view_pos(last);
+		memcpy(prev, last, sizeof prev);
+	}
+	if (hz == 60) {                             /* a tick per poll, no lerp */
+		for (int i = 0; i < n; i++) {
+			game_cmd_t cmd;
+			player_cmd(&cmd, &polls[i]);
+			game_tick(&cmd);
+		}
+		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+		prof_add(PROF_SIM, t0, prof_now());
+		return;
+	}
 	for (int i = 0; i < n; i++) {
 		game_cmd_t cmd;
-		player_cmd(&cmd, &ticks[i]);
+		player_cmd(&cmd, &polls[i]);
+		presses.weapon_next |= cmd.weapon_next;   /* a press between two ticks */
+		presses.weapon_prev |= cmd.weapon_prev;   /* counts (Quake's key "impulse" */
+		presses.centre      |= cmd.centre;        /* bit, CL_SendMove's state & 3): */
+		presses.fire        |= cmd.fire;          /* fire and jump too, held or */
+		presses.jump        |= cmd.jump;          /* tapped */
+		if (cmd.weapon_group >= 0)
+			presses.weapon_group = cmd.weapon_group;
+		since++;
+		if ((acc += hz) < 60)
+			continue;
+		acc -= 60;
+		cmd.weapon_next  = presses.weapon_next;
+		cmd.weapon_prev  = presses.weapon_prev;
+		cmd.centre       = presses.centre;
+		cmd.fire         = presses.fire;
+		cmd.jump         = presses.jump;
+		cmd.weapon_group = presses.weapon_group;
+		memset(&presses, 0, sizeof presses);
+		presses.weapon_group = -1;
+		game_dt = since;
 		game_tick(&cmd);
+		game_dt = 1;
+		span  = since;
+		since = 0;
+		memcpy(prev, last, sizeof prev);
+		game_view_pos(last);
 	}
-	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+	game_view_angles(&cam.yaw, &cam.pitch, &cam.roll);
+	memcpy(cam.pos, last, sizeof cam.pos);
+	memset(game_view_lerp, 0, sizeof game_view_lerp);
+	{
+		static const uint16_t inv[7] = { 0, 65535, 32768, 21846, 16384, 13108, 10923 };   /* 65536 / span */
+		int lag = (60 + hz - 1) / hz - 1;       /* polls: the longest tick less one */
+		int num = since - lag + span;           /* of span: where between the two */
+		if (num < 0)    num = 0;
+		if (num > span) num = span;
+		int32_t far = 0;
+		for (int k = 0; k < 3; k++) {
+			int32_t d = last[k] - prev[k];
+			far |= d > 64 * CLIP_SUB || d < -64 * CLIP_SUB;
+		}
+		if (!far && num < span) {
+			int32_t f = num * inv[span];            /* 0.16: where between the two */
+			for (int k = 0; k < 3; k++) {
+				game_view_lerp[k] = -(((last[k] - prev[k]) * (65536 - f)) >> 16);
+				cam.pos[k] += game_view_lerp[k];
+			}
+		}
+	}
 	prof_add(PROF_SIM, t0, prof_now());
 }
 
@@ -491,7 +568,8 @@ static const char *map_tag(int m)
 }
 
 /* The options under the map list: L2 / R2 pick one, L1 / R1 change it. */
-enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_DLIGHTS, OPT_FPS, OPT_COUNT };
+enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_DLIGHTS, OPT_FPS, OPT_TICK,
+       OPT_COUNT };
 static int opt_sel;
 
 static void opt_step(int d)
@@ -505,7 +583,8 @@ static void opt_step(int d)
 	case OPT_BUDGET: settings.budget = (settings.budget + num_warp_budget + d) % num_warp_budget; break;
 	case OPT_HUD:    settings.hud = (settings.hud + HUD_STYLES + d) % HUD_STYLES; break;
 	case OPT_DLIGHTS: settings.dlights ^= 1; break;
-	default:         settings.fps_cap = (settings.fps_cap + num_fps_caps + d) % num_fps_caps; break;
+	case OPT_FPS:    settings.fps_cap = (settings.fps_cap + num_fps_caps + d) % num_fps_caps; break;
+	default:         settings.tick = (settings.tick + num_tick_rates + d) % num_tick_rates; break;
 	}
 	apply_settings();   /* warp, dithering, the HUD at once; textures, fidelity on load */
 }
@@ -514,6 +593,7 @@ static void opt_draw(void)
 {
 	static const char *const label[OPT_COUNT] = {
 		"fidelity", "textures", "dither", "warp", "threshold", "budget", "hud", "dlights", "fps cap",
+		"tick rate",
 	};
 	char line[48], val[16];
 	for (int o = 0; o < OPT_COUNT; o++) {
@@ -526,7 +606,8 @@ static void opt_draw(void)
 		case OPT_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
 		case OPT_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
 		case OPT_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
-		default:         snprintf(val, sizeof val, "%d", fps_caps[settings.fps_cap]); break;
+		case OPT_FPS:    snprintf(val, sizeof val, "%d", fps_caps[settings.fps_cap]); break;
+		default:         snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
 		}
 		int x = 16 + (o % 2) * 152, y = 168 + (o / 2) * 10;
 		snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
@@ -782,16 +863,18 @@ static void bench_clip_diff(void)
    the reference so the count stays meaningful). */
 static void bench_pmove_diff(void)
 {
-	enum { TICKS = 6000 };
+	enum { TICKS = 6000, DT_TICKS = 3000 };     /* 60 Hz ticks, then ticks of 2, 3, 6, 1 / 60 s */
+	static const uint8_t dts[4] = { 2, 3, 6, 1 };
 	pmove_t     a, c;
 	pmove_cmd_t cmd;
-	int         bad = 0;
+	int         bad = 0, bad_dt = 0;
 	uint32_t    cyc_asm = 0, cyc_c = 0;
 	memset(&a, 0, sizeof a);
 	memset(&cmd, 0, sizeof cmd);
 	int water_runs = 0;
-	for (int t = 0; t < TICKS; t++) {
+	for (int t = 0; t < TICKS + DT_TICKS; t++) {
 		int phase = t % 300;
+		cmd.dt = t < TICKS ? 1 : dts[(t / 7) & 3];
 		if (phase == 0) {
 			rng_point(a.pos, 1);
 			if ((t / 300) & 1) {                        /* every other run starts in the water */
@@ -834,14 +917,18 @@ static void bench_pmove_diff(void)
 		uint32_t t1 = prof_now();
 		pmove_step_c(&c, &cmd);
 		uint32_t t2 = prof_now();
-		cyc_asm += prof_cycles(t0, t1);
-		cyc_c   += prof_cycles(t1, t2);
+		if (t < TICKS) {
+			cyc_asm += prof_cycles(t0, t1);
+			cyc_c   += prof_cycles(t1, t2);
+		}
 		if (memcmp(&a, &c, sizeof a)) {
+			if (t >= TICKS)
+				bad_dt++;
 			if (bad++ < 8)
-				printf("pmdiff MISMATCH tick %d noclip %d cmd %d %d %d %d %d wj %d\n"
+				printf("pmdiff MISMATCH tick %d dt %d noclip %d cmd %d %d %d %d %d wj %d\n"
 				       "  asm: pos %d %d %d vel %d %d %d g %d acc %d %d %d %d w %d %d %d %d\n"
 				       "  c:   pos %d %d %d vel %d %d %d g %d acc %d %d %d %d w %d %d %d %d\n",
-				       t, c.noclip, cmd.fwd, cmd.side, cmd.up, cmd.jump, cmd.walk, cmd.waterjump,
+				       t, cmd.dt, c.noclip, cmd.fwd, cmd.side, cmd.up, cmd.jump, cmd.walk, cmd.waterjump,
 				       (int) a.pos[0], (int) a.pos[1], (int) a.pos[2], (int) a.vel[0], (int) a.vel[1],
 				       (int) a.vel[2], a.onground, (int) a.pos_acc[0], (int) a.pos_acc[1],
 				       (int) a.pos_acc[2], (int) a.grav_acc, a.waterlevel, a.watertype, a.waterjump, a.jumpreleased,
@@ -862,8 +949,9 @@ static void bench_pmove_diff(void)
 			a = c;
 		}
 	}
-	printf("pmdiff ticks %d mismatches %d; cycles/tick asm %u c %u; runs started in water %d\n", TICKS, bad,
-	       (unsigned) (cyc_asm / TICKS), (unsigned) (cyc_c / TICKS), water_runs);
+	printf("pmdiff ticks %d mismatches %d; cycles/tick asm %u c %u; runs started in water %d\n", TICKS,
+	       bad - bad_dt, (unsigned) (cyc_asm / TICKS), (unsigned) (cyc_c / TICKS), water_runs);
+	printf("pmdiff dt ticks %d (2, 3, 6, 1 / 60 s) mismatches %d\n", DT_TICKS, bad_dt);
 
 	/* the same without clip hulls (every trace returns at once): the cost of
 	   pmove itself, without its traces */
@@ -873,6 +961,7 @@ static void bench_pmove_diff(void)
 	cmd.fwd = PM_AXIS;
 	cmd.side = PM_AXIS;
 	cmd.jump = 0;
+	cmd.dt = 1;
 	for (int t = 0; t < 1000; t++) {
 		a.noclip = 0;
 		a.pos[2] = 0;
@@ -1349,16 +1438,77 @@ static void bench_tick_cost(void)
 				game_tick(&c2);
 			}
 		uint32_t total = 0, worst = 0;
+		int worst_t = 0;
+		prof_sample_start();                          /* (SAMPLE=1: the ticks' profile) */
 		for (int t = 0; t < 120; t++) {
 			uint32_t t0 = prof_now();
 			game_tick(&cmd);
 			uint32_t c = prof_cycles(t0, prof_now());
 			total += c;
-			if (c > worst) worst = c;
+			if (c > worst) { worst = c; worst_t = t; }
 		}
-		printf("bench tick %s: %u cycles a tick on average, %u at worst\n", what[k], (unsigned) (total / 120),
-		       (unsigned) worst);
+		prof_sample_stop();
+		printf("bench tick %s: %u cycles a tick on average, %u at worst (tick %d)\n", what[k],
+		       (unsigned) (total / 120), (unsigned) worst, worst_t);
+		static char sname[3][12];
+		snprintf(sname[k], sizeof sname[k], "tick_%s", what[k]);
+		prof_sample_print(sname[k]);
 	}
+	game_active = 0;
+}
+
+/* The tick rates (settings.tick) through the game's own scheduler
+   (player_update) on the same polls: a second standing, two walking
+   forward, a jump held 0.2 s, a second falling back. The distance walked, the jump's
+   apex, the ticks run and the simulation's cycles (PROF_SIM) by rate. */
+static void bench_tick_rates(void)
+{
+	for (int r = num_tick_rates - 1; r >= 0; r--) {
+		game_spawn();
+		game_active = 1;
+		game_tick_hz = tick_rates[r];
+		int t0 = game_tick_count, ticks = 0, last_count = game_tick_count;
+		int32_t start[3], apex = -0x7fffffff;
+		uint32_t cyc = 0;
+		prof_sample_start();                        /* (SAMPLE=1: each rate's profile) */
+		for (int v = 0; v < 300; v++) {
+			pad_t p;
+			memset(&p, 0, sizeof p);
+			p.connected = 1;
+			p.type = 4;                               /* digital */
+			if (v >= 60 && v < 180)
+				p.held = PAD_UP;                      /* forward */
+			if (v >= 200 && v < 212)
+				p.held = PAD_CROSS;                   /* jump, held 0.2 s */
+			p.pressed = v == 200 ? PAD_CROSS : 0;
+			if (v == 60)
+				memcpy(start, pl.pm.pos, sizeof start);
+			uint32_t c0 = prof_now();
+			player_update(&p, 1);
+			cyc += prof_cycles(c0, prof_now());
+			if (game_tick_count != last_count) {
+				ticks++;
+				last_count = game_tick_count;
+			}
+			if (v == 180) {
+				int32_t d0 = pl.pm.pos[0] - start[0], d1 = pl.pm.pos[1] - start[1];
+				printf("bench rate %d Hz: walked %d units in 2 s\n", tick_rates[r],
+				       (int) (q_isqrt64((uint64_t) ((int64_t) d0 * d0 + (int64_t) d1 * d1)) / CLIP_SUB));
+			}
+			if (v == 199)
+				start[2] = apex = pl.pm.pos[2];       /* the jump's base */
+			if (v >= 200 && pl.pm.pos[2] > apex)
+				apex = pl.pm.pos[2];
+		}
+		prof_sample_stop();
+		printf("bench rate %d Hz: jump apex %d units, %d ticks over 300 polls (game time %d), %u cycles a poll\n",
+		       tick_rates[r], (int) (apex - start[2]) / CLIP_SUB, ticks, game_tick_count - t0,
+		       (unsigned) (cyc / 300));
+		static char rname[5][8];
+		snprintf(rname[r], sizeof rname[r], "rate%d", tick_rates[r]);
+		prof_sample_print(rname[r]);
+	}
+	game_tick_hz = 60;
 	game_active = 0;
 }
 
@@ -1486,7 +1636,8 @@ static void bench_game(void)
 	}
 	bench_menu();
 	snd_log = 0;
-	bench_tick_cost();                                /* (last: it moves the player) */
+	bench_tick_cost();                                /* (last: they move the player) */
+	bench_tick_rates();
 	game_active = 0;
 	pad_read();                                       /* the interrupt-driven poll, seen once */
 	printf("pad poll: %s type %d held %04x sticks %d %d %d %d\n", pad.connected ? "connected" : "absent",
@@ -1548,6 +1699,7 @@ static void run_bench(void)
 		pmove_cmd_t c;
 		uint32_t    cyc_sum = 0, cyc_max = 0, ticks = 0;
 		memset(&c, 0, sizeof c);
+		c.dt = 1;
 		player_spawn();
 #define PM_TICK() do { \
 			uint32_t t0_ = prof_now(); \

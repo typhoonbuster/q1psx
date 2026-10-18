@@ -608,18 +608,19 @@ static void push_move(edict_t *pusher, int movetime)
 	}
 }
 
-/* SV_Physics_Pusher, in ticks: the move up to the think's time, the think */
+/* SV_Physics_Pusher, in 60ths: the tick's move (game_dt, host_frametime)
+   up to the think's time, the think */
 static void physics_pusher(edict_t *e)
 {
 	int32_t oldltime  = e->ltime;
 	int32_t thinktime = e->nextthink;
 	int     movetime;
-	if (thinktime < e->ltime + 1) {
+	if (thinktime < e->ltime + game_dt) {
 		movetime = thinktime - e->ltime;
 		if (movetime < 0)
 			movetime = 0;
 	} else {
-		movetime = 1;
+		movetime = game_dt;
 	}
 	if (movetime)
 		push_move(e, movetime);

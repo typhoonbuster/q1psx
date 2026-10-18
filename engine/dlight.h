@@ -51,7 +51,7 @@ extern uint16_t dl_sqrt[1024];           /* sqrt(i << 11): the lights, snd.c */
 void      dl_init(void);
 void      dl_clear(void);                  /* a new map */
 dlight_t *dl_alloc(int key, int now);      /* CL_AllocDlight: the same key's, else a dead one, else the first */
-void      dl_decay(int now);               /* CL_DecayLights, once per tick */
+void      dl_decay(int now, int dt);       /* CL_DecayLights over a tick of dt 60ths (now: its end) */
 void      dl_push(int now);                /* R_PushDlights: the live lights for r_frame */
 void      dl_stamp_nodes(void);            /* r_render, after mark_pvs: the nodes the lights reach */
 #ifndef Q1PSX_DLIGHT_C

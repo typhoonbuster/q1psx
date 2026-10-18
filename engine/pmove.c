@@ -18,8 +18,8 @@
 #include "q_fixed.h"
 #include "render.h"   /* r_sin / r_cos: binary degrees -> x4096 */
 
-/* Quake defaults (sv_*.c cvars + client.qc). Frame-rate is locked to 60 Hz, so
-   the *host_frametime factors are baked into the /PM_HZ divisions below. */
+/* Quake defaults (sv_*.c cvars + client.qc). A tick lasts dt 60ths of a
+   second (pmove_cmd_t): Quake's *host_frametime factors are x dt / PM_HZ. */
 #define PM_HZ          60
 #define PM_MAXSPEED    320
 #define PM_ACCEL       10
@@ -37,9 +37,25 @@
 #define PM_WATERJUMP_TICKS 120 /* FL_WATERJUMP's teleport_time: 2 s             */
 #define PM_WATERJUMP_UP    225 /* CheckWaterJump's velocity_z                   */
 #define PM_SINK             60 /* SV_WaterMove: the drift to the bottom, units/s */
-#define PM_WATER_SCALE   61167 /* 1 - 4/60 (sv_friction, a tick), 0.16          */
-/* PlayerPreThink's drag, 1 - 0.8 x waterlevel / 60, 0.16 */
-static const int32_t water_drag[4] = { 65536, 64662, 63788, 62914 };
+/* SV_WaterMove's friction over the tick, 1 - 4 dt / 60 (sv_friction), 0.16,
+   rounded (engine/pmove.s pm_water_scale: the same) */
+static const int32_t water_scale[PM_DT_MAX + 1] = { 65536, 61167, 56798, 52429, 48060, 43691, 39322 };
+/* PlayerPreThink's drag, 1 - 0.8 x waterlevel x dt / 60, 0.16, truncated
+   (pm_water_drag) */
+static const int32_t water_drag[PM_DT_MAX + 1][4] = {
+	{ 65536, 65536, 65536, 65536 }, { 65536, 64662, 63788, 62914 }, { 65536, 63788, 62040, 60293 },
+	{ 65536, 62914, 60293, 57671 }, { 65536, 62040, 58545, 55050 }, { 65536, 61166, 56797, 52428 },
+	{ 65536, 60293, 55050, 49807 },
+};
+
+/* gravity over a tick longer than a 60th: the move takes the tick's average
+   speed, not its end speed (the parabola's own chord: a jump tops out at
+   ~45 units at every tick rate, not lower and lower as the ticks lengthen),
+   g dt^2 / 2 in pos_acc units (1/8 unit x 1/60): 800 x 8 x dt^2 / 120. Not
+   at 60 Hz (dt 1: 0), Quake's own step. (engine/pmove.s pm_grav_mid) */
+static const int32_t grav_mid[PM_DT_MAX + 1] = { 0, 0, 213, 480, 853, 1333, 1920 };
+
+static int pm_dt;      /* this tick's length (pmove_step), for the routines below */
 
 /* floor(sqrt(v)), bit by bit: no division, exact */
 static int32_t isqrt32(uint32_t v)
@@ -231,7 +247,7 @@ static int slide_move(pmove_t *pm, const int32_t move[3])
 		   a move that should run along a slope slightly INTO it, and the
 		   trace then stops dead every bump (stuck at the foot of ramps) */
 		for (int k = 0; k < 3; k++) {
-			int32_t num = vel[k] * CLIP_SUB;
+			int32_t num = vel[k] * CLIP_SUB * pm_dt;
 			rem[k] = (num + (num >= 0 ? PM_HZ / 2 : -PM_HZ / 2)) / PM_HZ;
 		}
 	}
@@ -282,7 +298,7 @@ static void ground_friction(pmove_t *pm)
 		return;
 
 	int32_t control  = speed < PM_STOPSPEED ? PM_STOPSPEED : speed;
-	int32_t drop     = control * PM_FRICTION / PM_HZ;
+	int32_t drop     = control * PM_FRICTION * pm_dt / PM_HZ;
 	int32_t newspeed = speed - drop;
 	if (newspeed < 0)
 		newspeed = 0;
@@ -305,7 +321,7 @@ static void accelerate(pmove_t *pm, const int32_t wishdir[3], int32_t cap, int32
 	if (add <= 0)
 		return;
 
-	int32_t accel = PM_ACCEL * rate / PM_HZ;
+	int32_t accel = PM_ACCEL * rate * pm_dt / PM_HZ;
 	if (accel > add)
 		accel = add;
 
@@ -358,7 +374,7 @@ static void water_move(pmove_t *pm, const pmove_cmd_t *cmd, const int32_t fwd3[3
 	wishspeed = wishspeed * 7 / 10;
 
 	for (int k = 0; k < 3; k++)
-		pm->vel[k] = pm->vel[k] * PM_WATER_SCALE / 65536;
+		pm->vel[k] = pm->vel[k] * water_scale[pm_dt] / 65536;
 	int32_t newspeed = isqrt32((uint32_t) dot_ii(pm->vel, pm->vel));
 
 	if (!wishspeed)
@@ -366,7 +382,7 @@ static void water_move(pmove_t *pm, const pmove_cmd_t *cmd, const int32_t fwd3[3
 	int32_t addspeed = wishspeed - newspeed * 64;
 	if (addspeed <= 0)
 		return;
-	int32_t accel = PM_ACCEL * wishspeed / PM_HZ;
+	int32_t accel = PM_ACCEL * wishspeed * pm_dt / PM_HZ;
 	if (accel > addspeed)
 		accel = addspeed;
 	for (int k = 0; k < 3; k++)
@@ -377,10 +393,10 @@ static void water_move(pmove_t *pm, const pmove_cmd_t *cmd, const int32_t fwd3[3
    FL_WATERJUMP holds: up to 2 s, or until out of the water */
 static void water_jump(pmove_t *pm)
 {
-	if (pm->waterjump <= 1 || !pm->waterlevel)
+	if (pm->waterjump <= pm_dt || !pm->waterlevel)
 		pm->waterjump = 0;
 	else
-		pm->waterjump--;
+		pm->waterjump -= pm_dt;
 	pm->vel[0] = pm->movedir[0];
 	pm->vel[1] = pm->movedir[1];
 }
@@ -397,6 +413,7 @@ static int32_t horiz_dist2(const int32_t a[3], const int32_t b[3])
 
 void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 {
+	pm_dt = cmd->dt;
 	pm->touched = 0;
 	int32_t sy = r_sin(pm->yaw), cy = r_cos(pm->yaw);
 	int32_t right[3] = { sy, -cy, 0 };            /* Quake AngleVectors, roll 0 */
@@ -404,7 +421,7 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 	if (pm->noclip) {
 		int32_t sp = r_sin(pm->pitch), cp = r_cos(pm->pitch);
 		int32_t fwd[3] = { (cp * cy) >> 12, (cp * sy) >> 12, -sp };
-		int s = NOCLIP_SPEED * CLIP_SUB * (cmd->walk ? 1 : 4);
+		int s = NOCLIP_SPEED * CLIP_SUB * (cmd->walk ? 1 : 4) * pm_dt;
 		int32_t fs = (cmd->fwd * s) >> 7, ss = (cmd->side * s) >> 7;   /* / PM_AXIS */
 		for (int k = 0; k < 3; k++)
 			pm->pos[k] += (fwd[k] * fs + right[k] * ss) >> Q_FIX_SHIFT;
@@ -451,7 +468,7 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 	   push (the game found the ledge), PlayerJump ---- */
 	if (pm->waterlevel && !pm->waterjump)
 		for (int k = 0; k < 3; k++)
-			pm->vel[k] = pm->vel[k] * water_drag[pm->waterlevel] / 65536;
+			pm->vel[k] = pm->vel[k] * water_drag[pm_dt][pm->waterlevel] / 65536;
 	if (cmd->waterjump) {
 		pm->waterjump    = PM_WATERJUMP_TICKS;
 		pm->vel[2]       = PM_WATERJUMP_UP;
@@ -473,8 +490,9 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 
 	/* ---- SV_Physics_Client: the water, gravity out of it, the move ---- */
 	int inwater = check_water(pm);
-	if (!pm->onground && !inwater && !pm->waterjump) {
-		pm->grav_acc += PM_GRAVITY;
+	int grav    = !pm->onground && !inwater && !pm->waterjump;
+	if (grav) {
+		pm->grav_acc += PM_GRAVITY * pm_dt;
 		pm->vel[2] -= pm->grav_acc / PM_HZ;
 		pm->grav_acc %= PM_HZ;
 	} else {
@@ -486,9 +504,11 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 	}
 
 	/* this frame's displacement, with sub-unit carry so slow walking moves */
+	if (grav)
+		pm->pos_acc[2] += grav_mid[pm_dt];
 	int32_t move[3];
 	for (int k = 0; k < 3; k++) {
-		pm->pos_acc[k] += pm->vel[k] * CLIP_SUB;
+		pm->pos_acc[k] += pm->vel[k] * CLIP_SUB * pm_dt;
 		move[k] = pm->pos_acc[k] / PM_HZ;
 		pm->pos_acc[k] -= move[k] * PM_HZ;
 	}

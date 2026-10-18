@@ -2,7 +2,8 @@
 #
 # Port of engine/pmove.c, which is the specification: same algorithm, same
 # integer operations, bit-identical results (the bench build links both and
-# compares them tick by tick). Quake's player physics at a fixed 60 Hz tick:
+# compares them tick by tick). Quake's player physics over a tick of dt
+# 60ths of a second (CMD_DT, 1 .. 6: the game's tick rate):
 # categorize (on the ground?), wish direction, then SV_ClientThink's intent
 # (SV_WaterJump / SV_WaterMove / friction and acceleration), PlayerPreThink's
 # drag, water jump and PlayerJump, SV_CheckWater, gravity, speed cap, then
@@ -44,7 +45,6 @@
 .set PM_WATERJUMP_TICKS, 120 # FL_WATERJUMP's 2 s
 .set PM_WATERJUMP_UP, 225
 .set PM_SINK,         60     # SV_WaterMove's drift to the bottom, units/s
-.set PM_WATER_SCALE, 61167   # 1 - 4/60, 0.16
 
 # VCOPY d, s / VZERO d: int32[3] at scratchpad offsets. VCOPY clobbers t0-t2.
 .macro VCOPY d, s
@@ -150,11 +150,26 @@
 	sw      $t6, \to+80(\tb)
 .endm
 
-# the drag of PlayerPreThink's WaterMove by water level: 1 - 0.8 wl / 60, 0.16
+# the drag of PlayerPreThink's WaterMove by tick length (rows: dt 0 .. 6) and
+# water level: 1 - 0.8 wl dt / 60, 0.16, truncated (engine/pmove.c water_drag)
 	.section .rodata.pm_water_drag, "a", @progbits
 	.align  2
 pm_water_drag:
+	.word   65536, 65536, 65536, 65536
 	.word   65536, 64662, 63788, 62914
+	.word   65536, 63788, 62040, 60293
+	.word   65536, 62914, 60293, 57671
+	.word   65536, 62040, 58545, 55050
+	.word   65536, 61166, 56797, 52428
+	.word   65536, 60293, 55050, 49807
+# SV_WaterMove's friction over the tick, 1 - 4 dt / 60, 0.16, rounded (dt 0 .. 6;
+# pmove.c water_scale)
+pm_water_scale:
+	.word   65536, 61167, 56798, 52429, 48060, 43691, 39322
+# gravity's midpoint over a tick longer than a 60th: g dt^2 / 2 in pos_acc
+# units, 800 x 8 x dt^2 / 120; 0 at dt 1 (pmove.c grav_mid)
+pm_grav_mid:
+	.word   0, 0, 213, 480, 853, 1333, 1920
 
 	.section .text.pmove_step, "ax", @progbits
 	.global pmove_step
@@ -175,6 +190,34 @@ pmove_step:
 	lui     $s7, 0x1F80
 	move    $s0, $a0                     # pmove_t
 	move    $s1, $a1                     # cmd
+
+	# the tick's length (dt 60ths of a second) and the rates' factors
+	lw      $t0, CMD_DT($s1)
+	lui     $t3, %hi(pm_water_scale)
+	sll     $t1, $t0, 2                  # 4 dt: friction
+	sll     $t2, $t0, 3                  # 8 dt: the move (vel x CLIP_SUB)
+	sw      $t0, PS_DT($s7)
+	sw      $t1, PS_DT4($s7)
+	sw      $t2, PS_DT8($s7)
+	sll     $t4, $t0, 1
+	addu    $t4, $t4, $t2                # 10 dt: acceleration
+	sw      $t4, PS_DT10($s7)
+	li      $t4, PM_GRAVITY
+	mult    $t0, $t4                     # 800 dt: gravity
+	addu    $t3, $t3, $t1                # (dt x 4: the scale's entry)
+	lw      $t3, %lo(pm_water_scale)($t3)
+	lui     $t7, %hi(pm_grav_mid)
+	addu    $t7, $t7, $t1
+	lw      $t7, %lo(pm_grav_mid)($t7)
+	sll     $t5, $t0, 4                  # dt x 16: the drag's row
+	lui     $t6, %hi(pm_water_drag)
+	addiu   $t6, $t6, %lo(pm_water_drag)
+	addu    $t6, $t6, $t5
+	sw      $t3, PS_WSCALE($s7)
+	sw      $t6, PS_DRAG($s7)
+	sw      $t7, PS_GMIDDT($s7)
+	mflo    $t4
+	sw      $t4, PS_DTG($s7)
 
 	PMCOPY  PM_POS, $s7, 0, $s0            # pmove_t -> scratchpad
 	sw      $zero, PM_TOUCHED($s7)       # (nothing run into yet this tick)
@@ -215,7 +258,11 @@ pmove_step:
 	beqz    $t0, 1f
 	nop
 	li      $s6, NOCLIP_SPEED * CLIP_SUB # s = speed (x4 unless walking)
-1:	lw      $t0, CMD_FWD($s1)
+1:	lw      $t0, PS_DT($s7)              # x dt: the tick's distance
+	nop
+	mult    $s6, $t0
+	mflo    $s6
+	lw      $t0, CMD_FWD($s1)
 	lw      $t1, CMD_SIDE($s1)
 	mult    $t0, $s6
 	mflo    $t8
@@ -371,9 +418,10 @@ ps_walk:
 	beqz    $t0, 8f
 	sll     $t0, $t0, 2
 	bnez    $t1, 8f
-	lui     $t2, %hi(pm_water_drag)
+	lw      $t2, PS_DRAG($s7)            # the tick's row
+	nop
 	addu    $t2, $t2, $t0
-	lw      $t2, %lo(pm_water_drag)($t2)   # the drag of this level, 0.16
+	lw      $t2, 0($t2)                  # the drag of this level, 0.16
 	lw      $t0, PM_VEL+0($s7)
 	lw      $t1, PM_VEL+4($s7)
 	mult    $t0, $t2
@@ -451,18 +499,22 @@ ps_walk:
 	bnez    $t0, 6f
 	lw      $t1, PM_GRAVACC($s7)
 	bnez    $v0, 6f
-	li      $t2, PM_HZ
+	lw      $t7, PS_DTG($s7)             # (gravity x dt)
 	bnez    $t6, 6f
-	addiu   $t1, $t1, PM_GRAVITY
+	li      $t2, PM_HZ
+	addu    $t1, $t1, $t7
 	div     $zero, $t1, $t2
 	lw      $t3, PM_VEL+8($s7)
 	mflo    $t4                          # grav_acc / 60
 	mfhi    $t5                          # grav_acc % 60
 	subu    $t3, $t3, $t4
 	sw      $t3, PM_VEL+8($s7)
-	b       7f
+	lw      $t6, PS_GMIDDT($s7)          # (the move takes gravity's midpoint)
 	sw      $t5, PM_GRAVACC($s7)
+	b       7f
+	sw      $t6, PS_GMID($s7)
 6:	sw      $zero, PM_GRAVACC($s7)
+	sw      $zero, PS_GMID($s7)
 
 7:	li      $t3, PM_MAXVELOCITY          # cap each component (sv_maxvelocity)
 	li      $t4, -PM_MAXVELOCITY
@@ -482,13 +534,16 @@ ps_walk:
 	bnez    $t6, 8b
 	addiu   $t5, $t5, 4
 
-	# this tick's displacement with sub-unit carry: pos_acc += vel * 8,
+	# this tick's displacement with sub-unit carry: pos_acc += vel x 8 dt,
 	# move = pos_acc / 60, pos_acc = its remainder
+	lw      $t9, PS_DT8($s7)
 	li      $t3, PM_HZ
 	lw      $t0, PM_VEL+0($s7)
 	lw      $t1, PM_POSACC+0($s7)
-	sll     $t0, $t0, 3
+	mult    $t9, $t0
+	mflo    $t0
 	addu    $t1, $t1, $t0
+	nop                                  # (two apart from the div: HI/LO)
 	div     $zero, $t1, $t3
 	mflo    $t0
 	mfhi    $t1
@@ -496,8 +551,10 @@ ps_walk:
 	sw      $t1, PM_POSACC+0($s7)
 	lw      $t0, PM_VEL+4($s7)
 	lw      $t1, PM_POSACC+4($s7)
-	sll     $t0, $t0, 3
+	mult    $t9, $t0
+	mflo    $t0
 	addu    $t1, $t1, $t0
+	nop
 	div     $zero, $t1, $t3
 	mflo    $t0
 	mfhi    $t1
@@ -505,8 +562,12 @@ ps_walk:
 	sw      $t1, PM_POSACC+4($s7)
 	lw      $t0, PM_VEL+8($s7)
 	lw      $t1, PM_POSACC+8($s7)
-	sll     $t0, $t0, 3
+	lw      $t2, PS_GMID($s7)
+	mult    $t9, $t0
+	addu    $t1, $t1, $t2                # (+ gravity's midpoint, a longer tick)
+	mflo    $t0
 	addu    $t1, $t1, $t0
+	nop
 	div     $zero, $t1, $t3
 	mflo    $t0
 	mfhi    $t1
@@ -776,8 +837,9 @@ water_move:
 	nop
 	div     $zero, $s3, $t1
 	mflo    $s3                          # wishspeed = x 0.7
-	# the water friction on the whole velocity: vel x 61167 / 65536, truncating
-	li      $t2, PM_WATER_SCALE
+	# the water friction on the whole velocity: vel x the tick's scale / 65536,
+	# truncating
+	lw      $t2, PS_WSCALE($s7)
 	li      $t4, 65536
 	lw      $t0, PM_VEL+0($s7)
 	lw      $t1, PM_VEL+4($s7)
@@ -815,14 +877,15 @@ water_move:
 	sll     $v0, $v0, 6                  # newspeed x64
 	subu    $t0, $s3, $v0                # addspeed = wishspeed - newspeed
 	blez    $t0, 9f
-	li      $t1, PM_ACCEL
+	lw      $t1, PS_DT10($s7)
+	nop
 	mult    $s3, $t1
 	li      $t2, PM_HZ
 	mflo    $s4
 	nop
 	nop
 	div     $zero, $s4, $t2
-	mflo    $s4                          # accel = 10 wishspeed / 60
+	mflo    $s4                          # accel = 10 wishspeed dt / 60
 	slt     $t1, $t0, $s4
 	beqz    $t1, 3f
 	nop
@@ -855,10 +918,11 @@ water_move:
 # velocity while FL_WATERJUMP holds: up to 2 s, or until out of the water.
 water_jump:
 	lw      $t0, PM_WATERJUMP($s7)
+	lw      $t3, PS_DT($s7)
 	lw      $t1, PM_WATERLEVEL($s7)
-	slti    $t2, $t0, 2                  # <= 1: over
-	bnez    $t2, 1f
-	addiu   $t0, $t0, -1
+	slt     $t2, $t3, $t0                # dt < left: on
+	beqz    $t2, 1f                      # (<= dt: over)
+	subu    $t0, $t0, $t3
 	bnez    $t1, 2f
 	nop
 1:	move    $t0, $zero
@@ -925,8 +989,8 @@ categorize:
 	addiu   $sp, $sp, 8
 
 # =============================================================================
-# friction: ground friction, speed -= max(speed, stopspeed) * 4 / 60, applied
-# as one 0.16 scale factor.
+# friction: ground friction, speed -= max(speed, stopspeed) * 4 dt / 60,
+# applied as one 0.16 scale factor.
 friction:
 	addiu   $sp, $sp, -8
 	sw      $ra, 0($sp)
@@ -940,7 +1004,8 @@ friction:
 	beqz    $t0, 1f
 	nop
 	li      $t1, PM_STOPSPEED
-1:	li      $t2, PM_FRICTION
+1:	lw      $t2, PS_DT4($s7)             # PM_FRICTION x dt
+	nop
 	mult    $t1, $t2
 	li      $t2, PM_HZ
 	mflo    $t1
@@ -981,7 +1046,7 @@ friction:
 
 # =============================================================================
 # accelerate(a0 = cap, a1 = rate): speed along wishdir up to `cap`, gaining
-# at most 10 * rate / 60 this tick (Quake's SV_Accelerate / AirAccelerate).
+# at most 10 * rate * dt / 60 this tick (Quake's SV_Accelerate / AirAccelerate).
 accelerate:
 	addiu   $t9, $s7, PM_VEL
 	addiu   $t8, $s7, PS_WISH
@@ -989,7 +1054,8 @@ accelerate:
 	sra     $v0, $v0, 12                 # current speed along wishdir
 	subu    $v0, $a0, $v0                # add = cap - cur
 	blez    $v0, 9f
-	li      $t0, PM_ACCEL
+	lw      $t0, PS_DT10($s7)            # PM_ACCEL x dt
+	nop
 	mult    $a1, $t0
 	li      $t1, PM_HZ
 	mflo    $t0
@@ -1262,9 +1328,11 @@ sm_check:                                # reverses the original push: stop
 	DOT_II  $v0, $t9, $t8
 	blez    $v0, sm_stop
 	li      $t4, PM_HZ
-	lw      $t0, PS_SVEL+0($s7)          # rem = (vel * 8 +- 30) / 60
+	lw      $t9, PS_DT8($s7)
+	lw      $t0, PS_SVEL+0($s7)          # rem = (vel x 8 dt +- 30) / 60
 	nop
-	sll     $t0, $t0, 3
+	mult    $t9, $t0
+	mflo    $t0
 	sra     $t1, $t0, 31
 	xori    $t2, $t1, PM_HZ / 2
 	subu    $t2, $t2, $t1
@@ -1274,7 +1342,8 @@ sm_check:                                # reverses the original push: stop
 	sw      $t0, PS_REM+0($s7)
 	lw      $t0, PS_SVEL+4($s7)
 	nop
-	sll     $t0, $t0, 3
+	mult    $t9, $t0
+	mflo    $t0
 	sra     $t1, $t0, 31
 	xori    $t2, $t1, PM_HZ / 2
 	subu    $t2, $t2, $t1
@@ -1284,7 +1353,8 @@ sm_check:                                # reverses the original push: stop
 	sw      $t0, PS_REM+4($s7)
 	lw      $t0, PS_SVEL+8($s7)
 	nop
-	sll     $t0, $t0, 3
+	mult    $t9, $t0
+	mflo    $t0
 	sra     $t1, $t0, 31
 	xori    $t2, $t1, PM_HZ / 2
 	subu    $t2, $t2, $t1

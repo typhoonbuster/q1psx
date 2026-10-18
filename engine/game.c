@@ -18,6 +18,10 @@
 
 player_t pl;
 int      game_tick_count;
+int      game_dt = 1;
+int      game_tick_hz = 60;
+int32_t  game_view_lerp[3];
+int      game_view_cut = 1;
 
 #define SUB CLIP_SUB                            /* 8 position sub-units per world unit */
 #undef TICKS                                    /* (ents.h's: the same, with 60) */
@@ -191,13 +195,14 @@ static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int smoke)
 }
 
 /* R_DrawParticles' run: the active list walked, a dead particle (its time
-   or its ramp's end) unlinked onto the free list */
-static void particles_tick(void)
+   or its ramp's end) unlinked onto the free list; one 60th of a second
+   ending at `now` */
+static void particles_step(int now)
 {
 	uint16_t *link = &part_active;
 	for (int i = part_active; i; ) {
 		particle_t *p = &particles[i - 1];
-		int dead = p->die <= game_tick_count;
+		int dead = p->die <= now;
 		if (!dead) {
 			for (int k = 0; k < 3; k++)
 				p->org[k] += p->vel[k] >> PV_SHIFT;
@@ -242,6 +247,14 @@ static void particles_tick(void)
 		}
 		i = next;
 	}
+}
+
+/* the tick's particles: each 60th of it in turn (the client's frames: they
+   move as at the 60 Hz tick, whatever the tick rate) */
+static void particles_tick(void)
+{
+	for (int t = game_tick_count - game_dt + 1; t <= game_tick_count; t++)
+		particles_step(t);
 }
 
 /* ----------------------------------------------------------- projectiles -- */
@@ -317,16 +330,16 @@ static void proj_move(proj_t *p)
 	if (p->type == PJ_GRENADE) {
 		if (p->onground)
 			return;
-		p->grav_acc += 800;                           /* sv_gravity per tick, exactly */
+		p->grav_acc += 800 * game_dt;                 /* sv_gravity over the tick, exactly */
 		p->vel[2] -= p->grav_acc / GAME_HZ;
 		p->grav_acc %= GAME_HZ;
-		p->roll += DEG(300) / GAME_HZ;                /* avelocity '300 300 300' */
-		p->pitch += DEG(300) / GAME_HZ;
-		p->yaw += DEG(300) / GAME_HZ;
+		p->roll += DEG(300) / GAME_HZ * game_dt;      /* avelocity '300 300 300' */
+		p->pitch += DEG(300) / GAME_HZ * game_dt;
+		p->yaw += DEG(300) / GAME_HZ * game_dt;
 	}
 	int32_t end[3];
-	for (int k = 0; k < 3; k++)
-		end[k] = p->org[k] + (int32_t) (((int64_t) p->vel[k] * SUB * 1092) >> 16);   /* x 8/60 */
+	for (int k = 0; k < 3; k++)                       /* x 8 dt / 60 */
+		end[k] = p->org[k] + (int32_t) (((int64_t) p->vel[k] * SUB * 1092 * game_dt) >> 16);
 	trace_t tr;
 	clip_trace(0, p->org, end, &tr);
 	int hit = tr.fraction < Q_FIX_ONE || tr.startsolid;
@@ -452,7 +465,7 @@ static void bubble_tick(proj_t *p)
 		p->vel[2] = rnd3;
 	}
 	for (int k = 0; k < 3; k++) {                     /* SV_Physics_Noclip */
-		p->end[k] += p->vel[k] * SUB;
+		p->end[k] += p->vel[k] * SUB * game_dt;
 		p->org[k] += p->end[k] / GAME_HZ;
 		p->end[k] -= p->end[k] / GAME_HZ * GAME_HZ;
 	}
@@ -1447,6 +1460,7 @@ static void parms_apply(void)
 /* PutClientInServer with DecodeLevelParms: SelectSpawnPoint's spot */
 void game_spawn_level(void)
 {
+	game_view_cut = 1;                            /* (the scheduler: no lerp across it) */
 	if (!parms.valid)
 		game_new_parms();
 	if (game_serverflags && world.map_name && !strcmp(world.map_name, "START"))
@@ -1489,6 +1503,7 @@ void game_init(void)
    debug menu's start */
 void game_spawn(void)
 {
+	game_view_cut = 1;
 	memset(&pl.pm, 0, sizeof pl.pm);
 	pl.pm.pos[0] = world.spawn[0] * SUB;
 	pl.pm.pos[1] = world.spawn[1] * SUB;
@@ -1612,7 +1627,7 @@ static void check_water_jump(pmove_cmd_t *pc)
 
 void game_tick(const game_cmd_t *cmd)
 {
-	game_tick_count++;
+	game_tick_count += game_dt;
 	pl.fire_was = pl.fire;
 	pl.fire     = cmd->fire;
 
@@ -1632,6 +1647,7 @@ void game_tick(const game_cmd_t *cmd)
 		pc.jump = cmd->jump;
 		pc.walk = cmd->walk;
 		pc.waterjump = 0;
+		pc.dt = game_dt;
 		if (cmd->centre)
 			pl.pm.pitch = 0;
 		/* SV_AirMove: no backing into the teleporter for 0.7 s */
@@ -1681,18 +1697,21 @@ void game_tick(const game_cmd_t *cmd)
 	projs_tick();
 	damage_report();                              /* SV_WriteClientdataToMessage's svc_damage */
 	/* the flashes fade: the bonus 100 % a second, the damage 150 % */
-	pl.bonus_pct  -= 100 * 256 / GAME_HZ;
-	pl.damage_pct -= 150 * 256 / GAME_HZ;
+	pl.bonus_pct  -= 100 * 256 / GAME_HZ * game_dt;
+	pl.damage_pct -= 150 * 256 / GAME_HZ * game_dt;
 	if (pl.bonus_pct < 0)  pl.bonus_pct = 0;
 	if (pl.damage_pct < 0) pl.damage_pct = 0;
 	particles_tick();
-	dl_decay(game_tick_count);
+	dl_decay(game_tick_count, game_dt);
 
 	/* the view's kicks decay: punchangle 10 degrees per second */
-	if (pl.punch < 0) { pl.punch += DEG(10) / GAME_HZ; if (pl.punch > 0) pl.punch = 0; }
-	if (pl.punch > 0) { pl.punch -= DEG(10) / GAME_HZ; if (pl.punch < 0) pl.punch = 0; }
-	if (pl.dmg_time > 0)
-		pl.dmg_time--;
+	if (pl.punch < 0) { pl.punch += DEG(10) / GAME_HZ * game_dt; if (pl.punch > 0) pl.punch = 0; }
+	if (pl.punch > 0) { pl.punch -= DEG(10) / GAME_HZ * game_dt; if (pl.punch < 0) pl.punch = 0; }
+	if (pl.dmg_time > 0) {
+		pl.dmg_time -= game_dt;
+		if (pl.dmg_time < 0)
+			pl.dmg_time = 0;
+	}
 }
 
 /* ------------------------------------------------------------------ view -- */
@@ -1723,19 +1742,28 @@ static int calc_roll(void)
 	return sign * side * DEG(2) / 200;
 }
 
-void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll)
+/* the view's position (a tick's: the bob follows its time and speed) */
+void game_view_pos(int32_t pos[3])
 {
 	if (level_intermission) {                     /* the intermission's spot: view_ofs 0 */
 		memcpy(pos, level_camera, 3 * sizeof *pos);
-		*pitch = level_camera_angles[0];
-		*yaw   = level_camera_angles[1];
-		*roll  = level_camera_angles[2];
 		return;
 	}
 	int bob = pl.dead ? 0 : calc_bob();
 	pos[0] = pl.pm.pos[0];
 	pos[1] = pl.pm.pos[1];
 	pos[2] = pl.pm.pos[2] + pl.viewheight + bob;
+}
+
+/* the view's angles (each poll's: the pad turns the view between ticks) */
+void game_view_angles(int *yaw, int *pitch, int *roll)
+{
+	if (level_intermission) {
+		*pitch = level_camera_angles[0];
+		*yaw   = level_camera_angles[1];
+		*roll  = level_camera_angles[2];
+		return;
+	}
 	*yaw   = pl.pm.yaw;
 	*pitch = pl.pm.pitch + pl.punch;
 	*roll  = pl.dead ? DEG(80) : calc_roll();
@@ -1743,6 +1771,12 @@ void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll)
 		*roll  += pl.dmg_roll * pl.dmg_time / TICKS(50);
 		*pitch += pl.dmg_pitch * pl.dmg_time / TICKS(50);
 	}
+}
+
+void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll)
+{
+	game_view_pos(pos);
+	game_view_angles(yaw, pitch, roll);
 }
 
 /* ---------------------------------------------------------------- render -- */
@@ -1796,8 +1830,8 @@ void game_render(void)
 		int32_t f[3], r[3], u[3], org[3];
 		int bob = calc_bob();
 		view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
-		for (int k = 0; k < 3; k++)
-			org[k] = pl.pm.pos[k] + f[k] * bob * 4 / 10 / 4096;
+		for (int k = 0; k < 3; k++)                   /* (at the camera, drawn between ticks) */
+			org[k] = pl.pm.pos[k] + f[k] * bob * 4 / 10 / 4096 + game_view_lerp[k];
 		org[2] += pl.viewheight + bob + (r_viewport_rows() < 240 ? 2 * SUB : 0);
 		const qw_leaf *leaf = leaf_at(org);
 		int light = leaf ? leaf->light : 128;

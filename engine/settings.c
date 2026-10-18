@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "dlight.h"
+#include "game.h"
 #include "hud.h"
 #include "render.h"
 #include "settings.h"
@@ -15,6 +16,11 @@ const int num_warp_t      = (int) sizeof warp_t_px;
 const int num_warp_budget = (int) (sizeof warp_budgets / sizeof warp_budgets[0]);
 const uint8_t fps_caps[]  = { 60, 45, 30, 15 };
 const int num_fps_caps    = (int) sizeof fps_caps;
+/* the game's ticks a second (engine/main.c player_update): 60 a tick per
+   vblank; fewer ticks, less work a second (the physics' traces, the thinks,
+   the touches), the camera drawn between two ticks */
+const uint8_t tick_rates[] = { 10, 20, 30, 32, 60 };
+const int num_tick_rates   = (int) sizeof tick_rates;
 
 settings_t settings;
 int settings_fid_mask = (1 << FIDELITY_LEVELS) - 1;
@@ -34,14 +40,17 @@ void settings_defaults(void)
 	settings.volume  = 7;
 	settings.music   = 10;
 	settings.fps_cap = 0;                /* 60: no cap */
+	settings.tick    = 3;                /* 32 ticks a second */
 }
 
 void settings_apply(void)
 {
 #if Q1PSX_PADSCRIPT
-	printf("settings: fid %d tex4 %d dither %d warp %d t %d budget %d hud %d dlights %d vol %d music %d\n",
+	printf("settings: fid %d tex4 %d dither %d warp %d t %d budget %d hud %d dlights %d vol %d music %d "
+	       "fps %d tick %d\n",
 	       settings.fidelity, settings.tex4, settings.dither, settings.warp, settings.t, settings.budget,
-	       settings.hud, settings.dlights, settings.volume, settings.music);
+	       settings.hud, settings.dlights, settings.volume, settings.music, fps_caps[settings.fps_cap],
+	       tick_rates[settings.tick]);
 #endif
 	r_set_warp(settings.warp, warp_t_px[settings.t], warp_budgets[settings.budget]);
 	vid_set_dither(settings.dither);
@@ -50,6 +59,7 @@ void settings_apply(void)
 	snd_set_volume(settings.volume);
 	snd_set_cd_volume(settings.music);
 	vid_set_fps_cap(fps_caps[settings.fps_cap]);
+	game_tick_hz = tick_rates[settings.tick];
 }
 
 int settings_fid_step(int fid, int d)

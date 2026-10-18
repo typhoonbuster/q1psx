@@ -99,15 +99,17 @@ dlight_t *dl_alloc(int key, int now)
 	return dl;
 }
 
-void dl_decay(int now)
+void dl_decay(int now, int dt)
 {
-	dlight_t *dl = dlights;
-	for (int i = 0; i < MAX_DLIGHTS; i++, dl++) {
-		if (dl->die < now || !dl->radius)
-			continue;
-		dl->radius -= dl->decay / 60;        /* per tick */
-		if (dl->radius < 0)
-			dl->radius = 0;
+	for (int t = now - dt + 1; t <= now; t++) {   /* each 60th of the tick, as at 60 Hz */
+		dlight_t *dl = dlights;
+		for (int i = 0; i < MAX_DLIGHTS; i++, dl++) {
+			if (dl->die < t || !dl->radius)
+				continue;
+			dl->radius -= dl->decay / 60;
+			if (dl->radius < 0)
+				dl->radius = 0;
+		}
 	}
 }
 
