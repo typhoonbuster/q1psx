@@ -3964,3 +3964,79 @@ Reported: the lava's surface untextured, and the tint when swimming in water the
   the three versions and a comparison sent (one underwater frame of start
   with Quake's three shifts); kept as Quake has it, a decision left open.
 
+## §37 — The draw distance and the flat shading (2026-10-18)
+
+Next: the draw distance and flat shading options, the two graphics options proposed during pass 4 (§34) for gains that change
+the picture (the rule: such a gain becomes the player's option).
+Both are in Graphics (and the debug map menu), off by default.
+
+- **Nothing while off.** The record loops (RECLOOP `dr`, `de`) are left
+  as they were: the options run in copies of them, `dro1` (the draw
+  distance), `dro2` (the flat shading), `dro3` (both) and `deo1` (the
+  models' draw distance), entered through self-modifying code. render.c
+  `r_set_options` writes the first word of `dr_records` / `de_records` as
+  a jump to the copy, points the dynamic lights' hook's three returns
+  (`dlr_ret0..2`) at it, turns the walk's `jal mark_pvs` into `jal
+  mark_pvs_far`, sets the thresholds as `slti` immediates, then calls
+  `FlushCache()`; with both off every word is put back. The display lists
+  of START's views and of the game bench are identical with the options
+  off (the graphics menu's pages aside: two rows more). The record loop's
+  second half became a macro (POLYS: the quads and triangles, CAREFUL, the
+  slow path's calls), instantiated Gouraud or flat.
+- **The draw distance** (off, 2048, 1536, 1024, 768 world units): a
+  depth D. The background turns black and so does the fog: a vertex's
+  light is multiplied by a factor of its SZ (r_fogtab, by SZ / 64, 128
+  down to 0 over the last quarter of D); a record wholly beyond D (z - rho
+  >= D, view units) is culled, black anyway. A record reaching into the
+  fog (z + rho past 0.75 D) whose centre is in it is drawn flat, its
+  average light darkened by the factor at its centre (cheaper than
+  Gouraud); one reaching in from before it (a big one) and the models go
+  through the fogged transform (XFORM fog: SZ / 64 -> the factor, a mult
+  per vertex). The PVS marking (`mark_pvs_far`) leaves out a leaf whose box
+  lies farther than 1.61 D + 64 units on an axis (1.61: a frustum
+  corner's distance over its depth), marked again once the camera has
+  moved 64 units; particles past the fog's middle are not drawn. A dynamic
+  light's block keeps its records' own lights (the fogged transform).
+- **The flat shading** (off, far, all): a record without a dynamic light
+  on its block, beyond 512 units (far) or any (all), is drawn in one
+  colour: its average light (the loader puts it in the record's flags,
+  bits 2 - 7), times the fog's factor at its centre when the draw
+  distance is on. Its vertices are transformed without their lights
+  (their colour words take that colour for the slow path, whose triangles
+  stay Gouraud); its quads and triangles go out as POLY_FT4 / POLY_FT3
+  (40 and 32 bytes instead of 52 and 40).
+- **Measured** (PCSX-Redux, `PROFILE=0`, frame cycles, the spawn views;
+  scratch scripts over `DRAWDIST=` / `FLAT=` bench builds):
+
+| Setting | START (10 views) | E1M8 | E3M4 | E1M7 |
+|---|---|---|---|---|
+| draw distance 768 | -1.2 % (v0 637 k -> 550 k) | -3.5 % (v0 -9.1 %, v7 -9.4 %) | -2.9 % (v5 -13.3 %) | -4.7 % (v0 683 k -> 501 k) |
+| draw distance 1024 | +0.4 % (v0 -0.5 %) | | | |
+| flat, all | -1.2 % (v0 -2.3 %) | -1.4 % | -1.1 % | -1.5 % |
+| flat, far (512) | +0.1 % (v0 -1.4 %) | | | |
+| 1024 + flat all | -0.1 % | | | |
+
+  The draw distance helps the deep views, the heaviest (START's hall:
+  under an NTSC frame at 768; E1M7's arena -27 %); a view whose geometry
+  is all near pays its tests and fogged transforms (+0.3 to +2.4 %), with
+  room to spare. In Quake's rooms little lies past 1024 units: 2048 and
+  1536 change little either way. Most of a heavy frame is near geometry:
+  the slow path is about 40 % of the busy time (E1M8's profile), which
+  the warp threshold, not these options, reduces (8 -> 16 px: -18 %).
+  First versions cost more than they saved (a fog over the last half of
+  D, a bit per option in a2: +3 % at 1024, the flat shading of far
+  records only: +0.6 %); the depths are now kept in registers from the
+  join to the decisions, the fog is the last quarter, and records in it
+  go flat.
+- **Checked**: DuckStation, every map played with the draw distance at
+  768 and the flat shading on (`PLAY=1 BENCH_MAPS=1`): 32/32, no GP0
+  error, no invalid read. Its frames against PCSX-Redux's on the same
+  binary: with the options off, the packet counts of the 128 views are
+  equal and 97 hashes differ (the animated textures and the 30 played
+  frames follow each emulator's timing); with them on, 9 views' counts
+  differ too, by whole particles (3 words) and model polygons on maps
+  with moving things (E1M4, E3M3, E3M7, E4M5, END): the particles' cut
+  and the culling depend on positions the timing changes. The patched
+  loops run alike on both (flat packets are 3 words shorter: the counts
+  would show a copy not entered).
+

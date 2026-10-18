@@ -70,6 +70,12 @@ static int      fid_loaded = -1;/* the settings.fidelity of the last load      *
 #ifndef Q1PSX_BENCH_TEX4
 #define Q1PSX_BENCH_TEX4 0    /* 1: the 4-bit textures (TEX4=1 scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_DRAWDIST
+#define Q1PSX_BENCH_DRAWDIST 0   /* the draw distance, world units (DRAWDIST=1024 scripts/bench.sh) */
+#endif
+#ifndef Q1PSX_BENCH_FLAT
+#define Q1PSX_BENCH_FLAT 0       /* the flat shading, R_FLAT_* (FLAT=1 scripts/bench.sh) */
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
@@ -79,6 +85,7 @@ static void apply_settings(void)
 	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T, 0);
 	vid_set_dither(1);
 	settings.tex4 = Q1PSX_BENCH_TEX4;
+	r_set_options(Q1PSX_BENCH_DRAWDIST, Q1PSX_BENCH_FLAT);
 #else
 	settings_apply();
 #endif
@@ -569,7 +576,7 @@ static const char *map_tag(int m)
 
 /* The options under the map list: L2 / R2 pick one, L1 / R1 change it. */
 enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_DLIGHTS, OPT_WEAPON, OPT_FPS,
-       OPT_TICK, OPT_COUNT };
+       OPT_TICK, OPT_DRAWDIST, OPT_FLAT, OPT_COUNT };
 static int opt_sel;
 
 static void opt_step(int d)
@@ -585,7 +592,9 @@ static void opt_step(int d)
 	case OPT_DLIGHTS: settings.dlights ^= 1; break;
 	case OPT_WEAPON: settings.viewmodel ^= 1; break;
 	case OPT_FPS:    settings.fps_cap = (settings.fps_cap + num_fps_caps + d) % num_fps_caps; break;
-	default:         settings.tick = (settings.tick + num_tick_rates + d) % num_tick_rates; break;
+	case OPT_TICK:   settings.tick = (settings.tick + num_tick_rates + d) % num_tick_rates; break;
+	case OPT_DRAWDIST: settings.drawdist = (settings.drawdist + num_draw_dists + d) % num_draw_dists; break;
+	default:         settings.flat = (settings.flat + R_FLAT_MODES + d) % R_FLAT_MODES; break;
 	}
 	apply_settings();   /* warp, dithering, the HUD at once; textures, fidelity on load */
 }
@@ -594,7 +603,7 @@ static void opt_draw(void)
 {
 	static const char *const label[OPT_COUNT] = {
 		"fidelity", "textures", "dither", "warp", "threshold", "budget", "hud", "dlights", "weapon",
-		"fps cap", "tick rate",
+		"fps cap", "tick rate", "distance", "flat",
 	};
 	char line[48], val[16];
 	for (int o = 0; o < OPT_COUNT; o++) {
@@ -609,7 +618,14 @@ static void opt_draw(void)
 		case OPT_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
 		case OPT_WEAPON: snprintf(val, sizeof val, "%s", settings.viewmodel ? "on" : "off"); break;
 		case OPT_FPS:    snprintf(val, sizeof val, "%d", fps_caps[settings.fps_cap]); break;
-		default:         snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
+		case OPT_TICK:   snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
+		case OPT_DRAWDIST:
+			if (draw_dists[settings.drawdist])
+				snprintf(val, sizeof val, "%d", draw_dists[settings.drawdist]);
+			else
+				snprintf(val, sizeof val, "off");
+			break;
+		default:         snprintf(val, sizeof val, "%s", flat_name[settings.flat]); break;
 		}
 		int x = 16 + (o % 2) * 152, y = 168 + (o / 2) * 10;
 		snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
@@ -1850,7 +1866,7 @@ int main(void)
 	snd_init();
 	music_init();
 	r_init();
-	vid_set_bg(40, 44, 60);   /* flat "sky" until R3.4 */
+	vid_set_bg(R_SKY_RGB);    /* flat "sky" until R3.4 */
 
 	printf("q1psx\n");
 

@@ -1,7 +1,8 @@
 /*
  * q1psx — the player's settings: the renderer's (fidelity, texture depth,
- * dithering, the affine-warp control, the dynamic lights), the HUD's, the
- * volumes, the frame rate cap and the game's tick rate. The debug build's
+ * dithering, the affine-warp control, the dynamic lights, the draw
+ * distance, the flat shading), the HUD's, the volumes, the frame rate cap
+ * and the game's tick rate. The debug build's
  * map menu and the release build's Options / Graphics menu (engine/menu.c)
  * change them; the fidelity and the texture depth take effect at a map's
  * load, the rest at once (settings_apply).
@@ -27,6 +28,8 @@ typedef struct {
 	int fps_cap;     /* fps_caps[] index: 60 (none), 45, 30, 15              */
 	int tick;        /* tick_rates[] index: the game's ticks a second        */
 	int viewmodel;   /* the weapon drawn (Quake's r_drawviewmodel)           */
+	int drawdist;    /* draw_dists[] index: the draw distance (0: off)       */
+	int flat;        /* R_FLAT_*: the flat shading                           */
 } settings_t;
 
 extern settings_t settings;
@@ -39,6 +42,9 @@ extern const uint8_t fps_caps[];
 extern const int num_fps_caps;
 extern const uint8_t tick_rates[];
 extern const int num_tick_rates;
+extern const uint16_t draw_dists[];       /* world units, 0: off */
+extern const int num_draw_dists;
+extern const char *const flat_name[];
 
 /* the fidelity levels the disc carries (bit n: level n; world_scan_maps) */
 extern int settings_fid_mask;

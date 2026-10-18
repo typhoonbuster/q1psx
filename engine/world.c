@@ -331,7 +331,9 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 	memset(world.face_visframe, 0, h->num_faces * 2);
 
 	/* each record's face index -> its byte offset in face_visframe (the
-	   asm adds it to the array as it is; faces < 32768) */
+	   asm adds it to the array as it is; faces < 32768); its average light
+	   / 4 into its flags' bits 2 - 7 (the flat shading's colour: r_world.s
+	   RECLOOP opt) */
 	{
 		uint8_t *r = (uint8_t *) world.faces;
 		for (uint32_t i = 0; i < h->num_records; i++) {
@@ -339,6 +341,12 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 			if (!rec->size)
 				break;
 			rec->face_id = (uint16_t) (rec->face_id << 1);
+			const uint8_t *light = r + rec->polys - ((rec->num_verts + 3) & ~3);
+			uint32_t sum = 0, n = rec->num_verts;
+			for (uint32_t k = 0; k < n; k++)
+				sum += light[k];
+			uint32_t avg = n ? (sum + n * 2) / (n * 4) : 0;
+			rec->flags = (uint8_t) ((rec->flags & (QWF_SKY | QWF_LIQUID)) | (avg > 63 ? 63 : avg) << 2);
 			r += rec->size;
 		}
 	}

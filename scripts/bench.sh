@@ -8,6 +8,9 @@
 #         FID picks the fidelity level the bench loads (default 2, high).
 #         T is the affine-warp threshold, fixed (default 8 px, the game's).
 #         TEX4=1 loads the 4-bit textures.
+#         DRAWDIST=<world units> renders with that draw distance (the fog,
+#         the culling: docs/porting-notes.md §37); FLAT=1 (far) or 2 (all)
+#         with the flat shading.
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
@@ -42,6 +45,8 @@ SECS=${1:-$([ "$BENCH_GAME" = 1 ] && echo 420 || echo 60)}
 FID=${FID:-2}
 T=${T:-8}
 TEX4=${TEX4:-0}
+DRAWDIST=${DRAWDIST:-0}
+FLAT=${FLAT:-0}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
@@ -59,6 +64,7 @@ FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
+      -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null

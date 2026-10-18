@@ -33,7 +33,8 @@ static const uint8_t sp_rows[]    = { 0 };
 #define MAIN_ITEMS         (int) sizeof main_rows
 #define SINGLEPLAYER_ITEMS (int) sizeof sp_rows
 enum { O_RESET, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
-enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_WEAPON, G_FPS, G_TICK, G_COUNT };
+enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_WEAPON, G_DRAWDIST, G_FLAT,
+       G_FPS, G_TICK, G_COUNT };
 #define SLIDER_RANGE       10
 #define GREY               56          /* a greyed entry's shade (128: as it is) */
 
@@ -177,6 +178,7 @@ static void graphics_draw(void)
 		"              Fidelity", "              Textures", "             Dithering",
 		"          Warp control", "             Threshold", "                Budget",
 		"                   HUD", "        Dynamic lights", "           Draw weapon",
+		"         Draw distance", "          Flat shading",
 		"        Frame rate cap", "             Tick rate" };
 	uint8_t rows[G_COUNT];
 	int n = graphics_rows(rows);
@@ -198,6 +200,13 @@ static void graphics_draw(void)
 		case G_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
 		case G_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
 		case G_WEAPON: snprintf(val, sizeof val, "%s", settings.viewmodel ? "on" : "off"); break;
+		case G_DRAWDIST:
+			if (draw_dists[settings.drawdist])
+				snprintf(val, sizeof val, "%d", draw_dists[settings.drawdist]);
+			else
+				snprintf(val, sizeof val, "off");
+			break;
+		case G_FLAT:   snprintf(val, sizeof val, "%s", flat_name[settings.flat]); break;
 		case G_FPS:    snprintf(val, sizeof val, "%d fps", fps_caps[settings.fps_cap]); break;
 		default:       snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
 		}
@@ -357,6 +366,8 @@ static void graphics_adjust(int g, int d)
 	case G_HUD:    settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
 	case G_DLIGHTS: settings.dlights ^= 1; break;
 	case G_WEAPON: settings.viewmodel ^= 1; break;
+	case G_DRAWDIST: settings.drawdist = wrap(settings.drawdist, d, num_draw_dists); break;
+	case G_FLAT:   settings.flat = wrap(settings.flat, d, R_FLAT_MODES); break;
 	case G_FPS:    settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;
 	default:       settings.tick = wrap(settings.tick, d, num_tick_rates); break;
 	}

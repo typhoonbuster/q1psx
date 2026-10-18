@@ -288,6 +288,13 @@ scratchpad for the duration of `r_frame`. Its GTE matrices:
    screen, whatever the 3D viewport (240 rows, or 192 above the original
    status bar).
 7. Sky and liquids come later (R3.4) as their own passes.
+8. **The graphics options** (`docs/porting-notes.md` §37): the draw
+   distance and the flat shading run in copies of the record loops
+   (RECLOOP `opt`: `dro1..3`, `deo1`) and of the PVS marking
+   (`mark_pvs_far`); `r_set_options` patches the loops' first words, the
+   dynamic lights' returns, the marking's call and the copies' thresholds
+   (`slti` immediates), then flushes the instruction cache. Off, the
+   original code runs untouched.
 
 ABI with C: asm entry points follow the MIPS o32 convention. They preserve
 `$s0-$s8`, `$gp`, `$sp`, and use the stack slots PSn00bSDK requires when they

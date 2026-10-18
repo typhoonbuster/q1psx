@@ -1219,4 +1219,11 @@ followed by R0-R4.
   V_SetContentsColor (nothing in the solid, the water's for any other
   contents); the water's colour is Quake's own (130, 80, 50). Every map
   recooked.
+- **The draw distance and the flat shading** (2026-10-18). §37: two
+  graphics options, off by default and free while off (the record loops'
+  copies entered by self-modifying code). The draw distance (2048 to 768
+  units) fogs to black over its last quarter, culls what lies beyond,
+  draws the fog's records flat and skips the PVS's far leaves: the
+  heaviest views -9 to -27 % at 768. The flat shading (far, all) draws a
+  record in its average light (POLY_FT4 / FT3): -1.1 to -1.5 %.
 

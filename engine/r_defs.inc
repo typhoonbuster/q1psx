@@ -45,6 +45,7 @@
 .set RS_VH2,          204
 .set RS_NLIGHTS,      208   # dynamic lights this frame, and their table
 .set RS_LIGHTS,       212   #   (engine/dlight.c rlight_t, 32 bytes each)
+.set RS_MARK_R,       216   # mark_pvs_far's reach, vertex units (render.c)
 .set DL_O,            0     # int32 origin[3], vertex units
 .set DL_RADIUS,       12    # vertex units
 .set DL_MINLIGHT,     16
@@ -177,7 +178,9 @@
 .set SP_T4,       0x3e8   # 2 x warp_t2: CAREFUL's 2 T2 zmin as one product
 .set SP_K16,      0x3ec   # r_state.warp_k16, the record warp bound
 .set SP_BMWALK,   0x3f0   # draw_bmodel: where dm_exit goes on after a block
-                          # of the model's walk, 0 outside one (free: 0x3f4 - 0x3fb)
+                          # of the model's walk, 0 outside one
+.set SP_FT4COL,   0x3f4   # the flat shading: a flat record's POLY_FT4 code |
+.set SP_FT3COL,   0x3f8   # colour, its POLY_FT3's (RECLOOP opt bit 1, POLYS)
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
@@ -214,4 +217,6 @@
 # ---- GPU packets --------------------------------------------------------------
 .set CODE_GT4,    0x3c000000   # Gouraud textured quad, opaque, texture x colour
 .set CODE_GT3,    0x34000000   # Gouraud textured triangle, opaque
+.set CODE_FT4,    0x2c000000   # flat textured quad, opaque, texture x colour
+.set CODE_FT3,    0x24000000   # flat textured triangle, opaque
 .set BACKFACE_EPS, 164         # Quake's 0.01 unit, x4096 x4

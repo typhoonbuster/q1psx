@@ -1903,6 +1903,14 @@ void game_render(void)
 			break;
 		}
 	}
+	if (r_part_z) {                                 /* the draw distance: not in the fog's */
+		for (int i = part_active; i; i = particles[i - 1].next) {   /* far half */
+			const particle_t *p = &particles[i - 1];
+			if (r_view_depth(p->org) <= r_part_z)
+				rl_add_particle(p->leaf, p->org, p->colour);
+		}
+		return;
+	}
 	for (int i = part_active; i; i = particles[i - 1].next) {   /* (R_DrawParticles' order) */
 		const particle_t *p = &particles[i - 1];
 		rl_add_particle(p->leaf, p->org, p->colour);

@@ -282,7 +282,8 @@ typedef struct {
 	                                list: harmless, never referenced)          */
 	uint8_t  num_quads;    /* +3                                              */
 	uint8_t  num_tris;     /* +4                                              */
-	uint8_t  flags;        /* +5  QWF_*                                       */
+	uint8_t  flags;        /* +5  QWF_* (bits 2 - 7: the loader's, the
+	                              record's average light / 4)                 */
 	uint16_t size;         /* +6  whole record, bytes                         */
 	uint16_t tex;          /* +8  index into the qw_tex table                 */
 	uint16_t sr;           /* +10 bounding sphere radius, vertex units         */

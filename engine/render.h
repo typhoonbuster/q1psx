@@ -73,6 +73,8 @@ typedef struct {
 	int32_t  vh2;            /* +204 the viewport's height (240, 192)         */
 	uint32_t nlights;        /* +208 dynamic lights this frame (dlight.c)      */
 	uint32_t lights;         /* +212 their table, 32 bytes each (DL_*)        */
+	int32_t  mark_r;         /* +216 mark_pvs_far's reach, vertex units: a leaf
+	                                 farther on an axis is not marked          */
 } r_state_t;
 
 extern r_state_t r_state;
@@ -129,6 +131,25 @@ extern int r_arena_full;
    the vblanks it took. Adjusts T for the next frame in the dynamic modes. */
 void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share);   /* share: the
                                               vblanks the frame rate cap gives this frame */
+
+/* The graphics options (the settings' Draw distance and Flat shading).
+   dist: the draw distance, world units (0: off): the depth where the fog
+   is black (from half of it), a record wholly beyond culled, the PVS's
+   leaves beyond reach not marked, the background black; flat: R_FLAT_*,
+   a far record (or any) drawn in one colour, its average light. Both off,
+   the record loops run as they are: on, the entries into them are patched
+   into their options' copies (r_world.s RECLOOP opt = 1, mark_pvs_far),
+   so an option costs nothing while it is off. */
+enum { R_FLAT_OFF, R_FLAT_FAR, R_FLAT_ALL, R_FLAT_MODES };
+#define R_FLAT_FAR_UNITS 512       /* R_FLAT_FAR: records wholly beyond this depth */
+#define R_SKY_RGB 40, 44, 60       /* the background: a flat "sky" until R3.4 */
+void r_set_options(int dist, int flat);
+
+/* particles deeper than this (view units, world x 6) are not drawn: where
+   the fog passes half (0: all drawn); and a point's depth (1/R_POS_SUB
+   world units) */
+extern int32_t r_part_z;
+int32_t r_view_depth(const int32_t pos[3]);
 
 /* asm entry point (engine/r_world.s) */
 void r_render(r_state_t *s);

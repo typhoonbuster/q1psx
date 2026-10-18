@@ -1,6 +1,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <psxapi.h>
 #include <psxgte.h>
 #include <inline_c.h>
 
@@ -44,6 +45,7 @@ _Static_assert(offsetof(r_state_t, viewmodel)    == 196, "r_state layout");
 _Static_assert(offsetof(r_state_t, vh2)          == 204, "r_state layout");
 _Static_assert(offsetof(r_state_t, nlights)      == 208, "r_state layout");
 _Static_assert(offsetof(r_state_t, lights)       == 212, "r_state layout");
+_Static_assert(offsetof(r_state_t, mark_r)       == 216, "r_state layout");
 _Static_assert(offsetof(qw_leaf, light)          == 27,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");
@@ -192,6 +194,99 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 	warp_apply(t < r_warp.t ? r_warp.t : t);
 }
 
+/* --------------------------------------------------------------- options -- */
+
+/* the fogged transform's table (r_world.s XFORM fog): by SZ / 64, a
+   vertex's light factor x 128, from 128 at half the draw distance down to
+   0 at it */
+uint8_t r_fogtab[1024];
+int32_t r_part_z;
+
+static int opt_dist, opt_flat;
+static int32_t mark_cam[3];                  /* the camera at the last marking */
+static uint32_t mark_visframe;
+#define R_MARK_MOVE 64                       /* world units the camera moves before
+                                                mark_pvs_far's marks are redone */
+
+/* the record loops' entries, their options' copies (dro1: the draw
+   distance, dro2: the flat shading, dro3: both; deo1: the models' draw
+   distance), the patched words (r_world.s) */
+extern uint32_t dr_records[], de_records[], dlr_ret0[], dlr_ret1[], dlr_ret2[], mark_call[];
+extern uint32_t dro1_records[], dro2_records[], dro3_records[], deo1_records[];
+extern uint32_t dro1_lit_ret[], dro2_lit_back[], dro3_lit_ret[];   /* (the draw distance's
+                    copies: a stub first, their far depth lost to the light) */
+extern uint32_t dro1_o_dcull[], dro1_o_fogz[], dro1_o_fogc[], dro2_o_flatz[];
+extern uint32_t dro3_o_dcull[], dro3_o_fogz[], dro3_o_fogc[], dro3_o_flatz[], deo1_o_dcull[], deo1_o_fogz[];
+extern uint32_t mark_pvs_far[];
+
+enum { S_DR, S_DE, S_RET0, S_RET1, S_RET2, S_MARK, S_ENTRIES };
+static uint32_t *const entry[S_ENTRIES] = { dr_records, de_records, dlr_ret0, dlr_ret1, dlr_ret2, mark_call };
+static uint32_t orig[S_ENTRIES];             /* their words as built */
+static uint32_t *const dcull[] = { dro1_o_dcull, dro3_o_dcull, deo1_o_dcull };
+static uint32_t *const fogz[]  = { dro1_o_fogz, dro3_o_fogz, deo1_o_fogz };
+static uint32_t *const fogc[]  = { dro1_o_fogc, dro3_o_fogc };
+static uint32_t *const flatz[] = { dro2_o_flatz, dro3_o_flatz };
+static uint32_t orig_flatz[2];
+
+#define J_TO(op, a)   ((op) | (((uint32_t) (a) >> 2) & 0x03ffffffu))
+#define SLTI(w, imm)  (((w) & 0xffff0000u) | ((uint32_t) (imm) & 0xffffu))
+#define LI(w, v)      (0x24000000u | ((w) & 0x001f0000u) | (uint32_t) (v))   /* addiu rt, $zero, v */
+
+void r_set_options(int dist, int flat)
+{
+	if (!orig[S_DR]) {
+		for (int i = 0; i < S_ENTRIES; i++)
+			orig[i] = *entry[i];
+		for (int i = 0; i < 2; i++)
+			orig_flatz[i] = *flatz[i];
+	}
+	opt_dist = dist;
+	opt_flat = flat;
+	/* view units (world x 6): the draw distance, the fog's start (its last
+	   quarter: the fogged transform for as few records as can be) */
+	int32_t dz = dist * 6, fz = dist * 9 / 2;
+	for (int i = 0; i < 1024; i++) {
+		int32_t z = i * 64 + 32;
+		r_fogtab[i] = (uint8_t) (!dist || z <= fz ? 128 : z >= dz ? 0 : 128 * (dz - z) / (dz - fz));
+	}
+	r_part_z = dist ? (fz + dz) / 2 : 0;
+	r_state.mark_r = (dist * 161 / 100 + R_MARK_MOVE) * QW_VSCALE;   /* (1.61: a frustum
+	                    corner's distance over its depth, 1 / 0.6247 for the 240 rows) */
+	for (unsigned i = 0; i < sizeof dcull / sizeof dcull[0]; i++) {
+		*dcull[i] = SLTI(*dcull[i], dz);
+		*fogz[i]  = SLTI(*fogz[i], fz);      /* the farthest depth: into the fog */
+	}
+	for (unsigned i = 0; i < sizeof fogc / sizeof fogc[0]; i++)
+		*fogc[i] = SLTI(*fogc[i], fz);       /* the centre: in it (drawn flat) */
+	for (int i = 0; i < 2; i++)                  /* everywhere: li 0 (never nearer) */
+		*flatz[i] = flat == R_FLAT_ALL ? LI(orig_flatz[i], 0) : SLTI(orig_flatz[i], R_FLAT_FAR_UNITS * 6);
+	int v = (dist ? 1 : 0) | (flat ? 2 : 0);
+	static uint32_t *const recs[4] = { 0, dro1_records, dro2_records, dro3_records };
+	static uint32_t *const back[4] = { 0, dro1_lit_ret, dro2_lit_back, dro3_lit_ret };
+	*entry[S_DR]   = v    ? J_TO(0x08000000u, recs[v]) : orig[S_DR];
+	*entry[S_DE]   = dist ? J_TO(0x08000000u, deo1_records) : orig[S_DE];
+	*entry[S_RET0] = v    ? (orig[S_RET0] & 0xffff0000u) |
+	                        ((((uint32_t) back[v] - ((uint32_t) dlr_ret0 + 4)) >> 2) & 0xffffu) : orig[S_RET0];
+	*entry[S_RET1] = v    ? J_TO(0x08000000u, back[v]) : orig[S_RET1];
+	*entry[S_RET2] = v    ? J_TO(0x08000000u, back[v]) : orig[S_RET2];
+	*entry[S_MARK] = dist ? J_TO(0x0c000000u, mark_pvs_far) : orig[S_MARK];
+	FlushCache();
+	r_state.force_mark = 1;
+	mark_visframe = 0;
+	if (dist)
+		vid_set_bg(0, 0, 0);                 /* (the fog's colour: what is culled shows it) */
+	else
+		vid_set_bg(R_SKY_RGB);
+}
+
+int32_t r_view_depth(const int32_t pos[3])
+{
+	int32_t x = pos[0] * QW_VSCALE / R_POS_SUB - r_state.cam[0];
+	int32_t y = pos[1] * QW_VSCALE / R_POS_SUB - r_state.cam[1];
+	int32_t z = pos[2] * QW_VSCALE / R_POS_SUB - r_state.cam[2];
+	return (r_state.rot[6] * x + r_state.rot[7] * y + r_state.rot[8] * z) >> 12;
+}
+
 /* ------------------------------------------------------------------ view -- */
 
 static int viewport_rows = VID_H;
@@ -295,6 +390,14 @@ void r_frame(void)
 	r_state.ot_world     = (uint32_t) &vid_frame.ot[OT_WORLD];
 	r_state.pkt          = (uint32_t) vid_frame.pkt;
 	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 48);  /* see r_world.s */
+	if (opt_dist) {                                /* mark_pvs_far's marks: again once the
+	                                                  camera has moved R_MARK_MOVE */
+		for (int k = 0; k < 3; k++) {
+			int32_t d = r_state.cam[k] - mark_cam[k];
+			if (d > R_MARK_MOVE * QW_VSCALE || d < -R_MARK_MOVE * QW_VSCALE)
+				r_state.force_mark = 1;
+		}
+	}
 #if Q1PSX_PROFILE
 	r_state.stat_nodes   = r_state.stat_records = r_state.stat_verts = 0;
 	r_state.stat_polys   = r_state.stat_skipped = 0;
@@ -306,13 +409,19 @@ void r_frame(void)
 #else
 	r_render(&r_state);   /* release: no counters, no stage timers */
 #endif
+	if (opt_dist && r_state.visframe != mark_visframe) {   /* marked this frame */
+		mark_visframe = r_state.visframe;
+		for (int k = 0; k < 3; k++)
+			mark_cam[k] = r_state.cam[k];
+	}
 
 	/* triangles for the warp budget: fast-path quads are 26 bytes per
-	   triangle (POLY_GT4, 52 B), the slow path's are POLY_GT3 (40 B); the
-	   few window commands go uncounted */
+	   triangle (POLY_GT4, 52 B; the flat shading's POLY_FT4, 40 B: 20),
+	   the slow path's are POLY_GT3 (40 B); the few window commands go
+	   uncounted */
 	uint32_t bytes = r_state.pkt - (uint32_t) vid_frame.pkt;
 	uint32_t slowb = r_state.slow_bytes <= bytes ? r_state.slow_bytes : bytes;
-	r_warp.tris = (bytes - slowb) / 26 + slowb / 40;
+	r_warp.tris = (bytes - slowb) / (opt_flat ? 20 : 26) + slowb / 40;
 	vid_frame.pkt = (uint8_t *) r_state.pkt;
 	r_arena_full  = r_state.pkt >= r_state.pkt_end;   /* the walk stopped short: the nearest records lost */
 

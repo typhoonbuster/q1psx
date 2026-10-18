@@ -82,6 +82,7 @@ solved, two checks are used:
 | 13.x | Full cycle-accurate pass + CD-R/flashcart + NTSC/PAL TV | PCSX-Redux | required |
 
 | 11.6 | The liquids lit (§36): the cooked worlds' liquid records at light 192 (scratch script over `*_high.wld`); `MAP=START BENCH_MAPS=1 VIEW=1545,2400,96,90,30 scripts/bench.sh`: the lava textured (`START.v12.png`); the game bench's `gwater` dump carries `P 62325082` (the water's colour) | headless bench | required (the water, the slime and the lava from above and from under) |
+| 11.7 | The draw distance and the flat shading (§37): the options off, `MAP=START BENCH_MAPS=1 HASHONLY=1 PROFILE=0 scripts/dlcheck.sh check <ref>` identical and the game bench's `H` lines identical (the graphics menu's pages aside); on, `DRAWDIST=768` / `FLAT=2` bench builds: the frame cycles of START's, E1M8's, E3M4's and E1M7's views, the views' pictures (the fog to black, the flat records); DuckStation `PLAY=1 BENCH_MAPS=1` with both on: 32/32 maps, no GP0 error, the hashes equal to PCSX-Redux's | headless bench + DuckStation | required (the fog while moving: no record popping in, the PVS marking redone as the camera moves; the menu rows) |
 _(to be completed as phases progress)_
 
 ## Real-hardware test log
