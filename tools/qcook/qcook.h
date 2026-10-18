@@ -162,11 +162,28 @@ typedef struct {
 	uint8_t  flags;          /* QWF_* derived from the name               */
 } tex_slot;
 
+/* An animated texture's chain (Mod_LoadTextures: "+0name" .. "+9name",
+   the alternates "+aname" .. "+jname"): its frames' slots, and the display
+   slot every face of the chain uses (the engine copies the frame of the
+   moment into it) */
+#define TEX_ANIM_FRAMES 10
 typedef struct {
-	tex_slot *slots;         /* [num]: the miptex, then the extras       */
-	int       num;           /* num_miptex + the extras                   */
+	int display;
+	int frames[TEX_ANIM_FRAMES], nframes;
+	int alt[TEX_ANIM_FRAMES], nalt;
+	int src;                 /* the miptex the display slot is cut from    */
+} tex_anim;
+
+typedef struct {
+	tex_slot *slots;         /* [num]: the miptex, the extras, then the
+	                            animations' display slots                 */
+	int       num;           /* num_miptex + the extras + the animations  */
 	int       pages_used;
 	uint32_t  bytes;         /* texture pixels uploaded                   */
+	int      *remap;         /* [num_miptex]: the slot a face of the miptex
+	                            draws with (an animated one's display)    */
+	tex_anim *anims;
+	int       num_anims;
 } tex_set;
 
 /* A texture the map's own models bring (tools/qcook/items.c): a BSP item's
@@ -185,7 +202,7 @@ typedef struct {
    (nothing written), else it dies. */
 int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
               const uint8_t palette[768], const fidelity_t *fid, const char *out_path,
-              const char *out4_path, int may_fail);
+              const char *out4_path, int anims, int may_fail);
 
 /* ------------------------------------------------------ the map's models -- */
 

@@ -187,6 +187,8 @@ void level_spawn(edict_t *e, const qw_ent *q);
 void items_spawn(edict_t *e, const qw_ent *q);   /* items, flames, fireballs, boxes, traps */
 void items_physics(edict_t *e);                  /* MOVETYPE_TOSS (the fireballs) */
 void items_render(void);                         /* the models into the render list */
+int  ents_model_frame(int model);                /* the frame of the drawn edict with brush model
+                                                    `model` (its textures' alternates), 0 none */
 
 /* the live edicts with a model of the map's own (an item, a flame, a
    fireball: item_model >= 0), rebuilt with the other lists */

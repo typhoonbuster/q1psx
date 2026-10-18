@@ -24,6 +24,7 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "anim.h"
 #include "menu.h"
 #include "dlight.h"
 #include "mem.h"
@@ -265,6 +266,7 @@ static int load_level(int map, int fid)
 		r_bind_world();
 		ents_load();                            /* the map's entities */
 		ents_spawn(1);
+		anim_reset();
 		snd_map_start();
 		music_play(snd_cd_track());
 	}
@@ -290,6 +292,7 @@ static void frame_work(void)
 	if (!world_ok)
 		return;
 	r_set_view(cam.pos, cam.yaw, cam.pitch, cam.roll);
+	anim_frame(game_tick_count);            /* the animated textures' frames */
 	uint32_t t0 = prof_now();
 	rl_begin();                             /* the render list: the game's
 	                                           projectiles, effects and view
@@ -406,6 +409,11 @@ static void run_frame(int interactive, int dump)
 		}
 	}
 	PLAY_STEP("render");
+#ifdef Q1PSX_BENCH
+	if (dump)
+		anim_invalidate();                  /* a dump shows the textures' frames (pktview
+		                                       sees no frame but the dumped ones) */
+#endif
 	frame_work();
 	if (game_active) {
 		uint32_t t1 = prof_now();
@@ -1162,6 +1170,17 @@ static void bench_ents(void)
 			walk.fwd = PM_AXIS;
 			for (int t = 0; t < 150; t++) {
 				game_tick(t < 40 ? &walk : &cmd);
+				if (t == 1 || t == 45) {              /* before and pressed: its alternate textures */
+					int32_t keep[3];
+					memcpy(keep, pl.pm.pos, sizeof keep);
+					for (int k = 0; k < 3; k++)       /* seen from 80 units back */
+						pl.pm.pos[k] = c[k] - (int32_t) ((int64_t) b->movedir[k] * (back + 40 * CLIP_SUB) / 4096);
+					pl.pm.pos[2] = c[2] - PM_EYE_HEIGHT * CLIP_SUB;
+					ents_look_at(c);
+					ents_dump(t == 1 ? (mi ? "estart_button0" : "ee1m1_button0")
+					                 : (mi ? "estart_button1" : "ee1m1_button1"));
+					memcpy(pl.pm.pos, keep, sizeof keep);
+				}
 				if (t % 15 == 0)
 					printf("button tick %d state %d origin %d %d %d player %d %d %d\n", t, b->state,
 					       (int) b->origin[0], (int) b->origin[1], (int) b->origin[2],

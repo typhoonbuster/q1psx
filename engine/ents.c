@@ -857,6 +857,16 @@ int ents_check(const char *where)
 }
 #endif
 
+int ents_model_frame(int model)
+{
+	for (int i = 0; i < num_draw; i++) {
+		const edict_t *e = &edicts[draw_list[i]];
+		if (e->model == model && e->inuse && e->draw)
+			return e->frame;
+	}
+	return 0;
+}
+
 /* ---------------------------------------------------------------- render -- */
 
 /* A leaf's box in front of the eye (its depth along the view's forward

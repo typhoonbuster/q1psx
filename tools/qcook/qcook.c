@@ -367,11 +367,19 @@ static int cmd_map(int argc, char **argv)
 	tex_set    ts;
 	tex_extra *extra;
 	int        nextra;
-	for (int squeeze = 0; ; squeeze++) {          /* the models' textures reduced if need be */
+	/* the pages full: the models' textures squeezed level by level, then
+	   the same without the textures' animation (their frames and display
+	   tiles: the faces keep the frame the map gave them) */
+	for (int attempt = 0; ; attempt++) {
+		int anims = attempt <= ITEMS_SQUEEZE_MAX, squeeze = anims ? attempt : attempt - ITEMS_SQUEEZE_MAX - 1;
 		items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, squeeze, &extra, &nextra);
-		if (tex_build(&ts, &bsp, extra, nextra, pal, fid, out_tex, out_tex4, squeeze < ITEMS_SQUEEZE_MAX))
+		if (tex_build(&ts, &bsp, extra, nextra, pal, fid, out_tex, out_tex4, anims,
+		              attempt < 2 * ITEMS_SQUEEZE_MAX + 1))
 			break;
-		printf("qcook: the models' textures squeezed to level %d\n", squeeze + 1);
+		if (attempt == ITEMS_SQUEEZE_MAX)
+			printf("qcook: the textures' animation left out\n");
+		else
+			printf("qcook: the models' textures squeezed to level %d\n", anims ? squeeze + 1 : squeeze + 1);
 	}
 	items_cook(&ts, bsp.num_miptex);
 	world_build(&bsp, &ts, fid, out_wld);

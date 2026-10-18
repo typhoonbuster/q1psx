@@ -16,7 +16,8 @@
  *
  * Supported: polygons (flat / Gouraud, textured or not), sprites (SPRT),
  * tiles (TILE), the texture page (DR_TPAGE), texture window (E2) and draw
- * area (E3 / E4) commands. The debug font is skipped.
+ * area (E3 / E4) commands, VRAM-to-VRAM copies (GP0 80h: they change the
+ * VRAM for the dumps after). The debug font is skipped.
  *
  * PKTVIEW_BG=r,g,b sets the clear colour (default black). A colour no
  * texture produces (e.g. 255,0,255) makes every pixel no polygon covers
@@ -420,6 +421,15 @@ static void packet(const uint32_t *w, int n)
 				if (clip_y1 > H - 1) clip_y1 = H - 1;
 			}
 		}
+		return;
+	}
+	if (code == 0x80 && n >= 4) {        /* VRAM to VRAM (the animated textures' frames) */
+		int sx = (int) (w[1] & 1023), sy = (int) ((w[1] >> 16) & 511);
+		int dx = (int) (w[2] & 1023), dy = (int) ((w[2] >> 16) & 511);
+		int cw = (int) (w[3] & 0xffff), ch = (int) (w[3] >> 16);
+		for (int y = 0; y < ch; y++)
+			for (int x = 0; x < cw; x++)
+				vram[(dy + y) & 511][(dx + x) & 1023] = vram[(sy + y) & 511][(sx + x) & 1023];
 		return;
 	}
 	if ((code & 0xe0) == 0x60) {         /* rectangles: 011 ss t a r */

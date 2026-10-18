@@ -1170,3 +1170,11 @@ followed by R0-R4.
   high fidelity on its disc, ultra alone on the `release-ultra` disc. The
   settings moved to `engine/settings.c`, shared with the debug build's
   map menu; the sound effects' and the music's volumes separate.
+- **The animated textures** (§32): Quake's `+0..+9` frames every 0.2 s and
+  the `+a..` alternates of a pressed button or a toggled wall, done in
+  VRAM: the cook packs every frame of a chain a face uses and a display
+  tile its faces draw with (the world is `QWVC`, its `qw_anim` table); the
+  engine moves the frame of the moment onto the display tile (GP0 80h, the
+  4-bit set's CLUT with it) at the head of the display list. When a map's
+  pages are full, the models' textures are squeezed first and the
+  animation left out last (start at ultra). pktview copies VRAM too.

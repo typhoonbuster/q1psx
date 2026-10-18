@@ -323,18 +323,13 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 
 int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
               const uint8_t palette[768], const fidelity_t *fid, const char *out_path,
-              const char *out4_path, int may_fail)
+              const char *out4_path, int anims, int may_fail)
 {
 	memset(ts, 0, sizeof *ts);
-	int total = b->num_miptex + nextra;
-	ts->num   = total;
-	ts->slots = xcalloc((size_t) total + 1, sizeof *ts->slots);
 
 	/* which miptex do the drawn models' faces use? (the world's and the
 	   brush models' but the triggers'); the extras are */
-	uint8_t *used  = xcalloc((size_t) total + 1, 1);
-	for (int i = b->num_miptex; i < total; i++)
-		used[i] = 1;
+	uint8_t *mt_used = xcalloc((size_t) b->num_miptex + 1, 1);
 	uint8_t *drawn = xcalloc((size_t) b->num_models, 1);
 	ents_drawn_models(b, drawn);
 	for (int m = 0; m < b->num_models; m++) {
@@ -346,18 +341,83 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			if (ti >= 0 && ti < b->num_texinfo) {
 				int mt = b->texinfo[ti].miptex;
 				if (mt >= 0 && mt < b->num_miptex)
-					used[mt] = 1;
+					mt_used[mt] = 1;
 			}
 		}
 	}
 	free(drawn);
 
+	/* Quake's animated textures (Mod_LoadTextures, R_TextureAnimation): a
+	   chain a drawn face uses gets every frame packed (frames 0 .. n - 1 and
+	   the alternates, all of one size; a chain with a missing frame, which
+	   Quake refuses, is left still) and a display slot of its own, cut from
+	   its first frame, that every face of the chain draws with */
+	ts->remap = xcalloc((size_t) b->num_miptex + 1, sizeof *ts->remap);
+	for (int i = 0; i < b->num_miptex; i++)
+		ts->remap[i] = i;
+	ts->anims = xcalloc((size_t) b->num_miptex + 1, sizeof *ts->anims);
+	uint8_t *in_chain = xcalloc((size_t) b->num_miptex + 1, 1);
+	for (int i = 0; i < b->num_miptex && anims; i++) {
+		const bsp_miptex *mi = &b->miptex[i];
+		if (in_chain[i] || mi->name[0] != '+' || !mi->name[1] || !mi->w)
+			continue;
+		tex_anim a;
+		memset(&a, 0, sizeof a);
+		int frame_of[TEX_ANIM_FRAMES], alt_of[TEX_ANIM_FRAMES], any_used = 0, ok = 1;
+		for (int k = 0; k < TEX_ANIM_FRAMES; k++)
+			frame_of[k] = alt_of[k] = -1;
+		for (int j = i; j < b->num_miptex; j++) {
+			const bsp_miptex *mj = &b->miptex[j];
+			if (mj->name[0] != '+' || strcmp(mj->name + 2, mi->name + 2))
+				continue;
+			int c = mj->name[1];
+			if (c >= 'A' && c <= 'J') c += 'a' - 'A';
+			if (c >= '0' && c <= '9')      frame_of[c - '0'] = j;
+			else if (c >= 'a' && c <= 'j') alt_of[c - 'a'] = j;
+			else continue;
+			in_chain[j] = 1;
+			any_used |= mt_used[j];
+			if (mj->w != mi->w || mj->h != mi->h || !mj->mip[0])
+				ok = 0;
+		}
+		for (int k = 0; k < TEX_ANIM_FRAMES; k++) {
+			if (frame_of[k] >= 0) { if (a.nframes != k) ok = 0; else a.frames[a.nframes++] = frame_of[k]; }
+			if (alt_of[k] >= 0)   { if (a.nalt != k) ok = 0; else a.alt[a.nalt++] = alt_of[k]; }
+		}
+		if (!any_used || !ok || a.nframes + a.nalt < 2)
+			continue;
+		a.src = a.nframes ? a.frames[0] : a.alt[0];
+		ts->anims[ts->num_anims++] = a;
+		printf("qcook: animated %s: %d frames, %d alternates, %dx%d\n", mi->name + 2, a.nframes, a.nalt,
+		       mi->w, mi->h);
+	}
+	free(in_chain);
+
+	int total = b->num_miptex + nextra + ts->num_anims;
+	ts->num   = total;
+	ts->slots = xcalloc((size_t) total + 1, sizeof *ts->slots);
+	uint8_t *used = xcalloc((size_t) total + 1, 1);
+	memcpy(used, mt_used, (size_t) b->num_miptex);
+	free(mt_used);
+	for (int i = b->num_miptex; i < total; i++)
+		used[i] = 1;
+	for (int c = 0; c < ts->num_anims; c++) {
+		tex_anim *a = &ts->anims[c];
+		a->display = b->num_miptex + nextra + c;
+		for (int k = 0; k < a->nframes; k++) { used[a->frames[k]] = 1; ts->remap[a->frames[k]] = a->display; }
+		for (int k = 0; k < a->nalt; k++)    { used[a->alt[k]] = 1;    ts->remap[a->alt[k]] = a->display; }
+	}
+	#define SLOT_MIPTEX(i) ((i) < b->num_miptex ? &b->miptex[i] \
+	                       : (i) < b->num_miptex + nextra ? &extra[(i) - b->num_miptex].mt \
+	                       : &b->miptex[ts->anims[(i) - b->num_miptex - nextra].src])
+	#define SLOT_SKIN(i)   ((i) >= b->num_miptex && (i) < b->num_miptex + nextra && extra[(i) - b->num_miptex].skin)
+
 	/* tile size per texture */
 	pack_item *items = xcalloc((size_t) total + 1, sizeof *items);
 	int nitems = 0;
 	for (int i = 0; i < total; i++) {
-		const bsp_miptex *m = i < b->num_miptex ? &b->miptex[i] : &extra[i - b->num_miptex].mt;
-		int skin = i >= b->num_miptex && extra[i - b->num_miptex].skin;
+		const bsp_miptex *m = SLOT_MIPTEX(i);
+		int skin = SLOT_SKIN(i);
 		tex_slot *s = &ts->slots[i];
 		s->index = i;
 		if (!strncmp(m->name, "sky", 3))
@@ -377,7 +437,8 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			continue;
 		}
 
-		int shift = fid->tex_shift + (i >= b->num_miptex ? extra[i - b->num_miptex].shift : 0);
+		int shift = fid->tex_shift + (i >= b->num_miptex && i < b->num_miptex + nextra
+		                              ? extra[i - b->num_miptex].shift : 0);
 		int w = m->w >> shift, h = m->h >> shift;
 		while (w > fid->tex_max || h > fid->tex_max) {
 			w >>= 1;
@@ -442,7 +503,7 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			for (int k = 0; k < nitems; k++) {
 				long ar = (long) ((items[k].w + 7) & ~7) * ((items[k].h + 7) & ~7);
 				need += ar;
-				if (items[k].idx >= b->num_miptex)
+				if (items[k].idx >= b->num_miptex && items[k].idx < b->num_miptex + nextra)
 					extras += ar;
 			}
 			if (may_fail) {
@@ -461,8 +522,8 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			for (int xx = 0; xx < cw; xx++)
 				cell[page][cy + yy][cx + xx] = 1;
 
-		const bsp_miptex *m = it->idx < b->num_miptex ? &b->miptex[it->idx] : &extra[it->idx - b->num_miptex].mt;
-		int skin = it->idx >= b->num_miptex && extra[it->idx - b->num_miptex].skin;
+		const bsp_miptex *m = SLOT_MIPTEX(it->idx);
+		int skin = SLOT_SKIN(it->idx);
 		int px = QTEX_PAGE_X0 + (page % QTEX_PAGE_COLS) * (PAGE_TEX / 2);
 		int py = (page / QTEX_PAGE_COLS) * PAGE_TEX;
 		s->present = 1;
@@ -532,8 +593,10 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 	long file_len = ftell(f);
 	fclose(f);
 
-	printf("qcook: %s — %d tiles in %d pages, %u texel bytes, file %ld B\n",
-	       out_path, nitems, ts->pages_used, ts->bytes, file_len);
+	printf("qcook: %s — %d tiles in %d pages (%d animated textures), %u texel bytes, file %ld B\n",
+	       out_path, nitems, ts->pages_used, ts->num_anims, ts->bytes, file_len);
+	#undef SLOT_MIPTEX
+	#undef SLOT_SKIN
 
 	if (out4_path)
 		write_tex4(ts, total, pages, page_h, palette, out4_path);

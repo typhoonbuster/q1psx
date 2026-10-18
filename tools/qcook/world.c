@@ -580,6 +580,13 @@ static int faces_adjacent(const bsp_t *b, int f, int g)
 }
 
 /* the miptex a face uses, or -1 */
+/* the slot a face of miptex mt draws with (an animated texture's: its
+   chain's display slot, tex_build) */
+static const tex_slot *face_slot(const tex_set *ts, int mt)
+{
+	return &ts->slots[ts->remap ? ts->remap[mt] : mt];
+}
+
 static int face_miptex(const bsp_t *b, int f)
 {
 	const bsp_face *bf = &b->faces[f];
@@ -621,7 +628,7 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 	const bsp_texinfo *ti = &b->texinfo[bf->texinfo];
 	if (ti->miptex < 0 || ti->miptex >= b->num_miptex)
 		return;
-	const tex_slot   *s = &ts->slots[ti->miptex];
+	const tex_slot   *s = face_slot(ts, ti->miptex);
 	const bsp_miptex *m = &b->miptex[ti->miptex];
 	if (!s->present)                    /* sky or missing: not drawn (yet) */
 		return;
@@ -841,7 +848,7 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 		return;
 	const bsp_face    *bf = &b->faces[f];
 	const bsp_texinfo *ti = &b->texinfo[bf->texinfo];
-	const tex_slot    *s  = &ts->slots[ti->miptex];
+	const tex_slot    *s  = face_slot(ts, ti->miptex);
 	const bsp_miptex  *m  = &b->miptex[ti->miptex];
 
 	poly_t pl;                          /* the whole face, for its lightmap */
@@ -1114,7 +1121,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 							h2 += (hi - lo) * (hi - lo) / 4;
 						}
 						if ((r->nq || r->nt) && h2 > REC_MAX_RADIUS * REC_MAX_RADIUS)
-							rec_flush(&o, r, &ts->slots[face_miptex(b, f)]);
+							rec_flush(&o, r, face_slot(ts, face_miptex(b, f)));
 						for (int k = 0; k < 3; k++) {
 							if (fmn[k] < r->mn[k]) r->mn[k] = fmn[k];
 							if (fmx[k] > r->mx[k]) r->mx[k] = fmx[k];
@@ -1122,7 +1129,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 						emit_face(&o, b, ts, order[q], r);
 					}
 				if (r->nq || r->nt)
-					rec_flush(&o, r, &ts->slots[face_miptex(b, f)]);
+					rec_flush(&o, r, face_slot(ts, face_miptex(b, f)));
 				free(r);
 			}
 		}
@@ -1454,6 +1461,37 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	buf_put(&f, estr.p, estr.len);
 	buf_align4(&f);
 	items_write(&f, &h.ofs_models, &h.num_models, &h.ofs_mgeo, &h.len_mgeo);
+
+	/* the animated textures: their tiles, and the brush models drawing a
+	   chain with alternates (the engine looks at their frame) */
+	buf_align4(&f);
+	h.ofs_anims = (uint32_t) f.len;
+	h.num_anims = (uint32_t) ts->num_anims;
+	for (int c = 0; c < ts->num_anims; c++) {
+		const tex_anim *a = &ts->anims[c];
+		qw_anim q;
+		memset(&q, 0, sizeof q);
+		#define TILE_OF(t, sl) do { const tex_slot *s_ = &ts->slots[sl]; (t).page = (uint8_t) s_->page; \
+			(t).slot = (uint16_t) (sl); (t).u0 = (uint16_t) s_->u0; (t).v0 = (uint16_t) s_->v0; \
+			(t).w = (uint16_t) s_->tile_w; (t).h = (uint16_t) s_->tile_h; } while (0)
+		TILE_OF(q.display, a->display);
+		q.num_frames = (uint8_t) a->nframes;
+		q.num_alt    = (uint8_t) a->nalt;
+		for (int k = 0; k < a->nframes; k++) TILE_OF(q.frames[k], a->frames[k]);
+		for (int k = 0; k < a->nalt; k++)    TILE_OF(q.alt[k], a->alt[k]);
+		#undef TILE_OF
+		for (int m = 1; a->nalt && m < b->num_models && q.num_models < QW_ANIM_MODELS; m++) {
+			const bsp_model *bm = &b->models[m];
+			int uses = 0;
+			for (int fc = bm->firstface; fc < bm->firstface + bm->numfaces && !uses; fc++) {
+				int mt = face_miptex(b, fc);
+				uses = mt >= 0 && ts->remap[mt] == a->display;
+			}
+			if (uses)
+				q.models[q.num_models++] = (uint16_t) m;
+		}
+		buf_put(&f, &q, sizeof q);
+	}
 	memcpy(f.p, &h, sizeof h);
 
 	FILE *fp = fopen(out_path, "wb");
@@ -1527,6 +1565,7 @@ int world_check(const char *path)
 	SECTION(h.ofs_bmodels, h.num_bmodels * sizeof(qw_bmodel));
 	SECTION(h.ofs_ents, h.num_ents * sizeof(qw_ent));
 	SECTION(h.ofs_strings, h.len_strings);
+	SECTION(h.ofs_anims, h.num_anims * sizeof(qw_anim));
 	if (h.max_depth > QW_MAX_DEPTH)
 		FAIL("depth %u > %d", h.max_depth, QW_MAX_DEPTH);
 	if (h.max_bm_depth > QW_MAX_BM_DEPTH)

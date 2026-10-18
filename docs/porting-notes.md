@@ -3609,3 +3609,38 @@ fidelity taken out of the release disc into a disc of its own.
   by key presses and a frame of each page dumped (`mmain`, `msingle`,
   `mnewgame`, `moptions`, `mgraphics`, `mgraphics_dyn`,
   `mgraphics_budget`).
+
+## §32 — The animated textures (2026-10-18)
+
+Quake animates the textures named `+0name` .. `+9name` (a frame every 0.2
+s: R_TextureAnimation) and switches an entity whose `frame` is set to the
+alternates `+aname` .. `+jname` (a pressed button turns from red to
+green, a toggled func_wall). The PS1's faces carry their texture's UVs
+baked into their records, so the animation is done in VRAM:
+
+- **The cook (tools/qcook/tex.c, world.c).** A chain (the frames and
+  alternates of one name, all of one size; one with a missing frame is
+  left still, as Quake refuses it) that a drawn face uses gets every frame
+  packed as a tile, and a display tile of its own cut from its first
+  frame; every face of the chain draws with the display tile (`remap`).
+  The world file (`QWVC`) lists the chains (`qw_anim`): the display tile,
+  the frames' and the alternates' tiles (page, texels, texture index for
+  the 4-bit set's CLUT) and the brush models drawing a chain that has
+  alternates. When a map's six pages overflow, the models' textures are
+  squeezed first (§29.4), the animation is left out last: low and medium
+  animate every map unsqueezed, high squeezes start and e1m1's models a
+  little, ultra squeezes 8 maps and leaves start still. 30 of the 32 maps
+  have animated textures (e1m1: the buttons, the planet, the slipgate).
+- **The engine (engine/anim.c).** Each frame, before the scene: per chain,
+  the frame of the moment (`(tick / 12) % frames`, the alternates while a
+  listed brush model's edict has its frame set) and, when it changed, a
+  VRAM-to-VRAM move (GP0 80h) of that frame's tile onto the display tile,
+  with its 16-colour CLUT in the 4-bit set, at the head of the display
+  list (the bucket drawn first), then a texture cache clear (GP0 01h).
+  No RAM, a few moves every 0.2 s. The world paused under the menu stops
+  them, as Quake's client time does.
+- **pktview** copies VRAM too, and the bench's dumped frames copy every
+  chain's frame again (`anim_invalidate`): pktview sees no frame but the
+  dumped ones. `ENTS=1 scripts/bench.sh` dumps e1m1's first button before
+  and after it is pressed (`ee1m1_button0`: red, `ee1m1_button1`: the
+  alternate, yellow) and logs the frame changes (`anim:` lines).

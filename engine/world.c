@@ -316,6 +316,8 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		}
 	}
 
+	world.anims        = (const qw_anim *) (f + h->ofs_anims);
+	world.num_anims    = h->num_anims;
 	world.ents         = (const qw_ent *) (f + h->ofs_ents);
 	world.num_ents     = h->num_ents;
 	world.strings      = (const char *) (f + h->ofs_strings);

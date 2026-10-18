@@ -57,6 +57,8 @@ typedef struct {
 	const qw_tex **model_tex;       /* [num_models]: each one's texture table */
 	uint8_t       *mgeo;            /* their geometry block                  */
 	int16_t        model_of[QIM_COUNT];   /* QIM_* -> models index, -1 none  */
+	const qw_anim *anims;           /* [num_anims]: the animated textures (anim.c) */
+	uint32_t       num_anims;
 	uint32_t       max_bm_depth;
 } world_t;
 

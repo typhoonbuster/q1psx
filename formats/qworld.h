@@ -43,7 +43,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWVB"
+#define QWORLD_MAGIC "QWVC"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
@@ -105,7 +105,33 @@ typedef struct {
 	uint32_t ofs_models, num_models;   /* qw_model[] (formats/qgame.h): the map's
 	                                  own models (items, flames)              */
 	uint32_t ofs_mgeo, len_mgeo;   /* their geometry block                    */
+	uint32_t ofs_anims, num_anims; /* qw_anim[]: the animated textures        */
 } qw_header;
+
+/* An animated texture (Quake's "+0name" .. "+9name" and the alternates
+   "+aname" .. "+jname", R_TextureAnimation): every frame is a tile of the
+   map's texture pages, and the faces of the chain draw with a display tile
+   of their own; the engine copies the frame of the moment into it (a
+   frame every 0.2 s; the alternates while a brush model listed has its
+   frame set: a pressed button, a toggled wall). Tiles in texels of the
+   8-bit pages (page p at x 320 + 128 (p % 5), y 256 (p / 5); in the 4-bit
+   set, x 320 + 64 p, y 0, the same texels), with their texture-table index
+   (the 4-bit set's CLUT for it, 16 a row from (0, 480)). */
+#define QW_ANIM_FRAMES 10
+#define QW_ANIM_MODELS 8
+typedef struct {
+	uint8_t  page, pad;
+	uint16_t slot;             /* its qw_tex index                        */
+	uint16_t u0, v0, w, h;     /* texels in its page                      */
+} qw_anim_tile;                /* 12 bytes */
+
+typedef struct {
+	qw_anim_tile display;
+	uint8_t      num_frames, num_alt, num_models, pad;
+	qw_anim_tile frames[QW_ANIM_FRAMES];
+	qw_anim_tile alt[QW_ANIM_FRAMES];
+	uint16_t     models[QW_ANIM_MODELS];   /* brush models drawing it (their frame) */
+} qw_anim;                     /* 272 bytes */
 
 /* A brush model: Quake's submodel. Bounds in the physics' units, spread by
    a unit like Mod_LoadSubmodels; the root is its hull-0 BSP (its nodes in
