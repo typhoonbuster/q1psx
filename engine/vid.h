@@ -63,6 +63,10 @@ void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */
    whole screen (the chain opens with a DR_AREA when the viewport is
    smaller), before the overlay bucket's other packets (the debug text). */
 void *vid_ovl_alloc(int bytes);                /* NULL when the arena is full */
+/* n packets of `bytes` each, in a row, chained in the overlay as n calls
+   of vid_ovl_alloc would (the same bytes): the first, or NULL (the arena
+   full: then none) */
+void *vid_ovl_alloc_run(int bytes, int n);
 void  vid_ovl_append(void *head, void *tail);  /* a ready chain (terminated) at its end */
 void  vid_tint(int r, int g, int b);           /* a 50 % blend of a colour over the viewport */
 /* V_UpdatePalette's damage, bonus and powerup shifts over the viewport:

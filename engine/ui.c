@@ -70,17 +70,59 @@ void ui_char(int x, int y, int c, int shade)
 	sprite(a, x, y, a->u + (c & 15) * 8, a->v + ((c >> 4) & 7) * 8, 8, 8, shade);
 }
 
+/* n characters of s from (x, y), 8 px apart: ui_char's packets, the same
+   bytes, built in one run when they share a page (a tpage change: ui_char
+   one by one) */
+void ui_chars(int x, int y, const char *s, int n, int add, int shade)
+{
+	if (!gdata.aux || n <= 0)
+		return;
+	int count = 0, tp = -1;
+	for (int j = 0; j < n; j++) {
+		int c = ((uint8_t) s[j] + add) & 255;
+		if ((c & 127) == 32)
+			continue;
+		int t = gdata.aux[c & 128 ? QGA_CONCHARS2 : QGA_CONCHARS].tpage;
+		if (tp >= 0 && t != tp) {                 /* two pages: one by one */
+			for (j = 0; j < n; j++, x += 8)
+				ui_char(x, y, (uint8_t) s[j] + add, shade);
+			return;
+		}
+		tp = t;
+		count++;
+	}
+	if (!count)
+		return;
+	set_tpage(tp);
+	uint32_t *p = vid_ovl_alloc_run(sizeof (SPRT), count);
+	if (!p)
+		return;
+	uint32_t rgb = 0x64000000u | (uint32_t) shade * 0x010101u, yy = (uint32_t) y << 16;
+	for (int j = 0; j < n; j++, x += 8) {
+		int c = ((uint8_t) s[j] + add) & 255;
+		if ((c & 127) == 32)
+			continue;
+		const qg_aux *a = &gdata.aux[c & 128 ? QGA_CONCHARS2 : QGA_CONCHARS];
+		p[1] = rgb;
+		p[2] = yy | ((uint32_t) x & 0xffffu);
+		p[3] = (uint32_t) a->clut << 16 | (uint32_t) (a->v + ((c >> 4) & 7) * 8) << 8 |
+		       (uint32_t) (a->u + (c & 15) * 8);
+		p[4] = 8u << 16 | 8u;
+		p += sizeof (SPRT) / 4;
+	}
+}
+
 void ui_text_shaded(int x, int y, const char *s, int add, int shade)
 {
-	int x0 = x;
-	for (; *s; s++) {
-		if (*s == '\n') {
-			x = x0;
-			y += 8;
-			continue;
-		}
-		ui_char(x, y, (uint8_t) *s + add, shade);
-		x += 8;
+	for (;;) {                                    /* a line at a time */
+		int n = 0;
+		while (s[n] && s[n] != '\n')
+			n++;
+		ui_chars(x, y, s, n, add, shade);
+		if (!s[n])
+			return;
+		s += n + 1;
+		y += 8;
 	}
 }
 

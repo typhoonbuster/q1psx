@@ -577,11 +577,13 @@ static void draw_center_string(const char *text, int reveal)
 		while (p[l] && p[l] != '\n' && l < 40)
 			l++;
 		int x = (VID_W - l * 8) / 2;
-		for (int j = 0; j < l; j++) {
-			if (reveal >= 0 && reveal-- == 0)
-				return;
-			ui_char(x + j * 8, y, (uint8_t) p[j], 128);
+		if (reveal >= 0 && reveal < l) {          /* the finale's typing: its last line */
+			ui_chars(x, y, p, reveal, 0, 128);
+			return;
 		}
+		ui_chars(x, y, p, l, 0, 128);
+		if (reveal >= 0)
+			reveal -= l;
 		y += 8;
 		p += l;
 		if (*p == '\n')

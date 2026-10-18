@@ -55,6 +55,23 @@ int vid_viewport_rows(void)
 	return viewport_rows;
 }
 
+void *vid_ovl_alloc_run(int bytes, int n)
+{
+	uint32_t *p = vid_alloc(bytes * n);
+	if (!p)
+		return NULL;
+	uint32_t len = (uint32_t) (bytes - 4) / 4 << 24, *q = p;
+	for (int i = 1; i < n; i++, q += bytes / 4)
+		q[0] = len | (((uint32_t) q + (uint32_t) bytes) & 0xffffffu);
+	q[0] = len | 0xffffffu;
+	if (ovl_tail)
+		*ovl_tail = (*ovl_tail & 0xff000000u) | ((uint32_t) p & 0xffffffu);
+	else
+		ovl_head = p;
+	ovl_tail = q;
+	return p;
+}
+
 void *vid_ovl_alloc(int bytes)
 {
 	uint32_t *p = vid_alloc(bytes);
