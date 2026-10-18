@@ -1,7 +1,9 @@
 /*
- * q1psx — cooked game data "QGM1": the models, sprites and HUD pictures the
- * engine needs on every map. Written by `qcook game`, loaded once at boot by
- * engine/gdata.c (GAME.DAT on the disc).
+ * q1psx — cooked game data "QGM5": the models, sprites and HUD pictures the
+ * engine needs on every map. Written by `qcook game`, one file per model
+ * level (GAME_<n>.DAT on the disc, formats/qlevels.h: the models'
+ * triangles differ, the pictures and skins do not), loaded at boot by
+ * engine/gdata.c, its models again when the level changes.
  *
  * Models
  *   A Quake MDL becomes a set of face records in the world's format
@@ -32,7 +34,7 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM4"
+#define QGAME_MAGIC "QGM5"
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
@@ -71,11 +73,13 @@ typedef struct {
 } qg_model;                      /* 32 bytes */
 
 /* A map's own models (the items', the flames', the explosive boxes'): its
-   world file's models section (qw_header ofs_models), each the cooked
-   model (frames and records as GAME.DAT's, offsets in the section's
-   geometry block) and the entries of the map's texture table its records'
-   tex 0 .. num_tex - 1 stand for (a skin among the map's textures, or a
-   BSP item's few). Only the models the map's entities use are cooked. */
+   models file (qmm_header below), each the cooked model (frames and
+   records as GAME.DAT's, offsets in the file's geometry block) and the
+   entries of the map's texture table its records' tex 0 .. num_tex - 1
+   stand for (a skin among the map's textures, or a BSP item's few). Only
+   the models the map's entities use are cooked. Their UVs are the world
+   file's kind (formats/qtex.h qtex_uvmap: the finest texture level's,
+   tile-relative), mapped at load like the world's. */
 enum {
 	QIM_G_SHOT, QIM_G_NAIL, QIM_G_NAIL2, QIM_G_ROCK, QIM_G_ROCK2, QIM_G_LIGHT,
 	QIM_ARMOR1, QIM_ARMOR2, QIM_ARMOR3,             /* armor.mdl's three skins */
@@ -95,6 +99,14 @@ typedef struct {
 	uint16_t tex[QW_MODEL_TEX];  /* the map texture table's entries              */
 	qg_model m;
 } qw_model;                      /* 48 bytes */
+
+/* "QMM1": a map's own models at one model level (<MAP>_M<n>.MDL) */
+#define QMAPMDL_MAGIC "QMM1"
+typedef struct {
+	char     magic[4];
+	uint32_t num_models, ofs_models;   /* qw_model[num_models]                  */
+	uint32_t ofs_geo, len_geo;         /* their geometry block                  */
+} qmm_header;
 
 /* pictures, in this order in the file (gfx.wad lumps) */
 enum {
@@ -177,6 +189,9 @@ typedef struct {
 	                                among the rects)                             */
 	uint32_t num_finales, ofs_finales, len_finales;   /* qg_finale[num_finales]
 	                                then their texts (the block's len bytes)     */
+	uint32_t level;              /* the model level (formats/qlevels.h)          */
+	uint32_t len_geo_max;        /* the largest geometry block of all the levels'
+	                                files: the engine's room for any of them     */
 } qg_header;
 
 /* The episodes' end texts (client.qc ExitIntermission's SVC_FINALE strings,

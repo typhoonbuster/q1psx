@@ -686,7 +686,58 @@ static int by_dist(const void *a, const void *b)
 	return x->d < y->d ? -1 : x->d > y->d;
 }
 
-static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
+/* The model level's triangles (formats/qlevels.h): at low up to half, at
+   medium up to a quarter of those kept go (decim.c), as long as no surface
+   or texture moves more than 3 units (low) or 1.5 (medium): 4 and 2 px at
+   128 units. The view models stay Quake's at every level: seen from the
+   eye, they lose nothing at an error of 2 to 4 px on the screen, and at 12
+   px, for 1 to 3 % of a frame, their outline broke (the super shotgun's
+   barrels) and a few triangles turned from the eye. A model of fewer than
+   DECIM_MIN triangles stays as it is too. Returns the reduced model (its
+   own triangle list) or NULL. */
+#define DECIM_MIN 24
+static int decim_tris, decim_left;
+
+static int (*reduce_mdl(const mdl_t *m, const model_spec *sp, const uint8_t *keep, int model_level,
+                        mdl_t *out))[4]
+{
+	int nk = 0;
+	for (int t = 0; t < m->ntris; t++)
+		nk += keep[t];
+	decim_tris = decim_left = nk;
+	if (model_level >= QL_HIGH || nk < DECIM_MIN || sp->view)
+		return NULL;
+	int (*tris)[4] = xmalloc((size_t) nk * sizeof *tris);
+	int k = 0;
+	for (int t = 0; t < m->ntris; t++)
+		if (keep[t])
+			memcpy(tris[k++], m->tris[t], sizeof tris[0]);
+	double *pos = xmalloc((size_t) m->nframes * m->nverts * 3 * sizeof *pos);
+	for (int f = 0; f < m->nframes; f++)
+		for (int v = 0; v < m->nverts; v++)
+			for (int c = 0; c < 3; c++)
+				pos[((size_t) f * m->nverts + v) * 3 + c] =
+					(m->frames[f][v].v[c] * m->scale[c] + m->origin[c]) * sp->scale[c];
+	double  *uv   = xmalloc((size_t) m->nverts * 2 * sizeof *uv);
+	uint8_t *seam = xmalloc((size_t) m->nverts);
+	for (int v = 0; v < m->nverts; v++) {
+		uv[v * 2]     = m->st[v][1];
+		uv[v * 2 + 1] = m->st[v][2];
+		seam[v]       = m->st[v][0] != 0;
+	}
+	dmesh dm = { m->nverts, m->nframes, pos, uv, 0.25, seam, m->skinw };
+	int left = decimate(&dm, tris, nk, model_level == QL_LOW ? 0.5 : 0.75, model_level == QL_LOW ? 3.0 : 1.5);
+	free(pos);
+	free(uv);
+	free(seam);
+	*out        = *m;
+	out->tris   = tris;
+	out->ntris  = left;
+	decim_left  = left;
+	return tris;
+}
+
+static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 {
 	const model_spec *sp = ms->sp;
 	mdl_t *m = &ms->mdl;
@@ -750,6 +801,17 @@ static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 		}
 		if (behind) { keep[t] = 0; dropped_near++; }
 		else if (back) { keep[t] = 0; dropped_back++; }
+	}
+
+	/* the model level: the triangles kept, reduced (they all stay) */
+	mdl_t reduced;
+	int (*reduced_tris)[4] = reduce_mdl(m, sp, keep, model_level, &reduced);
+	int full_tris = m->ntris;
+	if (reduced_tris) {
+		m = &reduced;
+		free(keep);
+		keep = xmalloc((size_t) m->ntris + 1);
+		memset(keep, 1, (size_t) m->ntris + 1);
 	}
 
 	/* triangle order: a view model nearest-first (seen from the origin, the
@@ -854,9 +916,13 @@ static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 		}
 	out->radius = (uint16_t) (rad > 65000 ? 65000 : ceil(rad));
 	out->flags  = (uint16_t) (sp->flat ? QGF_FLAT : 0);
-	printf("qcook: %-20s %3d frames %4d tris (%d behind the eye, %d back-facing dropped) -> %3d records, %4d slots (%d verts), skin %dx%d, %u B\n",
-	       sp->file, m->nframes, m->ntris, dropped_near, dropped_back, nrec, nslots, m->nverts, im->w, im->h,
+	printf("qcook: %-20s %3d frames %4d tris (%d behind the eye, %d back-facing dropped) -> %3d records, %4d slots (%d verts), skin %dx%d, %u B",
+	       sp->file, m->nframes, full_tris, dropped_near, dropped_back, nrec, nslots, m->nverts, im->w, im->h,
 	       (unsigned) (geo->len - rec_start));
+	if (reduced_tris)
+		printf("; %s: %d of %d tris", level_name[model_level], decim_left, decim_tris);
+	printf("\n");
+	free(reduced_tris);
 }
 
 /* a sprite: one record (one quad) per frame; the frame's pool holds the
@@ -1322,14 +1388,16 @@ int qc_mdl_flags(const qc_mdl *q)
 	return q->src.mdl.flags;
 }
 
-void qc_mdl_cook(qc_mdl *q, int u0, int v0, buf_t *geo, void *qg_model_out)
+const int qc_mdl_border = GP_BORDER;
+
+void qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out)
 {
 	qg_model *out = qg_model_out;
 	image *im = q->src.im;
-	im->u    = u0 + im->border;
-	im->v    = v0 + im->border;
+	im->u    = 0;                /* the layout's UVs: from the skin's corner */
+	im->v    = 0;
 	im->page = 0;
-	cook_mdl(&q->src, (gbuf *) geo, out);
+	cook_mdl(&q->src, model_level, (gbuf *) geo, out);
 }
 
 /* ------------------------------------------------------------------ main -- */
@@ -1458,7 +1526,7 @@ int cmd_game(int argc, char **argv)
 		if (!strcmp(argv[i], "--out")) out_path = argv[i + 1];
 	}
 	if (!pak_path || !out_path)
-		die("usage: qcook game --pak <pak0.pak> --out <game.dat>");
+		die("usage: qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<level>.dat)");
 
 	long pak_len;
 	uint8_t *pak = read_file(pak_path, &pak_len);
@@ -1492,22 +1560,33 @@ int cmd_game(int argc, char **argv)
 		p->w = (uint16_t) ps->im->w;
 		p->h = (uint16_t) ps->im->h;
 	}
-	gbuf geo;
-	memset(&geo, 0, sizeof geo);
-	static qg_model models[QGM_COUNT];
-	for (int i = 0; i < QGM_COUNT; i++) {
-		model_src *ms = &srcs[i];
-		qg_model *out = &models[i];
-		memset(out, 0, sizeof *out);
-		out->id = (uint16_t) i;
-		galign(&geo, 4);
-		if (strstr(ms->sp->file, ".spr"))
-			cook_spr(ms, &geo, out);
-		else
-			cook_mdl(ms, &geo, out);
-		out->tex.clut = (uint16_t) ((QG_CLUT_Y << 6) | (QG_CLUT_X >> 4));
+	/* the models at every model level (their triangles; the pictures and
+	   skins are the same): one file each */
+	static gbuf geos[QL_LEVELS];
+	static qg_model level_models[QL_LEVELS][QGM_COUNT];
+	uint32_t len_geo_max = 0;
+	for (int lv = 0; lv < QL_LEVELS; lv++) {
+		if (!(QL_MODEL_MASK & 1 << lv))
+			continue;
+		printf("qcook: models at %s\n", level_name[lv]);
+		gbuf *geo = &geos[lv];
+		memset(geo, 0, sizeof *geo);
+		for (int i = 0; i < QGM_COUNT; i++) {
+			model_src *ms = &srcs[i];
+			qg_model *out = &level_models[lv][i];
+			memset(out, 0, sizeof *out);
+			out->id = (uint16_t) i;
+			galign(geo, 4);
+			if (strstr(ms->sp->file, ".spr"))
+				cook_spr(ms, geo, out);
+			else
+				cook_mdl(ms, lv, geo, out);
+			out->tex.clut = (uint16_t) ((QG_CLUT_Y << 6) | (QG_CLUT_X >> 4));
+		}
+		galign(geo, 4);
+		if (geo->len > len_geo_max)
+			len_geo_max = (uint32_t) geo->len;
 	}
-	galign(&geo, 4);
 
 	/* light tables: a vertex's factor (x128) by its normal, for a model
 	   yawed by k x 22.5 degrees; Quake's fixed light comes from -x: a
@@ -1525,7 +1604,12 @@ int cmd_game(int argc, char **argv)
 	for (int i = 0; i < 256; i++)
 		rgb[i] = (uint32_t) palette[i * 3] | (uint32_t) palette[i * 3 + 1] << 8 | (uint32_t) palette[i * 3 + 2] << 16;
 
-	/* assemble: header, rects, tables, geometry, pixels */
+	/* assemble each level's file: header, rects, tables, geometry, pixels */
+	for (int lv = 0; lv < QL_LEVELS; lv++) {
+	if (!(QL_MODEL_MASK & 1 << lv))
+		continue;
+	gbuf geo = geos[lv];
+	qg_model *models = level_models[lv];
 	int npages = 0;
 	for (int p = 0; p < GP_PAGES; p++)
 		if (page_rows[p]) npages = p + 1;
@@ -1540,7 +1624,9 @@ int cmd_game(int argc, char **argv)
 	h.ofs_rects = (uint32_t) f.len;
 	size_t rects_at = f.len;
 	{ qtex_rect z; memset(&z, 0, sizeof z); for (uint32_t i = 0; i < h.num_rects; i++) gput(&f, &z, sizeof z); }
-	h.num_models = QGM_COUNT; h.ofs_models = (uint32_t) f.len; gput(&f, models, sizeof models);
+	h.num_models = QGM_COUNT; h.ofs_models = (uint32_t) f.len; gput(&f, models, QGM_COUNT * sizeof *models);
+	h.level = (uint32_t) lv;
+	h.len_geo_max = len_geo_max;
 	h.num_pics = QGP_COUNT;   h.ofs_pics = (uint32_t) f.len;   gput(&f, pics, sizeof pics);
 	h.ofs_dots = (uint32_t) f.len; gput(&f, dots, sizeof dots); galign(&f, 4);
 	h.ofs_rgb  = (uint32_t) f.len; gput(&f, rgb, sizeof rgb);
@@ -1623,12 +1709,17 @@ int cmd_game(int argc, char **argv)
 	memcpy(f.p + rects_at, rects, h.num_rects * sizeof *rects);
 	memcpy(f.p, &h, sizeof h);
 
-	FILE *fp = fopen(out_path, "wb");
-	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", out_path);
+	char path[512];
+	snprintf(path, sizeof path, "%s_%d.dat", out_path, lv);
+	FILE *fp = fopen(path, "wb");
+	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", path);
 	fclose(fp);
 	uint32_t texels = 0;
 	for (int p = 0; p < npages; p++) texels += (uint32_t) page_rows[p] * PT;
 	printf("qcook: %s — %u B: %d models (%u B of geometry), %d pictures, %d VRAM pages (%u K texels)\n",
-	       out_path, (unsigned) f.len, QGM_COUNT, (unsigned) geo.len, QGP_COUNT, npages, texels / 1024);
+	       path, (unsigned) f.len, QGM_COUNT, (unsigned) geo.len, QGP_COUNT, npages, texels / 1024);
+	free(rects);
+	free(f.p);
+	}
 	return 0;
 }

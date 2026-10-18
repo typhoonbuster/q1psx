@@ -1,10 +1,11 @@
 /*
  * qcook — textures: palette -> CLUT, one tile per used miptex (one texture
- * repetition at the fidelity's resolution; on an axis that is not a power of
- * two, possibly several), packed into whole 8bpp texture pages, each
- * power-of-two axis aligned for the GPU texture window, written as a QTX3
- * file (formats/qtex.h). Optionally the same pages in 4bpp, each texture
- * quantized to its own 16 colours (QTX4).
+ * repetition at the level's resolution), packed into whole 8bpp texture
+ * pages, each power-of-two axis aligned for the GPU texture window, written
+ * as a QTX6 file (formats/qtex.h) with the map's texture table: the slots'
+ * words, how the world's UVs (cooked for the finest level's layout) land on
+ * this set's tiles, the animated textures' tiles. Optionally the same pages
+ * in 4bpp, each texture quantized to its own 16 colours (QTX7).
  */
 
 #include <math.h>
@@ -219,12 +220,106 @@ static void quantize16(const uint32_t hist[256], const uint8_t pal[768],
 	}
 }
 
-/* The QTX4 file: the pages of `pages` (8bpp indices) re-coded per tile with
+
+/* ------------------------------------------------------------- tables -- */
+
+/* a slot's CLUT and tpage words in one of the two sets */
+typedef struct { uint16_t clut, tpage; } tex_words;
+
+/* The slot of `ts` that draws slot i of the layout `canon`: itself, or, for
+   an animation's display slot at a level that left the animation out, the
+   chain's first frame (the display tile is cut from it); -1 if none. */
+static int draw_slot(const tex_set *ts, const tex_set *canon, int i)
+{
+	if (i < ts->num)
+		return i;
+	for (int c = 0; c < canon->num_anims; c++)
+		if (canon->anims[c].display == i)
+			return canon->anims[c].src;
+	return -1;
+}
+
+static int face_miptex(const bsp_t *b, int f)
+{
+	const bsp_face *bf = &b->faces[f];
+	if (bf->texinfo < 0 || bf->texinfo >= b->num_texinfo)
+		return -1;
+	int mt = b->texinfo[bf->texinfo].miptex;
+	return mt >= 0 && mt < b->num_miptex ? mt : -1;
+}
+
+/* The set's tables (formats/qtex.h) into `out`: qw_tex[canon->num] (the
+   CLUT and tpage of `words`, the texture window), qtex_uvmap[canon->num]
+   (the layout's UVs onto this set's tiles), then qw_anim[ts->num_anims]
+   (the animated textures' tiles, and the brush models drawing a chain
+   with alternates: the engine looks at their frame). */
+static void tables_build(buf_t *out, const tex_set *ts, const tex_set *canon, const bsp_t *b,
+                         const tex_words *words)
+{
+	for (int i = 0; i < canon->num; i++) {
+		qw_tex t;
+		memset(&t, 0, sizeof t);
+		int j = draw_slot(ts, canon, i);
+		if (j >= 0 && ts->slots[j].present && canon->slots[i].present) {
+			t.clut   = words[j].clut;
+			t.tpage  = words[j].tpage;
+			t.window = ts->slots[j].window;
+		}
+		buf_put(out, &t, sizeof t);
+	}
+	for (int i = 0; i < canon->num; i++) {
+		qtex_uvmap m;
+		memset(&m, 0, sizeof m);
+		int j = draw_slot(ts, canon, i);
+		const tex_slot *c = &canon->slots[i];
+		if (j >= 0 && ts->slots[j].present && c->present) {
+			const tex_slot *s = &ts->slots[j];
+			long su = lround(32768.0 * s->res_u / c->res_u), sv = lround(32768.0 * s->res_v / c->res_v);
+			if (su < 1 || sv < 1 || su > 32768 || sv > 32768)
+				die("texture slot %d: scale %ld / %ld (finer than the layout's)", i, su, sv);
+			m.su  = (uint16_t) su;
+			m.sv  = (uint16_t) sv;
+			m.u0  = (uint8_t) (s->win_x ? 0 : s->u0 + s->inner);
+			m.v0  = (uint8_t) (s->win_y ? 0 : s->v0 + s->inner);
+			m.rnd = s->inner ? 0 : 16384;          /* a skin's texels: divided (game.c) */
+		}
+		buf_put(out, &m, sizeof m);
+	}
+	for (int c = 0; c < ts->num_anims; c++) {
+		const tex_anim *a = &ts->anims[c];
+		qw_anim q;
+		memset(&q, 0, sizeof q);
+		#define TILE_OF(t, sl) do { const tex_slot *s_ = &ts->slots[sl]; (t).page = (uint8_t) s_->page; \
+			(t).slot = (uint16_t) (sl); (t).u0 = (uint16_t) s_->u0; (t).v0 = (uint16_t) s_->v0; \
+			(t).w = (uint16_t) s_->tile_w; (t).h = (uint16_t) s_->tile_h; } while (0)
+		TILE_OF(q.display, a->display);
+		q.num_frames = (uint8_t) a->nframes;
+		q.num_alt    = (uint8_t) a->nalt;
+		for (int k = 0; k < a->nframes; k++) TILE_OF(q.frames[k], a->frames[k]);
+		for (int k = 0; k < a->nalt; k++)    TILE_OF(q.alt[k], a->alt[k]);
+		#undef TILE_OF
+		for (int m = 1; a->nalt && m < b->num_models && q.num_models < QW_ANIM_MODELS; m++) {
+			const bsp_model *bm = &b->models[m];
+			int uses = 0;
+			for (int fc = bm->firstface; fc < bm->firstface + bm->numfaces && !uses; fc++) {
+				int mt = face_miptex(b, fc);
+				uses = mt >= 0 && ts->remap[mt] == a->display;
+			}
+			if (uses)
+				q.models[q.num_models++] = (uint16_t) m;
+		}
+		buf_put(out, &q, sizeof q);
+	}
+}
+
+/* ---------------------------------------------------------------- 4bpp -- */
+
+/* The QTX7 file: the pages of `pages` (8bpp indices) re-coded per tile with
    that tile's own 16 colours. */
-static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
+static void write_tex4(const tex_set *ts, const tex_set *canon, const bsp_t *b, const uint8_t *pages,
                        const int page_h[], const uint8_t palette[768], const char *path)
 {
-	int ncl = num_miptex;
+	int ncl = ts->num;
 	int cl_rows = (ncl + QTEX4_CLUTS_PER_ROW - 1) / QTEX4_CLUTS_PER_ROW;
 	if (cl_rows > QTEX4_CLUT_ROWS)
 		die("%d textures: more 4-bit CLUTs than the CLUT area holds (%d)", ncl,
@@ -232,10 +327,10 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 	int cl_w = 16 * (ncl < QTEX4_CLUTS_PER_ROW ? ncl : QTEX4_CLUTS_PER_ROW);
 	uint16_t  *clut = xcalloc((size_t) (cl_w * cl_rows) + 16, 2);
 	uint8_t   *nib  = xcalloc(QTEX_PAGES, PAGE_TEX * PAGE_TEX);
-	qtex4_tex *tab  = xcalloc((size_t) num_miptex + 1, sizeof *tab);
+	tex_words *tab  = xcalloc((size_t) ts->num + 1, sizeof *tab);
 	double err = 0, npx = 0;
 
-	for (int i = 0; i < num_miptex; i++) {
+	for (int i = 0; i < ts->num; i++) {
 		const tex_slot *s = &ts->slots[i];
 		if (!s->present)
 			continue;
@@ -265,6 +360,10 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 		tab[i].tpage = gpu_tpage4(QTEX4_PAGE_X0 + s->page * (PAGE_TEX / 4), 0);
 	}
 
+	buf_t tables;
+	memset(&tables, 0, sizeof tables);
+	tables_build(&tables, ts, canon, b, tab);
+
 	FILE *f = fopen(path, "wb");
 	if (!f)
 		die("cannot write %s", path);
@@ -273,11 +372,13 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 	memset(&h, 0, sizeof h);
 	memcpy(h.magic, QTEX4_MAGIC, 4);
 	h.num_rects = (uint32_t) nrects;
-	h.num_tex   = (uint32_t) num_miptex;
-	h.ofs_tex   = (uint32_t) (sizeof h + (size_t) nrects * sizeof(qtex_rect));
+	h.num_slots = (uint32_t) canon->num;
+	h.ofs_slots = (uint32_t) (sizeof h + (size_t) nrects * sizeof(qtex_rect));
+	h.num_anims = (uint32_t) ts->num_anims;
+	h.ofs_anims = h.ofs_slots + (uint32_t) canon->num * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
 	fwrite(&h, sizeof h, 1, f);
 
-	uint32_t ofs = h.ofs_tex + (uint32_t) num_miptex * (uint32_t) sizeof(qtex4_tex);
+	uint32_t ofs = h.ofs_slots + (uint32_t) tables.len;
 	ofs = (ofs + 63u) & ~63u;                            /* (64: the GPU DMA's 16-word unit; zeros follow each rectangle) */
 	if (ncl) {
 		qtex_rect r = { 0, QTEX4_CLUT_Y, (uint16_t) cl_w, (uint16_t) cl_rows, ofs };
@@ -295,7 +396,7 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 		fwrite(&r, sizeof r, 1, f);
 		ofs += (uint32_t) r.w * r.h * 2;                 /* 128 * h bytes */
 	}
-	fwrite(tab, sizeof *tab, (size_t) num_miptex, f);
+	fwrite(tables.p, 1, tables.len, f);
 	long here = ftell(f);
 	static const uint8_t zero[64];
 	fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
@@ -317,6 +418,7 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 	fclose(f);
 	printf("qcook: %s — 4bpp, %d CLUTs, file %ld B, rms error %.2f / 31 per channel\n",
 	       path, ncl, file_len, npx > 0 ? sqrt(err / npx / 3) : 0.0);
+	free(tables.p);
 	free(clut);
 	free(nib);
 	free(tab);
@@ -324,10 +426,11 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 
 /* ------------------------------------------------------------- build -- */
 
-int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
-              const uint8_t palette[768], const fidelity_t *fid, const char *out_path,
+int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra *extra,
+              int nextra, const uint8_t palette[768], int level, const char *out_path,
               const char *out4_path, int anims, int may_fail)
 {
+	const tex_level_t *lv = &tex_levels[level];
 	memset(ts, 0, sizeof *ts);
 
 	/* which miptex do the drawn models' faces use? (the world's and the
@@ -391,8 +494,9 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			continue;
 		a.src = a.nframes ? a.frames[0] : a.alt[0];
 		ts->anims[ts->num_anims++] = a;
-		printf("qcook: animated %s: %d frames, %d alternates, %dx%d\n", mi->name + 2, a.nframes, a.nalt,
-		       mi->w, mi->h);
+		if (out_path)
+			printf("qcook: animated %s: %d frames, %d alternates, %dx%d\n", mi->name + 2, a.nframes, a.nalt,
+			       mi->w, mi->h);
 	}
 	free(in_chain);
 
@@ -410,17 +514,21 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 		for (int k = 0; k < a->nframes; k++) { used[a->frames[k]] = 1; ts->remap[a->frames[k]] = a->display; }
 		for (int k = 0; k < a->nalt; k++)    { used[a->alt[k]] = 1;    ts->remap[a->alt[k]] = a->display; }
 	}
+	/* a level that leaves the animations out still draws the chains' first
+	   frames: the stand-ins for their display slots (draw_slot) */
+	for (int c = 0; canon && !anims && c < canon->num_anims; c++)
+		used[canon->anims[c].src] = 1;
 	#define SLOT_MIPTEX(i) ((i) < b->num_miptex ? &b->miptex[i] \
 	                       : (i) < b->num_miptex + nextra ? &extra[(i) - b->num_miptex].mt \
 	                       : &b->miptex[ts->anims[(i) - b->num_miptex - nextra].src])
-	#define SLOT_SKIN(i)   ((i) >= b->num_miptex && (i) < b->num_miptex + nextra && extra[(i) - b->num_miptex].skin)
+	#define SLOT_EXTRA(i)  ((i) >= b->num_miptex && (i) < b->num_miptex + nextra ? &extra[(i) - b->num_miptex] : 0)
 
-	/* tile size per texture */
+	/* tile size per texture: one repetition at the level's resolution */
 	pack_item *items = xcalloc((size_t) total + 1, sizeof *items);
 	int nitems = 0;
 	for (int i = 0; i < total; i++) {
 		const bsp_miptex *m = SLOT_MIPTEX(i);
-		int skin = SLOT_SKIN(i);
+		const tex_extra  *x = SLOT_EXTRA(i);
 		tex_slot *s = &ts->slots[i];
 		s->index = i;
 		if (!strncmp(m->name, "sky", 3))
@@ -429,10 +537,11 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			s->flags |= QWF_LIQUID;
 		if (!used[i] || !m->w || !m->mip[0] || (s->flags & QWF_SKY))
 			continue;
-		if (skin) {                             /* a model's skin: as it is */
+		if (x && x->skin) {                     /* a model's skin: as it is */
 			s->rep_w  = (m->w + 1) & ~1;        /* (halfword-aligned in 8bpp) */
 			s->rep_h  = m->h;
-			s->reps_x = s->reps_y = 1;
+			s->res_u  = s->res_v = 1.0 / x->div;
+			s->inner  = x->border;
 			items[nitems].idx = i;
 			items[nitems].w   = s->rep_w;
 			items[nitems].h   = s->rep_h;
@@ -440,10 +549,9 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			continue;
 		}
 
-		int shift = fid->tex_shift + (i >= b->num_miptex && i < b->num_miptex + nextra
-		                              ? extra[i - b->num_miptex].shift : 0);
+		int shift = lv->tex_shift + (x ? x->shift : 0);
 		int w = m->w >> shift, h = m->h >> shift;
-		while (w > fid->tex_max || h > fid->tex_max) {
+		while (w > lv->tex_max || h > lv->tex_max) {
 			w >>= 1;
 			h >>= 1;
 		}
@@ -458,19 +566,20 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 		w = (w + 1) & ~1;               /* halfword-aligned in 8bpp */
 		s->rep_w = w;
 		s->rep_h = h;
-
-		/* an axis that cannot wrap: lay small repetitions side by side so
-		   a polygon can span several (at most 128 texels: UVs in a byte) */
-		s->reps_x = s->reps_y = 1;
-		while (!s->win_x && w * s->reps_x < fid->tile_min && w * s->reps_x * 2 <= 128)
-			s->reps_x *= 2;
-		while (!s->win_y && h * s->reps_y < fid->tile_min && h * s->reps_y * 2 <= 128)
-			s->reps_y *= 2;
+		s->res_u = (double) w / m->w;
+		s->res_v = (double) h / m->h;
 
 		items[nitems].idx = i;
-		items[nitems].w   = w * s->reps_x;
-		items[nitems].h   = h * s->reps_y;
+		items[nitems].w   = w;
+		items[nitems].h   = h;
 		nitems++;
+	}
+	if (!out_path) {                        /* the layout alone */
+		for (int n = 0; n < nitems; n++)
+			ts->slots[items[n].idx].present = 1;
+		free(items);
+		free(used);
+		return 1;
 	}
 	qsort(items, (size_t) nitems, sizeof *items, by_area);
 
@@ -511,14 +620,14 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			}
 			if (may_fail) {
 				printf("qcook: %ld K texels (%ld K the models') overflow %d pages at %s\n",
-				       need / 1024, extras / 1024, QTEX_MAP_PAGES, fid->name);
+				       need / 1024, extras / 1024, QTEX_MAP_PAGES, level_name[level]);
 				free(pages);
 				free(items);
 				free(used);
 				return 0;
 			}
-			die("textures do not fit in %d VRAM pages at fidelity %s (%ld K texels, %ld K of them "
-			    "the models', item %d of %d: %dx%d)", QTEX_MAP_PAGES, fid->name, need / 1024,
+			die("textures do not fit in %d VRAM pages at %s (%ld K texels, %ld K of them "
+			    "the models', item %d of %d: %dx%d)", QTEX_MAP_PAGES, level_name[level], need / 1024,
 			    extras / 1024, n, nitems, it->w, it->h);
 		}
 		for (int yy = 0; yy < ch; yy++)
@@ -526,7 +635,8 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 				cell[page][cy + yy][cx + xx] = 1;
 
 		const bsp_miptex *m = SLOT_MIPTEX(it->idx);
-		int skin = SLOT_SKIN(it->idx);
+		const tex_extra  *x = SLOT_EXTRA(it->idx);
+		int skin = x && x->skin;
 		int px = QTEX_PAGE_X0 + (page % QTEX_PAGE_COLS) * (PAGE_TEX / 2);
 		int py = (page / QTEX_PAGE_COLS) * PAGE_TEX;
 		s->present = 1;
@@ -549,7 +659,7 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 			for (int xx = 0; xx < it->w; xx++)
 				img[(s->v0 + y) * PAGE_TEX + s->u0 + xx] = skin
 					? m->mip[0][y * m->w + (xx < m->w ? xx : m->w - 1)]   /* (the pad: the last column) */
-					: sample(m, xx % s->rep_w, y % s->rep_h, s->rep_w, s->rep_h);
+					: sample(m, xx, y, s->rep_w, s->rep_h);
 
 		ts->bytes += (uint32_t) (it->w * it->h);
 		if (s->v0 + it->h > page_h[page])
@@ -559,7 +669,18 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 	}
 	ts->pages_used = pages_used;
 
-	/* QTX3: header + one rect per used page (only the used rows) */
+	/* QTX6: header, one rect per used page (only the used rows), the
+	   tables, the pixels */
+	tex_words *words = xcalloc((size_t) total + 1, sizeof *words);
+	for (int i = 0; i < total; i++) {
+		words[i].clut  = ts->slots[i].clut;
+		words[i].tpage = ts->slots[i].tpage;
+	}
+	buf_t tables;
+	memset(&tables, 0, sizeof tables);
+	tables_build(&tables, ts, canon, b, words);
+	free(words);
+
 	FILE *f = fopen(out_path, "wb");
 	if (!f)
 		die("cannot write %s", out_path);
@@ -573,9 +694,13 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 		uint16_t c = (uint16_t) ((r >> 3) | ((g >> 3) << 5) | ((bl >> 3) << 10));
 		h.clut[i] = c ? c : 0x8000;     /* 0x0000 would be transparent */
 	}
+	h.num_slots = (uint32_t) canon->num;
+	h.ofs_slots = (uint32_t) (sizeof h + (size_t) ts->pages_used * sizeof(qtex_rect));
+	h.num_anims = (uint32_t) ts->num_anims;
+	h.ofs_anims = h.ofs_slots + (uint32_t) canon->num * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
 	fwrite(&h, sizeof h, 1, f);
 
-	uint32_t ofs = (uint32_t) (sizeof h + (size_t) ts->pages_used * sizeof(qtex_rect));
+	uint32_t ofs = h.ofs_slots + (uint32_t) tables.len;
 	ofs = (ofs + 63u) & ~63u;                            /* (64: the GPU DMA's 16-word unit) */
 	for (int p = 0; p < ts->pages_used; p++) {
 		qtex_rect r;
@@ -587,6 +712,8 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 		fwrite(&r, sizeof r, 1, f);
 		ofs += (uint32_t) r.w * r.h * 2;       /* 256 * h bytes: 32-multiple */
 	}
+	fwrite(tables.p, 1, tables.len, f);
+	free(tables.p);
 	long here = ftell(f);
 	static const uint8_t zero[64];
 	fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
@@ -599,10 +726,10 @@ int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
 	printf("qcook: %s — %d tiles in %d pages (%d animated textures), %u texel bytes, file %ld B\n",
 	       out_path, nitems, ts->pages_used, ts->num_anims, ts->bytes, file_len);
 	#undef SLOT_MIPTEX
-	#undef SLOT_SKIN
+	#undef SLOT_EXTRA
 
 	if (out4_path)
-		write_tex4(ts, total, pages, page_h, palette, out4_path);
+		write_tex4(ts, canon, b, pages, page_h, palette, out4_path);
 
 	free(pages);
 	free(items);

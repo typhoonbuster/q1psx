@@ -198,19 +198,27 @@ static const struct { uint16_t from, to, buttons; } pad_script[] = {
 	{ 2280, 2284, PAD_DOWN },      /* (Multiplayer greyed: Options) */
 	{ 2340, 2344, PAD_CROSS },     /* Options */
 	{ 2400, 2404, PAD_UP },        /* (to Graphics) */
-	{ 2460, 2464, PAD_CROSS },     /* Graphics */
-	{ 2520, 2524, PAD_DOWN }, { 2580, 2584, PAD_DOWN }, { 2640, 2644, PAD_DOWN },
-	{ 2700, 2704, PAD_RIGHT },     /* warp: dynamic */
-	{ 2760, 2764, PAD_DOWN }, { 2820, 2824, PAD_DOWN }, { 2880, 2884, PAD_DOWN },
-	{ 2940, 2944, PAD_RIGHT },     /* HUD: q2 psx */
-	{ 3000, 3004, PAD_DOWN },
-	{ 3060, 3064, PAD_CROSS },     /* dynamic lights: off */
-	{ 3120, 3124, PAD_START }, { 3180, 3184, PAD_START }, { 3240, 3244, PAD_START },   /* out */
-	{ 3300, 3420, PAD_R2 },        /* two seconds of fire */
-	{ 3480, 3484, PAD_START },     /* the menu again */
-	{ 3540, 3544, PAD_CROSS },     /* Single Player */
-	{ 3600, 3604, PAD_CROSS },     /* New Game: "Are you sure" */
-	{ 3660, 3664, PAD_CROSS },     /* yes */
+	{ 2460, 2464, PAD_CROSS },     /* Graphics: the textures */
+	{ 2520, 2524, PAD_RIGHT },     /* textures: low (the release disc's after high) */
+	{ 2580, 2584, PAD_DOWN },
+	{ 2640, 2644, PAD_LEFT },      /* map geometry: low */
+	{ 2700, 2704, PAD_DOWN },
+	{ 2760, 2764, PAD_LEFT },      /* models: medium */
+	{ 2820, 2824, PAD_DOWN },
+	{ 2880, 2884, PAD_RIGHT },     /* effects: ultra (at once) */
+	{ 2940, 2944, PAD_DOWN }, { 3000, 3004, PAD_DOWN }, { 3060, 3064, PAD_DOWN },
+	{ 3120, 3124, PAD_RIGHT },     /* warp: dynamic */
+	{ 3180, 3184, PAD_DOWN }, { 3240, 3244, PAD_DOWN },
+	{ 3300, 3304, PAD_RIGHT },     /* HUD: q2 psx (the budget skipped: greyed) */
+	{ 3360, 3364, PAD_DOWN },
+	{ 3420, 3424, PAD_CROSS },     /* dynamic lights: off */
+	{ 3480, 3484, PAD_START }, { 3540, 3544, PAD_START }, { 3600, 3604, PAD_START },   /* out: no load */
+	{ 3660, 3780, PAD_R2 },        /* two seconds of fire */
+	{ 3840, 3844, PAD_START },     /* the menu again (its cursor on Options) */
+	{ 3870, 3874, PAD_UP },
+	{ 3900, 3904, PAD_CROSS },     /* Single Player */
+	{ 3960, 3964, PAD_CROSS },     /* New Game: "Are you sure" */
+	{ 4020, 4024, PAD_CROSS },     /* yes: START at the levels chosen */
 };
 static uint32_t script_vbl;
 

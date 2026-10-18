@@ -27,16 +27,19 @@ enum { M_NONE, M_MAIN, M_SINGLEPLAYER, M_NEWGAME, M_OPTIONS, M_GRAPHICS };
 /* Only what the PlayStation port does: the main menu's Single Player and
    Options (rows 0 and 2 of mainmenu.lmp), the single player menu's New Game
    (row 0 of sp_menu.lmp), the options the port handles; the graphics page's
-   rows (its fidelity only when the disc carries more than one level) */
+   rows (engine/settings.h SET_*: a quality level only when the disc carries
+   more than one of it) */
 static const uint8_t main_rows[]  = { 0, 2 };
 static const uint8_t sp_rows[]    = { 0 };
 #define MAIN_ITEMS         (int) sizeof main_rows
 #define SINGLEPLAYER_ITEMS (int) sizeof sp_rows
 enum { O_RESET, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
-enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_WEAPON, G_DRAWDIST, G_FLAT,
-       G_FPS, G_TICK, G_COUNT };
 #define SLIDER_RANGE       10
 #define GREY               56          /* a greyed entry's shade (128: as it is) */
+#define HINT_SHADE         88          /* the graphics page's hint: under the rows' 128 */
+#define HINT_GAP           4           /* px between the rows and the hint, then the
+                                          note: 16 rows end it at row 192, where
+                                          Quake's status bars begin */
 
 static int m_state = M_NONE;
 static int m_main_cursor, m_singleplayer_cursor, options_cursor, graphics_cursor;
@@ -155,12 +158,12 @@ static void options_draw(void)
 	draw_cursor(32 + options_cursor * 8);
 }
 
-/* the graphics page's rows: the fidelity only when the disc has a choice */
-static int graphics_rows(uint8_t rows[G_COUNT])
+/* the graphics page's rows: a quality level only when the disc has a choice */
+static int graphics_rows(uint8_t rows[SET_ROWS])
 {
 	int n = 0;
-	for (int g = 0; g < G_COUNT; g++)
-		if (g != G_FID || settings_fid_step(settings.fidelity, 1) != settings.fidelity)
+	for (int g = 0; g < SET_ROWS; g++)
+		if (settings_row_shown(g))
 			rows[n++] = (uint8_t) g;
 	return n;
 }
@@ -169,54 +172,53 @@ static int graphics_rows(uint8_t rows[G_COUNT])
    works in every mode: the fixed mode's, the others' floor) */
 static int graphics_grey(int g)
 {
-	return g == G_BUDGET && settings.warp != R_WARP_BUDGET;
+	return g == SET_BUDGET && settings.warp != R_WARP_BUDGET;
+}
+
+/* A text centred on the screen (M_Print's bronze), at a shade */
+static void m_print_centred(int y, const char *s, int shade)
+{
+	m_print((VID_W - (int) strlen(s) * 8) / 2, y, s, shade);
+}
+
+/* What the highlighted row's value does to the speed and to the picture:
+   two dim lines centred under the rows, the speed's first */
+static void graphics_hint(int g, int y)
+{
+	const char *line[2];
+	settings_hint(g, line);
+	m_print_centred(y, line[0], HINT_SHADE);
+	m_print_centred(y + 8, line[1], HINT_SHADE);
 }
 
 static void graphics_draw(void)
 {
-	static const char *const label[G_COUNT] = {
-		"              Fidelity", "              Textures", "             Dithering",
+	static const char *const label[SET_ROWS] = {
+		"              Textures", "          Map geometry", "                Models",
+		"               Effects", "         Texture depth", "             Dithering",
 		"          Warp control", "             Threshold", "                Budget",
 		"                   HUD", "        Dynamic lights", "           Draw weapon",
 		"         Draw distance", "          Flat shading",
 		"        Frame rate cap", "             Tick rate" };
-	uint8_t rows[G_COUNT];
+	uint8_t rows[SET_ROWS];
 	int n = graphics_rows(rows);
 	char val[24];
 	draw_header(QGA_P_OPTION);
 	for (int i = 0; i < n; i++) {
 		int g = rows[i], shade = graphics_grey(g) ? GREY : 128, y = 32 + i * 8;
 		const char *l = label[g];
-		if (g == G_T && settings.warp != R_WARP_FIXED)
+		if (g == SET_T && settings.warp != R_WARP_FIXED)
 			l = "         Min threshold";          /* the dynamic modes' floor */
 		m_print(16, y, l, shade);
-		switch (g) {
-		case G_FID:    snprintf(val, sizeof val, "%s", fidelity_name[settings.fidelity]); break;
-		case G_TEX:    snprintf(val, sizeof val, "%s", settings.tex4 ? "4-bit" : "8-bit"); break;
-		case G_DITHER: snprintf(val, sizeof val, "%s", settings.dither ? "on" : "off"); break;
-		case G_WARP:   snprintf(val, sizeof val, "%s", warp_mode_name[settings.warp]); break;
-		case G_T:      snprintf(val, sizeof val, "%d px", warp_t_px[settings.t]); break;
-		case G_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
-		case G_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
-		case G_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
-		case G_WEAPON: snprintf(val, sizeof val, "%s", settings.viewmodel ? "on" : "off"); break;
-		case G_DRAWDIST:
-			if (draw_dists[settings.drawdist])
-				snprintf(val, sizeof val, "%d", draw_dists[settings.drawdist]);
-			else
-				snprintf(val, sizeof val, "off");
-			break;
-		case G_FLAT:   snprintf(val, sizeof val, "%s", flat_name[settings.flat]); break;
-		case G_FPS:    snprintf(val, sizeof val, "%d fps", fps_caps[settings.fps_cap]); break;
-		default:       snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
-		}
+		settings_value(g, val, sizeof val);
 		m_print(220, y, val, shade);
 	}
 	draw_cursor(32 + graphics_cursor * 8);
-	if (hooks.loaded_fid && (settings.fidelity != hooks.loaded_fid() || settings.tex4 != hooks.loaded_tex4())) {
-		m_print_white(16, 32 + (n + 1) * 8, "The fidelity and the textures");
-		m_print_white(16, 32 + (n + 2) * 8, "change with the next level.");
-	}
+	int y = 32 + n * 8 + HINT_GAP;
+	if (graphics_cursor < n)
+		graphics_hint(rows[graphics_cursor], y);
+	if (hooks.reload_due && hooks.reload_due())   /* (the levels, the texture depth) */
+		m_print_white((VID_W - 30 * 8) / 2, y + 16 + HINT_GAP, "Takes effect at the next level");
 }
 
 void menu_draw(void)
@@ -356,27 +358,13 @@ static void options_key(int k)
 static void graphics_adjust(int g, int d)
 {
 	local_sound(S_MENU3);
-	switch (g) {
-	case G_FID:    settings.fidelity = settings_fid_step(settings.fidelity, d); break;
-	case G_TEX:    settings.tex4 ^= 1; break;
-	case G_DITHER: settings.dither ^= 1; break;
-	case G_WARP:   settings.warp = wrap(settings.warp, d, R_WARP_MODES); break;
-	case G_T:      settings.t = wrap(settings.t, d, num_warp_t); break;
-	case G_BUDGET: settings.budget = wrap(settings.budget, d, num_warp_budget); break;
-	case G_HUD:    settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
-	case G_DLIGHTS: settings.dlights ^= 1; break;
-	case G_WEAPON: settings.viewmodel ^= 1; break;
-	case G_DRAWDIST: settings.drawdist = wrap(settings.drawdist, d, num_draw_dists); break;
-	case G_FLAT:   settings.flat = wrap(settings.flat, d, R_FLAT_MODES); break;
-	case G_FPS:    settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;
-	default:       settings.tick = wrap(settings.tick, d, num_tick_rates); break;
-	}
-	settings_apply();                             /* the fidelity and the textures: at a load */
+	settings_step(g, d);
+	settings_apply();                             /* the levels and the depth: at a load */
 }
 
 static void graphics_key(int k)
 {
-	uint8_t rows[G_COUNT];
+	uint8_t rows[SET_ROWS];
 	int n = graphics_rows(rows);
 	if (graphics_cursor >= n)
 		graphics_cursor = n - 1;

@@ -8,6 +8,7 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "mem.h"
 #include "prof.h"
 #include "q_fixed.h"
 #include "render.h"
@@ -97,8 +98,14 @@ static const uint8_t ramp3[8] = { 0x6d, 0x6b, 6, 5, 4, 3, 3, 3 };
 
 enum { PT_STATIC, PT_GRAV, PT_SLOWGRAV, PT_FIRE, PT_EXPLODE, PT_EXPLODE2 };
 
-#define MAX_PARTICLES 256
+#define MAX_PARTICLES 512   /* the ultra effects' pool; the others use 256 */
 #define PV_SHIFT 8       /* particle velocity: 1/SUB units per tick x 256 */
+
+/* The effects level (formats/qlevels.h): the particles each effect makes,
+   in eighths of the port's own counts (high: 8; Quake's are several times
+   those, r_part.c's 2048-particle pool), a rocket's or a grenade's trail
+   every tick or every 2nd / 4th, and the pool. */
+static int fx_scale = 8, fx_trail_mask, fx_trail_n, part_cap = 256;
 
 typedef struct {
 	int32_t org[3];        /* 1/SUB units                                  */
@@ -110,7 +117,7 @@ typedef struct {
 	const qw_leaf *leaf;
 } particle_t;
 
-static particle_t particles[MAX_PARTICLES];
+static particle_t *particles;              /* [MAX_PARTICLES], in the game arena (game_init) */
 static uint16_t   part_active, part_free;   /* the lists' heads, index + 1 (R_ClearParticles) */
 
 /* u/s -> particle velocity */
@@ -121,13 +128,35 @@ static int32_t pvel(int32_t ups)
 
 #define PGRAV ((800 * SUB * 256) / (GAME_HZ * GAME_HZ) / 20)   /* r_part.c: gravity x 0.05 */
 
-/* R_ClearParticles: every particle on the free list */
+/* R_ClearParticles: every particle on the free list (none before the pool) */
 static void particles_clear(void)
 {
 	part_active = 0;
-	part_free   = 1;
-	for (int i = 0; i < MAX_PARTICLES; i++)
-		particles[i].next = (uint16_t) (i + 2 <= MAX_PARTICLES ? i + 2 : 0);
+	part_free   = particles ? 1 : 0;
+	for (int i = 0; particles && i < part_cap; i++)
+		particles[i].next = (uint16_t) (i + 2 <= part_cap ? i + 2 : 0);
+}
+
+void game_set_effects(int level)
+{
+	static const uint8_t scale[QL_LEVELS] = { 2, 4, 8, 16 };
+	static const uint8_t trail[QL_LEVELS] = { 3, 1, 0, 0 };
+	if (level < 0 || level >= QL_LEVELS)
+		level = QL_HIGH;
+	fx_scale      = scale[level];
+	fx_trail_mask = trail[level];
+	int cap = level == QL_ULTRA ? MAX_PARTICLES : 256;
+	if (cap != part_cap) {                   /* (the pool's size: those alive go) */
+		part_cap = cap;
+		particles_clear();
+	}
+}
+
+/* an effect's count at the level (at least one when the port makes any) */
+static int fx_count(int count)
+{
+	int n = count * fx_scale >> 3;
+	return n || !count ? n : 1;
 }
 
 /* the free list's head onto the active list's (r_part.c: none left, none made) */
@@ -143,9 +172,11 @@ static particle_t *particle_new(void)
 	return p;
 }
 
-/* R_RunParticleEffect: `count` sparks of `colour` (its 8-shade ramp) */
+/* R_RunParticleEffect: `count` sparks of `colour` (its 8-shade ramp), as
+   many as the effects level makes of them */
 static void particle_effect(const int32_t org[3], const qw_leaf *leaf, int colour, int count)
 {
+	count = fx_count(count);
 	for (int i = 0; i < count; i++) {
 		particle_t *p = particle_new();
 		if (!p) return;
@@ -160,10 +191,12 @@ static void particle_effect(const int32_t org[3], const qw_leaf *leaf, int colou
 	}
 }
 
-/* R_ParticleExplosion, scaled down from 1024 to 48 */
+/* R_ParticleExplosion, scaled down from 1024 to 48 (high; 12 to 96 by the
+   effects level) */
 static void particle_explosion(const int32_t org[3], const qw_leaf *leaf)
 {
-	for (int i = 0; i < 48; i++) {
+	int n = fx_count(48);
+	for (int i = 0; i < n; i++) {
 		particle_t *p = particle_new();
 		if (!p) return;
 		p->die    = game_tick_count + TICKS(500);
@@ -179,8 +212,9 @@ static void particle_explosion(const int32_t org[3], const qw_leaf *leaf)
 }
 
 /* R_RocketTrail types 0 (rocket: fire) and 1 (grenade: smoke): one
-   particle per tick, not one per 3 units */
-static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int smoke)
+   particle per tick (high; ultra two, medium and low one every 2nd and
+   4th tick), not one per 3 units */
+static void particle_trail_one(const int32_t org[3], const qw_leaf *leaf, int smoke)
 {
 	particle_t *p = particle_new();
 	if (!p) return;
@@ -193,6 +227,15 @@ static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int smoke)
 		p->org[k] = org[k] + crandom(3) * SUB;
 		p->vel[k] = 0;
 	}
+}
+
+static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int smoke)
+{
+	if (fx_trail_n++ & fx_trail_mask)
+		return;
+	particle_trail_one(org, leaf, smoke);
+	if (fx_scale > 8)
+		particle_trail_one(org, leaf, smoke);
 }
 
 /* R_DrawParticles' run: the active list walked, a dead particle (its time
@@ -1316,13 +1359,16 @@ void game_teleport(const int32_t org[3], const int16_t mangle[3])
 	pl.teleport_time = game_tick_count + TICKS(70);
 }
 
-/* R_TeleportSplash, every other point of its grid (the pool is smaller) */
+/* R_TeleportSplash, every other point of its grid (the pool is smaller);
+   by the effects level every 4th point across (low), every 4th up (medium),
+   every other up (ultra: Quake's own height spacing) */
 void game_teleport_splash(const int32_t org[3])
 {
 	const qw_leaf *leaf = leaf_at(org);
-	for (int i = -16; i < 16; i += 8)
-		for (int j = -16; j < 16; j += 8)
-			for (int k = -24; k < 32; k += 8) {
+	int ij = fx_scale < 4 ? 16 : 8, kk = fx_scale == 4 ? 16 : fx_scale > 8 ? 4 : 8;
+	for (int i = -16; i < 16; i += ij)
+		for (int j = -16; j < 16; j += ij)
+			for (int k = -24; k < 32; k += kk) {
 				particle_t *p = particle_new();
 				if (!p)
 					return;
@@ -1493,6 +1539,8 @@ void game_restart_level(void)
 
 void game_init(void)
 {
+	if (!particles)
+		particles = mem_game_alloc(MAX_PARTICLES * sizeof *particles);
 	memset(&pl, 0, sizeof pl);
 	memset(projs, 0, sizeof projs);
 	proj_top = 0;

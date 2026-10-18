@@ -10,7 +10,7 @@
 
 world_t world;
 
-const char *const fidelity_name[FIDELITY_LEVELS] = { "low", "medium", "high", "ultra" };
+const char *const level_name[QL_LEVELS] = { "low", "medium", "high", "ultra" };
 
 /* Every Quake map, in play order; the disc carries some of them
    (scripts/cook.sh: episode 1 by default, all with COOK_MAPS=all). */
@@ -26,33 +26,43 @@ static const char *disc_maps[NUM_QUAKE_MAPS];
 static int         num_disc_maps;
 
 static uint8_t map_on_disc[NUM_QUAKE_MAPS];
-static int     fid_mask;          /* the fidelity levels the disc's maps come in */
+static int     level_mask[QL_AXES];   /* the levels the disc's maps come in, per axis */
 
-/* cd_list_dir's call: a "<MAP>_<N>.WLD" marks its map present at level N
-   (the release disc carries low to high, the ultra one ultra only) */
+/* cd_list_dir's call: a "<MAP>_G<N>.WLD" marks its map present at geometry
+   level N, a "<MAP>_T<N>.TEX" and a "<MAP>_M<N>.MDL" add texture and model
+   level N (the release disc carries low to high, the ultra one ultra) */
 static void note_map_file(const char *name, uint32_t size)
 {
 	(void) size;
 	const char *s = name;
 	while (*s && *s != '_') s++;
-	if (s[0] != '_' || s[1] < '0' || s[1] >= '0' + FIDELITY_LEVELS || strncmp(s + 2, ".WLD", 4))
+	if (s[0] != '_' || s[2] < '0' || s[2] >= '0' + QL_LEVELS || s[3] != '.')
+		return;
+	int axis = !strncmp(s + 1, "T", 1) && !strncmp(s + 3, ".TEX", 4) ? QL_TEXTURES
+	         : !strncmp(s + 1, "G", 1) && !strncmp(s + 3, ".WLD", 4) ? QL_GEOMETRY
+	         : !strncmp(s + 1, "M", 1) && !strncmp(s + 3, ".MDL", 4) ? QL_MODELS : -1;
+	if (axis < 0)
 		return;
 	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
 		if (!strncmp(name, quake_maps[i], (size_t) (s - name)) && !quake_maps[i][s - name]) {
-			map_on_disc[i] = 1;
-			fid_mask |= 1 << (s[1] - '0');
+			if (axis == QL_GEOMETRY)
+				map_on_disc[i] = 1;
+			level_mask[axis] |= 1 << (s[2] - '0');
 		}
 }
 
-int world_fid_mask(void)
+int world_level_mask(int axis)
 {
-	return fid_mask ? fid_mask : (1 << FIDELITY_LEVELS) - 1;
+	static const int all[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK, QL_EFFECT_MASK };
+	if (axis < 0 || axis >= QL_AXES)
+		return 0;
+	return level_mask[axis] ? level_mask[axis] : all[axis];
 }
 
 int world_scan_maps(void)
 {
 	num_disc_maps = 0;
-	fid_mask = 0;
+	memset(level_mask, 0, sizeof level_mask);
 	memset(map_on_disc, 0, sizeof map_on_disc);
 	cd_list_dir("\\MAPS", note_map_file);         /* one directory read */
 	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
@@ -106,11 +116,11 @@ static void load_step(uint32_t base)
 		load_poll(0);
 }
 
-/* A QTX4 set's CLUT / tpage words, kept until the world file is loaded and
-   its texture table can take them. */
-#define TEX4_MAX 512
-static qtex4_tex tex4_tab[TEX4_MAX];
-static uint32_t  tex4_n;
+/* The texture set's tables, kept at the bottom of the level arena: the
+   texture words the renderer reads, the UV maps (the world's and the
+   models' UVs onto this set's tiles), the animated textures. */
+static const qtex_uvmap *uvmap;
+static uint32_t          num_slots;
 
 /* LoadImage sends the rectangle's w x h halfwords by DMA in units of 16
    words, rounding a shorter last unit up: up to 60 bytes past the data go
@@ -144,55 +154,149 @@ static void upload_rects(const uint8_t *f, const qtex_rect *r, uint32_t n)
 		vram_upload(f + r[i].data_ofs, &r[i]);
 }
 
-/* The map's texture set into VRAM: QTX3 (8bpp, the Quake palette) or QTX4
-   (4bpp, 16 colours per texture). */
+/* The map's texture set into VRAM: QTX6 (8bpp, the Quake palette) or QTX7
+   (4bpp, 16 colours per texture). The file is transient but for its
+   tables, moved to its start: the arena's bottom (the arena was reset). */
 static int load_textures(const char *name)
 {
 	uint32_t mark = mem_level_mark(), size;
-	const uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
-	tex4_n = 0;
+	uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
+	uint32_t ofs_slots = 0, ofs_anims = 0, nanims = 0;
 	if (f && size >= sizeof(qtex_header) && !memcmp(f, QTEX_MAGIC, 4)) {
 		const qtex_header *h = (const qtex_header *) f;
 		RECT clut = { QTEX_CLUT_X, QTEX_CLUT_Y, 256, 1 };
 		LoadImage(&clut, (const uint32_t *) h->clut);
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
+		num_slots = h->num_slots; ofs_slots = h->ofs_slots;
+		nanims    = h->num_anims; ofs_anims = h->ofs_anims;
+		world.tex4 = 0;
 		printf("world: %s — %u texture pages -> VRAM\n", name, h->num_rects);
 	} else if (f && size >= sizeof(qtex4_header) && !memcmp(f, QTEX4_MAGIC, 4)) {
 		const qtex4_header *h = (const qtex4_header *) f;
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
-		tex4_n = h->num_tex < TEX4_MAX ? h->num_tex : TEX4_MAX;
-		memcpy(tex4_tab, f + h->ofs_tex, tex4_n * sizeof *tex4_tab);
+		num_slots = h->num_slots; ofs_slots = h->ofs_slots;
+		nanims    = h->num_anims; ofs_anims = h->ofs_anims;
+		world.tex4 = 1;
 		printf("world: %s — 4bpp, %u rects -> VRAM\n", name, h->num_rects);
 	} else {
 		printf("world: bad texture file %s\n", name);
 		mem_level_release(mark);
 		return 0;
 	}
-	DrawSync(0);
-	mem_level_release(mark);   /* pixels live in VRAM now */
+	DrawSync(0);                     /* pixels live in VRAM now */
+	uint32_t tables = num_slots * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
+	uint32_t len    = ofs_anims + nanims * (uint32_t) sizeof(qw_anim) - ofs_slots;
+	if (ofs_anims != ofs_slots + tables || ofs_slots + len > size) {
+		printf("world: bad texture tables in %s\n", name);
+		mem_level_release(mark);
+		return 0;
+	}
+	memmove(f, f + ofs_slots, len);
+	world.textures  = (const qw_tex *) f;
+	world.num_tex   = num_slots;
+	uvmap           = (const qtex_uvmap *) (f + num_slots * sizeof(qw_tex));
+	world.anims     = (const qw_anim *) (f + tables);
+	world.num_anims = nanims;
+	mem_level_release(mark + ((len + 15) & ~15u));   /* (the arena's 16-byte steps) */
+	return 1;
+}
+
+/* The UVs of a record stream onto the loaded set's tiles (formats/qtex.h
+   qtex_uvmap): u' = u0 + ((u * su + rnd) >> 15). `slot_of` maps a
+   record's tex to its texture slot (a map's model: its own table), NULL
+   for the world's records. */
+static void map_uvs(uint8_t *r, const uint8_t *end, const uint16_t *slot_of, uint32_t nslot_of)
+{
+	while (r < end) {
+		qw_record *rec = (qw_record *) r;
+		if (!rec->size)
+			break;
+		uint32_t slot = rec->tex;
+		if (slot_of)
+			slot = slot < nslot_of ? slot_of[slot] : 0;
+		const qtex_uvmap *m = &uvmap[slot < num_slots ? slot : 0];
+		uint32_t su = m->su, sv = m->sv, u0 = m->u0, v0 = m->v0, rnd = m->rnd;
+		uint16_t *uv = (uint16_t *) (r + rec->polys + 4);    /* qw_quad / qw_tri: uv at +4 */
+		for (uint32_t q = 0; q < rec->num_quads; q++, uv += 6)
+			for (int k = 0; k < 4; k++) {
+				uint32_t w = uv[k];
+				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) |
+				                    (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
+			}
+		for (uint32_t t = 0; t < rec->num_tris; t++, uv += 6)
+			for (int k = 0; k < 3; k++) {
+				uint32_t w = uv[k];
+				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) |
+				                    (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
+			}
+		r += rec->size;
+	}
+}
+
+/* The map's own models (formats/qgame.h qmm_header): their tables, a
+   texture table each from the set's (an alias model's skin does not wrap),
+   their UVs mapped. */
+static int load_models(const char *name)
+{
+	uint32_t size;
+	uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
+	if (!f || size < sizeof(qmm_header) || memcmp(f, QMAPMDL_MAGIC, 4)) {
+		printf("world: bad models file %s\n", name);
+		return 0;
+	}
+	const qmm_header *h = (const qmm_header *) f;
+	world.num_models = h->num_models;
+	world.mgeo       = f + h->ofs_geo;
+	if (!h->num_models)
+		return 1;
+	const qw_model *qm = (const qw_model *) (f + h->ofs_models);
+	world.models    = mem_level_alloc(h->num_models * sizeof *world.models);
+	world.model_tex = mem_level_alloc(h->num_models * sizeof *world.model_tex);
+	if (!world.models || !world.model_tex)
+		return 0;
+	for (uint32_t i = 0; i < h->num_models; i++) {
+		world.models[i] = qm[i].m;
+		qw_tex *t = mem_level_alloc(QW_MODEL_TEX * sizeof *t);
+		if (!t)
+			return 0;
+		for (int k = 0; k < qm[i].num_tex && k < QW_MODEL_TEX; k++)
+			t[k] = qm[i].tex[k] < world.num_tex ? world.textures[qm[i].tex[k]] : world.textures[0];
+		if (!(world.models[i].flags & QGF_FLAT))           /* (an alias model: no wrap) */
+			t[0].window = 0xE2000000u;
+		world.models[i].tex = t[0];
+		world.model_tex[i]  = t;
+		if (qm[i].qim < QIM_COUNT)
+			world.model_of[qm[i].qim] = (int16_t) i;
+		map_uvs(world.mgeo + qm[i].m.ofs_records, world.mgeo + qm[i].m.ofs_records + qm[i].m.len_records,
+		        qm[i].tex, qm[i].num_tex);
+	}
 	return 1;
 }
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-int world_load(int map, int fid, int tex4, world_progress_fn progress)
+int world_load(int map, int tex, int geo, int models, int tex4, world_progress_fn progress)
 {
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
+	for (int i = 0; i < QIM_COUNT; i++)
+		world.model_of[i] = -1;
 	if (map < 0 || map >= num_disc_maps)
 		return 0;
 
-	char name[24], tex_name[24];
-	uint32_t tex_size = 0, wld_size = 0;
-	snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_%d.TX4;1", disc_maps[map], fid);
-	if (!tex4 || !cd_exists(tex_name, &tex_size))     /* (an older disc: 8 bits) */
-		snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_%d.TEX;1", disc_maps[map], fid);
-	snprintf(name, sizeof name, "\\MAPS\\%s_%d.WLD;1", disc_maps[map], fid);
+	char name[24], tex_name[24], mdl_name[24];
+	uint32_t tex_size = 0, wld_size = 0, mdl_size = 0;
+	snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_T%d.TX4;1", disc_maps[map], tex);
+	if (!tex4 || !cd_exists(tex_name, &tex_size))     /* (no 4-bit set: 8 bits) */
+		snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_T%d.TEX;1", disc_maps[map], tex);
+	snprintf(name, sizeof name, "\\MAPS\\%s_G%d.WLD;1", disc_maps[map], geo);
+	snprintf(mdl_name, sizeof mdl_name, "\\MAPS\\%s_M%d.MDL;1", disc_maps[map], models);
 	load_progress = progress;
 	if (progress) {
 		cd_exists(tex_name, &tex_size);
 		cd_exists(name, &wld_size);
-		load_total = tex_size + wld_size;
+		cd_exists(mdl_name, &mdl_size);
+		load_total = tex_size + wld_size + mdl_size;
 		load_step(0);
 	}
 
@@ -207,6 +311,10 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		return 0;
 	}
 	const qw_header *h = (const qw_header *) f;
+	if (h->num_tex != world.num_tex) {
+		printf("world: %s names %u textures, its set %u\n", name, h->num_tex, world.num_tex);
+		return 0;
+	}
 
 	world.nodes       = (qw_node *) (f + h->ofs_nodes);
 	world.leaves      = (qw_leaf *) (f + h->ofs_leaves);
@@ -216,14 +324,7 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		                                    face_visframe (faces < 32768) */
 	world.faces       = f + h->ofs_faces;
 	world.views       = (const qw_view *) (f + h->ofs_views);
-	world.textures    = (const qw_tex *) (f + h->ofs_tex);
-	world.num_tex     = h->num_tex;
-	world.tex4        = tex4_n != 0;
-	for (uint32_t i = 0; i < tex4_n && i < h->num_tex; i++) {   /* 4bpp: its CLUTs, pages */
-		qw_tex *t = (qw_tex *) &world.textures[i];
-		t->clut  = tex4_tab[i].clut;
-		t->tpage = tex4_tab[i].tpage;
-	}
+	map_uvs((uint8_t *) world.faces, world.faces + h->len_faces, NULL, 0);   /* onto the set's tiles */
 	world.verts       = (const qw_vert *) (f + h->ofs_verts);
 	world.num_verts   = h->num_verts;
 	world.ambient     = f + h->ofs_ambient;
@@ -288,36 +389,6 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		                      ? (uint32_t) &world.leaves[r & 0x7fffffffu] | 1u
 		                      : (uint32_t) &world.nodes[r]) & 0x00ffffffu;
 	}
-	/* the map's own models (items, flames): their textures' words from the
-	   table (the 4-bit set's when loaded), a table each for its records */
-	world.num_models = h->num_models;
-	world.mgeo       = f + h->ofs_mgeo;
-	for (int i = 0; i < QIM_COUNT; i++)
-		world.model_of[i] = -1;
-	if (h->num_models) {
-		const qw_model *qm = (const qw_model *) (f + h->ofs_models);
-		world.models    = mem_level_alloc(h->num_models * sizeof *world.models);
-		world.model_tex = mem_level_alloc(h->num_models * sizeof *world.model_tex);
-		if (!world.models || !world.model_tex)
-			return 0;
-		for (uint32_t i = 0; i < h->num_models; i++) {
-			world.models[i] = qm[i].m;
-			qw_tex *t = mem_level_alloc(QW_MODEL_TEX * sizeof *t);
-			if (!t)
-				return 0;
-			for (int k = 0; k < qm[i].num_tex && k < QW_MODEL_TEX; k++)
-				t[k] = qm[i].tex[k] < world.num_tex ? world.textures[qm[i].tex[k]] : world.textures[0];
-			if (!(world.models[i].flags & QGF_FLAT))           /* (an alias model: no wrap) */
-				t[0].window = 0xE2000000u;
-			world.models[i].tex = t[0];
-			world.model_tex[i]  = t;
-			if (qm[i].qim < QIM_COUNT)
-				world.model_of[qm[i].qim] = (int16_t) i;
-		}
-	}
-
-	world.anims        = (const qw_anim *) (f + h->ofs_anims);
-	world.num_anims    = h->num_anims;
 	world.ents         = (const qw_ent *) (f + h->ofs_ents);
 	world.num_ents     = h->num_ents;
 	world.strings      = (const char *) (f + h->ofs_strings);
@@ -351,10 +422,18 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		}
 	}
 
+	load_step(tex_size + wld_size);
+	if (!load_models(mdl_name))
+		return 0;
+	world.level[QL_TEXTURES] = (int8_t) tex;
+	world.level[QL_GEOMETRY] = (int8_t) geo;
+	world.level[QL_MODELS]   = (int8_t) models;
+	world.level[QL_EFFECTS]  = -1;
+
 	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, %u brush models, "
-	       "%u entities, arena %u KB\n",
+	       "%u entities, %u models, arena %u KB\n",
 	       name, h->num_nodes, h->num_leaves, h->num_records, h->num_pieces,
-	       h->num_bmodels ? h->num_bmodels - 1 : 0, h->num_ents, mem_level_used() / 1024);
+	       h->num_bmodels ? h->num_bmodels - 1 : 0, h->num_ents, world.num_models, mem_level_used() / 1024);
 	load_step(load_total);
 	return 1;
 }

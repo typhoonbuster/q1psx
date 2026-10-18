@@ -1,7 +1,7 @@
 /*
  * q1psx — boot + main loop.
  *
- * Normal build: a map menu (every map on the disc, the fidelity level, the
+ * Normal build: a map menu (every map on the disc, the quality levels, the
  * texture depth, dithering, the affine-warp control and the HUD style),
  * then the game (engine/game.c: the player, the weapons) over the
  * asm-rendered world with the HUD and the debug overlay; SELECT + START
@@ -59,9 +59,9 @@ static int      in_menu;        /* the map menu is up (normal build)   */
 static int      menu_sel;       /* the map highlighted in the menu      */
 static int      world_ok;
 static int      map_index;      /* into world_map_name(); R2 cycles it */
-static int      fidelity   = 2; /* the level actually loaded (a map too
-                                   big for the arena falls back lower)  */
-static int      fid_loaded = -1;/* the settings.fidelity of the last load      */
+static int      loaded[QL_AXES] = { -1, -1, -1, -1 };   /* the settings' levels of the
+                                   last load (a map too big for the arena
+                                   falls back to a lower geometry: world.level) */
 
 #ifdef Q1PSX_BENCH
 #ifndef Q1PSX_BENCH_T
@@ -76,6 +76,18 @@ static int      fid_loaded = -1;/* the settings.fidelity of the last load      *
 #ifndef Q1PSX_BENCH_FLAT
 #define Q1PSX_BENCH_FLAT 0       /* the flat shading, R_FLAT_* (FLAT=1 scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_TEXTURES
+#define Q1PSX_BENCH_TEXTURES 2   /* the levels the bench loads (formats/qlevels.h: */
+#endif
+#ifndef Q1PSX_BENCH_GEOMETRY
+#define Q1PSX_BENCH_GEOMETRY 2   /*   0 low .. 3 ultra; TEXTURES=, GEOMETRY=,      */
+#endif
+#ifndef Q1PSX_BENCH_MODELS
+#define Q1PSX_BENCH_MODELS 2     /*   MODELS=, EFFECTS= scripts/bench.sh)          */
+#endif
+#ifndef Q1PSX_BENCH_EFFECTS
+#define Q1PSX_BENCH_EFFECTS 2
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
@@ -85,6 +97,11 @@ static void apply_settings(void)
 	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T, 0);
 	vid_set_dither(1);
 	settings.tex4 = Q1PSX_BENCH_TEX4;
+	settings.level[QL_TEXTURES] = Q1PSX_BENCH_TEXTURES;
+	settings.level[QL_GEOMETRY] = Q1PSX_BENCH_GEOMETRY;
+	settings.level[QL_MODELS]   = Q1PSX_BENCH_MODELS;
+	settings.level[QL_EFFECTS]  = Q1PSX_BENCH_EFFECTS;
+	game_set_effects(Q1PSX_BENCH_EFFECTS);
 	r_set_options(Q1PSX_BENCH_DRAWDIST, Q1PSX_BENCH_FLAT);
 #else
 	settings_apply();
@@ -285,11 +302,9 @@ static void player_update(const pad_t *polls, int n)
 	prof_add(PROF_SIM, t0, prof_now());
 }
 
-/* ------------------------------------------------------- map / fidelity -- */
-
 /* ------------------------------------------------------- loading bar -- */
 
-static int load_map, load_fid;   /* what the bar is loading */
+static int load_map;             /* what the bar is loading */
 
 /* A bordered TILE in the overlay bucket. */
 static void ui_rect(int x, int y, int w, int h, int r, int g, int b)
@@ -312,8 +327,7 @@ static void loading_screen(uint32_t done, uint32_t total)
 	char line[48];
 	int  fill = total ? (int) (done * BW / total) : 0;   /* < 2 MB: no overflow */
 
-	snprintf(line, sizeof line, "loading %s  (%s%s)", world_map_name(load_map),
-	         fidelity_name[load_fid], settings.tex4 ? ", 4-bit" : "");
+	snprintf(line, sizeof line, "loading %s", world_map_name(load_map));
 	vid_text(BX, BY - 16, line);
 	snprintf(line, sizeof line, "%3d %%", total ? (int) (done * 100 / total) : 0);
 	vid_text(BX + BW - 40, BY + BH + 8, line);
@@ -328,25 +342,27 @@ static void loading_screen(uint32_t done, uint32_t total)
 #define LOAD_PROGRESS loading_screen
 #endif
 
-/* Load `map` at fidelity `fid`, or the highest lower level that fits the
-   level arena. Sets world_ok / fidelity and binds the renderer. */
-static int load_level(int map, int fid)
+/* Load `map` at the settings' levels (textures, geometry, models), or at
+   the highest lower geometry that fits the level arena; the game data's
+   models at the models' level. Sets world_ok and binds the renderer. */
+static int load_level(int map)
 {
 	world_ok = 0;
 	load_map = map;
 	music_stop();                               /* one drive: the reads need it */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
-	for (int f = fid; f >= 0 && !world_ok; f--) {
-		load_fid = f;
-		world_ok = world_load(map, f, settings.tex4, LOAD_PROGRESS);
-		if (world_ok)
-			fidelity = f;
-	}
-	fid_loaded = fid;
+	gdata_set_models(settings.level[QL_MODELS]);
+	int geo = settings.level[QL_GEOMETRY];
+	for (int g = geo; g >= 0 && !world_ok; g--)
+		if (settings_level_mask[QL_GEOMETRY] & 1 << g)
+			world_ok = world_load(map, settings.level[QL_TEXTURES], g, settings.level[QL_MODELS],
+			                      settings.tex4, LOAD_PROGRESS);
+	for (int a = 0; a < QL_AXES; a++)
+		loaded[a] = settings.level[a];
 	if (world_ok) {
-		if (fidelity != fid)
-			printf("level: %s does not fit at %s, loaded at %s\n", world_map_name(map),
-			       fidelity_name[fid], fidelity_name[fidelity]);
+		if (world.level[QL_GEOMETRY] != geo)
+			printf("level: %s does not fit at geometry %s, loaded at %s\n", world_map_name(map),
+			       level_name[geo], level_name[world.level[QL_GEOMETRY]]);
 		r_bind_world();
 		ents_load();                            /* the map's entities */
 		ents_spawn(1);
@@ -358,16 +374,12 @@ static int load_level(int map, int fid)
 	return world_ok;
 }
 
-/* L2: reload the map at the next fidelity level, keeping the camera where
-   it is; R2: next map, at its spawn. */
-static void switch_level(int next_map)
+/* the settings ask for other levels than the map was loaded at (or another
+   texture depth): its reload is due */
+static int load_due(void)
 {
-	if (next_map)
-		map_index = (map_index + 1) % (world_num_maps() ? world_num_maps() : 1);
-	else
-		settings.fidelity = settings_fid_step(settings.fidelity, 1);
-	if (load_level(map_index, settings.fidelity) && next_map)
-		game_spawn();
+	return settings.tex4 != world.tex4 || loaded[QL_TEXTURES] != settings.level[QL_TEXTURES] ||
+	       loaded[QL_GEOMETRY] != settings.level[QL_GEOMETRY] || loaded[QL_MODELS] != settings.level[QL_MODELS];
 }
 
 /* --------------------------------------------------------------- frame -- */
@@ -412,10 +424,14 @@ static void draw_overlay(void)
 	if (pad.analog)                    /* raw, before the dead zone */
 		snprintf(sticks, sizeof sticks, "\nsticks L %4d %4d  R %4d %4d", pad.lx, pad.ly, pad.rx, pad.ry);
 
+	char levels[24] = "no world";               /* textures, geometry, models, effects */
+	if (world_ok)
+		snprintf(levels, sizeof levels, "T%d G%d M%d E%d", world.level[QL_TEXTURES], world.level[QL_GEOMETRY],
+		         world.level[QL_MODELS], settings.level[QL_EFFECTS]);
 	int n = snprintf(line, sizeof line,
 	         "q1psx  %s %s  ~%u fps\n"
 	         "frame %6u cyc  gpu wait %u  arena %u KB\n",
-	         world_map_name(map_index), world_ok ? fidelity_name[fidelity] : "no world",
+	         world_map_name(map_index), levels,
 	         vid_stats.vbl ? 60 / vid_stats.vbl : 60,
 	         prof_stage[PROF_FRAME], vid_stats.sync_cycles, mem_level_used() / 1024);
 #if Q1PSX_PROFILE   /* the renderer's counters / stage timers (release: none) */
@@ -464,8 +480,8 @@ static void run_frame(int interactive, int dump)
 			menu_key(&pad);
 			nticks = 0;
 			if (!menu_active() && !release_in_game) {   /* left on the first map: playing it, */
-				if (settings.fidelity != fid_loaded || settings.tex4 != world.tex4)
-					release_start_map();      /* at the fidelity just chosen */
+				if (load_due())
+					release_start_map();      /* at the levels just chosen */
 				release_in_game = 1;
 			}
 		} else if (pad.pressed & PAD_START) {
@@ -494,7 +510,7 @@ static void run_frame(int interactive, int dump)
 			} else {
 				game_save_parms();
 				map_index = m;
-				if (load_level(m, settings.fidelity))
+				if (load_level(m))
 					game_spawn_level();
 			}
 		}
@@ -545,9 +561,9 @@ static void run_frame(int interactive, int dump)
 
 #ifndef Q1PSX_BENCH
 
-#define MENU_ROWS 16       /* two columns of 16: Quake's 32 maps */
+#define MENU_ROWS 11       /* three columns of 11: Quake's 32 maps */
 
-static int         complex_map = -1;      /* the "(complex)" one          */
+static int         complex_map = -1;      /* the "(heavy)" one            */
 static const char *menu_msg = "";
 
 /* START is where Quake begins (the skill is picked there). The heaviest
@@ -569,75 +585,44 @@ static void mapmenu_init(void)
 
 static const char *map_tag(int m)
 {
-	if (!strcmp(world_map_name(m), "START"))
-		return " (default)";
-	return m == complex_map ? " (complex)" : "";
+	return m == complex_map ? " (heavy)" : "";
 }
 
-/* The options under the map list: L2 / R2 pick one, L1 / R1 change it. */
-enum { OPT_FID, OPT_TEX, OPT_DITHER, OPT_WARP, OPT_T, OPT_BUDGET, OPT_HUD, OPT_DLIGHTS, OPT_WEAPON, OPT_FPS,
-       OPT_TICK, OPT_DRAWDIST, OPT_FLAT, OPT_COUNT };
+/* The options under the map list (engine/settings.h's rows, Quake's
+   Graphics page's): L2 / R2 pick one, L1 / R1 change it; what the value
+   gains and costs under them. */
 static int opt_sel;
 
 static void opt_step(int d)
 {
-	switch (opt_sel) {
-	case OPT_FID:    settings.fidelity = settings_fid_step(settings.fidelity, d); break;
-	case OPT_TEX:    settings.tex4 ^= 1; break;
-	case OPT_DITHER: settings.dither ^= 1; break;
-	case OPT_WARP:   settings.warp = (settings.warp + R_WARP_MODES + d) % R_WARP_MODES; break;
-	case OPT_T:      settings.t = (settings.t + num_warp_t + d) % num_warp_t; break;
-	case OPT_BUDGET: settings.budget = (settings.budget + num_warp_budget + d) % num_warp_budget; break;
-	case OPT_HUD:    settings.hud = (settings.hud + HUD_STYLES + d) % HUD_STYLES; break;
-	case OPT_DLIGHTS: settings.dlights ^= 1; break;
-	case OPT_WEAPON: settings.viewmodel ^= 1; break;
-	case OPT_FPS:    settings.fps_cap = (settings.fps_cap + num_fps_caps + d) % num_fps_caps; break;
-	case OPT_TICK:   settings.tick = (settings.tick + num_tick_rates + d) % num_tick_rates; break;
-	case OPT_DRAWDIST: settings.drawdist = (settings.drawdist + num_draw_dists + d) % num_draw_dists; break;
-	default:         settings.flat = (settings.flat + R_FLAT_MODES + d) % R_FLAT_MODES; break;
-	}
-	apply_settings();   /* warp, dithering, the HUD at once; textures, fidelity on load */
+	settings_step(opt_sel, d);
+	apply_settings();   /* at once but the levels and the depth: at a load */
 }
 
 static void opt_draw(void)
 {
-	static const char *const label[OPT_COUNT] = {
-		"fidelity", "textures", "dither", "warp", "threshold", "budget", "hud", "dlights", "weapon",
-		"fps cap", "tick rate", "distance", "flat",
+	static const char *const label[SET_ROWS] = {
+		"textures", "geometry", "models", "effects", "depth", "dither", "warp", "threshold", "budget",
+		"hud", "dlights", "weapon", "distance", "flat", "fps cap", "tick rate",
 	};
 	char line[48], val[16];
-	for (int o = 0; o < OPT_COUNT; o++) {
-		switch (o) {
-		case OPT_FID:    snprintf(val, sizeof val, "%s", fidelity_name[settings.fidelity]); break;
-		case OPT_TEX:    snprintf(val, sizeof val, "%s", settings.tex4 ? "4 bit" : "8 bit"); break;
-		case OPT_DITHER: snprintf(val, sizeof val, "%s", settings.dither ? "on" : "off"); break;
-		case OPT_WARP:   snprintf(val, sizeof val, "%s", warp_mode_name[settings.warp]); break;
-		case OPT_T:      snprintf(val, sizeof val, "%d px", warp_t_px[settings.t]); break;
-		case OPT_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
-		case OPT_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
-		case OPT_DLIGHTS: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
-		case OPT_WEAPON: snprintf(val, sizeof val, "%s", settings.viewmodel ? "on" : "off"); break;
-		case OPT_FPS:    snprintf(val, sizeof val, "%d", fps_caps[settings.fps_cap]); break;
-		case OPT_TICK:   snprintf(val, sizeof val, "%d Hz", tick_rates[settings.tick]); break;
-		case OPT_DRAWDIST:
-			if (draw_dists[settings.drawdist])
-				snprintf(val, sizeof val, "%d", draw_dists[settings.drawdist]);
-			else
-				snprintf(val, sizeof val, "off");
-			break;
-		default:         snprintf(val, sizeof val, "%s", flat_name[settings.flat]); break;
-		}
-		int x = 16 + (o % 2) * 152, y = 168 + (o / 2) * 10;
+	for (int o = 0; o < SET_ROWS; o++) {
+		settings_value(o, val, sizeof val);
+		int x = 16 + (o % 2) * 152, y = 128 + (o / 2) * 10;
 		snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
 		vid_text(x, y, line);
 		if (o == opt_sel)
 			ui_rect(x - 4, y - 1, 148, 10, 60, 70, 120);
 	}
+	const char *hint[2];
+	settings_hint(opt_sel, hint);
+	vid_text(16, 210, hint[0]);
+	vid_text(16, 218, hint[1]);
 }
 
 /* One frame of the menu: d-pad picks a map, L2 / R2 an option and L1 / R1
    its value, Cross / START loads the map, Circle goes back to the loaded
-   one (reloading it if the textures or the fidelity changed). */
+   one (reloading it if a level or the texture depth changed). */
 static void mapmenu_frame(void)
 {
 	hud_invalidate();                           /* (this menu draws over the whole screen) */
@@ -663,16 +648,16 @@ static void mapmenu_frame(void)
 			menu_sel -= MENU_ROWS;
 	}
 	if (pad.pressed & PAD_L2)
-		opt_sel = (opt_sel + OPT_COUNT - 1) % OPT_COUNT;
+		opt_sel = (opt_sel + SET_ROWS - 1) % SET_ROWS;
 	if (pad.pressed & PAD_R2)
-		opt_sel = (opt_sel + 1) % OPT_COUNT;
+		opt_sel = (opt_sel + 1) % SET_ROWS;
 	if (pad.pressed & PAD_L1)
 		opt_step(-1);
 	if (pad.pressed & PAD_R1)
 		opt_step(1);
 	if ((pad.pressed & PAD_CIRCLE) && world_ok) {
-		if (world.tex4 != settings.tex4 || fid_loaded != settings.fidelity)
-			load_level(map_index, settings.fidelity);   /* same map, same place */
+		if (load_due())
+			load_level(map_index);               /* same map, same place */
 		if (world_ok) {
 			in_menu = 0;                         /* back to the loaded map */
 			return;
@@ -681,7 +666,7 @@ static void mapmenu_frame(void)
 	}
 	if (n && (pad.pressed & (PAD_CROSS | PAD_START))) {
 		map_index = menu_sel;
-		if (load_level(map_index, settings.fidelity)) {
+		if (load_level(map_index)) {
 			game_spawn();
 			in_menu  = 0;
 			menu_msg = "";
@@ -691,20 +676,19 @@ static void mapmenu_frame(void)
 	}
 
 	char line[48];
-	snprintf(line, sizeof line, "Q1PSX - choose a map (%d on the disc)", n);
+	snprintf(line, sizeof line, "Q1PSX maps (%d)  in game: SELECT+START", n);
 	vid_text(16, 6, line);
 	for (int m = 0; m < n; m++) {
-		int x = 24 + (m / MENU_ROWS) * 148, y = 16 + (m % MENU_ROWS) * 10;
+		int x = 24 + (m / MENU_ROWS) * 100, y = 18 + (m % MENU_ROWS) * 10;
 		snprintf(line, sizeof line, "%s%s", world_map_name(m), map_tag(m));
 		vid_text(x, y, line);
 		if (m == menu_sel)
-			ui_rect(x - 4, y - 1, 140, 10, 60, 70, 120);
+			ui_rect(x - 4, y - 1, 96, 10, 60, 70, 120);
 	}
 	if (!n)
 		vid_text(24, 20, "no cooked map on the disc");
 	opt_draw();
-	vid_text(16, 218, "L2/R2 option  L1/R1 value  X load  O back");
-	vid_text(16, 228, menu_msg[0] ? menu_msg : "in game: SELECT + START = this menu");
+	vid_text(16, 228, menu_msg[0] ? menu_msg : "L2/R2 option  L1/R1 value  X load  O back");
 	vid_flip();
 }
 
@@ -714,9 +698,6 @@ static void mapmenu_frame(void)
 
 #ifdef Q1PSX_BENCH
 
-#ifndef Q1PSX_BENCH_FID
-#define Q1PSX_BENCH_FID 2     /* fidelity level the bench loads (0 low .. 3 ultra) */
-#endif
 
 #ifndef Q1PSX_BENCH_VIEWS
 #define Q1PSX_BENCH_VIEWS 1   /* 0: physics checks only (VIEWS=0 scripts/bench.sh) */
@@ -998,7 +979,7 @@ static void bench_pmove_diff(void)
 	       (unsigned) (cyc_c / 1000));
 }
 
-/* Every map on the disc: load it (falling back to a lower fidelity when it
+/* Every map on the disc: load it (falling back to a lower geometry when it
    does not fit the arena), then its four spawn views, briefly, each followed
    by its display list's hash (scripts/dlcheck.sh compares them). */
 #ifndef Q1PSX_BENCH_MAP
@@ -1022,11 +1003,11 @@ static void bench_maps(void)
 	for (int m = 0; m < world_num_maps(); m++) {
 		if (Q1PSX_BENCH_MAP[0] && strcmp(world_map_name(m), Q1PSX_BENCH_MAP))
 			continue;
-		if (!load_level(m, Q1PSX_BENCH_FID)) {
+		if (!load_level(m)) {
 			printf("bench map %s FAILED to load\n", world_map_name(m));
 			continue;
 		}
-		printf("bench map %s fid %s arena %u KB\n", world_map_name(m), fidelity_name[fidelity],
+		printf("bench map %s geometry %s arena %u KB\n", world_map_name(m), level_name[world.level[QL_GEOMETRY]],
 		       mem_level_used() / 1024);
 		if (Q1PSX_BENCH_PLAY) {                 /* the game's frames on the map, as a player's */
 			ents_check("load");
@@ -1238,7 +1219,7 @@ static void bench_ents(void)
 	game_active = 1;
 	for (int mi = 0; mi < 2; mi++) {
 		int m = world_find_map(maps[mi]);
-		if (m < 0 || !load_level(m, Q1PSX_BENCH_FID))
+		if (m < 0 || !load_level(m))
 			continue;
 		map_index = m;
 		game_spawn();
@@ -1369,7 +1350,7 @@ static void bench_ents(void)
 				printf("next map %s (disc %d)\n", next, nm);
 				if (nm >= 0) {
 					game_save_parms();
-					if (load_level(nm, Q1PSX_BENCH_FID)) {
+					if (load_level(nm)) {
 						game_spawn_level();
 						printf("now on %s, health %d items %08x shells %d\n", world.map_name, pl.health,
 						       (unsigned) pl.items, pl.ammo[AMMO_SHELLS]);
@@ -1389,8 +1370,6 @@ static void bench_ents(void)
    question, the options, the graphics page in each warp mode (the greyed
    entries), back out */
 static int  bench_yes(void) { return 1; }
-static int  bench_fid(void) { return Q1PSX_BENCH_FID; }
-static int  bench_tex(void) { return Q1PSX_BENCH_TEX4; }
 static void bench_menu_key(uint16_t buttons, const char *dump)
 {
 	pad_t p;
@@ -1407,7 +1386,7 @@ static void bench_menu_key(uint16_t buttons, const char *dump)
 
 static void bench_menu(void)
 {
-	static const menu_hooks_t hooks = { 0, bench_yes, bench_fid, bench_tex };
+	static const menu_hooks_t hooks = { 0, bench_yes, load_due };
 	menu_init(&hooks);
 	menu_open();
 	menu_shown = 1;
@@ -1420,9 +1399,11 @@ static void bench_menu(void)
 	bench_menu_key(PAD_CROSS, "moptions");
 	bench_menu_key(PAD_UP, 0);                        /* (the greyed ones: to Graphics) */
 	bench_menu_key(PAD_CROSS, "mgraphics");
-	bench_menu_key(PAD_DOWN, 0);
-	bench_menu_key(PAD_DOWN, 0);
-	bench_menu_key(PAD_DOWN, 0);                      /* the warp control */
+	bench_menu_key(PAD_DOWN, 0);                      /* the map geometry */
+	bench_menu_key(PAD_RIGHT, "mgraphics_geo");       /* ultra: its hint, the next level's note */
+	bench_menu_key(PAD_LEFT, 0);                      /* (high again) */
+	for (int i = 0; i < 5; i++)
+		bench_menu_key(PAD_DOWN, 0);                  /* the warp control */
 	bench_menu_key(PAD_RIGHT, "mgraphics_dyn");       /* dynamic: the threshold a floor */
 	bench_menu_key(PAD_RIGHT, "mgraphics_budget");    /* budget: its budget live */
 	bench_menu_key(PAD_RIGHT, 0);                     /* back to fixed */
@@ -1837,7 +1818,7 @@ static void release_start_map(void)
 	int m = world_find_map("START");
 	map_index = m >= 0 ? m : 0;
 	game_new_parms();
-	if (load_level(map_index, settings.fidelity))
+	if (load_level(map_index))
 		game_spawn_level();
 }
 
@@ -1848,8 +1829,6 @@ static void release_new_game(void)
 }
 
 static int release_started(void) { return release_in_game; }
-static int release_fid(void)     { return fid_loaded; }
-static int release_tex4(void)    { return world.tex4; }
 #endif
 
 int main(void)
@@ -1871,23 +1850,23 @@ int main(void)
 	printf("q1psx\n");
 
 	world_scan_maps();
-	settings_fid_mask = world_fid_mask();
+	for (int a = 0; a < QL_AXES; a++)
+		settings_level_mask[a] = world_level_mask(a);
 	settings_defaults();
 	apply_settings();
-	gdata_load();
+	gdata_load(settings.level[QL_MODELS]);
 	dl_init();
 	game_init();
 #ifdef Q1PSX_BENCH
-	settings.fidelity = Q1PSX_BENCH_FID;
 	if (!Q1PSX_BENCH_MAPS && Q1PSX_BENCH_MAP[0] && world_find_map(Q1PSX_BENCH_MAP) >= 0)
 		map_index = world_find_map(Q1PSX_BENCH_MAP);  /* MAP=: the physics diffs there too */
-	if (load_level(map_index, settings.fidelity))
+	if (load_level(map_index))
 		player_spawn();
 	run_bench();
 #elif Q1PSX_RELEASE
 	/* Quake starts its demo loop under the menu; with no demos to play,
 	   the first map waits under it, a new game's kit in hand */
-	static const menu_hooks_t hooks = { release_new_game, release_started, release_fid, release_tex4 };
+	static const menu_hooks_t hooks = { release_new_game, release_started, load_due };
 	menu_init(&hooks);
 	game_active = 1;
 	release_start_map();

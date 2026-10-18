@@ -1,11 +1,14 @@
 /*
- * q1psx — loaded world (formats/qworld.h + qtex.h).
+ * q1psx — loaded world (formats/qworld.h + qtex.h + qgame.h).
  *
- * world_load() uploads the map's texture pages to VRAM (the QTX3 / QTX4 file
- * is only transient), then loads the QWVA world into the level arena and
- * rewrites its link fields into absolute pointers for the asm renderer: the
- * nodes' children and face blocks, the leaves' marks and PVS rows, the
- * brush models' roots.
+ * world_load() uploads the map's texture pages to VRAM (the QTX6 / QTX7 file
+ * is transient but for its tables: the texture words, the UV maps, the
+ * animated textures), then loads the QWVD world and the map's own models
+ * (QMM1) into the level arena, maps their UVs onto the loaded set's tiles
+ * and rewrites the world's link fields into absolute pointers for the asm
+ * renderer: the nodes' children and face blocks, the leaves' marks and PVS
+ * rows, the brush models' roots. Each of the three files comes at the level
+ * of its own quality axis (formats/qlevels.h).
  */
 
 #ifndef Q1PSX_WORLD_H
@@ -14,10 +17,9 @@
 #include <stdint.h>
 
 #include "qgame.h"
+#include "qlevels.h"
 #include "qtex.h"
 #include "qworld.h"
-
-#define FIDELITY_LEVELS 4   /* 0 low, 1 medium, 2 high, 3 ultra */
 
 typedef struct {
 	qw_node       *nodes;
@@ -60,6 +62,8 @@ typedef struct {
 	const qw_anim *anims;           /* [num_anims]: the animated textures (anim.c) */
 	uint32_t       num_anims;
 	uint32_t       max_bm_depth;
+	int8_t         level[QL_AXES];  /* the levels loaded: textures, geometry, the
+	                                   map's models (QL_*; effects: -1)       */
 } world_t;
 
 #ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */
@@ -71,27 +75,30 @@ _Static_assert(__builtin_offsetof(world_t, hull2_root) == 88, "p_defs.inc W_HULL
 #endif
 
 extern world_t world;
-extern const char *const fidelity_name[FIDELITY_LEVELS];
+extern const char *const level_name[QL_LEVELS];   /* "low" .. "ultra" */
 
-/* Find which Quake maps the disc carries (<MAP>_<fidelity>.TEX / .WLD);
-   returns how many. Call once after cd_init. */
+/* Find which Quake maps the disc carries (<MAP>_G<n>.WLD, with its
+   <MAP>_T<n>.TEX and <MAP>_M<n>.MDL); returns how many. Call once after
+   cd_init. */
 int         world_scan_maps(void);
 int         world_num_maps(void);
-int         world_fid_mask(void);    /* bit n: the maps come at fidelity n */
+int         world_level_mask(int axis);   /* QL_TEXTURES .. QL_MODELS: bit n, the
+                                             disc's maps come at level n of it */
 const char *world_map_name(int map);   /* "START", "E1M1", ... */
 int         world_find_map(const char *name);   /* by name, any case; -1 if absent */
 int         world_registered(void);    /* the disc carries the registered episodes */
 
-/* Load progress: `done` of `total` bytes (texture file + world file). Called
-   about once per frame while the CD reads, and once per step in between; it
-   may draw and flip a frame (a loading bar). */
+/* Load progress: `done` of `total` bytes (the texture, world and models
+   files). Called about once per frame while the CD reads, and once per step
+   in between; it may draw and flip a frame (a loading bar). */
 typedef void (*world_progress_fn)(uint32_t done, uint32_t total);
 
-/* Load map `map` (0 .. world_num_maps() - 1) at a fidelity level, with
-   its 4-bit textures (<MAP>_<N>.TX4) if `tex4` and the disc has them, else
-   the 8-bit ones; resets the level arena. 1 on success, 0 if missing or too
-   big for the arena. `progress` may be NULL (the reads then block). */
-int world_load(int map, int fidelity, int tex4, world_progress_fn progress);
+/* Load map `map` (0 .. world_num_maps() - 1): its textures at level `tex`
+   (the 4-bit set, <MAP>_T<n>.TX4, if `tex4` and the disc has it, else the
+   8-bit one), its world at geometry level `geo`, its own models at model
+   level `models`; resets the level arena. 1 on success, 0 if missing or
+   too big for the arena. `progress` may be NULL (the reads then block). */
+int world_load(int map, int tex, int geo, int models, int tex4, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);

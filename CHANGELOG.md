@@ -1227,3 +1227,22 @@ followed by R0-R4.
   heaviest views -9 to -27 % at 768. The flat shading (far, all) draws a
   record in its average light (POLY_FT4 / FT3): -1.1 to -1.5 %.
 
+- **Four quality settings instead of one fidelity, and what each option
+  costs** (2026-10-18: textures, models, map geometry and effects apart, a hint on every option). §39: textures (the resolution),
+  map geometry (low: no T-junction repair, -2.3 % polygons; ultra: the
+  faces cut every 128 texels for the vertex light, +37 %), models (the
+  map's items and the projectiles simplified by edge collapses, -9 % /
+  -5 % of their triangles; the guns stay Quake's) and effects (the
+  particles, a quarter to twice the port's). The world file no longer
+  depends on the textures: one per geometry level (`<MAP>_G<n>.WLD`,
+  QWVD), its UVs the finest texture level's, mapped at load onto the
+  texture set's tiles (`<MAP>_T<n>.TEX`, QTX6 / QTX7: the texture table,
+  the UV maps, the animations); the map's models per model level
+  (`<MAP>_M<n>.MDL`, QMM1), the game data too (`GAME_<n>.DAT`, QGM5).
+  At high every map but three draws the same polygons as before (the
+  textures over 128 texels: a texel of rounding on a few vertices), and
+  the disc carries every combination in less room (all levels 100 MB of
+  cooked data, 125 before; the release disc 747 MB, 774 before). The
+  Graphics page and the debug map menu show, under the rows, what the
+  highlighted value gains and costs; the debug menu's rows no longer run
+  into its help line.

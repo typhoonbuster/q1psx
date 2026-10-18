@@ -144,6 +144,7 @@ uint32_t q_rand(void);
 /* ---- the map's entities' calls (engine/ents.c, triggers.c, level.c) ---- */
 void game_teleport(const int32_t org[3], const int16_t mangle[3]);   /* the player, there */
 void game_teleport_splash(const int32_t org[3]);   /* R_TeleportSplash */
+void game_set_effects(int level);   /* QL_*: the particles' counts and pool (formats/qlevels.h) */
 void game_spawn_bubble(const int32_t org[3]);      /* misc.qc make_bubbles' bubble */
 int  game_quad_active(void);
 int  game_intermission(void);
