@@ -379,9 +379,16 @@
 	addu    $t7, $t7, $t3                #  record's size for \p\()_cull) rho = 1.5 r
 	mult    $t9, $t7                     # k16 rho, for a2 bit 2 below
 	lw      $at, SP_LASTTEX($t8)
+.if !\var
+	mfc2    $t4, C2_IR3                  # z
+	beqz    $s2, \p\()_inside           # the node's box inside every plane: its
+	mfc2    $t0, C2_IR1                  # faces too, no plane can cull (s2: the
+	mfc2    $t1, C2_IR2                  # world block's node's clip flags)
+.else
 	mfc2    $t0, C2_IR1                  # x
 	mfc2    $t1, C2_IR2                  # y
 	mfc2    $t4, C2_IR3                  # z
+.endif
 	sll     $t5, $t3, 1
 	srl     $t6, $t3, 3
 	addu    $t5, $t5, $t6                # 2.125 r
@@ -406,6 +413,7 @@
 	addu    $t9, $t9, $t5
 	bltz    $t9, \p\()_cull
 	sll     $t5, $t3, 1                  # delay: 2r
+\p\()_join:
 	subu    $t6, $t4, $t7                # nearest depth z - rho
 	lw      $t7, SP_SZFAST($t8)
 	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
@@ -785,6 +793,12 @@ dr_lit_back:                             # record, in view, is lit first
 	XFORM   0, \p\()_xfn, \p\()_onen, \p\()_polys
 	b       \p\()_polys_1
 	lhu     $t0, R_POLYS($a0)            # (\p\()_polys's first)
+
+.if !\var
+\p\()_inside:                              # (no plane test: on with 2r)
+	b       \p\()_join
+	sll     $t5, $t3, 1
+.endif
 
 \p\()_full:
 	li      $t0, 1
