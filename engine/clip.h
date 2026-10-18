@@ -132,9 +132,11 @@ _Static_assert(__builtin_offsetof(clip_mover_t, missile) == 32, "p_defs.inc MV_M
 _Static_assert(__builtin_offsetof(clip_mover_t, root0) == 36, "p_defs.inc MV_ROOT0");
 _Static_assert(__builtin_offsetof(clip_mover_t, sight) == 40, "p_defs.inc MV_SIGHT");
 _Static_assert(sizeof(clip_mover_t) == 44, "clip.s clip_mover's .space");
+#if UINTPTR_MAX == 0xffffffffu   /* (the console's layout: a host's pointers are wider) */
 _Static_assert(sizeof(clip_bmodel_t) == 48, "p_defs.inc CB_SIZE");
 _Static_assert(__builtin_offsetof(clip_bmodel_t, next) == 40, "p_defs.inc CB_NEXT");
 _Static_assert(__builtin_offsetof(clip_bmodel_t, self) == 45, "p_defs.inc CB_SELF");
+#endif
 _Static_assert(sizeof(clip_area_t) == 8, "p_defs.inc CA_SIZE");
 _Static_assert(__builtin_offsetof(clip_area_t, flags) == 2, "p_defs.inc CA_SIZE");
 _Static_assert(__builtin_offsetof(clip_area_t, head) == 4, "p_defs.inc CA_HEAD");

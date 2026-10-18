@@ -31,6 +31,9 @@ int32_t        stream_origin[3];
 #define MAX_RES       48       /* assets resident (or being read) at once       */
 #define MAX_REGIONS   40       /* free VRAM rectangles                          */
 #define PASS_FRAMES   8        /* a residency pass every this many frames       */
+#define PASS_JUMP     (256 * QW_CLIP_SUB)   /* and at once when the player moved
+                                       farther since the last one (a teleporter:
+                                       no read started on the old place's wants) */
 #define TRIM_FRAMES   2        /* an image's pixels kept until its upload is done */
 #define BACKOFF       8        /* passes before an asset no pool took is tried again */
 #define MDL_CACHE     (24 * 1024)   /* the expanded frames' cache (engine/mdl.c)  */
@@ -957,8 +960,11 @@ void stream_want(int a, uint32_t score)
 		assets[a].score = score;
 }
 
+static int32_t pass_origin[3];             /* stream_origin at the last pass */
+
 static void pass(void)
 {
+	memcpy(pass_origin, stream_origin, sizeof pass_origin);
 	for (int a = 0; a < num_assets; a++)
 		assets[a].score = ~0u;
 	ents_stream_wants();
@@ -1045,7 +1051,12 @@ void stream_frame(void)
 	frame_no++;
 	memcpy(stream_origin, pl.pm.pos, sizeof stream_origin);
 	trims();
-	if (frame_no % PASS_FRAMES == 0)
+	int jump = 0;
+	for (int k = 0; k < 3; k++) {
+		int32_t d = stream_origin[k] - pass_origin[k];
+		jump |= d > PASS_JUMP || d < -PASS_JUMP;
+	}
+	if (frame_no % PASS_FRAMES == 0 || jump)
 		pass();
 	if (reading >= 0) {                       /* a model's read */
 		int left = CdReadSync(1, 0);          /* (also runs CdReadRetry's retries) */

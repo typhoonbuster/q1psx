@@ -1235,3 +1235,19 @@ followed by R0-R4.
   super shotgun's frame -11.6 %). The gun is no longer drawn under the
   Ring of Shadows (R_DrawViewModel).
 
+- **Streaming, the monsters, the SPU pool** (2026-10-18). §39: a
+  disc file a map (`STREAM.DAT`, `QST1`) holds what the map may need and
+  not always: the nine monsters' models, heads, projectiles and sounds,
+  the gibs, the backpack, the items' models, every positional sound. The
+  engine keeps RAM, VRAM and SPU pools filled by distance to the player
+  (every 8 frames), the keys, the rune and the weapons always first; one
+  CD read at a time, the CD-DA paused around it and resumed where it
+  was. The nine monsters of the shareware in native C from `progs.dat`
+  1.06 (state tables generated from its bytecode, the AI and sv_move.c
+  transcribed): their attacks, missiles, deaths, gibs, teleporters and
+  pushers for them. The map's sound bank keeps only the player's and the
+  weapons' sounds (nothing halved any more). Quake's area nodes for the
+  traces and the touch passes, visible()'s line of sight, CheckBottom's
+  box node, the residual-solid walk from a node (the asm only): E1M3's
+  47 monsters awake 830 k cycles a tick to 287 k, the player's moves on
+  E1M3 -50 %, start's -7 %, every trace's result kept.

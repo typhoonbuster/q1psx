@@ -4145,7 +4145,9 @@ allocator compacted when a block no longer fits); VRAM (the map's
 texture pages' free rows, the 4-bit pages, GAME.DAT's free rectangles);
 SPU RAM past the map's bank (§39.4).
 
-- **Wants.** Every 8 frames a pass asks the edicts what they use and how
+- **Wants.** Every 8 frames (and at once when the player is 256 units
+  from where the last pass saw him: a teleporter's arrival, no read started
+  on the old place's wants) a pass asks the edicts what they use and how
   much: a distance (Chebyshev, world units) from the player, `STREAM_PIN`
   for what must always be in. A monster's kind is wanted at its nearest
   monster's distance, its whole group (model, head, sounds); a head, a
@@ -4312,31 +4314,46 @@ box's walk 19 k, the flyers 11 k.
 
 ### 39.6 Checking
 
+Shortened; what was seen:
+
 - **The physics diffs** (`VIEWS=0 scripts/bench.sh`, `MAP=E1M3` too):
   clip.s against clip.c on 4000 random sweeps, 3008 sweeps at the box
   entries (47 monsters on E1M3) as entities too, 4000 contents, 1000
   CheckBottom boxes (the node asm against C, the points and lines from
   it against the root's), 4000 lines of sight; pmove.s against pmove.c
-  on 9000 ticks: no mismatch.
-- **The monsters' scenarios** (`MONSTERS=1 MAP=... scripts/bench.sh`):
-  for each kind, a monster with a free spot on its floor in its sight;
-  the player stands there 300 ticks (it sees him, comes, attacks), then
-  shoots it with the shotgun (pictures at each step). E1M1: the soldier
-  and the dog fight and die, their sounds streamed in on the approach.
-  E1M2: soldier, ogre (the player killed with grenades and chainsaw),
-  knight. E1M3: ogre, wizard (its spikes), demon (its leaps, its claws),
-  the zombie getting up (the shotgun never gibs it: Quake's). E1M5 and
-  E1M7: the shambler (its lightning kills the player), the demon, the
-  zombie's flesh. The items bench (`ENTS=1`): every item streamed in and
-  taken (the armours' skins, the weapons, the artifacts, the flames).
-- **The crowd** above, E1M3; E1M1's: 20 monsters, 260 k cycles a tick.
+  on 9000 ticks: no mismatch, after each change of 39.5.
+- **The monsters' scenarios** (`MONSTERS=1 MAP=... scripts/bench.sh`, the
+  first runs, before the area nodes): for each kind, a monster with a
+  free spot in its sight; the player stands there 300 ticks (it sees him,
+  comes, attacks), then shoots it with the shotgun, pictures at each
+  step. E1M1: the soldier and the dog fight and die, their sounds
+  streamed in on the approach. E1M2: the soldier, the ogre (its
+  chainsaw) and the knight killed. E1M3: the ogre (its grenades), the
+  zombies (their flesh, their falls; the shotgun never gibs one:
+  Quake's), the wizard killed. E1M5: the wizard's and the demon's
+  attacks, the knight's sword. The sounds by name from the `snd` lines
+  (the scratchpad's hash decoder over pak0's names).
+- **What those runs showed wrong**, fixed since: the bench ran the stream
+  manager only on its pictures' frames (a knight on E1M2 fought unseen
+  and silent, its model read the whole fight long): two frames a tick
+  now, as in the game; a pass after a teleport used the old place's
+  wants and started reading what was no longer near: a pass at once when
+  the player is 256 units from the last pass's place. The bench's spot
+  could leave the player falling or in a liquid: on a floor, out of the
+  liquids now.
+- **The items bench** (`ENTS=1`): every item streamed in and taken (the
+  armours' skins, the weapons, the artifacts, the flames).
+- **The crowd** (39.5), E1M3.
 
 ### 39.7 Left
 
-- Chthon in a scenario: the bench wakes it by its `use` (its trigger) on
-  E1M7, with its lava balls and `event_lightning`'s doors not seen yet.
-- The CD-DA's pause and resume around a read on a console (DuckStation
-  headless first): only seen on PCSX-Redux.
+- The scenarios again with the fixed bench (the stream between ticks,
+  the spots on a floor, `mon OVERLAP`): the shambler's attacks and
+  Chthon (woken by its `use` now, its lava balls, `event_lightning`'s
+  doors) were not seen; a demon was once found inside the player's box
+  on E1M3 (before the area nodes), not explained.
+- The game bench (`BENCH_GAME=1`) and DuckStation (the CD-DA's pause and
+  resume around a read, the reads' timing) not run on this state.
 - A crowd thinking together still costs a tick of 2 M cycles: spreading
   the thinks over the ticks would move them from Quake's times (a choice
   left open).

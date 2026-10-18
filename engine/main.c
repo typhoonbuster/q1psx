@@ -1916,6 +1916,38 @@ static void mon_log(const char *what, const edict_t *e)
 	       (unsigned) stream_stats.halved);
 }
 
+/* the stream manager's frames between two ticks (the game draws about
+   two a tick at 32 Hz: its passes, reads and uploads run on them) */
+static void bench_stream_frames(void)
+{
+	stream_frame();
+	stream_frame();
+}
+
+/* the scenario's monster and the player both solid, their boxes
+   overlapping (a step or a push that went through): the first tick of
+   each overlap printed */
+static void mon_overlap(const char *what, int t, const edict_t *e)
+{
+	static int was;
+	const edict_t *p = ent_player;
+	int lap = e->solid != SOLID_NOT && p->solid != SOLID_NOT && e->health > 0 &&
+	          e->origin[0] + e->mins[0] < p->origin[0] + p->maxs[0] &&
+	          e->origin[0] + e->maxs[0] > p->origin[0] + p->mins[0] &&
+	          e->origin[1] + e->mins[1] < p->origin[1] + p->maxs[1] &&
+	          e->origin[1] + e->maxs[1] > p->origin[1] + p->mins[1] &&
+	          e->origin[2] + e->mins[2] < p->origin[2] + p->maxs[2] &&
+	          e->origin[2] + e->maxs[2] > p->origin[2] + p->mins[2];
+	if (lap && !was)
+		printf("mon OVERLAP %s t %d: state %d frame %d flags %x as %d movetype %d pos %d %d %d vel %d %d %d | "
+		       "player %d %d %d vel %d %d %d ground %d\n", what, t, e->mstate, e->frame, (unsigned) e->flags,
+		       e->attack_state, e->movetype, (int) e->origin[0] / CLIP_SUB, (int) e->origin[1] / CLIP_SUB,
+		       (int) e->origin[2] / CLIP_SUB, (int) e->velocity[0], (int) e->velocity[1], (int) e->velocity[2],
+		       (int) pl.pm.pos[0] / CLIP_SUB, (int) pl.pm.pos[1] / CLIP_SUB, (int) pl.pm.pos[2] / CLIP_SUB,
+		       (int) pl.pm.vel[0], (int) pl.pm.vel[1], (int) pl.pm.vel[2], pl.pm.onground);
+	was = lap;
+}
+
 static void bench_monsters(void)
 {
 	const char *mapname = Q1PSX_BENCH_MAP[0] ? Q1PSX_BENCH_MAP : "E1M1";
@@ -1947,11 +1979,12 @@ static void bench_monsters(void)
 			static const int turns[16] = { 0, 45, -45, 90, -90, 135, -135, 180,
 			                               22, -22, 67, -67, 112, -112, 157, -157 };
 			for (int a = 0; a < 16 && !e; a++)          /* (the second eight: farther, for */
-				for (int d = a < 8 ? 450 : 1000; d >= 100 && !e; d -= 25) {   /* Chthon's lava) */
+				for (int d = a < 8 ? 450 : 1000; d >= 100 && !e; d -= 25)   /* Chthon's lava, */
+				for (int up = 0; up <= (a < 8 ? 0 : 512) && !e; up += 64) {  /* higher too) */
 					int yaw = (c->ang[1] >> 4) + turns[a] * ANG_TURN / 360;
 					spot[0] = c->origin[0] + d * CLIP_SUB * r_cos(yaw) / 4096;
 					spot[1] = c->origin[1] + d * CLIP_SUB * r_sin(yaw) / 4096;
-					spot[2] = c->origin[2];
+					spot[2] = c->origin[2] + up * CLIP_SUB;
 					clip_trace(1, spot, spot, &tr);
 					if (tr.startsolid || tr.allsolid)
 						continue;
@@ -1995,6 +2028,8 @@ static void bench_monsters(void)
 		for (int t = 0; t < 300; t++) {           /* it sees the player, fights */
 			ents_look_at(e->origin);
 			game_tick(&cmd);
+			bench_stream_frames();
+			mon_overlap("fight", t, e);
 			if (t % 30 == 0) {
 				mon_log("fight", e);
 				if (t == 0)
@@ -2020,13 +2055,17 @@ static void bench_monsters(void)
 		for (int t = 0; t < 600 && e->health > 0; t++) {
 			ents_look_at(e->origin);
 			game_tick(&cmd);
+			bench_stream_frames();
+			mon_overlap("shot", t, e);
 			if (t % 30 == 0)
 				mon_log("shot", e);
 		}
 		cmd.fire = 0;
 		mon_log("killed", e);
-		for (int t = 0; t < 120; t++)             /* its death, its backpack */
+		for (int t = 0; t < 120; t++) {           /* its death, its backpack */
 			game_tick(&cmd);
+			bench_stream_frames();
+		}
 		mon_log("dead", e);
 		snprintf(name, sizeof name, "m%s_%d_c", mapname, k);
 		ents_look_at(e->origin);
@@ -2060,6 +2099,7 @@ static void bench_monsters(void)
 		pl.health = 100;
 		pl.dead = 0;
 		game_tick(&cmd);
+		bench_stream_frames();
 		if (t % 60 == 59) {
 			int alive = 0;
 			for (int i = 2; i < num_edicts; i++)
