@@ -75,6 +75,8 @@ typedef struct {
 	uint32_t lights;         /* +212 their table, 32 bytes each (DL_*)        */
 	int32_t  mark_r;         /* +216 mark_pvs_far's reach, vertex units: a leaf
 	                                 farther on an axis is not marked          */
+	uint32_t fragpool;       /* +220 qw_vert *: the brush models' pieces'
+	                                 vertices (bmfrag.c)                       */
 } r_state_t;
 
 extern r_state_t r_state;

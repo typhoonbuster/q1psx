@@ -30,11 +30,12 @@
 /* engine/r_defs.inc mirrors both layouts (RI_*, RE_*) */
 typedef struct {
 	uint16_t next;       /* +0  next item of the leaf's list, index + 1; 0 ends  */
-	uint8_t  type;       /* +2  0 particle, 1 model                              */
+	uint8_t  type;       /* +2  0 particle, 1 model, RI_PIECES a brush model's
+	                            pieces (negative as a signed byte: r_world.s)  */
 	uint8_t  colour;     /* +3  particle: palette index                          */
 	int16_t  x, y, z;    /* +4  particle: vertex units                           */
-	uint16_t pad;        /* +10                                                  */
-	uint32_t ent;        /* +12 model: the r_ent_t                               */
+	uint16_t pad;        /* +10 pieces: their records' bytes                     */
+	uint32_t ent;        /* +12 model: the r_ent_t; pieces: their first record   */
 } r_item_t;              /* 16 bytes */
 
 typedef struct {
@@ -54,6 +55,8 @@ typedef struct {
 	                             vertex units (the walk's plane tests)         */
 	uint32_t pad[2];
 } r_ent_t;               /* 80 bytes */
+
+#define RI_PIECES 0x80
 
 #define RE_VIEW   1
 #define RE_BMODEL 2
@@ -86,10 +89,14 @@ r_ent_t *rl_bmodel(const qw_bmodel *bm, const int32_t org[3]);
    NULL or the item pool is full) */
 void rl_add_model(const qw_leaf *leaf, r_ent_t *e);
 void rl_add_particle(const qw_leaf *leaf, const int32_t pos[3], int colour);   /* 1/R_POS_SUB units */
+/* a brush model's pieces in that leaf (bmfrag.c): `len` bytes of records,
+   their vertices in r_state.fragpool, drawn in the world's space */
+void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len);
 
 /* after the frame is rendered: clears the leaves' list ids */
 void rl_end(void);
 
 int rl_num_items(void);
+int rl_num_lists(void);     /* (the last frame's leaves with a list, of RL_MAX_LISTS) */
 
 #endif

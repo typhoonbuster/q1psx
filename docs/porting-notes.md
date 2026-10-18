@@ -4332,3 +4332,69 @@ bench's 12 scenarios (START's spawn, each weapon fired, the HUD, a walk at
   four rows and their hints on a TV; a level changed in a game (the next
   level's load); the low geometry's cracks, the ultra geometry's light,
   the reduced items and torches.
+
+## §41 — The brush models cut by the world's BSP (fourth play test, 2026-10-18)
+
+- **The report**: almost every texture hidden in a wall showing (E1M1: black blocks standing in rooms and corridors, a
+  door's buried part over the floor) and START's floor over the pit to the
+  end (func_bossgate) still disappearing at times (§33).
+- **The cause**: a brush model went whole into one leaf's render list (§33:
+  the leaf on the eye's side of its nearest face). With no depth buffer, the
+  painter's order puts all of the model before or after each world face:
+  the part of a door slid into its wall pocket, a plat's sides under the
+  floor, a column under the slime were painted over the walls and floors in
+  front of them (their faces there unlit: black). And a model was looked at
+  only when one of the leaves its box touches, 8 kept at most, was in the
+  PVS: the slab touches more, and from some places none of its 8 were.
+- **Quake's answer** (r_bsp.c R_DrawSolidClippedSubmodelPolygons,
+  R_RecursiveClipBPoly): each polygon of a brush model is cut by the
+  world's planes from the model's top node down; a piece reaching a solid
+  leaf is dropped, the others are emitted with their leaf's key, so the
+  span sorter puts each piece where its leaf stands in the BSP's order.
+  `engine/bmfrag.c` does the same with the walk's painter's order in place
+  of the keys:
+  - per drawn brush model, a cache (`bmf_models`, by model: the edict
+    keeps its 384 bytes, see below): its records cut where it stands, at
+    the load and again only when it moves (a door, a plat, while they
+    move); the pieces are records in the world's format (face id 0: drawn
+    with the models' stamp), their vertices in a level pool of their own
+    (`r_state.fragpool`), grouped by the model's node side and by leaf;
+  - each frame, the model's own BSP from the eye, back to front: per node
+    side facing the eye (the faces facing away are left out, as Quake), its
+    groups whose leaf the PVS sees go into that leaf's render list (an item
+    of type RI_PIECES); the walk draws a leaf's list between the faces
+    behind it and those in front (`r_world.s` `ei_pieces`: the models'
+    record loop with the pieces' pool, the world's matrix as it is);
+  - the cut: d > 0 is the front, as the walk (Quake's `dist > 0`); a
+    polygon lying in the plane goes to the back (Quake's); one touching the
+    plane from the front goes whole to the front (Quake's back part there
+    has no area: nothing drawn); a corner in the plane goes with its
+    neighbours' sides; a crossing is computed from the lower end of its
+    edge (lexicographic), so two pieces sharing an edge get the same point,
+    its parameter exact whatever the plane (both distances shifted down
+    together until the division fits 32 bits); an uncut polygon keeps its
+    cooked corners (a quad its diagonal), a cut one is fanned from its
+    first corner into quads and a last triangle; the corners' texels and
+    light interpolated along the edges; a record's sphere and average light
+    (the flat shading's) from its corners;
+  - which models a frame looks at: as before, those whose kept leaves the
+    PVS sees; a model with pieces whose box touches 8 leaves or more (its
+    list may be cut short) is seen by its top node instead (its pieces'
+    leaves are all under it, and the PVS marking stamps a visible leaf's
+    ancestors); a model whose box lies wholly behind the eye is left there;
+  - the old way stays as the fallback: a model whose pieces do not fit its
+    room is drawn whole as before (none on E1M1 and START).
+- **The dispatch** (`r_world.s` ei_model): the item's type is read signed
+  (`lb`), RI_PIECES is 0x80, a negative type goes to `ei_pieces`; a model
+  enters draw_model past its first instruction with its return set to the
+  next item, so the test costs a model nothing (5 instructions, as `jal`,
+  its slot, draw_model's `sw` of the return, `b ei_next` and its slot
+  were); `ep_back` does ei_next's work itself.
+- **On the way**: consecutive groups of one leaf were merged across the
+  model's node sides, so the pressed E1M1 button's three visible faces (all
+  in its recess's leaf) were drawn on the first one's side only: from the
+  room, none. Groups merge within a node side now. And a pointer to the
+  cache in the edict made it 388 bytes: every `&edicts[i]` then took three
+  shifts and two adds instead of two shifts and an add, +0.5 to +1.9 % on
+  E1M1's views with no brush model in sight; the caches are found by model
+  number instead.

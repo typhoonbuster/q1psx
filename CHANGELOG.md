@@ -1265,3 +1265,13 @@ followed by R0-R4.
   GPU and the loads); the debug menu's rows no longer run into its help
   line. Every map loads at every geometry level, at ultra textures and
   geometry too (release-ultra's), and plays on DuckStation.
+- **The brush models cut by the world's BSP** (fourth play test). §41:
+  as Quake's R_DrawSolidClippedSubmodelPolygons, every brush model's
+  polygons are cut by the world's planes from its top node: the pieces in
+  solid leaves dropped (a door in its wall pocket, a plat's sides under
+  the floor, a column under the slime: the black blocks), the others
+  drawn in their own leaves, in the walk's painter's order. A model is
+  looked at when the PVS sees one of its pieces' leaves (START's slab
+  over the pit touches more leaves than a box keeps: it went with them).
+  The models are cut at the load and again when they move; the pressed
+  E1M1 button, lost on the way, shown again.

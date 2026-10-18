@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "bmfrag.h"
 #include "ents.h"
 #include "game.h"
 #include "hud.h"
@@ -890,6 +891,19 @@ static int leaf_in_front(const qw_leaf *l, int32_t *depth)
 	return 1;
 }
 
+/* a model's box not wholly behind the eye (leaf_in_front's test) */
+static int box_in_front(const edict_t *e)
+{
+	int32_t c[3], h = 0;
+	for (int k = 0; k < 3; k++) {                 /* 1/8 units -> vertex units */
+		c[k] = (e->absmin[k] + e->absmax[k]) >> 2;
+		h   += (e->absmax[k] - e->absmin[k]) >> 2;
+	}
+	int32_t z = ((r_state.rot[6] * c[0] + r_state.rot[7] * c[1] + r_state.rot[8] * c[2]) >> 12) +
+	            r_state.tr[2];
+	return z + h * 3 / 2 > 0;
+}
+
 #ifdef Q1PSX_BENCH
 int ents_stat[4];   /* the last frame: models drawn, PVS-visible, leaves in view, candidates */
 int ents_debug;     /* the bench: print each model drawn this frame */
@@ -900,9 +914,13 @@ int ents_debug;     /* the bench: print each model drawn this frame */
 
 /* The drawable models the PVS sees: found again when the stamp changes
    (the camera's leaf) or a box moved, each with the bits of its leaves
-   the PVS sees. */
+   the PVS sees. A model with pieces (bmfrag.c) is seen when the PVS sees
+   one of its pieces' leaves: exact, where its box's leaves are a superset
+   that stops at 8 (the slab over START's pit touches more: from some
+   places none of its 8 were in the PVS, and it went with them). */
 static void ents_visible(uint16_t vis)
 {
+	bmf_cache *const *bm = bmf_models;
 	num_vis = 0;
 	for (int i = 0; i < num_draw; i++) {
 		edict_t *e = &edicts[draw_list[i]];
@@ -924,7 +942,10 @@ static void ents_visible(uint16_t vis)
 		for (int j = 0; j < e->num_leaves; j++)
 			if (e->leaves[j]->visframe == vis)
 				e->vismask |= (uint8_t) (1 << j);
-		if (e->vismask)
+		int seen = e->vismask != 0;
+		if (bm && bm[e->model] && (seen || e->num_leaves == ENT_MAX_LEAVES))
+			seen = bmf_seen(bm[e->model], vis, seen);
+		if (seen)
 			vis_list[num_vis++] = draw_list[i];
 	}
 	vis_list_stamp = vis;
@@ -974,10 +995,23 @@ void ents_render(void)
 #endif
 	if (vis_list_stamp != vis || ents_relink)
 		ents_visible(vis);
+	bmf_cache *const *bm = bmf_models;
 	for (int i = 0; i < num_vis; i++) {
 		edict_t *e = &edicts[vis_list[i]];
 		STAT(1);
-		/* among the leaves the PVS sees, the one in front of the eye
+		if (bm && bm[e->model]) {                /* cut by the world's BSP, as Quake:
+		                                            its pieces in their own leaves */
+			if (!box_in_front(e))
+				continue;
+			if (bmf_draw(e, vis)) {
+				STAT(0);
+				continue;
+			}
+			if (!e->vismask)                     /* (too cut up: drawn whole, its
+			                                        leaves' way) */
+				continue;
+		}
+		/* drawn whole: among the leaves the PVS sees, the one in front of the eye
 		   nearest it: drawn there, over what the walk draws after it (a
 		   single one: as it is) */
 		const qw_leaf *best = 0;

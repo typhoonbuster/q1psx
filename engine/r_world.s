@@ -2293,6 +2293,7 @@ lr_done:
 # t0-t7, t9.
 draw_model:
 	sw      $ra, SP_DMRA($t8)
+dm_body:                                 # (ei_model: its ra and SP_DMRA set)
 	jal     close_run
 	nop
 	lw      $t0, RE_ROT+0($a0)
@@ -2352,9 +2353,11 @@ draw_model:
 	lw      $a0, RE_RECS($a0)
 	RECLOOP de, dm_exit, 1
 dm_exit:
-	lw      $t0, SP_BMWALK($t8)          # a brush model's block: on with
-	nop                                  # its walk
-	bnez    $t0, bm_block
+	lw      $t0, SP_BMWALK($t8)          # a brush model's block (bm_block: on
+	nop                                  # with its walk) or a model's pieces
+	beqz    $t0, dm_exit_1               # (ep_back)
+	nop
+	jr      $t0
 	nop
 dm_exit_1:
 	jal     close_run
@@ -2575,7 +2578,7 @@ ei_item:
 	lw      $t1, RS_ITEMS($t0)
 	lw      $t2, RS_RGB($t0)
 	addu    $t9, $t9, $t1                # the item
-	lbu     $t3, RI_TYPE($t9)
+	lb      $t3, RI_TYPE($t9)
 	lhu     $t1, RI_NEXT($t9)
 	lw      $a0, RI_ENT($t9)
 	sw      $t1, SP_NEXTITEM($t8)
@@ -2608,10 +2611,42 @@ ei_next:
 	b       ei_item
 	nop
 ei_model:
-	jal     draw_model
-	nop
-	b       ei_next
-	nop
+	bltz    $t3, ei_pieces               # (RI_PIECES: a negative byte)
+	lui     $ra, %hi(ei_next)            # a model: draw_model's return
+	addiu   $ra, $ra, %lo(ei_next)       # straight to the next item
+	j       dm_body
+	sw      $ra, SP_DMRA($t8)            # (draw_model's first)
+
+# A brush model's pieces in this leaf (bmfrag.c, rl_add_pieces): records in
+# the world's space and its texture table, with their own vertex pool,
+# through the models' record loop as one of a brush model's blocks is:
+# no matrix to load or put back (the walk's is the world's), the texture
+# run going on; the models' stamp for their face ids, the world's pool
+# and stamp again after them (ep_back, from dm_exit).
+ei_pieces:                               # a0 = the first record (RI_ENT)
+	lw      $t0, SP_RSTATE($t8)
+	lhu     $t1, RI_LEN($t9)
+	lw      $t2, RS_FRAGPOOL($t0)
+	addiu   $t3, $t8, SP_STAMP
+	lw      $t0, SP_FULL($t8)
+	addu    $a1, $a0, $t1                # the end
+	sw      $t2, SP_VERTPOOL($t8)
+	sw      $t3, SP_FVBASE($t8)
+	la      $t3, ep_back
+.if R_PROFILE
+	lhu     $t9, TIMER2($t8)             # (the record loop's start time)
+.endif
+	b       de_records
+	sw      $t3, SP_BMWALK($t8)
+ep_back:                                 # (ei_next's own work here)
+	lw      $t0, SP_RSTATE($t8)
+	sw      $zero, SP_BMWALK($t8)
+	lw      $t1, RS_VERTPOOL($t0)
+	lw      $t2, RS_FVBASE($t0)
+	sw      $t1, SP_VERTPOOL($t8)
+	lhu     $t9, SP_NEXTITEM($t8)
+	b       ei_item
+	sw      $t2, SP_FVBASE($t8)
 
 # -----------------------------------------------------------------------------
 # The graphics options' record loops (RECLOOP opt): entered from the

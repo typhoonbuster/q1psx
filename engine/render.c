@@ -46,6 +46,7 @@ _Static_assert(offsetof(r_state_t, vh2)          == 204, "r_state layout");
 _Static_assert(offsetof(r_state_t, nlights)      == 208, "r_state layout");
 _Static_assert(offsetof(r_state_t, lights)       == 212, "r_state layout");
 _Static_assert(offsetof(r_state_t, mark_r)       == 216, "r_state layout");
+_Static_assert(offsetof(r_state_t, fragpool)     == 220, "r_state layout");
 _Static_assert(offsetof(qw_leaf, light)          == 27,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");

@@ -46,6 +46,7 @@
 .set RS_NLIGHTS,      208   # dynamic lights this frame, and their table
 .set RS_LIGHTS,       212   #   (engine/dlight.c rlight_t, 32 bytes each)
 .set RS_MARK_R,       216   # mark_pvs_far's reach, vertex units (render.c)
+.set RS_FRAGPOOL,     220   # the brush models' pieces' vertex pool (bmfrag.c)
 .set DL_O,            0     # int32 origin[3], vertex units
 .set DL_RADIUS,       12    # vertex units
 .set DL_MINLIGHT,     16
@@ -64,11 +65,12 @@
 
 # ---- the render list (engine/rlist.h): r_item_t (16 B), r_ent_t (80 B) -----
 .set RI_NEXT,     0     # next item of the list + 1, 0 ends
-.set RI_TYPE,     2     # 0 particle, 1 model
+.set RI_TYPE,     2     # 0 particle, 1 model, 0x80 a brush model's pieces (lb: < 0)
 .set RI_COLOUR,   3
 .set RI_X,        4     # particle: x | y << 16 (lwc2 VXY0), z at +8 (lh)
 .set RI_Z,        8
-.set RI_ENT,     12     # model: the r_ent_t
+.set RI_LEN,     10     # pieces: their records' bytes
+.set RI_ENT,     12     # model: the r_ent_t; pieces: their first record
 .set RE_ROT,      0     # GTE rotation, 5 words
 .set RE_TR,      20     # 3 words
 .set RE_POOL,    32

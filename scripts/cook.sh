@@ -45,7 +45,8 @@ EP1="start e1m1 e1m2 e1m3 e1m4 e1m5 e1m6 e1m7 e1m8"
 RETAIL="e2m1 e2m2 e2m3 e2m4 e2m5 e2m6 e2m7 e3m1 e3m2 e3m3 e3m4 e3m5 e3m6 e3m7
         e4m1 e4m2 e4m3 e4m4 e4m5 e4m6 e4m7 e4m8 end"
 if [ -z "${COOK_MAPS:-}" ]; then
-	COOK_MAPS=$(ls cooked/id1/*_g2.wld 2>/dev/null | sed 's|.*/||; s|_g2\.wld$||' | tr '\n' ' ')
+	COOK_MAPS=$( (ls cooked/id1/*_g2.wld cooked/id1/*_high.wld 2>/dev/null || true) |   # (_high: the
+	            sed 's|.*/||; s|_g2\.wld$||; s|_high\.wld$||' | sort -u | tr '\n' ' ')   # fidelity's names)
 	COOK_MAPS=${COOK_MAPS:-ep1}
 fi
 case "$COOK_MAPS" in

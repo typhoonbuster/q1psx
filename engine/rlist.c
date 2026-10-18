@@ -22,6 +22,13 @@ int rl_num_items(void)
 	return n_items;
 }
 
+static int lists_used;      /* (the last frame's, for the bench) */
+
+int rl_num_lists(void)
+{
+	return lists_used;
+}
+
 /* Quake's AngleVectors: forward, right, up of (pitch, yaw, roll), x4096 */
 static void angle_vectors(int pitch, int yaw, int roll, int32_t f[3], int32_t r[3], int32_t u[3])
 {
@@ -171,6 +178,23 @@ static int leaf_list(qw_leaf *leaf)
 	return id;
 }
 
+void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len)
+{
+	if (!leaf || !len || n_items >= RL_MAX_ITEMS)
+		return;
+	int id = leaf_list((qw_leaf *) leaf);
+	if (!id)
+		return;
+	r_item_t *it = &r_items[n_items];
+	it->next   = r_lists[id];
+	it->type   = RI_PIECES;
+	it->colour = 0;
+	it->pad    = (uint16_t) len;
+	it->ent    = (uint32_t) recs;
+	r_lists[id] = (uint16_t) (n_items + 1);
+	n_items++;
+}
+
 void rl_add_model(const qw_leaf *leaf, r_ent_t *e)
 {
 	if (!leaf || !e || n_items >= RL_MAX_ITEMS)
@@ -210,5 +234,8 @@ void rl_end(void)
 {
 	for (int i = 0; i < n_lists; i++)
 		touched[i]->vis &= 0x00ffffffu;
+#ifdef Q1PSX_BENCH
+	lists_used = n_lists;
+#endif
 	n_lists = 0;
 }

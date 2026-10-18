@@ -18,6 +18,7 @@
 #include <hwregs_c.h>
 
 #include "bench.h"
+#include "bmfrag.h"
 #include "cd.h"
 #include "ents.h"
 #include "game.h"
@@ -368,8 +369,10 @@ static int load_level(int map)
 			printf("level: %s does not fit at geometry %s, loaded at %s\n", world_map_name(map),
 			       level_name[geo], level_name[world.level[QL_GEOMETRY]]);
 		r_bind_world();
+		bmf_level();                            /* (the brush models' pieces: anew) */
 		ents_load();                            /* the map's entities */
 		ents_spawn(1);
+		bmf_load();
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		snd_map_start();
@@ -991,12 +994,9 @@ static void bench_pmove_diff(void)
 #define Q1PSX_BENCH_MAP ""    /* a map name: the maps bench runs that one only (MAP=E1M1) */
 #endif
 #ifndef Q1PSX_BENCH_VIEW_SET
-#define Q1PSX_BENCH_VIEW_SET 0   /* 1: one more view of that map, Q1PSX_BENCH_VX .. VPITCH (VIEW=x,y,z,yaw,pitch) */
-#define Q1PSX_BENCH_VX 0
-#define Q1PSX_BENCH_VY 0
-#define Q1PSX_BENCH_VZ 0
-#define Q1PSX_BENCH_VYAW 0
-#define Q1PSX_BENCH_VPITCH 0
+#define Q1PSX_BENCH_VIEW_SET 0   /* 1: more views of that map, Q1PSX_BENCH_VIEWS_XY: x, y, z, yaw, pitch
+                                    each (VIEW=x,y,z,yaw,pitch[,x,y,z,yaw,pitch ...]) */
+#define Q1PSX_BENCH_VIEWS_XY 0, 0, 0, 0, 0
 #endif
 #ifndef Q1PSX_BENCH_NOENTS
 #define Q1PSX_BENCH_NOENTS 0  /* 1: the map's entities are not drawn (NOENTS=1: an A / B) */
@@ -1029,13 +1029,17 @@ static void bench_maps(void)
 			game_active = 0;
 			printf("bench play %s ok\n", world_map_name(m));
 		}
-		qw_view extra;                          /* VIEW=x,y,z,yaw,pitch: one more */
-		int have_extra = Q1PSX_BENCH_VIEW_SET;
-		extra.pos[0] = Q1PSX_BENCH_VX; extra.pos[1] = Q1PSX_BENCH_VY; extra.pos[2] = Q1PSX_BENCH_VZ;
-		extra.yaw = Q1PSX_BENCH_VYAW; extra.pitch = Q1PSX_BENCH_VPITCH;
+		static const int16_t xv[] = { Q1PSX_BENCH_VIEWS_XY };   /* VIEW=x,y,z,yaw,pitch...: more */
+		uint32_t have_extra = Q1PSX_BENCH_VIEW_SET ? sizeof xv / sizeof xv[0] / 5 : 0;
+		qw_view extra;
 		uint32_t nviews = Q1PSX_BENCH_MAP[0] ? world.num_views : 4u;
 		if (nviews > world.num_views) nviews = world.num_views;
-		for (uint32_t v = 0; v < nviews + (uint32_t) have_extra; v++) {
+		for (uint32_t v = 0; v < nviews + have_extra; v++) {
+			if (v >= nviews) {
+				const int16_t *x = &xv[(v - nviews) * 5];
+				extra.pos[0] = x[0]; extra.pos[1] = x[1]; extra.pos[2] = x[2];
+				extra.yaw = x[3]; extra.pitch = x[4];
+			}
 			const qw_view *vw = v < nviews ? &world.views[v] : &extra;   /* (one map: all of its views) */
 			cam.pos[0] = vw->pos[0] * CLIP_SUB;
 			cam.pos[1] = vw->pos[1] * CLIP_SUB;
@@ -1061,8 +1065,9 @@ static void bench_maps(void)
 			run_frame(0, Q1PSX_BENCH_MAP[0] ? 1 : 2);   /* one map: its frames in full */
 			ents_debug = 0;
 			run_frame(0, 0);                    /* (the cycles of a frame without the prints) */
-			printf("ents view %s: %d models drawn of %d, %d in the PVS, %d leaves in front, items %d\n",
-			       names[v & 3], ents_stat[0], ents_stat[3], ents_stat[1], ents_stat[2], rl_num_items());
+			printf("ents view %s: %d models drawn of %d, %d in the PVS, %d leaves in front, items %d, lists %d\n",
+			       names[v & 3], ents_stat[0], ents_stat[3], ents_stat[1], ents_stat[2], rl_num_items(),
+			       rl_num_lists());
 		}
 	}
 }
@@ -1108,7 +1113,13 @@ static void ents_dump(const char *name)
 	for (int i = 0; i < 2; i++)
 		run_frame(0, 0);
 	printf("D %s\n", name);
+	ents_debug = 1;                                   /* (the models drawn, their pieces) */
 	run_frame(0, BENCH_DUMP);
+	ents_debug = 0;
+	printf("bmf %s: %u models with pieces, %u pieces made in %u cuts (%u given up), %u cycles, %u the dearest;"
+	       " items %d, lists %d\n", name, (unsigned) bmf_stats[0], (unsigned) bmf_stats[1],
+	       (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4], (unsigned) bmf_stats[5],
+	       rl_num_items(), rl_num_lists());
 }
 
 static edict_t *ents_first(int cls, int (*ok)(const edict_t *))

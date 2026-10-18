@@ -2,6 +2,7 @@
 #include <string.h>
 #include <psxgpu.h>
 
+#include "bmfrag.h"
 #include "clip.h"
 #include "dlight.h"
 #include "ents.h"
@@ -1531,6 +1532,7 @@ void game_spawn_level(void)
 void game_restart_level(void)
 {
 	ents_spawn(0);
+	bmf_load();                                   /* (the models' pieces: their caches) */
 	parms = level_parms;
 	game_spawn_level();
 }

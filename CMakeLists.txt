@@ -103,6 +103,7 @@ set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
 set(Q1PSX_BENCH_DRAWDIST 0 CACHE STRING "The draw distance the bench renders with, world units (0: off)")
 set(Q1PSX_BENCH_FLAT 0 CACHE STRING "The flat shading the bench renders with: 0 off, 1 far, 2 all")
 set(Q1PSX_BENCH_VIEWMODEL 1 CACHE STRING "The gun the bench draws: 0 none, 1 the 3D model, 2 the 2D pictures")
+set(Q1PSX_BENCH_BMF 1 CACHE STRING "0: the brush models drawn whole, not cut by the world's BSP (an A / B)")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
@@ -118,25 +119,20 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
 		Q1PSX_BENCH_DRAWDIST=${Q1PSX_BENCH_DRAWDIST} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
-		Q1PSX_BENCH_VIEWMODEL=${Q1PSX_BENCH_VIEWMODEL}
+		Q1PSX_BENCH_VIEWMODEL=${Q1PSX_BENCH_VIEWMODEL} Q1PSX_BENCH_BMF=${Q1PSX_BENCH_BMF}
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
 		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS})
 	if(Q1PSX_BENCH_VIEW)
-		# five numbers: separate definitions (a quoted string with spaces does not
-		# survive the generator's command line)
+		# groups of five numbers, one definition with no spaces (a quoted string
+		# with spaces does not survive the generator's command line)
 		string(REPLACE "," ";" _view_list "${Q1PSX_BENCH_VIEW}")
 		list(LENGTH _view_list _view_n)
-		if(NOT _view_n EQUAL 5)
-			message(FATAL_ERROR "Q1PSX_BENCH_VIEW needs x,y,z,yaw,pitch")
+		math(EXPR _view_r "${_view_n} % 5")
+		if(_view_n EQUAL 0 OR NOT _view_r EQUAL 0)
+			message(FATAL_ERROR "Q1PSX_BENCH_VIEW needs x,y,z,yaw,pitch (more views: more groups of five)")
 		endif()
-		list(GET _view_list 0 _vx)
-		list(GET _view_list 1 _vy)
-		list(GET _view_list 2 _vz)
-		list(GET _view_list 3 _vyaw)
-		list(GET _view_list 4 _vpitch)
-		target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH_VIEW_SET=1 Q1PSX_BENCH_VX=${_vx}
-			Q1PSX_BENCH_VY=${_vy} Q1PSX_BENCH_VZ=${_vz} Q1PSX_BENCH_VYAW=${_vyaw} Q1PSX_BENCH_VPITCH=${_vpitch})
+		target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH_VIEW_SET=1 "Q1PSX_BENCH_VIEWS_XY=${Q1PSX_BENCH_VIEW}")
 	endif()
 	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
 	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS

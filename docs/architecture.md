@@ -106,7 +106,7 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | Stack | 16 KB | |
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
-| Level arena | 1152 KB | world render data + clip hulls + PVS (the biggest map 696 KB) |
+| Level arena | 1152 KB | world render data + clip hulls + PVS (the biggest map 696 KB) + the brush models' pieces (§41, what room is left) |
 | Game arena | 224 KB | the game data every map needs (`GAME_<n>.DAT`, n the model level: weapon and projectile models, 63 KB at high, the block sized for the largest level so another level's models replace them in place before a map's load; the 2D weapons' packets, 102 KB), filled at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
@@ -284,7 +284,8 @@ scratchpad for the duration of `r_frame`. Its GTE matrices:
    - One texture-window command per run of same-texture records
      (`docs/porting-notes.md` §16.1).
    - **Entities** (`engine/rlist.h`, `docs/porting-notes.md` §22.3): a
-     leaf's render list (particles, model entities) is drawn when the walk
+     leaf's render list (particles, model entities, a brush model's pieces
+     cut by the world's BSP: `engine/bmfrag.c`, §41) is drawn when the walk
      visits the leaf, with the same record loop; the view model first of
      all, on top.
 5. **Slow path** (polygons whose affine error may exceed the warp
