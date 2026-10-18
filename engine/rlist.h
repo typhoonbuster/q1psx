@@ -77,6 +77,10 @@ void rl_begin(void);
 r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, int pitch,
                   int roll, int light);
 
+/* a streamed model's frame (engine/stream.h: asset a, resident), the same
+   way; NULL when it is not resident or the pool is full */
+r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pitch, int roll, int light);
+
 /* the view model: its x and y (screen) rows and translation x4, the
    renderer's H / 4 (RE_VIEW: the GTE then projects down to 5 units) */
 void rl_view_model(r_ent_t *e);

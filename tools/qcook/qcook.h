@@ -146,6 +146,14 @@ qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int ski
 void    qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px);
 int     qc_mdl_flags(const qc_mdl *q);
 void    qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out);
+/* the compact format of the streamed models (formats/qstream.h): the
+   whole asset (qst_model, frames, records, skin) appended to `out` */
+void    qc_mdl_cook_compact(qc_mdl *q, buf_t *out);
+
+/* ---------------------------------------------------------------- stream -- */
+
+/* `qcook stream`: the streamed assets -> one QST1 file (stream.c) */
+int cmd_stream(int argc, char **argv);
 
 /* ---------------------------------------------------------------- sound -- */
 
@@ -153,6 +161,15 @@ void    qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out);
    Sounds come from the map's pak, then from pak0. */
 void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
                  long pak0_len, const char *out_path);
+/* the streamed sounds (the ones with a place in a map: its entities' and
+   ambient entities'; the monsters' are stream.c's) into list, their count;
+   a bank sound (always in a map's bank); one streamed sound's asset
+   (qst_sound, then its ADPCM) */
+int  sound_streamed(const char **list, int max);
+int  sound_is_banked(const char *name);
+int  sound_in_paks(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len);
+void sound_encode_stream(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len,
+                         buf_t *out, uint32_t *ticks);
 
 
 /* ------------------------------------------------------------- textures -- */

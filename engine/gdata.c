@@ -78,7 +78,8 @@ int gdata_load(int level)
 	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
 	uint8_t *wt = mem_game_alloc(wtab);
 	uint8_t *wp = mem_game_alloc(h->len_wpix);
-	if (!t || !g || (h->len_finales && !fin) || !wt || !wp) {
+	uint8_t *fr = h->num_free ? mem_game_alloc(h->num_free * sizeof(qg_free)) : 0;
+	if (!t || !g || (h->len_finales && !fin) || !wt || !wp || (h->num_free && !fr)) {
 		mem_level_release(mark);
 		return 0;
 	}
@@ -113,6 +114,11 @@ int gdata_load(int level)
 			*tag = (*tag & 0xff000000u) | (((uint32_t) wp + next) & 0xffffffu);
 			at = next;
 		}
+	}
+	if (fr) {                                    /* (the same in every level's file) */
+		memcpy(fr, f + h->ofs_free, h->num_free * sizeof(qg_free));
+		gdata.free     = (const qg_free *) fr;
+		gdata.num_free = h->num_free;
 	}
 	gdata.geo   = g;
 	gdata.clut  = h->clut;

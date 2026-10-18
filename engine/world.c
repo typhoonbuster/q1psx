@@ -154,6 +154,29 @@ static void upload_rects(const uint8_t *f, const qtex_rect *r, uint32_t n)
 		vram_upload(f + r[i].data_ofs, &r[i]);
 }
 
+/* what the map's texture rectangles take of its pages (world_t page_rows,
+   page4_rows: the streamed skins get the rest, engine/stream.c); a CLUT
+   row (y >= 480) takes none */
+static void note_rects(const qtex_rect *r, uint32_t n, int four)
+{
+	for (uint32_t i = 0; i < n; i++) {
+		if (r[i].y >= 480 || r[i].x < QTEX_PAGE_X0)
+			continue;
+		int x = r[i].x - QTEX_PAGE_X0, p, rows;
+		if (four) {
+			p = x / 64;
+			rows = r[i].y + r[i].h;
+			if (p < QTEX_MAP_PAGES && rows > world.page4_rows[p])
+				world.page4_rows[p] = (uint16_t) rows;
+		} else {
+			p = x / 128 + QTEX_PAGE_COLS * (r[i].y / 256);
+			rows = r[i].y % 256 + r[i].h;
+			if (p < QTEX_MAP_PAGES && rows > world.page_rows[p])
+				world.page_rows[p] = (uint16_t) rows;
+		}
+	}
+}
+
 /* The map's texture set into VRAM: QTX6 (8bpp, the Quake palette) or QTX7
    (4bpp, 16 colours per texture). The file is transient but for its
    tables, moved to its start: the arena's bottom (the arena was reset). */
@@ -167,6 +190,7 @@ static int load_textures(const char *name)
 		RECT clut = { QTEX_CLUT_X, QTEX_CLUT_Y, 256, 1 };
 		LoadImage(&clut, (const uint32_t *) h->clut);
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
+		note_rects((const qtex_rect *) (f + sizeof *h), h->num_rects, 0);
 		num_slots = h->num_slots; ofs_slots = h->ofs_slots;
 		nanims    = h->num_anims; ofs_anims = h->ofs_anims;
 		world.tex4 = 0;
@@ -174,6 +198,7 @@ static int load_textures(const char *name)
 	} else if (f && size >= sizeof(qtex4_header) && !memcmp(f, QTEX4_MAGIC, 4)) {
 		const qtex4_header *h = (const qtex4_header *) f;
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
+		note_rects((const qtex_rect *) (f + sizeof *h), h->num_rects, 1);
 		num_slots = h->num_slots; ofs_slots = h->ofs_slots;
 		nanims    = h->num_anims; ofs_anims = h->ofs_anims;
 		world.tex4 = 1;

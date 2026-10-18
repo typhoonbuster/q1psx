@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked game data "QGM6": the models, sprites and HUD pictures the
+ * q1psx — cooked game data "QGM7": the models, sprites and HUD pictures the
  * engine needs on every map. Written by `qcook game`, one file per model
  * level (GAME_<n>.DAT on the disc, formats/qlevels.h: the models'
  * triangles differ, the pictures and skins do not), loaded at boot by
@@ -47,7 +47,7 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM6"
+#define QGAME_MAGIC "QGM7"
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
@@ -221,7 +221,7 @@ typedef struct {
 } qg_aux;                        /* 12 bytes */
 
 typedef struct {
-	char     magic[4];           /* "QGM6"                                       */
+	char     magic[4];           /* "QGM7"                                       */
 	uint32_t num_rects, ofs_rects;   /* qtex_rect[]: the CLUT row, then the pages' used rows */
 	uint32_t num_models, ofs_models; /* qg_model[QGM_COUNT]                      */
 	uint32_t num_pics, ofs_pics;     /* qg_pic[QGP_COUNT]                        */
@@ -244,7 +244,20 @@ typedef struct {
 	uint32_t level;              /* the model level (formats/qlevels.h)          */
 	uint32_t len_geo_max;        /* the largest geometry block of all the levels'
 	                                files: the engine's room for any of them     */
+	uint32_t num_free, ofs_free; /* qg_free[num_free]: what the images leave of
+	                                the game's pages (the streamed skins' room,
+	                                engine/stream.c)                           */
 } qg_header;
+
+/* A free rectangle of the game's pages, as the packer left them (maximal
+   rectangles: they overlap one another; a skin placed in one must not
+   overlap another skin placed in an overlapping one). */
+typedef struct {
+	uint8_t  page;               /* the texture page (formats/qtex.h: 6 .. 9)    */
+	uint8_t  pad;
+	uint8_t  u, v;               /* its corner, page-relative texels             */
+	uint16_t w, h;               /* texels                                       */
+} qg_free;                       /* 8 bytes */
 
 /* The episodes' end texts (client.qc ExitIntermission's SVC_FINALE strings,
    read from the pak's progs.dat): the map whose intermission shows it, which

@@ -64,6 +64,11 @@ typedef struct {
 	uint32_t       max_bm_depth;
 	int8_t         level[QL_AXES];  /* the levels loaded: textures, geometry, the
 	                                   map's models (QL_*; effects: -1)       */
+	/* the VRAM the map's textures take (the streamed skins get the rest,
+	   engine/stream.c): the 8-bit set's rows from the top of each map page,
+	   or the 4-bit set's of each 4-bit page (x 320 + 64 p, y 0) */
+	uint16_t       page_rows[QTEX_MAP_PAGES];
+	uint16_t       page4_rows[QTEX_MAP_PAGES];
 } world_t;
 
 #ifdef __mips__   /* engine/p_defs.inc mirrors the clip-hull fields (PS1 pointers) */

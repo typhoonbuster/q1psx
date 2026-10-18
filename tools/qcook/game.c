@@ -1,6 +1,6 @@
 /*
  * qcook — game data: the models, sprites and HUD pictures the engine needs
- * on every map, cooked from the pak into one QGM6 file per model level
+ * on every map, cooked from the pak into one QGM7 file per model level
  * (formats/qgame.h, formats/qlevels.h).
  *
  *   qcook game --pak <pak0.pak> --out <prefix>      (<prefix>_<level>.dat)
@@ -36,6 +36,7 @@
 #include "../../formats/qtex.h"
 #include "../../formats/qworld.h"
 #include "../../formats/qgame.h"
+#include "../../formats/qstream.h"
 
 static const float anorms[QG_NORMALS][3] = {
 #include "anorms.h"
@@ -1406,6 +1407,279 @@ void qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out)
 	cook_mdl(&q->src, model_level, (gbuf *) geo, out);
 }
 
+/* ------------------------------------------------- the compact format -- */
+
+/* A streamed model (formats/qstream.h): qst_model, the frames as Quake's
+   own vertex words, the records indexing them directly, the skin's images
+   (its front and back halves when every triangle keeps to one, each with
+   its own border); the whole asset appended to `out`. The model's scale
+   and origin are kept for its GTE matrix; a big model's steps are expanded
+   with a left shift so that the matrix (the view's 1.5 x the step) stays
+   within the GTE's 4.12 (QSTM_MAX_STEP). */
+#define QSTM_MAX_STEP 5.0          /* vertex units per expanded step, at most */
+
+static uint32_t mdl_word(const tvert *tv)
+{
+	int n = tv->n < QG_NORMALS ? tv->n : 0;
+	return (uint32_t) tv->v[0] | (uint32_t) tv->v[2] << 8 | (uint32_t) tv->v[1] << 16 | (uint32_t) n << 24;
+}
+
+/* a triangle's skin s at vertex k, the back face's onseam shift applied */
+static int tri_s(const mdl_t *m, int t, int k)
+{
+	int vi = m->tris[t][k + 1];
+	return m->st[vi][1] + (!m->tris[t][0] && m->st[vi][0] ? m->skinw / 2 : 0);
+}
+
+/* an image of the reduced skin: columns x0 .. x1 - 1, with a border of the
+   edge texels, its width made even (one more edge column) */
+static void cut_image(const image *im, int x0, int x1, buf_t *pix, uint16_t *w, uint16_t *h)
+{
+	int b = im->border, iw = x1 - x0, bw = iw + 2 * b, bh = im->h + 2 * b;
+	if (bw & 1) bw++;
+	for (int y = 0; y < bh; y++)
+		for (int x = 0; x < bw; x++) {
+			int sx = x - b, sy = y - b;
+			if (sx < 0) sx = 0;
+			if (sx >= iw) sx = iw - 1;
+			if (sy < 0) sy = 0;
+			if (sy >= im->h) sy = im->h - 1;
+			buf_put(pix, &im->px[(size_t) sy * im->w + x0 + sx], 1);
+		}
+	static const uint8_t zero[64];
+	buf_put(pix, zero, (64 - (size_t) bw * bh % 64) % 64);   /* LoadImage's DMA unit */
+	if (bw > 256 || bh > 256)
+		die("%s: a skin image of %dx%d past a texture page", im->what, bw, bh);
+	*w = (uint16_t) bw;
+	*h = (uint16_t) bh;
+}
+
+void qc_mdl_cook_compact(qc_mdl *q, buf_t *out)
+{
+	model_src   *ms = &q->src;
+	const mdl_t *m  = &ms->mdl;
+	const image *im = ms->im;
+	int div = ms->sp->skin_div;
+
+	/* the expansion's shift: the smallest that keeps a step within bounds */
+	double step_max = 0;
+	for (int k = 0; k < 3; k++)
+		if (m->scale[k] * QW_VSCALE > step_max)
+			step_max = m->scale[k] * QW_VSCALE;
+	int shift = 0;
+	while (step_max / (1 << shift) > QSTM_MAX_STEP)
+		shift++;
+	if (shift > 7)
+		die("%s: scale too large for the compact format", q->file);
+
+	/* the halves: each triangle's s within one (Quake's skins: the front
+	   on the left, the back on the right), else one image */
+	int half = m->skinw / 2, two = 1;
+	uint8_t *side = xcalloc((size_t) m->ntris, 1);
+	for (int t = 0; t < m->ntris && two; t++) {
+		int lo = 1 << 30, hi = -1;
+		for (int k = 0; k < 3; k++) {
+			int ss = tri_s(m, t, k);
+			if (ss < lo) lo = ss;
+			if (ss > hi) hi = ss;
+		}
+		if (hi < half)       side[t] = 0;
+		else if (lo >= half) side[t] = 1;
+		else                 two = 0;
+	}
+	if (!two)
+		memset(side, 0, (size_t) m->ntris);
+	/* the images' columns of the reduced skin: the front's [0, fx1), the
+	   back's [bx0, w) (a texel the split crosses goes to both) */
+	int fx1 = two ? (half + div - 1) / div : im->w, bx0 = two ? half / div : 0;
+	if (fx1 > im->w) fx1 = im->w;
+
+	/* records: each half's triangles in file order, preferring among the
+	   next WINDOW the one sharing the most vertices with the record being
+	   built; the indices are the model's own vertices */
+	enum { WINDOW = 24 };
+	buf_t recs = { 0 };
+	uint8_t *done = xcalloc((size_t) m->ntris, 1);
+	int nrec = 0;
+	#define EXP(f, vi, k) ((double) (m->frames[f][vi].v[k] << shift))
+	#define VU(f, vi, k)  ((m->frames[f][vi].v[k] * m->scale[k] + m->origin[k]) * QW_VSCALE)
+	for (int img = 0; img < (two ? 2 : 1); img++) {
+		int left = 0, scan = 0;
+		for (int t = 0; t < m->ntris; t++) {
+			done[t] = side[t] != img;
+			left += !done[t];
+		}
+		mrec r;
+		memset(&r, 0, sizeof r);
+		for (;;) {
+			int best = -1, best_shared = -1;
+			if (left) {
+				while (done[scan]) scan++;
+				for (int t = scan, seen = 0; t < m->ntris && seen < WINDOW; t++) {
+					if (done[t]) continue;
+					seen++;
+					int shared = 0, newv = 0;
+					for (int k = 1; k < 4; k++)
+						if (rec_has(&r, m->tris[t][k])) shared++;
+						else newv++;
+					if (r.nv + newv > QW_MAX_VERTS) continue;
+					if (shared > best_shared) { best_shared = shared; best = t; }
+					if (!r.nt) break;
+				}
+			}
+			if (best < 0 || r.nt >= REC_MAX_TRIS) {
+				if (!r.nt)
+					break;
+				qw_record h;
+				memset(&h, 0, sizeof h);
+				h.num_verts = (uint8_t) r.nv;
+				h.num_tris  = (uint8_t) r.nt;
+				h.tex       = (uint16_t) img;
+				int nidx    = (r.nv + 2) / 3 * 3;
+				int ibytes  = (nidx * 2 + 3) & ~3;
+				int cbytes  = (r.nv + 3) & ~3;
+				h.polys     = (uint16_t) (sizeof h + ibytes + cbytes);
+				h.size      = (uint16_t) (h.polys + r.nt * sizeof(qw_tri));
+				/* the sphere: the box of its vertices over every frame in the
+				   expanded units (its centre), the farthest in vertex units */
+				double lo[3] = { 1e9, 1e9, 1e9 }, hi[3] = { -1e9, -1e9, -1e9 };
+				for (int f = 0; f < m->nframes; f++)
+					for (int i = 0; i < r.nv; i++)
+						for (int k = 0; k < 3; k++) {
+							double e = EXP(f, r.mv[i], k);
+							if (e < lo[k]) lo[k] = e;
+							if (e > hi[k]) hi[k] = e;
+						}
+				double cv[3];
+				for (int k = 0; k < 3; k++) {
+					h.sc[k] = (int16_t) lround((lo[k] + hi[k]) / 2);
+					cv[k] = (h.sc[k] / (double) (1 << shift) * m->scale[k] + m->origin[k]) * QW_VSCALE;
+				}
+				double rad = 0;
+				for (int f = 0; f < m->nframes; f++)
+					for (int i = 0; i < r.nv; i++) {
+						double d2 = 0;
+						for (int k = 0; k < 3; k++) {
+							double d = VU(f, r.mv[i], k) - cv[k];
+							d2 += d * d;
+						}
+						if (d2 > rad * rad) rad = sqrt(d2);
+					}
+				h.sr = (uint16_t) ceil(rad + 1);
+				buf_put(&recs, &h, sizeof h);
+				uint16_t idx[QW_MAX_VERTS + 3] = { 0 };
+				for (int i = 0; i < r.nv; i++)
+					idx[i] = (uint16_t) r.mv[i];
+				for (int i = r.nv; i < nidx; i++)
+					idx[i] = idx[0];
+				buf_put(&recs, idx, (size_t) ibytes);
+				uint8_t col[QW_MAX_VERTS + 4];
+				memset(col, 128, sizeof col);
+				buf_put(&recs, col, (size_t) cbytes);
+				buf_put(&recs, r.t, (size_t) r.nt * sizeof(qw_tri));
+				nrec++;
+				r.nv = r.nt = 0;
+				continue;
+			}
+			int t = best;
+			done[t] = 1;
+			left--;
+			int s[3];
+			for (int k = 0; k < 3; k++)
+				s[k] = rec_slot(&r, m->tris[t][k + 1]);
+			qw_tri *tri = &r.t[r.nt++];
+			memset(tri, 0, sizeof *tri);
+			int x0 = img ? bx0 : 0, x1 = img ? im->w : fx1;
+			for (int k = 0; k < 3; k++) {
+				/* the reduced skin's texel holding Quake's texel (s, t), from
+				   its image's bordered corner */
+				long u = tri_s(m, t, k) / div, v = m->st[m->tris[t][k + 1]][2] / div;
+				if (u < x0) u = x0;
+				if (u > x1 - 1) u = x1 - 1;
+				if (v > im->h - 1) v = im->h - 1;
+				tri->idx[k] = (uint8_t) (s[k] * 4);
+				tri->uv[k]  = (uint16_t) ((u - x0 + im->border) | (v + im->border) << 8);
+			}
+		}
+	}
+	#undef EXP
+	#undef VU
+	free(done);
+	free(side);
+
+	/* the fallback's skin: the same reduction at twice the step */
+	model_spec sp2 = *ms->sp;
+	sp2.skin_div = div * 2;
+	model_src src2 = *ms;
+	src2.sp = &sp2;
+	model_prepare(&src2);
+	const image *im2 = src2.im;
+	int fx1q = two ? (half + 2 * div - 1) / (2 * div) : im2->w, bx0q = two ? half / (2 * div) : 0;
+	if (fx1q > im2->w) fx1q = im2->w;
+
+	/* the asset: header, frames, records, images */
+	qst_model h;
+	memset(&h, 0, sizeof h);
+	h.num_frames  = (uint16_t) m->nframes;
+	h.num_verts   = (uint16_t) m->nverts;
+	h.num_records = (uint16_t) nrec;
+	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (m->flags & 0xff) << 8);
+	h.ofs_frames  = sizeof h;
+	h.ofs_records = h.ofs_frames + (uint32_t) m->nframes * (uint32_t) m->nverts * 4;
+	h.len_records = (uint32_t) recs.len;
+	h.shift       = (uint8_t) shift;
+	h.num_images  = (uint8_t) (two ? 2 : 1);
+	double rad = 0;
+	for (int k = 0; k < 3; k++) {
+		h.scale[k]  = (int32_t) lround(m->scale[k] * QW_VSCALE * 65536.0 / (1 << shift));
+		h.origin[k] = (int32_t) lround(m->origin[k] * QW_VSCALE * 16.0);
+	}
+	for (int f = 0; f < m->nframes; f++)
+		for (int v = 0; v < m->nverts; v++) {
+			double d2 = 0;
+			for (int k = 0; k < 3; k++) {
+				double d = (m->frames[f][v].v[k] * m->scale[k] + m->origin[k]) * QW_VSCALE;
+				d2 += d * d;
+			}
+			if (d2 > rad * rad) rad = sqrt(d2);
+		}
+	h.radius = (uint16_t) (rad > 65000 ? 65000 : ceil(rad));
+	buf_t pix = { 0 };
+	uint32_t img_at = h.ofs_records + h.len_records;
+	h.images[0].ofs = img_at;
+	cut_image(im, 0, fx1, &pix, &h.images[0].w, &h.images[0].h);
+	if (two) {
+		h.images[1].ofs = img_at + (uint32_t) pix.len;
+		h.images[1].x0  = (uint16_t) bx0;
+		cut_image(im, bx0, im->w, &pix, &h.images[1].w, &h.images[1].h);
+	}
+	h.small[0].ofs = img_at + (uint32_t) pix.len;
+	cut_image(im2, 0, fx1q, &pix, &h.small[0].w, &h.small[0].h);
+	if (two) {
+		h.small[1].ofs = img_at + (uint32_t) pix.len;
+		h.small[1].x0  = (uint16_t) bx0q;
+		cut_image(im2, bx0q, im2->w, &pix, &h.small[1].w, &h.small[1].h);
+	}
+	if (im->border != QST_BORDER || im2->border != QST_BORDER)
+		die("%s: a skin border of %d, the engine's is %d", q->file, im->border, QST_BORDER);
+	size_t start = out->len;
+	buf_put(out, &h, sizeof h);
+	for (int f = 0; f < m->nframes; f++)
+		for (int v = 0; v < m->nverts; v++) {
+			uint32_t w = mdl_word(&m->frames[f][v]);
+			buf_put(out, &w, 4);
+		}
+	buf_put(out, recs.p, recs.len);
+	buf_put(out, pix.p, pix.len);
+	free(recs.p);
+	free(pix.p);
+	printf("qcook: %-22s %3d frames %4d verts %4d tris -> %3d records, skin %s %dx%d%s%dx%d (or %dx%d), "
+	       "shift %d: %6zu B (%zu B of frames)\n", q->file, m->nframes, m->nverts, m->ntris, nrec,
+	       two ? "halves" : "whole", h.images[0].w, h.images[0].h, two ? " + " : "", two ? h.images[1].w : 0,
+	       two ? h.images[1].h : 0, h.small[0].w, h.small[0].h, shift, out->len - start,
+	       (size_t) m->nframes * m->nverts * 4);
+}
+
 /* ------------------------------------------------------------------ main -- */
 
 /* ------------------------------------------------------------- finales -- */
@@ -2114,6 +2388,26 @@ int cmd_game(int argc, char **argv)
 		       nfr, (unsigned) pix.len, ws_slot->page, ws_slot->u, ws_slot->v, sx, sy);
 	}
 
+	{	/* the pages' free rectangles (the streamed skins' room) */
+		h.ofs_free = (uint32_t) f.len;
+		uint32_t texels = 0;
+		for (int p = 0; p < GP_PAGES; p++)
+			for (int i = 0; i < nfree[p]; i++) {
+				const rect *r = &freer[p][i];
+				if (r->w < 8 || r->h < 8)
+					continue;
+				qg_free q;
+				q.page = (uint8_t) (QTEX_MAP_PAGES + p);
+				q.pad  = 0;
+				q.u = (uint8_t) r->x; q.v = (uint8_t) r->y;
+				q.w = (uint16_t) r->w; q.h = (uint16_t) r->h;
+				gput(&f, &q, sizeof q);
+				h.num_free++;
+				texels += (uint32_t) (r->w * r->h);
+			}
+		printf("qcook: %u free rectangles in the game's pages (%u K texels, overlapping)\n", h.num_free,
+		       texels / 1024);
+	}
 	galign(&f, 32);
 
 	qtex_rect *rects = xcalloc(h.num_rects, sizeof *rects);

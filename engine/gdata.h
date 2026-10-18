@@ -29,6 +29,9 @@ typedef struct {
 	const qg_wframe  *wframes;   /* their frames                             */
 	uint8_t          *wpix;      /* their packets (links made absolute)      */
 	qg_pic            wslot;     /* the VRAM slot a frame is copied to       */
+	const qg_free  *free;      /* what the images leave of the game's pages
+	                              (the streamed skins' room), and its count */
+	uint32_t        num_free;
 	int             level;     /* the models' level (formats/qlevels.h)    */
 } gdata_t;
 

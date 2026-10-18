@@ -7,6 +7,8 @@
  *               [--models high --mdl <out.mdl>]   (tools/qcook/sound.c, items.c)
  *   qcook check <file.wld>
  *   qcook game  --pak <pak0.pak> --out <prefix>      (tools/qcook/game.c)
+ *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
+ *                                                     (tools/qcook/stream.c)
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
  * writes the files the engine loads for that map: a texture set per
@@ -423,6 +425,8 @@ int main(int argc, char **argv)
 		return world_check(argv[2]);
 	if (argc >= 2 && !strcmp(argv[1], "game"))
 		return cmd_game(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "stream"))
+		return cmd_stream(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"
@@ -431,6 +435,7 @@ int main(int argc, char **argv)
 	        "            [--geometry low|high|ultra --world <out.wld>] [--sounds <out.snd>]\n"
 	        "            [--models low|medium|high --mdl <out.mdl>]\n"
 	        "  qcook check <file.wld>\n"
-	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n");
+	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n"
+	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n");
 	return 2;
 }

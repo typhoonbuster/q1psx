@@ -13,15 +13,19 @@
 #include "hud.h"
 #include "level.h"
 #include "mem.h"
+#include "monsters.h"
 #include "pmove.h"
+#include "prof.h"
 #include "q_fixed.h"
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
+#include "stream.h"
 #include "world.h"
 
 clip_bmodel_t clip_bmodels[CLIP_MAX_BMODELS];
 int           clip_num_bmodels;
+clip_area_t   clip_areas[CLIP_AREAS];
 static edict_t *clip_owner[CLIP_MAX_BMODELS];   /* the edict of each clip entry */
 
 edict_t *edicts;
@@ -43,9 +47,24 @@ static uint32_t active[ENT_WORDS];   /* edicts with a think or a move pending */
 static int      lists_dirty;         /* an edict spawned or went: the lists */
 static uint16_t touch_list[512];     /* edicts with a touch (the player's pass) */
 static int      num_touch;
+typedef struct {
+	int16_t  box[6];                 /* its box in whole units, a unit wider (the
+	                                    touch passes' first test: no edict read
+	                                    for one far away) */
+	uint16_t next;                   /* its area node's list: the next slot + 1, 0 the end */
+	uint8_t  area;                   /* that node, CLIP_NO_AREA none */
+	uint8_t  pad;
+} touch_slot_t;
+static touch_slot_t *touch_slots;    /* (touch_list's) */
+static int           max_touch;
+static uint16_t trig_head[CLIP_AREAS], trig_tail[CLIP_AREAS];   /* the nodes' trigger lists */
+static uint16_t trig_count[CLIP_AREAS];   /* the trigger slots linked in each node's subtree */
+static void touch_relink(const edict_t *e);
 static uint16_t draw_list[CLIP_MAX_BMODELS + 64];   /* drawn brush models */
 uint16_t        ents_model_list[512];               /* drawn alias models (items.c) */
 int             ents_num_models;
+uint16_t        ents_streamed_list[512];            /* the monsters, the streamed models */
+int             ents_num_streamed;
 static int      num_draw;
 static uint16_t vis_list[CLIP_MAX_BMODELS + 64];    /* those the PVS stamp sees */
 static int      num_vis;
@@ -79,9 +98,11 @@ edict_t *ent_spawn(void)
 		if (e->inuse)
 			continue;
 		memset(e, 0, sizeof *e);
+		e->touch_slot = -1;
 		e->inuse = 1;
 		e->class = QE_TEMP;
 		e->item_model = -1;
+		e->masset = -1;
 		e->noise = e->noise1 = e->noise2 = e->noise3 = e->noise4 = SND_NONE;
 		if (i >= num_edicts)
 			num_edicts = i + 1;
@@ -90,6 +111,146 @@ edict_t *ent_spawn(void)
 	}
 	printf("ents: no free edict\n");
 	return 0;
+}
+
+/* ------------------------------------------------------- the area nodes -- */
+
+static int     num_areas;
+static uint8_t area_parent[CLIP_AREAS];
+static uint8_t area_solids[CLIP_AREAS];   /* the solid entries linked in each node's subtree */
+
+/* SV_CreateAreaNode: the box halved across its longer side (x or y), the
+   upper half first (children[0], numbered next), to AREA_DEPTH */
+static int create_area(int depth, const int32_t mins[3], const int32_t maxs[3])
+{
+	int n = num_areas++;
+	clip_area_t *a = &clip_areas[n];
+	a->head = a->tail = 0;
+	trig_head[n] = trig_tail[n] = trig_count[n] = 0;
+	area_solids[n] = 0;
+	if (depth == CLIP_AREA_DEPTH) {
+		a->flags  = CLIP_AREA_LEAF;
+		a->dist   = 0;
+		a->child1 = 0;
+		return n;
+	}
+	int axis = maxs[0] - mins[0] > maxs[1] - mins[1] ? 0 : 1;
+	a->flags = (uint8_t) axis;
+	a->dist  = (int16_t) ((maxs[axis] + mins[axis]) >> 1);
+	int32_t mins2[3], maxs1[3];
+	__builtin_memcpy(mins2, mins, sizeof mins2);
+	__builtin_memcpy(maxs1, maxs, sizeof maxs1);
+	maxs1[axis] = mins2[axis] = a->dist;
+	area_parent[create_area(depth + 1, mins2, maxs)] = (uint8_t) n;
+	a->child1 = (uint8_t) create_area(depth + 1, mins, maxs1);
+	area_parent[a->child1] = (uint8_t) n;
+	return n;
+}
+
+/* a solid entry linked in node n (d 1) or unlinked (d -1): the counts of
+   its subtree and its ancestors', a parent's flag when a child's subtree
+   gets or loses its first entry */
+static void area_count(int n, int d)
+{
+	for (;;) {
+		int was = area_solids[n];
+		area_solids[n] = (uint8_t) (was + d);
+		if (!n)
+			return;
+		int p = area_parent[n];
+		if (!was != !area_solids[n]) {
+			uint8_t bit = n == p + 1 ? CLIP_AREA_C0 : CLIP_AREA_C1;
+			if (area_solids[n])
+				clip_areas[p].flags |= bit;
+			else
+				clip_areas[p].flags &= (uint8_t) ~bit;
+		}
+		n = p;
+	}
+}
+
+/* SV_LinkEdict's node: the first one whose split the box straddles (or a
+   leaf) */
+static int area_of(const int32_t absmin[3], const int32_t absmax[3])
+{
+	int n = 0;
+	for (;;) {
+		const clip_area_t *a = &clip_areas[n];
+		if (a->flags & CLIP_AREA_LEAF)
+			return n;
+		int axis = a->flags & CLIP_AREA_Y;
+		if (absmin[axis] > a->dist)
+			n++;                              /* children[0] */
+		else if (absmax[axis] < a->dist)
+			n = a->child1;
+		else
+			return n;
+	}
+}
+
+/* a linked clip entry out of its node's list */
+static void clip_list_remove(clip_bmodel_t *cb)
+{
+	clip_area_t *a = &clip_areas[cb->area];
+	if (cb->prev)
+		CLIP_ENTRY(cb->prev)->next = cb->next;
+	else
+		a->head = cb->next;
+	if (cb->next)
+		CLIP_ENTRY(cb->next)->prev = cb->prev;
+	else
+		a->tail = cb->prev;
+}
+
+/* SV_UnlinkEdict for a clip entry */
+static void clip_unlink(clip_bmodel_t *cb)
+{
+	if (cb->area == CLIP_NO_AREA)
+		return;
+	clip_list_remove(cb);
+	area_count(cb->area, -1);
+	cb->next = cb->prev = 0;
+	cb->area = CLIP_NO_AREA;
+}
+
+/* SV_LinkEdict for a clip entry: unlinked, then appended to its node's
+   list (InsertLinkBefore the list's head: at its end) */
+static void clip_link(clip_bmodel_t *cb, const int32_t absmin[3], const int32_t absmax[3])
+{
+	int n = area_of(absmin, absmax);
+	if (cb->area == n) {                      /* the same node: */
+		if (!cb->next)
+			return;                           /* already its last */
+		clip_list_remove(cb);
+	} else {
+		clip_unlink(cb);
+		area_count(n, 1);
+	}
+	clip_area_t *a = &clip_areas[n];
+	uint16_t self = CLIP_LINK(cb - clip_bmodels);
+	if (a->tail)
+		CLIP_ENTRY(a->tail)->next = self;
+	else
+		a->head = self;
+	cb->prev = a->tail;
+	cb->next = 0;
+	a->tail  = self;
+	cb->area = (uint8_t) n;
+}
+
+/* a new clip entry for e: not linked yet */
+static int clip_new(edict_t *e, const qw_bmodel *bm)
+{
+	if (clip_num_bmodels >= CLIP_MAX_BMODELS)
+		return 0;
+	clip_bmodel_t *cb = &clip_bmodels[clip_num_bmodels];
+	cb->bm   = bm;
+	cb->next = cb->prev = 0;
+	cb->area = CLIP_NO_AREA;
+	cb->self = (uint8_t) (clip_num_bmodels + 1);
+	clip_owner[clip_num_bmodels] = e;
+	e->clip = (uint8_t) ++clip_num_bmodels;
+	return 1;
 }
 
 /* a clip entry out of the traces: a box no sweep reaches */
@@ -102,20 +263,21 @@ static void clip_disable(edict_t *e)
 	cb->absmax[0] = cb->absmax[1] = cb->absmax[2] = -0x3fffffff;
 }
 
-static void clip_update(edict_t *e)
+static int clip_solid(const edict_t *e)
 {
-	if (!e->clip)
-		return;
-	if (e->solid != SOLID_BSP && e->solid != SOLID_BBOX) {
-		clip_disable(e);
-		return;
-	}
+	return e->solid == SOLID_BSP || e->solid == SOLID_BBOX || e->solid == SOLID_SLIDEBOX;
+}
+
+/* the entry's box from its edict's (a solid one), in place */
+static void clip_box(edict_t *e)
+{
 	clip_bmodel_t *cb = &clip_bmodels[e->clip - 1];
-	memcpy(cb->origin, e->origin, sizeof cb->origin);
-	if (cb->bm) {
-		memcpy(cb->absmin, e->absmin, sizeof cb->absmin);
-		memcpy(cb->absmax, e->absmax, sizeof cb->absmax);
-	} else {                                  /* a box: its own, exact (clip.h) */
+	__builtin_memcpy(cb->origin, e->origin, sizeof cb->origin);
+	if ((uintptr_t) cb->bm > 1) {
+		__builtin_memcpy(cb->absmin, e->absmin, sizeof cb->absmin);
+		__builtin_memcpy(cb->absmax, e->absmax, sizeof cb->absmax);
+	} else {                                  /* a box: its own, exact (clip.h), a */
+		cb->bm = (e->flags & FL_MONSTER) ? CLIP_BM_MONSTER : 0;   /* monster's marked */
 		for (int k = 0; k < 3; k++) {
 			cb->absmin[k] = e->origin[k] + e->mins[k];
 			cb->absmax[k] = e->origin[k] + e->maxs[k];
@@ -123,17 +285,44 @@ static void clip_update(edict_t *e)
 	}
 }
 
+/* the entry after its edict's solid changed, the edict not relinked (as a
+   pusher out of the traces and back, SV_PushMove's solid flips): its box
+   in place, it stays in its list (SV_ClipToLinks skips SOLID_NOT) */
+static void clip_update(edict_t *e)
+{
+	if (!e->clip)
+		return;
+	if (!clip_solid(e)) {
+		clip_disable(e);
+		return;
+	}
+	clip_box(e);
+	if (clip_bmodels[e->clip - 1].area == CLIP_NO_AREA)
+		clip_link(&clip_bmodels[e->clip - 1], e->absmin, e->absmax);
+}
+
+/* SV_LinkEdict for the entry: its box, relinked (a solid edict) or
+   unlinked */
+static void clip_relink(edict_t *e)
+{
+	if (!e->clip)
+		return;
+	clip_bmodel_t *cb = &clip_bmodels[e->clip - 1];
+	if (!clip_solid(e)) {
+		clip_disable(e);
+		clip_unlink(cb);
+		return;
+	}
+	clip_box(e);
+	clip_link(cb, e->absmin, e->absmax);
+}
+
 /* a SOLID_BBOX (or SLIDEBOX) entity without a brush model into the traces:
    SV_ClipToLinks takes its box (SV_HullForBox) */
 static void clip_add_box(edict_t *e)
 {
-	if (clip_num_bmodels >= CLIP_MAX_BMODELS) {
+	if (!clip_new(e, 0))
 		printf("ents: more than %d solid entities\n", CLIP_MAX_BMODELS);
-		return;
-	}
-	clip_bmodels[clip_num_bmodels].bm = 0;
-	clip_owner[clip_num_bmodels] = e;
-	e->clip = (uint8_t) ++clip_num_bmodels;
 }
 
 void ent_remove(edict_t *e)
@@ -141,6 +330,8 @@ void ent_remove(edict_t *e)
 	if (e == ent_world || e == ent_player || !e->inuse)
 		return;
 	clip_disable(e);
+	if (e->clip)
+		clip_unlink(&clip_bmodels[e->clip - 1]);
 	e->clip  = 0;
 	e->inuse = 0;
 	e->draw  = 0;
@@ -163,11 +354,8 @@ void ent_link(edict_t *e)
 			e->absmax[k] += 15 * CLIP_SUB;
 		}
 	}
-	if (e->item_model >= 0) {                 /* an alias model: drawn in its centre's leaf */
-		int32_t c[3];
-		for (int k = 0; k < 3; k++)
-			c[k] = (e->origin[k] + (e->mins[k] + e->maxs[k]) / 2) / CLIP_SUB;
-		e->leaves[0]  = world_point_leaf(c);
+	if (e->item_model >= 0 || e->masset >= 0) {   /* an alias model: drawn in its centre's leaf, */
+		e->leaves[0]  = 0;                        /* found when it is drawn (ent_model_leaf) */
 		e->num_leaves = 1;
 	} else if (e->draw && e->model) {
 		uint16_t idx[ENT_MAX_LEAVES];
@@ -185,19 +373,32 @@ void ent_link(edict_t *e)
 	}
 	if (!e->clip && !e->model && e != ent_player && (e->solid == SOLID_BBOX || e->solid == SOLID_SLIDEBOX))
 		clip_add_box(e);
-	clip_update(e);
+	clip_relink(e);
+	if (e->touch_slot >= 0 && touch_slots)
+		touch_relink(e);
+}
+
+const qw_leaf *ent_model_leaf(edict_t *e)
+{
+	if (!e->leaves[0]) {
+		int32_t c[3];
+		for (int k = 0; k < 3; k++)
+			c[k] = (e->origin[k] + (e->mins[k] + e->maxs[k]) / 2) / CLIP_SUB;
+		e->leaves[0] = world_point_leaf(c);
+	}
+	return e->leaves[0];
 }
 
 void ent_setorigin(edict_t *e, const int32_t org[3])
 {
-	memcpy(e->origin, org, sizeof e->origin);
+	__builtin_memcpy(e->origin, org, sizeof e->origin);
 	ent_link(e);
 }
 
 void ent_setsize(edict_t *e, const int32_t mins[3], const int32_t maxs[3])
 {
-	memcpy(e->mins, mins, sizeof e->mins);
-	memcpy(e->maxs, maxs, sizeof e->maxs);
+	__builtin_memcpy(e->mins, mins, sizeof e->mins);
+	__builtin_memcpy(e->maxs, maxs, sizeof e->maxs);
 	ent_link(e);
 }
 
@@ -207,17 +408,10 @@ void ent_setmodel(edict_t *e, int model)
 {
 	const qw_bmodel *bm = &world.bmodels[model];
 	e->model = (int16_t) model;
-	memcpy(e->mins, bm->mins, sizeof e->mins);
-	memcpy(e->maxs, bm->maxs, sizeof e->maxs);
-	if ((e->solid == SOLID_BSP || e->solid == SOLID_BBOX) && model && !e->clip) {
-		if (clip_num_bmodels < CLIP_MAX_BMODELS) {
-			clip_bmodels[clip_num_bmodels].bm = bm;
-			clip_owner[clip_num_bmodels] = e;
-			e->clip = (uint8_t) ++clip_num_bmodels;
-		} else {
-			printf("ents: more than %d solid brush models\n", CLIP_MAX_BMODELS);
-		}
-	}
+	__builtin_memcpy(e->mins, bm->mins, sizeof e->mins);
+	__builtin_memcpy(e->maxs, bm->maxs, sizeof e->maxs);
+	if ((e->solid == SOLID_BSP || e->solid == SOLID_BBOX) && model && !e->clip && !clip_new(e, bm))
+		printf("ents: more than %d solid brush models\n", CLIP_MAX_BMODELS);
 	lists_dirty = 1;
 	ent_link(e);
 }
@@ -367,7 +561,7 @@ static void sub_calc_move_done(edict_t *self)
 void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func)
 {
 	self->think1 = func;
-	memcpy(self->finaldest, tdest, sizeof self->finaldest);
+	__builtin_memcpy(self->finaldest, tdest, sizeof self->finaldest);
 	self->think = sub_calc_move_done;
 	self->move_ticks = 0;
 	ent_wake(self);
@@ -390,8 +584,8 @@ void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func
 		return;
 	}
 	self->nextthink = self->ltime + ticks;
-	memcpy(self->move_from, self->origin, sizeof self->move_from);
-	memcpy(self->move_delta, d, sizeof self->move_delta);
+	__builtin_memcpy(self->move_from, self->origin, sizeof self->move_from);
+	__builtin_memcpy(self->move_delta, d, sizeof self->move_delta);
 	self->move_t0    = self->ltime;
 	self->move_ticks = ticks;
 	for (int k = 0; k < 3; k++) {
@@ -403,37 +597,81 @@ void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func
 
 /* ------------------------------------------------------------ combat.qc -- */
 
-/* T_Damage on an edict (no armor: only the player has some, the game's);
-   Killed: a pusher's or a trigger's th_die */
-void ent_damage(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage)
+/* combat.qc Killed: a pusher's or a trigger's th_die as it is; a
+   monster's: angry at its killer, counted, no more damage or touch, its
+   targets fired (monster_death_use), its th_die */
+static void killed(edict_t *targ, edict_t *attacker)
+{
+	if (targ->health < -99)
+		targ->health = -99;               /* don't let sbar look bad if a player */
+	if (targ->movetype == MOVETYPE_PUSH || targ->movetype == MOVETYPE_NONE) {
+		if (targ->th_die)
+			targ->th_die(targ);           /* doors, triggers, etc */
+		return;
+	}
+	targ->enemy = attacker;
+	if (targ->flags & FL_MONSTER)         /* bump the monster counter */
+		ent_killed_monsters++;
+	targ->takedamage = DAMAGE_NO;
+	targ->touch = sub_null;
+	if (targ->mdef)
+		monster_death_use(targ);
+	if (targ->th_die)
+		targ->th_die(targ);
+}
+
+/* combat.qc T_Damage, the damage x256 (the QC's damage is a float: a
+   melee's sum of randoms, a blast's falloff): the attacker's quad, the
+   armour (the player's, the game's), the health less the damage rounded
+   up, Killed, or the monster's anger (not at its own kind, but the
+   soldiers') and its pain */
+void ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage)
 {
 	if (!targ || !targ->takedamage)
 		return;
-	ent_damage_attacker = attacker;
+	ent_damage_attacker = attacker;       /* used by buttons and triggers to set activator */
+	if (attacker == ent_player && game_quad_active())
+		damage *= 4;
 	if (targ == ent_player) {
 		int32_t c[3];
 		if (inflictor && inflictor != ent_world) {
 			for (int k = 0; k < 3; k++)
 				c[k] = (inflictor->absmin[k] + inflictor->absmax[k]) / 2;
-			game_damage_player(damage, c);
+			game_damage_player_x256(damage, c);
 		} else {
-			game_damage_player(damage, 0);
+			game_damage_player_x256(damage, 0);
 		}
 		return;
 	}
-	if (attacker == ent_player && game_quad_active())
-		damage *= 4;
-	targ->health -= damage;
-	ELOG("ent: %s takes %d (health %d)\n", world_string(targ->classname), damage, targ->health);
+	int take = (damage + 255) >> 8;       /* ceil (no armour: only the player's) */
+	targ->health = (int16_t) (targ->health - take);
+	ELOG("ent: %s takes %d (health %d)\n", world_string(targ->classname), take, targ->health);
 	if (targ->health <= 0) {
-		if (targ->health < -99)
-			targ->health = -99;
-		if ((targ->movetype == MOVETYPE_PUSH || targ->movetype == MOVETYPE_NONE) && targ->th_die)
-			targ->th_die(targ);
+		killed(targ, attacker);
 		return;
 	}
-	if (targ->th_pain)
+	/* react to the damage */
+	if ((targ->flags & FL_MONSTER) && attacker && attacker != ent_world) {
+		/* get mad unless of the same class (except for soldiers) */
+		if (targ != attacker && attacker != targ->enemy &&
+		    (attacker->mdef != targ->mdef || (targ->mdef && targ->mdef->kind == MK_ARMY))) {
+			if (targ->enemy == ent_player)
+				targ->oldenemy = targ->enemy;
+			targ->enemy = attacker;
+			ai_found_target(targ);
+		}
+	}
+	if (targ->th_pain) {
+		ai_damage_take = take;
 		targ->th_pain(targ);
+		if (game_skill == 3)              /* nightmare mode monsters don't go into pain frames often */
+			targ->pain_finished = ent_time + TICKS(500);
+	}
+}
+
+void ent_damage(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage)
+{
+	ent_damage_x256(targ, inflictor, attacker, damage * 256);
 }
 
 edict_t *ent_from_trace(const trace_t *tr)
@@ -455,33 +693,11 @@ void ents_impact(int ent)
 	e->touch(e);
 }
 
-/* CanDamage: a pusher by its box centre (the line may end on the pusher),
-   anything else by its origin and four points around it */
-static int can_damage(const edict_t *targ, const int32_t org[3])
-{
-	trace_t tr;
-	if (targ->movetype == MOVETYPE_PUSH) {
-		int32_t c[3];
-		for (int k = 0; k < 3; k++)
-			c[k] = (targ->absmin[k] + targ->absmax[k]) / 2;
-		clip_trace(0, org, c, &tr);
-		return tr.fraction >= Q_FIX_ONE || ent_from_trace(&tr) == targ;
-	}
-	static const int8_t off[5][2] = { { 0, 0 }, { 15, 15 }, { -15, -15 }, { -15, 15 }, { 15, -15 } };
-	for (int i = 0; i < 5; i++) {
-		int32_t p[3] = { targ->origin[0] + off[i][0] * CLIP_SUB, targ->origin[1] + off[i][1] * CLIP_SUB,
-		                 targ->origin[2] };
-		clip_trace(0, org, p, &tr);
-		if (tr.fraction >= Q_FIX_ONE)
-			return 1;
-	}
-	return 0;
-}
-
 void ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edict_t *ignore)
 {
+	/* findradius's chain: the last edict found first */
 	int32_t rad = (damage + 40) * CLIP_SUB;
-	for (int i = 2; i < num_edicts; i++) {
+	for (int i = num_edicts - 1; i >= 2; i--) {
 		edict_t *e = &edicts[i];
 		if (!e->inuse || e == ignore || !e->takedamage || e->solid == SOLID_NOT)
 			continue;
@@ -492,11 +708,14 @@ void ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edi
 		                                             (int64_t) d[2] * d[2]));
 		if (len > rad)
 			continue;
-		int points = damage - len / (2 * CLIP_SUB);
+		int points = damage * 256 - len * (256 / (2 * CLIP_SUB));   /* damage - vlen / 2, x256 */
 		if (e == attacker)
 			points /= 2;
-		if (points > 0 && can_damage(e, org))
-			ent_damage(e, attacker, attacker, points);
+		if (points > 0 && ai_can_damage_at(e, org, 0)) {
+			if (e->mdef && e->mdef->kind == MK_SHAMBLER)
+				points /= 2;
+			ent_damage_x256(e, attacker, attacker, points);
+		}
 	}
 }
 
@@ -505,11 +724,14 @@ void ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edi
 static const int32_t player_mins[3] = { -16 * CLIP_SUB, -16 * CLIP_SUB, -24 * CLIP_SUB };
 static const int32_t player_maxs[3] = {  16 * CLIP_SUB,  16 * CLIP_SUB,  32 * CLIP_SUB };
 
-/* the player's mirror: its box, health, items, from the game's player */
+/* the player's mirror: its box, health, items, from the game's player;
+   its box in the traces' entry 0 (clip.h: the entities' traces meet it,
+   its own begin past it) */
 static void sync_player(void)
 {
 	edict_t *p = ent_player;
-	memcpy(p->origin, pl.pm.pos, sizeof p->origin);
+	__builtin_memcpy(p->origin, pl.pm.pos, sizeof p->origin);
+	__builtin_memcpy(p->velocity, pl.pm.vel, sizeof p->velocity);
 	for (int k = 0; k < 3; k++) {
 		p->absmin[k] = p->origin[k] + player_mins[k] - CLIP_SUB;
 		p->absmax[k] = p->origin[k] + player_maxs[k] + CLIP_SUB;
@@ -517,8 +739,9 @@ static void sync_player(void)
 	p->health     = (int16_t) pl.health;
 	p->items      = pl.items;
 	p->takedamage = pl.dead || game_intermission() ? DAMAGE_NO : DAMAGE_AIM;
-	p->solid      = pl.dead || game_intermission() ? SOLID_NOT : SOLID_SLIDEBOX;
+	p->solid      = pl.dead || game_intermission() || pl.pm.noclip ? SOLID_NOT : SOLID_SLIDEBOX;
 	p->movetype   = pl.pm.noclip ? MOVETYPE_NOCLIP : MOVETYPE_WALK;
+	clip_relink(p);                           /* (SV_LinkEdict, its every move) */
 }
 
 /* SV_TestEntityPosition for the player: inside anything solid? */
@@ -569,43 +792,111 @@ static void push_move(edict_t *pusher, int movetime)
 		mins[k] = pusher->absmin[k] + move[k];
 		maxs[k] = pusher->absmax[k] + move[k];
 	}
-	memcpy(pushorig, pusher->origin, sizeof pushorig);
+	__builtin_memcpy(pushorig, pusher->origin, sizeof pushorig);
 	pusher->ltime += movetime;
 	ent_setorigin(pusher, to);
 
+	/* the player (edict 1, SV_PushMove's first) */
 	edict_t *p = ent_player;
-	if (p->movetype == MOVETYPE_NOCLIP || pl.dead || game_intermission())
-		return;
-	if (player_ground() != pusher) {
-		if (p->absmin[0] >= maxs[0] || p->absmin[1] >= maxs[1] || p->absmin[2] >= maxs[2] ||
-		    p->absmax[0] <= mins[0] || p->absmax[1] <= mins[1] || p->absmax[2] <= mins[2])
-			return;
-		if (!player_stuck())
-			return;
-	}
-	int32_t entorig[3], end[3];
-	memcpy(entorig, pl.pm.pos, sizeof entorig);
-	for (int k = 0; k < 3; k++)
-		end[k] = pl.pm.pos[k] + move[k];
-	uint8_t solid = pusher->solid;
-	pusher->solid = SOLID_NOT;                 /* (out of the traces) */
-	clip_update(pusher);
-	trace_t tr;
-	clip_trace(1, pl.pm.pos, end, &tr);
-	memcpy(pl.pm.pos, tr.endpos, sizeof pl.pm.pos);
-	pusher->solid = solid;
-	clip_update(pusher);
-	sync_player();
-	if (player_stuck()) {                      /* fail the move */
-		memcpy(pl.pm.pos, entorig, sizeof pl.pm.pos);
+	int32_t plorig[3];
+	int player_moved = 0;
+	__builtin_memcpy(plorig, pl.pm.pos, sizeof plorig);
+	if (p->movetype != MOVETYPE_NOCLIP && !pl.dead && !game_intermission() &&
+	    (player_ground() == pusher ||
+	     (!(p->absmin[0] >= maxs[0] || p->absmin[1] >= maxs[1] || p->absmin[2] >= maxs[2] ||
+	        p->absmax[0] <= mins[0] || p->absmax[1] <= mins[1] || p->absmax[2] <= mins[2]) && player_stuck()))) {
+		int32_t end[3];
+		for (int k = 0; k < 3; k++)
+			end[k] = pl.pm.pos[k] + move[k];
+		uint8_t solid = pusher->solid;
+		pusher->solid = SOLID_NOT;             /* (out of the traces) */
+		clip_update(pusher);
+		trace_t tr;
+		clip_trace(1, pl.pm.pos, end, &tr);
+		__builtin_memcpy(pl.pm.pos, tr.endpos, sizeof pl.pm.pos);
+		pusher->solid = solid;
+		clip_update(pusher);
 		sync_player();
+		player_moved = 1;
+		if (player_stuck()) {                  /* fail the move */
+			__builtin_memcpy(pl.pm.pos, plorig, sizeof pl.pm.pos);
+			sync_player();
+			pusher->ltime -= movetime;
+			ent_setorigin(pusher, pushorig);
+			if (pusher->blocked) {
+				ent_other = p;
+				ELOG("ent: %s blocked\n", world_string(pusher->classname));
+				pusher->blocked(pusher);
+			}
+			return;
+		}
+	}
+
+	/* the other edicts: a monster, a dropped pack, a gib riding it or in
+	   its way, pushed along; one stuck blocks it (every one moved put
+	   back), a corpse or a trigger in the way flattened, a point left */
+	static edict_t *moved[256];
+	static int32_t  moved_from[256][3];
+	int nmoved = 0;
+	for (int i = 2; i < num_edicts; i++) {
+		edict_t *c = &edicts[i];
+		if (!c->inuse || c == pusher || c->movetype == MOVETYPE_PUSH || c->movetype == MOVETYPE_NONE ||
+		    c->movetype == MOVETYPE_NOCLIP)
+			continue;
+		/* if the entity is standing on the pusher, it will definitely be moved */
+		if (!((c->flags & FL_ONGROUND) && c->groundentity == pusher)) {
+			if (c->absmin[0] >= maxs[0] || c->absmin[1] >= maxs[1] || c->absmin[2] >= maxs[2] ||
+			    c->absmax[0] <= mins[0] || c->absmax[1] <= mins[1] || c->absmax[2] <= mins[2])
+				continue;
+			if (!ai_test_position(c))      /* not in the pusher's final position */
+				continue;
+		}
+		c->flags &= ~FL_ONGROUND;              /* (not a player: it walks no more) */
+		if (nmoved < 256) {
+			moved[nmoved] = c;
+			__builtin_memcpy(moved_from[nmoved++], c->origin, sizeof moved_from[0]);
+		}
+		int32_t entorig[3];
+		__builtin_memcpy(entorig, c->origin, sizeof entorig);
+		uint8_t solid = pusher->solid;         /* try moving the contacted entity */
+		pusher->solid = SOLID_NOT;
+		clip_update(pusher);
+		trace_t tr;
+		ai_push_entity(c, move, &tr);
+		pusher->solid = solid;
+		clip_update(pusher);
+		if (!c->inuse || !ai_test_position(c))
+			continue;
+		/* still inside the pusher: blocked */
+		if (c->mins[0] == c->maxs[0])          /* a point: left in it */
+			continue;
+		if (c->solid == SOLID_NOT || c->solid == SOLID_TRIGGER) {   /* a corpse: flattened */
+			c->mins[0] = c->mins[1] = 0;
+			__builtin_memcpy(c->maxs, c->mins, sizeof c->maxs);
+			continue;
+		}
+		__builtin_memcpy(c->origin, entorig, sizeof c->origin);
+		ent_link(c);
 		pusher->ltime -= movetime;
 		ent_setorigin(pusher, pushorig);
+		/* if the pusher has a "blocked" function, call it, otherwise just
+		   stay in place until the obstacle is gone */
 		if (pusher->blocked) {
-			ent_other = p;
-			ELOG("ent: %s blocked\n", world_string(pusher->classname));
+			ent_other = c;
+			ELOG("ent: %s blocked by %s\n", world_string(pusher->classname), world_string(c->classname));
 			pusher->blocked(pusher);
 		}
+		/* move back any entities we already moved */
+		for (int j = 0; j < nmoved; j++)
+			if (moved[j]->inuse) {
+				__builtin_memcpy(moved[j]->origin, moved_from[j], sizeof moved_from[0]);
+				ent_link(moved[j]);
+			}
+		if (player_moved) {
+			__builtin_memcpy(pl.pm.pos, plorig, sizeof pl.pm.pos);
+			sync_player();
+		}
+		return;
 	}
 }
 
@@ -644,17 +935,90 @@ static void run_think(edict_t *e)
 		e->think(e);
 }
 
+/* a box in whole units, the touch passes' (floor of the mins, ceiling of
+   the maxs: it holds the exact one) */
+static void box16(const edict_t *e, int16_t b[6])
+{
+	for (int k = 0; k < 3; k++) {
+		b[k]     = (int16_t) (e->absmin[k] >> 3);
+		b[k + 3] = (int16_t) ((e->absmax[k] + 7) >> 3);
+	}
+}
+
+/* SV_LinkEdict for a trigger: its slot's box, the slot unlinked and
+   appended to its node's list */
+/* a trigger slot linked in node n (d 1) or unlinked (d -1): the subtree
+   counts of n and its ancestors */
+static void trig_count_add(int n, int d)
+{
+	for (;;) {
+		trig_count[n] = (uint16_t) (trig_count[n] + d);
+		if (!n)
+			return;
+		n = area_parent[n];
+	}
+}
+
+static void touch_unlink(int s)
+{
+	touch_slot_t *t = &touch_slots[s];
+	if (t->area == CLIP_NO_AREA)
+		return;
+	trig_count_add(t->area, -1);
+	uint16_t self = (uint16_t) (s + 1), prev = 0;
+	for (uint16_t l = trig_head[t->area]; l; prev = l, l = touch_slots[l - 1].next)
+		if (l == self) {
+			if (prev)
+				touch_slots[prev - 1].next = t->next;
+			else
+				trig_head[t->area] = t->next;
+			if (trig_tail[t->area] == self)
+				trig_tail[t->area] = prev;
+			break;
+		}
+	t->next = 0;
+	t->area = CLIP_NO_AREA;
+}
+static void touch_relink(const edict_t *e)
+{
+	int s = e->touch_slot;
+	touch_slot_t *t = &touch_slots[s];
+	box16(e, t->box);
+	touch_unlink(s);
+	int n = area_of(e->absmin, e->absmax);
+	if (trig_tail[n])
+		touch_slots[trig_tail[n] - 1].next = (uint16_t) (s + 1);
+	else
+		trig_head[n] = (uint16_t) (s + 1);
+	trig_tail[n] = (uint16_t) (s + 1);
+	t->next = 0;
+	t->area = (uint8_t) n;
+	trig_count_add(n, 1);
+}
+
 static void rebuild_lists(void)
 {
-	num_touch = num_draw = ents_num_models = 0;
+	num_touch = num_draw = ents_num_models = ents_num_streamed = 0;
+	memset(trig_head, 0, sizeof trig_head);
+	memset(trig_tail, 0, sizeof trig_tail);
+	memset(trig_count, 0, sizeof trig_count);
 	for (int i = 2; i < num_edicts; i++) {
 		edict_t *e = &edicts[i];
 		if (!e->inuse)
 			continue;
 		if (e->item_model >= 0 && ents_num_models < (int) (sizeof ents_model_list / sizeof ents_model_list[0]))
 			ents_model_list[ents_num_models++] = (uint16_t) i;
-		if (e->touch && num_touch < (int) (sizeof touch_list / sizeof touch_list[0]))
+		if ((e->masset >= 0 || e->mdef) &&
+		    ents_num_streamed < (int) (sizeof ents_streamed_list / sizeof ents_streamed_list[0]))
+			ents_streamed_list[ents_num_streamed++] = (uint16_t) i;
+		e->touch_slot = -1;
+		if (e->touch && (e->solid == SOLID_TRIGGER || e->solid == SOLID_NOT) && !e->mdef &&
+		    num_touch < max_touch) {
+			e->touch_slot = (int16_t) num_touch;
+			touch_slots[num_touch].area = CLIP_NO_AREA;
 			touch_list[num_touch++] = (uint16_t) i;
+			touch_relink(e);
+		}
 		if (e->draw && e->model && e->num_leaves &&
 		    num_draw < (int) (sizeof draw_list / sizeof draw_list[0]))
 			draw_list[num_draw++] = (uint16_t) i;
@@ -663,14 +1027,112 @@ static void rebuild_lists(void)
 	ents_relink = 1;
 }
 
+#ifdef Q1PSX_BENCH
+int ents_num_touch(void)
+{
+	return num_touch;
+}
+
+/* the area nodes' lists: solid entries and trigger slots in each node */
+void ents_area_stats(void)
+{
+	if (lists_dirty)
+		rebuild_lists();
+	printf("areas:");
+	for (int a = 0; a < num_areas; a++) {
+		int ns = 0, nt = 0;
+		for (uint16_t l = clip_areas[a].head; l; l = CLIP_ENTRY(l)->next)
+			ns++;
+		for (uint16_t l = trig_head[a]; l; l = touch_slots[l - 1].next)
+			nt++;
+		printf(" %d:%s%d/%d", a, clip_areas[a].flags & CLIP_AREA_LEAF ? "L" : (clip_areas[a].flags & 1) ? "y" : "x",
+		       ns, nt);
+	}
+	printf("\n");
+}
+#endif
+
+/* SV_TouchLinks' walk: the trigger slots whose box the box of e reaches,
+   area node by area node (Quake's order: clip.h), their edicts; touched
+   after (the touches spawn, remove and move edicts: each one is tested
+   again when its turn comes) */
+#define TOUCH_MAX 64
+static int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX])
+{
+	int16_t eb[6];
+	box16(e, eb);
+	int n = 0;
+	uint8_t stack[CLIP_AREA_DEPTH + 2];          /* the nodes to walk (depth first, */
+	int     sp = 0;                              /* children[0] on top) */
+	if (trig_count[0])
+		stack[sp++] = 0;
+	while (sp) {
+		int a = stack[--sp];
+		const clip_area_t *an = &clip_areas[a];
+		if (!(an->flags & CLIP_AREA_LEAF)) {
+			int axis = an->flags & CLIP_AREA_Y;
+			if (e->absmin[axis] < an->dist && trig_count[an->child1])
+				stack[sp++] = an->child1;
+			if (e->absmax[axis] > an->dist && trig_count[a + 1])
+				stack[sp++] = (uint8_t) (a + 1);     /* children[0]: the next node */
+		}
+		for (uint16_t l = trig_head[a]; l; l = touch_slots[l - 1].next) {
+			const int16_t *b = touch_slots[l - 1].box;
+#ifdef Q1PSX_BENCH
+			ai_tr_n[AI_TR_OTHER]++;                   /* (the bench: the slots tested) */
+#endif
+			if (eb[0] > b[3] || eb[1] > b[4] || eb[2] > b[5] || eb[3] < b[0] || eb[4] < b[1] || eb[5] < b[2])
+				continue;
+			if (n < TOUCH_MAX)
+				out[n++] = touch_list[l - 1];
+		}
+	}
+	return n;
+}
+
+/* SV_TouchLinks: the SOLID_TRIGGER edicts the box of e overlaps, touched
+   by it (the player each tick; a monster when it moves) */
+void ents_touch_links(edict_t *e)
+{
+	if (e->solid == SOLID_NOT || !edicts)
+		return;
+	if (lists_dirty)
+		rebuild_lists();
+#ifdef Q1PSX_BENCH
+	uint32_t t0 = prof_now();
+#endif
+	uint16_t hit[TOUCH_MAX];
+	int n = touch_slots ? touch_gather(e, hit) : 0;
+	for (int i = 0; i < n; i++) {
+		edict_t *t = &edicts[hit[i]];
+		if (t == e || !t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
+			continue;
+		if (e->absmin[0] > t->absmax[0] || e->absmin[1] > t->absmax[1] || e->absmin[2] > t->absmax[2] ||
+		    e->absmax[0] < t->absmin[0] || e->absmax[1] < t->absmin[1] || e->absmax[2] < t->absmin[2])
+			continue;
+		edict_t *other = ent_other;
+		ent_other = e;
+		t->touch(t);
+		ent_other = other;
+		if (!e->inuse)
+			break;
+	}
+#ifdef Q1PSX_BENCH
+	ai_tr_cyc[AI_TR_TOUCH] += prof_cycles(t0, prof_now());
+	ai_tr_n[AI_TR_TOUCH]++;
+#endif
+}
+
 /* SV_TouchLinks for the player: the SOLID_TRIGGER edicts its box overlaps */
 static void touch_player(void)
 {
 	edict_t *p = ent_player;
-	if (p->solid == SOLID_NOT)
+	if (p->solid == SOLID_NOT || !touch_slots)
 		return;
-	for (int i = 0; i < num_touch; i++) {
-		edict_t *t = &edicts[touch_list[i]];
+	uint16_t hit[TOUCH_MAX];
+	int n = touch_gather(p, hit);
+	for (int i = 0; i < n; i++) {
+		edict_t *t = &edicts[hit[i]];
 		if (!t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
 			continue;
 		if (p->absmin[0] > t->absmax[0] || p->absmin[1] > t->absmax[1] || p->absmin[2] > t->absmax[2] ||
@@ -678,8 +1140,6 @@ static void touch_player(void)
 			continue;
 		ent_other = p;
 		t->touch(t);
-		if (lists_dirty)                       /* (the touch spawned or removed) */
-			break;
 	}
 }
 
@@ -700,16 +1160,30 @@ void ents_tick(void)
 			int b = __builtin_ctz(bits);
 			bits &= bits - 1;
 			edict_t *e = &edicts[w * 32 + b];
+			if (e->inuse && ent_force_retouch && e->movetype != MOVETYPE_PUSH)
+				ents_touch_links(e);           /* force retouch even for stationary */
 			if (e->inuse) {
 				if (e->movetype == MOVETYPE_PUSH) {
 					physics_pusher(e);
+				} else if (e->mdef || e->masset >= 0) {   /* a monster, what it throws */
+					if (e->movetype == MOVETYPE_STEP)
+						ai_physics_step(e);
+					else if (e->movetype >= MOVETYPE_FLY && e->movetype != MOVETYPE_PUSH &&
+					         e->movetype != MOVETYPE_NOCLIP)
+						ai_physics_toss(e);
+					else
+						run_think(e);
 				} else {
 					run_think(e);                 /* SV_Physics_Toss: the think, then the move */
 					if (e->inuse && e->movetype == MOVETYPE_TOSS)
 						items_physics(e);
 				}
 			}
-			if (!e->inuse || (e->nextthink <= 0 && !e->move_ticks))
+			/* asleep: nothing to think, nothing moving (a monster or what
+			   it throws keeps falling while off the ground) */
+			if (!e->inuse || (e->nextthink <= 0 && !e->move_ticks &&
+			                  !((e->mdef || e->masset >= 0) && e->movetype >= MOVETYPE_STEP &&
+			                    e->movetype != MOVETYPE_PUSH && !(e->flags & FL_ONGROUND))))
 				active[w] &= ~(1u << b);
 		}
 	}
@@ -729,6 +1203,11 @@ void ents_load(void)
 		printf("ents: no room for %d edicts\n", max_edicts);
 		max_edicts = 0;
 	}
+	max_touch = max_edicts < (int) (sizeof touch_list / sizeof touch_list[0]) ? max_edicts
+	          : (int) (sizeof touch_list / sizeof touch_list[0]);
+	touch_slots = max_touch ? mem_level_alloc((uint32_t) max_touch * sizeof *touch_slots) : 0;
+	if (!touch_slots)
+		max_touch = 0;
 }
 
 /* the edict for a cooked entity: the fields every class takes (ED_ParseEdict) */
@@ -738,13 +1217,14 @@ static edict_t *ent_new(const qw_ent *q)
 		return 0;
 	edict_t *e = &edicts[num_edicts++];
 	memset(e, 0, sizeof *e);
+	e->touch_slot = -1;
 	e->inuse      = 1;
 	e->class      = q->class;
 	e->classname  = q->classname;
 	e->spawnflags = q->spawnflags;
-	memcpy(e->origin, q->origin, sizeof e->origin);
+	__builtin_memcpy(e->origin, q->origin, sizeof e->origin);
 	e->angle      = q->angle;
-	memcpy(e->mangle, q->mangle, sizeof e->mangle);
+	__builtin_memcpy(e->mangle, q->mangle, sizeof e->mangle);
 	e->model  = q->model;
 	e->speed  = q->speed;  e->wait   = q->wait;   e->delay  = q->delay;
 	e->lip    = q->lip;    e->height = q->height; e->dmg    = q->dmg;
@@ -753,6 +1233,7 @@ static edict_t *ent_new(const qw_ent *q)
 	e->target = q->target; e->targetname = q->targetname; e->killtarget = q->killtarget;
 	e->message = q->message; e->map = q->map;
 	e->item_model = -1;
+	e->masset = -1;
 	e->noise = e->noise1 = e->noise2 = e->noise3 = e->noise4 = SND_NONE;
 	return e;
 }
@@ -777,14 +1258,30 @@ void ents_spawn(int first)
 	memset(edicts, 0, (size_t) max_edicts * sizeof *edicts);
 	edicts[0].inuse = 1; edicts[0].class = QE_WORLD; edicts[0].solid = SOLID_BSP;
 	edicts[1].inuse = 1; edicts[1].class = QE_PLAYER; edicts[1].solid = SOLID_SLIDEBOX;
-	memcpy(edicts[1].mins, player_mins, sizeof player_mins);
-	memcpy(edicts[1].maxs, player_maxs, sizeof player_maxs);
+	__builtin_memcpy(edicts[1].mins, player_mins, sizeof player_mins);
+	__builtin_memcpy(edicts[1].maxs, player_maxs, sizeof player_maxs);
 	edicts[0].noise = edicts[0].noise1 = edicts[0].noise2 = edicts[0].noise3 = edicts[0].noise4 = SND_NONE;
 	edicts[1].noise = edicts[1].noise1 = edicts[1].noise2 = edicts[1].noise3 = edicts[1].noise4 = SND_NONE;
+	{                                         /* SV_ClearWorld: the area nodes, over */
+		int32_t mins[3] = { 0, 0, 0 }, maxs[3] = { 0, 0, 0 };   /* the world's box (its */
+		const qw_node *r = world.root;                         /* BSP root's, in vertex */
+		for (int k = 0; r && k < 3; k++) {                     /* units: x 2 for 1/8; */
+			mins[k] = (r->c[k] - r->h[k]) * (CLIP_SUB / QW_VSCALE);   /* within int16, */
+			maxs[k] = (r->c[k] + r->h[k]) * (CLIP_SUB / QW_VSCALE);   /* the splits too) */
+			mins[k] = mins[k] < -32768 ? -32768 : mins[k];
+			maxs[k] = maxs[k] > 32767 ? 32767 : maxs[k];
+		}
+		num_areas = 0;
+		create_area(r ? 0 : CLIP_AREA_DEPTH, mins, maxs);     /* (no world: one leaf) */
+	}
+	clip_new(ent_player, 0);                  /* the traces' entry 0: the player's box */
+	clip_disable(ent_player);
 	edicts[0].item_model = edicts[1].item_model = -1;     /* (no model of the map's) */
+	edicts[0].masset = edicts[1].masset = -1;
+	edicts[0].touch_slot = edicts[1].touch_slot = -1;
 	num_edicts = 2;
 
-	int unknown = 0, skipped = 0, inhibit = 0;
+	int unknown = 0, inhibit = 0;
 	for (uint32_t i = 0; i < world.num_ents; i++) {
 		const qw_ent *q = &world.ents[i];
 		int cls = q->class;
@@ -795,10 +1292,7 @@ void ents_spawn(int first)
 			inhibit++;
 			continue;
 		}
-		if (cls >= QE_MONSTER_ARMY && cls <= QE_MONSTER_OLDONE) {   /* (Phase 8.1) */
-			skipped++;
-			continue;
-		}
+
 		if (cls == QE_UNKNOWN) {
 			unknown++;
 			continue;
@@ -807,6 +1301,10 @@ void ents_spawn(int first)
 		if (!e)
 			break;
 
+		if (cls >= QE_MONSTER_ARMY && cls <= QE_MONSTER_OLDONE) {
+			monsters_spawn(e, q);
+			continue;
+		}
 		switch (cls) {
 		case QE_FUNC_DOOR: case QE_FUNC_DOOR_SECRET: case QE_FUNC_BUTTON:
 		case QE_FUNC_PLAT: case QE_FUNC_TRAIN: case QE_MISC_TELEPORTTRAIN:
@@ -814,6 +1312,9 @@ void ents_spawn(int first)
 			break;
 		case QE_TRIGGER_CHANGELEVEL: case QE_INFO_INTERMISSION:
 			level_spawn(e, q);
+			break;
+		case QE_EVENT_LIGHTNING:
+			monsters_event_lightning(e);
 			break;
 		case QE_LIGHT_TORCH_SMALL_WALLTORCH: case QE_LIGHT_FLAME_LARGE_YELLOW:
 		case QE_LIGHT_FLAME_SMALL_YELLOW: case QE_LIGHT_FLAME_SMALL_WHITE:
@@ -833,8 +1334,8 @@ void ents_spawn(int first)
 	int drawn = 0;
 	for (int i = 0; i < num_edicts; i++)
 		drawn += edicts[i].inuse && edicts[i].draw;
-	printf("ents: %d edicts (%d monsters left out, %d unknown, %d not on skill %d), %d solid brush "
-	       "models, %d drawn, %d models, %d touch, %d secrets\n", num_edicts, skipped, unknown, inhibit,
+	printf("ents: %d edicts (%d monsters, %d unknown, %d not on skill %d), %d solid brush "
+	       "models, %d drawn, %d models, %d touch, %d secrets\n", num_edicts, ent_total_monsters, unknown, inhibit,
 	       game_skill, clip_num_bmodels, drawn, ents_num_models, num_touch, ent_total_secrets);
 }
 
@@ -1048,4 +1549,36 @@ void ents_render(void)
 		rl_add_model(best, rl_bmodel(&world.bmodels[e->model], e->origin));
 	}
 	items_render();
+	monsters_render();
+}
+
+void ents_stream_wants(void)
+{
+	if (!edicts)
+		return;
+	if (lists_dirty)
+		rebuild_lists();
+	monsters_stream_wants();
+	/* the entities' streamed sounds (a door's, a plat's, a trigger's, an
+	   item's), by their box centre's distance (Chebyshev, world units) */
+	for (int i = 2; i < num_edicts; i++) {
+		const edict_t *e = &edicts[i];
+		if (!e->inuse || (e->noise < SND_STREAM && e->noise1 < SND_STREAM && e->noise2 < SND_STREAM &&
+		                  e->noise3 < SND_STREAM && e->noise4 < SND_STREAM))
+			continue;
+		int32_t c[3];
+		ent_centre(e, c);
+		uint32_t d = 0;
+		for (int k = 0; k < 3; k++) {
+			int32_t v = c[k] - stream_origin[k];
+			uint32_t x = (uint32_t) (v < 0 ? -v : v);
+			if (x > d) d = x;
+		}
+		d /= CLIP_SUB;
+		const int16_t n[5] = { e->noise, e->noise1, e->noise2, e->noise3, e->noise4 };
+		for (int k = 0; k < 5; k++)
+			if (n[k] >= SND_STREAM)
+				stream_want(n[k] - SND_STREAM, d);
+	}
+	game_stream_wants();
 }

@@ -1265,6 +1265,25 @@ followed by R0-R4.
   GPU and the loads); the debug menu's rows no longer run into its help
   line. Every map loads at every geometry level, at ultra textures and
   geometry too (release-ultra's), and plays on DuckStation.
+- **Streaming, the monsters, the SPU pool** (2026-10-18). §40: a
+  disc file a map (`STREAM.DAT`, `QST1`) holds what the map may need and
+  not always: the nine monsters' models, heads, projectiles and sounds,
+  the gibs, the backpack, the items' models, every positional sound. The
+  engine keeps RAM, VRAM and SPU pools filled by distance to the player
+  (every 8 frames), the keys, the rune and the weapons always first; one
+  CD read at a time, the CD-DA paused around it and resumed where it
+  was. The nine monsters of the shareware in native C from `progs.dat`
+  1.06 (state tables generated from its bytecode, the AI and sv_move.c
+  transcribed): their attacks, missiles, deaths, gibs, teleporters and
+  pushers for them. The map's sound bank keeps only the player's and the
+  weapons' sounds (nothing halved any more). Quake's area nodes for the
+  traces and the touch passes, visible()'s line of sight, CheckBottom's
+  box node, the residual-solid walk from a node (the asm only): E1M3's
+  47 monsters awake 830 k cycles a tick to 287 k, the player's moves on
+  E1M3 -50 %, start's -7 %, every trace's result kept. Merged with the
+  quality settings: the streamed items at Quake's detail (the models level
+  reduces the projectiles), the game data `QGM7`, the monsters' particles
+  at the effects level.
 - **The brush models cut by the world's BSP** (fourth play test). §41:
   as Quake's R_DrawSolidClippedSubmodelPolygons, every brush model's
   polygons are cut by the world's planes from its top node: the pieces in

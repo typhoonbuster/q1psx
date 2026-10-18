@@ -25,6 +25,11 @@
 #         counter columns read 0).
 #         HASHONLY=1 dumps only the frames' hashes (`H` lines): no packets,
 #         no pictures, a run several times shorter (the console is slow).
+#         MONSTERS=1 runs the monsters' scenarios (MAP=, default E1M1: a
+#         monster of each kind there woken, fighting, killed; "mon" lines,
+#         dumps m<map>_<kind>_<step>; then the crowd: every monster of the
+#         map awake, the entities' cost a second); MONSTERS=2 the crowd
+#         alone (SAMPLE=1: its PC samples, "samples crowd").
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds
@@ -69,6 +74,7 @@ MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
 ENTS=${ENTS:-0}
+MONSTERS=${MONSTERS:-0}
 SAMPLE=${SAMPLE:-0}
 cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="$GEOMETRY" \
       -DQ1PSX_BENCH_MODELS="$MODELS" -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
@@ -77,7 +83,7 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
-      -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
 	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
 
@@ -88,8 +94,11 @@ LOG="$ROOT/build-bench/bench.log" \
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
+[ "$MONSTERS" != 0 ] && grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400
+[ "$MONSTERS" = 2 ] && exit 0
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0
 [ "$ENTS" = 1 ] && MAP=E1M1          # (its dumps: e1m1's textures, the first map)
+[ "$MONSTERS" != 0 ] && MAP=${MAP:-E1M1}
 
 # Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
 # output can be checked without a screen (the game's dumps need GAME.DAT's
@@ -101,4 +110,4 @@ TEXEXT=tex; [ "$TEX4" = 1 ] && TEXEXT=tx4
 TEXMAP=start; [ -n "$MAP" ] && TEXMAP=$(echo "$MAP" | tr 'A-Z' 'a-z')
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
 	"$ROOT/cooked/id1/${TEXMAP}_t$TEXTURES.$TEXEXT" "$ROOT/build-bench/views/" \
-	"$ROOT/cooked/id1/game_$MODELS.dat" | sed 's/^/  /'
+	"$ROOT/cooked/id1/game_$MODELS.dat" "$ROOT/cooked/id1/stream.dat" | sed 's/^/  /'

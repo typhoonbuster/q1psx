@@ -5,9 +5,11 @@
  * (weapons.qc, player.qc's weapon animations, combat.qc's T_Damage /
  * T_RadiusDamage, sv_phys.c's missile and bounce physics, view.c's bob and
  * kicks, r_part.c's particles), native C as the permanent home of the
- * player's weapons (docs/porting-notes.md §22). No sounds yet (Phase 9), no
- * dynamic lights (by choice), no monsters: projectiles hit the world, and
- * explosions hurt the player (rocket jumps work).
+ * player's weapons (docs/porting-notes.md §22). The projectiles are the
+ * player's, the traps' and the monsters' (an owner: its box passed, the
+ * damage its); they hit the world, the brush models and the boxes (the
+ * player's, the monsters' grown for a missile), explosions hurt everything
+ * in reach.
  *
  * Units: positions 1/R_POS_SUB (1/8) world units, velocities world units
  * per second, angles binary degrees (4096 per turn), times in ticks.
@@ -165,7 +167,37 @@ void game_select_best(void);
 void game_powerup(uint32_t item);                  /* its 30 s */
 void game_radius_damage_player(const int32_t org[3], int damage);
 void game_explosion(const int32_t org[3]);         /* BecomeExplosion's */
-void game_launch_spike(const int32_t org[3], const int32_t dir[3], int speed, int super);
+struct edict_s;
+void game_launch_spike(struct edict_s *owner, const int32_t org[3], const int32_t dir[3], int speed, int super);
+/* a monster's missile (the projectiles': its owner's box passed, the
+   damage its), from org at vel: MM_GRENADE (OgreFireGrenade's), MM_ZOMGIB
+   (ZombieFireGrenade's: s1 its hit sound, s2 its miss), MM_WIZSPIKE (s1
+   TE_WIZSPIKE's sound), MM_LAVABALL; masset its streamed model */
+enum { MM_GRENADE, MM_ZOMGIB, MM_WIZSPIKE, MM_LAVABALL };
+void game_monster_missile(int kind, struct edict_s *owner, const int32_t org[3], const int32_t vel[3], int masset,
+                          int s1, int s2);
+
+/* a shambler's lightning: TE_LIGHTNING1 (its beam, masset bolt.mdl) and
+   LightningDamage from `from` along p1-p2 */
+void game_monster_beam(struct edict_s *owner, const int32_t org[3], const int32_t end[3], int masset);
+void game_lightning_damage(struct edict_s *from, const int32_t p1[3], const int32_t p2[3], int damage);
+
+void game_lava_splash(const int32_t org[3]);   /* TE_LAVASPLASH */
+void game_stream_wants(void);                   /* a running powerup's sounds */
+#ifdef Q1PSX_BENCH
+extern uint32_t game_ents_cycles, game_ents_max, game_ents_ticks;   /* ents_tick's cost */
+#endif
+
+/* R_RocketTrail's particles at org (one a tick), flying at vel */
+enum { TR_ROCKET, TR_SMOKE, TR_BLOOD, TR_TRACER, TR_SLIGHT_BLOOD };
+void game_trail(const int32_t org[3], int type, const int32_t vel[3]);
+
+/* R_RunParticleEffect at org, no velocity (TE_GUNSHOT: colour 0, 20;
+   SpawnBlood: 73, the damage x 2) */
+void game_particles(const int32_t org[3], int colour, int count);
+/* EF_MUZZLEFLASH's light (CL_RelinkEntities) for an entity at org (1/8
+   units) facing yaw (binary degrees), its dlight key */
+void game_muzzle_flash(int key, const int32_t org[3], int yaw);
 
 void game_save_parms(void);
 void game_new_parms(void);

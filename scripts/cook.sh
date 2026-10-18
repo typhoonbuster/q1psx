@@ -25,10 +25,13 @@
 #   cooked/id1/<map>_g<N>.wld   QWVD world (geometry 0, 2, 3)     -> disc <MAP>_G<N>.WLD
 #   cooked/id1/<map>_m<N>.mdl   QMM1 its own models (models 0..2) -> disc <MAP>_M<N>.MDL
 # per map (with the high geometry job), the sound bank (formats/qsound.h):
-#   cooked/id1/<map>.snd        QSB1 sounds                       -> disc <MAP>.SND
-# and once per model level, the game data (weapon models, projectiles, the
+#   cooked/id1/<map>.snd        QSB2 sounds                       -> disc <MAP>.SND
+# once per model level, the game data (weapon models, projectiles, the
 # HUD; formats/qgame.h):
-#   cooked/id1/game_<N>.dat     QGM6                              -> disc GAME_<N>.DAT
+#   cooked/id1/game_<N>.dat     QGM7                              -> disc GAME_<N>.DAT
+# and once, the streamed assets (the monsters, the items' models, the
+# positional sounds; formats/qstream.h):
+#   cooked/id1/stream.dat       QST1                              -> disc STREAM.DAT
 # and the music, as 44.1 kHz stereo WAV for mkpsxiso's audio tracks:
 #   cooked/music/trackNN.wav                              -> CD-DA track NN
 # Jobs run in parallel; each one's log is shown only if it fails.
@@ -61,11 +64,15 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
-      cooked/id1/game*.dat
+      cooked/id1/game*.dat cooked/id1/stream.dat
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game > "$LOGS/game.log" 2>&1 \
 	|| { echo "cook FAILED: game data"; cat "$LOGS/game.log"; exit 1; }
+# the streamed assets (formats/qstream.h): the monsters' models, every map's
+tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} \
+                         --out cooked/id1/stream.dat > "$LOGS/stream.log" 2>&1 \
+	|| { echo "cook FAILED: streamed assets"; cat "$LOGS/stream.log"; exit 1; }
 
 cook_one() {   # map axis level (t / g / m, 0..3)
 	local pak=$QUAKE_PAK0

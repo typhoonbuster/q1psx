@@ -2,8 +2,10 @@
 #include <string.h>
 
 #include "gdata.h"
+#include "mdl.h"
 #include "render.h"
 #include "rlist.h"
+#include "stream.h"
 #include "world.h"
 
 r_item_t r_items[RL_MAX_ITEMS];
@@ -15,6 +17,7 @@ static qw_leaf *touched[RL_MAX_LISTS];
 void rl_begin(void)
 {
 	n_items = n_ents = n_lists = 0;
+	mdl_new_frame();
 }
 
 int rl_num_items(void)
@@ -116,6 +119,48 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
 		ent_rotation(e, yaw, pitch, roll, o);
 	}
 	if (!(m->flags & QGF_FLAT))
+		e->dots = (uint32_t) (gdata.dots + ((yaw * QG_LIGHT_YAWS / ANG_TURN) & (QG_LIGHT_YAWS - 1)) * QG_NORMALS);
+	return e;
+}
+
+/* A streamed model (formats/qstream.h): its frame expanded (engine/mdl.c),
+   its matrix the model-to-world columns scaled by its steps (Quake's
+   R_AliasSetUpTransform folds the scale in the same way), the origin moved
+   by its own origin turned with it. */
+r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pitch, int roll, int light)
+{
+	const qst_model *m = stream_model(a);
+	if (!m || n_ents >= RL_MAX_ENTS)
+		return 0;
+	if (frame < 0 || frame >= m->num_frames)
+		frame = 0;
+	const qw_vert *pool = mdl_frame(a, m, frame);
+	if (!pool)
+		return 0;
+	r_ent_t *e = &r_ents[n_ents++];
+	e->pool     = (uint32_t) pool;
+	e->recs     = (uint32_t) ((const uint8_t *) m + m->ofs_records);
+	e->recs_end = e->recs + m->len_records;
+	e->tex      = (uint32_t) stream_model_tex(a);
+	if (light > 170) light = 170;
+	if (light < 0) light = 0;
+	e->light = (uint32_t) light;
+	e->dots  = 0;
+	e->flags = 0;
+	int32_t f[3], r[3], u[3];
+	angle_vectors(-pitch, yaw, roll, f, r, u);
+	int16_t cols[3][4], o[4];
+	for (int i = 0; i < 3; i++) {
+		cols[0][i] = (int16_t) ((f[i] * m->scale[0] + 32768) >> 16);
+		cols[1][i] = (int16_t) ((-r[i] * m->scale[1] + 32768) >> 16);
+		cols[2][i] = (int16_t) ((u[i] * m->scale[2] + 32768) >> 16);
+		int32_t mo = f[i] * m->origin[0] - r[i] * m->origin[1] + u[i] * m->origin[2];   /* x 4096 x 16 */
+		o[i] = (int16_t) (org[i] * QW_VSCALE / R_POS_SUB + ((mo + 32768) >> 16));
+	}
+	cols[0][3] = cols[1][3] = cols[2][3] = 0;
+	o[3] = 0;
+	rl_ent_matrix(e, (const int16_t (*)[4]) cols, o);
+	if (!(m->flags & QSTM_FLAT))
 		e->dots = (uint32_t) (gdata.dots + ((yaw * QG_LIGHT_YAWS / ANG_TURN) & (QG_LIGHT_YAWS - 1)) * QG_NORMALS);
 	return e;
 }

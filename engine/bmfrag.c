@@ -566,82 +566,92 @@ static void cut_at(bmf_cache *c, const edict_t *e)
 #endif
 }
 
-void bmf_load(void)
+/* room for every model the map's entities name and the cook drew (a
+   trigger's has no faces): before the stream manager takes the arena's
+   rest, so before the spawn says which are drawn */
+void bmf_reserve(void)
 {
 #ifdef Q1PSX_BENCH
 	uint32_t used = mem_level_used();
 #endif
-	if (!bmf_models) {
-		bmf_models = mem_level_alloc(world.num_bmodels * sizeof *bmf_models);
-		if (!bmf_models)
-			return;
-		memset(bmf_models, 0, world.num_bmodels * sizeof *bmf_models);
-		/* the pool first: every drawn model's corners, grown */
-		uint32_t total = 0;
-		for (int i = 2; i < num_edicts; i++) {
-			const edict_t *e = &edicts[i];
-			if (!drawn_model(e))
-				continue;
-			uint32_t bytes = 0, corners = 0;
-			int nodes = 0;
-			model_size(world.bmodels[e->model].root, &bytes, &corners, &nodes);
+	bmf_models = mem_level_alloc(world.num_bmodels * sizeof *bmf_models);
+	if (!bmf_models)
+		return;
+	memset(bmf_models, 0, world.num_bmodels * sizeof *bmf_models);
+	/* the pool first: every such model's corners, grown */
+	uint32_t total = 0;
+	for (uint32_t i = 0; i < world.num_ents; i++) {
+		int m = world.ents[i].model;
+		if (m <= 0 || m >= (int) world.num_bmodels)
+			continue;
+		uint32_t bytes = 0, corners = 0;
+		int nodes = 0;
+		model_size(world.bmodels[m].root, &bytes, &corners, &nodes);
+		if (corners)
 			total += corners * BMF_GROW + 64;
-		}
-		if (total > 65535)
-			total = 65535;                        /* (the records' 16-bit indices) */
-		if (total)
-			bmf_pool = mem_level_alloc(total * sizeof *bmf_pool);
-		if (bmf_pool) {
-			bmf_pool_cap = total;
-			r_state.fragpool = (uint32_t) bmf_pool;
-			for (int i = 2; i < num_edicts; i++) {
-				const edict_t *e = &edicts[i];
-				if (!drawn_model(e) || bmf_models[e->model])
-					continue;
-				const qw_bmodel *bm = &world.bmodels[e->model];
-				uint32_t bytes = 0, corners = 0;
-				int nodes = 0;
-				model_size(bm->root, &bytes, &corners, &nodes);
-				uint32_t pool = corners * BMF_GROW + 64;
-				if (!nodes || bmf_pool_used + pool > bmf_pool_cap)
-					continue;
-				bmf_cache *c = mem_level_alloc(sizeof *c);
-				if (!c)
-					break;
-				memset(c, 0, sizeof *c);
-				c->nodes      = mem_level_alloc((uint32_t) nodes * sizeof *c->nodes);
-				c->recs_cap   = (bytes * BMF_GROW + BMF_SLACK + 3) & ~3u;
-				c->recs       = mem_level_alloc(c->recs_cap);
-				c->groups_cap = (uint32_t) nodes * 2 * 4 + 16;
-				c->groups     = mem_level_alloc(c->groups_cap * sizeof *c->groups);
-				if (!c->nodes || !c->recs || !c->groups)
-					break;
-				int count = 0;
-				if (build_nodes(c, bm->root, &count, nodes) < 0)
-					continue;
-				c->num_nodes  = (uint16_t) count;
-				c->pool_first = bmf_pool_used;
-				c->pool_cap   = pool;
-				bmf_pool_used += pool;
-				bmf_models[e->model] = c;
-#ifdef Q1PSX_BENCH
-				bmf_stats[0]++;
-#endif
-			}
-		}
 	}
-	/* the models (their edicts spawned again after a death: the same) cut
-	   where they stand (here, not at a first sight: a room's doors coming
-	   into view in one frame) */
+	if (total > 65535)
+		total = 65535;                            /* (the records' 16-bit indices) */
+	if (total)
+		bmf_pool = mem_level_alloc(total * sizeof *bmf_pool);
+	if (!bmf_pool)
+		return;
+	bmf_pool_cap = total;
+	r_state.fragpool = (uint32_t) bmf_pool;
+	for (uint32_t i = 0; i < world.num_ents; i++) {
+		int m = world.ents[i].model;
+		if (m <= 0 || m >= (int) world.num_bmodels || bmf_models[m])
+			continue;
+		const qw_bmodel *bm = &world.bmodels[m];
+		uint32_t bytes = 0, corners = 0;
+		int nodes = 0;
+		model_size(bm->root, &bytes, &corners, &nodes);
+		uint32_t pool = corners * BMF_GROW + 64;
+		if (!nodes || !corners || bmf_pool_used + pool > bmf_pool_cap)
+			continue;
+		bmf_cache *c = mem_level_alloc(sizeof *c);
+		if (!c)
+			break;
+		memset(c, 0, sizeof *c);
+		c->nodes      = mem_level_alloc((uint32_t) nodes * sizeof *c->nodes);
+		c->recs_cap   = (bytes * BMF_GROW + BMF_SLACK + 3) & ~3u;
+		c->recs       = mem_level_alloc(c->recs_cap);
+		c->groups_cap = (uint32_t) nodes * 2 * 4 + 16;
+		c->groups     = mem_level_alloc(c->groups_cap * sizeof *c->groups);
+		if (!c->nodes || !c->recs || !c->groups)
+			break;
+		int count = 0;
+		if (build_nodes(c, bm->root, &count, nodes) < 0)
+			continue;
+		c->num_nodes  = (uint16_t) count;
+		c->pool_first = bmf_pool_used;
+		c->pool_cap   = pool;
+		bmf_pool_used += pool;
+		bmf_models[m] = c;
+#ifdef Q1PSX_BENCH
+		bmf_stats[0]++;
+#endif
+	}
+#ifdef Q1PSX_BENCH
+	printf("bmf: %u models, %u KB\n", (unsigned) bmf_stats[0], (unsigned) ((mem_level_used() - used) / 1024));
+#endif
+}
+
+/* after each spawn (the load's, a death's): the drawn models cut where
+   they stand (here, not at a first sight: a room's doors coming into view
+   in one frame) */
+void bmf_load(void)
+{
+	if (!bmf_models)
+		return;
 	for (int i = 2; i < num_edicts; i++) {
 		const edict_t *e = &edicts[i];
 		if (drawn_model(e) && bmf_models[e->model])
 			cut_at(bmf_models[e->model], e);
 	}
 #ifdef Q1PSX_BENCH
-	printf("bmf: %u models, %u KB, %u pieces in %u cuts (%u given up), %u cycles\n", (unsigned) bmf_stats[0],
-	       (unsigned) ((mem_level_used() - used) / 1024), (unsigned) bmf_stats[1], (unsigned) bmf_stats[2],
-	       (unsigned) bmf_stats[3], (unsigned) bmf_stats[4]);
+	printf("bmf: %u pieces in %u cuts (%u given up), %u cycles\n", (unsigned) bmf_stats[1],
+	       (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4]);
 #endif
 }
 

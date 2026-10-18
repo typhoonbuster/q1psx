@@ -1,7 +1,7 @@
 /*
  * pktview — render a q1psx display-list dump to PNG images (host tool).
  *
- *   pktview <bench.log> <textures.tex|.tx4> <out-prefix> [game.dat]
+ *   pktview <bench.log> <textures.tex|.tx4> <out-prefix> [game.dat [stream.dat]]
  *
  * The bench build prints, for one frame per scenario, "D <name>" (the views'
  * names are "view <n>"), "V <rows>" (the 3D viewport's height) and the
@@ -32,6 +32,7 @@
 
 #include "../../formats/qtex.h"
 #include "../../formats/qgame.h"
+#include "../../formats/qstream.h"
 
 #define W 320
 #define H 240
@@ -183,6 +184,62 @@ static void load_game(const char *path)
 			memcpy(&vram[r.y + y][r.x], px + y * r.w, r.w * 2u);
 	}
 	free(d);
+}
+
+/* the streamed assets (STREAM.DAT): the bench's "S hash image page u v
+   flags" lines put a model's skin image where the engine placed it
+   (flags 1: transposed, 2: the half-resolution fallback) */
+static uint8_t *stream_dat;
+static long     stream_len;
+
+static void load_stream(const char *path)
+{
+	FILE *f = fopen(path, "rb");
+	if (!f) { fprintf(stderr, "pktview: cannot open %s\n", path); exit(1); }
+	fseek(f, 0, SEEK_END);
+	stream_len = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	stream_dat = malloc((size_t) stream_len);
+	if (fread(stream_dat, 1, (size_t) stream_len, f) != (size_t) stream_len) {
+		fprintf(stderr, "pktview: short read\n");
+		exit(1);
+	}
+	fclose(f);
+	if (stream_len < (long) sizeof(qst_header) || memcmp(stream_dat, QSTREAM_MAGIC, 4)) {
+		fprintf(stderr, "pktview: %s is not a QST1 file\n", path);
+		exit(1);
+	}
+}
+
+static void stream_image(const char *line)
+{
+	unsigned hash, k, page, u, v, flags;
+	if (!stream_dat || sscanf(line + 2, "%x %u %u %u %u %u", &hash, &k, &page, &u, &v, &flags) != 6 || k > 1)
+		return;
+	qst_header h;
+	memcpy(&h, stream_dat, sizeof h);
+	for (uint32_t i = 0; i < h.num_assets; i++) {
+		qst_asset a;
+		memcpy(&a, stream_dat + h.ofs_assets + i * sizeof a, sizeof a);
+		if (a.hash != hash || a.kind != QSTK_MODEL)
+			continue;
+		const uint8_t *base = stream_dat + (size_t) a.sector * QST_SECTOR;
+		qst_model m;
+		memcpy(&m, base, sizeof m);
+		const qst_image *im = flags & 2 ? &m.small[k] : &m.images[k];
+		const uint8_t *px = base + im->ofs;
+		int vx = QTEX_PAGE_X0 + (int) (page % QTEX_PAGE_COLS) * 128, vy = (int) (page / QTEX_PAGE_COLS) * 256;
+		int tw = flags & 1 ? (im->h + 1) & ~1 : im->w, th = flags & 1 ? im->w : im->h;
+		for (int y = 0; y < th; y++)
+			for (int x = 0; x < tw; x++) {
+				int sx = flags & 1 ? y : x, sy = flags & 1 ? (x < im->h ? x : im->h - 1) : y;
+				uint8_t c = px[sy * im->w + sx];
+				int tx = (int) u + x, ty = (int) v + y;
+				uint16_t *hw = &vram[vy + ty][vx + tx / 2];
+				*hw = tx & 1 ? (uint16_t) ((*hw & 0x00ff) | c << 8) : (uint16_t) ((*hw & 0xff00) | c);
+			}
+		return;
+	}
 }
 
 /* --------------------------------------------------------------- raster -- */
@@ -526,13 +583,15 @@ static void packet(const uint32_t *w, int n)
 
 int main(int argc, char **argv)
 {
-	if (argc != 4 && argc != 5) {
-		fprintf(stderr, "usage: pktview <bench.log> <textures.tex> <out-prefix> [game.dat]\n");
+	if (argc < 4 || argc > 6) {
+		fprintf(stderr, "usage: pktview <bench.log> <textures.tex> <out-prefix> [game.dat [stream.dat]]\n");
 		return 2;
 	}
 	crc_init();
-	if (argc == 5)                       /* the console's order: the game data at boot, */
+	if (argc >= 5)                       /* the console's order: the game data at boot, */
 		load_game(argv[4]);              /* then the map over it                         */
+	if (argc == 6)
+		load_stream(argv[5]);
 	load_tex(argv[2]);
 	const char *dis = getenv("PKTVIEW_DITHER");
 	if (dis && dis[0] == '0')
@@ -574,6 +633,8 @@ int main(int argc, char **argv)
 			clip_x0 = clip_y0 = 0;
 			clip_x1 = W - 1;
 			clip_y1 = H - 1;
+		} else if (!strncmp(line, "S ", 2)) {
+			stream_image(line);               /* (VRAM: kept for the dumps after) */
 		} else if (view && !strncmp(line, "V ", 2)) {
 			int rows = atoi(line + 2);        /* the 3D viewport: the draw area */
 			if (rows > 0 && rows <= H)

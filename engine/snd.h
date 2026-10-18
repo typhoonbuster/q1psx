@@ -56,6 +56,8 @@ enum {
 
 #define SND_NONE  (-1)      /* snd_find: not in this map's bank          */
 #define SND_NULL  (-2)      /* "misc/null.wav": playing it cuts the channel */
+#define SND_STREAM 0x4000   /* snd_find: a streamed sound, + its asset (engine/stream.h):
+                               heard while its samples are in SPU RAM    */
 
 void snd_init(void);
 
@@ -64,6 +66,9 @@ void snd_init(void);
    the CD music's (the SPU's CD input) */
 void snd_set_volume(int tenths);
 void snd_set_cd_volume(int tenths);
+/* the CD input's level against the setting, x256 (the music's fade around
+   a streamed read, engine/music.c) */
+void snd_cd_fade(int x256);
 
 /* the map's bank: MAPS/<MAP>.SND into SPU RAM (through the level arena,
    which it resets: call it before the world loads). 0 if there is none. */
@@ -76,9 +81,17 @@ void snd_map_start(void);
 void snd_start(int entnum, int entchannel, int sfx, const int32_t origin[3], int vol, int atten);
 void snd_stop_all(void);
 
-/* the bank's sound of that name (the QC's names: "doors/drclos4.wav"),
-   SND_NULL for "misc/null.wav", else SND_NONE */
+/* the sound of that name (the QC's names: "doors/drclos4.wav"): the bank's
+   index, or SND_STREAM + a streamed one's asset; SND_NULL for
+   "misc/null.wav", else SND_NONE */
 int  snd_find(const char *name);
+
+/* a streamed sound is leaving SPU RAM: the voices playing it stopped */
+void snd_forget(int s);
+
+/* the residency pass's: the static sources' streamed sounds wanted by
+   their distance (engine/stream.c) */
+void snd_stream_wants(void);
 
 /* S_StartSound with a bank sound (snd_find's); SND_NULL cuts what the
    entity's channel plays (Quake starts a silent sound there), SND_NONE

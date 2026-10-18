@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <psxgpu.h>
 
@@ -10,16 +11,21 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "monsters.h"
 #include "prof.h"
 #include "q_fixed.h"
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
+#include "stream.h"
 #include "vid.h"
 #include "world.h"
 
 player_t pl;
 int      game_tick_count;
+#ifdef Q1PSX_BENCH
+uint32_t game_ents_cycles, game_ents_max, game_ents_ticks;
+#endif
 int      game_dt = 1;
 int      game_tick_hz = 60;
 int32_t  game_view_lerp[3];
@@ -174,8 +180,10 @@ static particle_t *particle_new(void)
 }
 
 /* R_RunParticleEffect: `count` sparks of `colour` (its 8-shade ramp), as
-   many as the effects level makes of them */
-static void particle_effect(const int32_t org[3], const qw_leaf *leaf, int colour, int count)
+   many as the effects level makes of them, their dir straight up at vz
+   units a second (the protocol's: dir x16 clamped to a char, back /16,
+   x15) */
+static void particle_effect_dir(const int32_t org[3], const qw_leaf *leaf, int colour, int count, int vz)
 {
 	count = fx_count(count);
 	for (int i = 0; i < count; i++) {
@@ -189,7 +197,43 @@ static void particle_effect(const int32_t org[3], const qw_leaf *leaf, int colou
 			p->org[k] = org[k] + crandom(8) * SUB;
 			p->vel[k] = 0;
 		}
+		p->vel[2] = pvel(vz);
 	}
+}
+
+static void particle_effect(const int32_t org[3], const qw_leaf *leaf, int colour, int count)
+{
+	particle_effect_dir(org, leaf, colour, count, 0);
+}
+
+static const qw_leaf *leaf_at(const int32_t org[3]);
+
+/* R_LavaSplash (TE_LAVASPLASH: Chthon rising, falling): a 32 x 32 grid
+   of particles thrown up from a 256-unit square, scaled down to 8 x 8
+   (high; the effects level's count of 64 as a square grid) */
+void game_lava_splash(const int32_t org[3])
+{
+	const qw_leaf *leaf = leaf_at(org);
+	int side = (int) q_isqrt64((uint64_t) fx_count(64)), lo = -side / 2;
+	for (int i = lo; i < lo + side; i++)
+		for (int j = lo; j < lo + side; j++) {
+			particle_t *p = particle_new();
+			if (!p) return;
+			p->die    = game_tick_count + TICKS(200) + (int) (q_rand() & 31) * TICKS(2);
+			p->colour = (uint8_t) (224 + (q_rand() & 7));
+			p->type   = PT_SLOWGRAV;
+			p->leaf   = leaf;
+			int32_t cell = 256 / side;
+			int32_t dir[3] = { j * cell + (int32_t) (q_rand() & 31), i * cell + (int32_t) (q_rand() & 31), 256 };
+			p->org[0] = org[0] + dir[0] * SUB;
+			p->org[1] = org[1] + dir[1] * SUB;
+			p->org[2] = org[2] + (int32_t) (q_rand() & 63) * SUB;
+			int32_t n[3];
+			vnormalize(dir, n);
+			int32_t vel = 50 + (int32_t) (q_rand() & 63);
+			for (int k = 0; k < 3; k++)
+				p->vel[k] = pvel(n[k] * vel / 4096);
+		}
 }
 
 /* R_ParticleExplosion, scaled down from 1024 to 48 (high; 12 to 96 by the
@@ -214,29 +258,52 @@ static void particle_explosion(const int32_t org[3], const qw_leaf *leaf)
 
 /* R_RocketTrail types 0 (rocket: fire) and 1 (grenade: smoke): one
    particle per tick (high; ultra two, medium and low one every 2nd and
-   4th tick), not one per 3 units */
-static void particle_trail_one(const int32_t org[3], const qw_leaf *leaf, int smoke)
+   4th tick), not one per 3 units; R_RocketTrail's other types too
+   (blood, the scrag's tracer) */
+static void particle_trail_one(const int32_t org[3], const qw_leaf *leaf, int type, const int32_t vel[3])
 {
+	static int tracercount;
 	particle_t *p = particle_new();
 	if (!p) return;
-	p->die    = game_tick_count + TICKS(50);
-	p->ramp   = ((int32_t) (q_rand() & 3) + (smoke ? 2 : 0)) << 8;
-	p->colour = ramp3[p->ramp >> 8];
-	p->type   = PT_FIRE;
-	p->leaf   = leaf;
+	p->die  = game_tick_count + TICKS(50);
+	p->leaf = leaf;
 	for (int k = 0; k < 3; k++) {
 		p->org[k] = org[k] + crandom(3) * SUB;
 		p->vel[k] = 0;
 	}
+	switch (type) {
+	case TR_ROCKET:
+	case TR_SMOKE:
+		p->ramp   = ((int32_t) (q_rand() & 3) + (type == TR_SMOKE ? 2 : 0)) << 8;
+		p->colour = ramp3[p->ramp >> 8];
+		p->type   = PT_FIRE;
+		break;
+	case TR_BLOOD:
+	case TR_SLIGHT_BLOOD:
+		p->type   = PT_GRAV;
+		p->colour = (uint8_t) (67 + (q_rand() & 3));
+		break;
+	case TR_TRACER: {                                 /* across the flight, side to side */
+		int32_t d[3];
+		vnormalize(vel, d);
+		p->type   = PT_STATIC;
+		p->colour = (uint8_t) (52 + ((tracercount & 4) << 1));
+		__builtin_memcpy(p->org, org, sizeof p->org);
+		int s = tracercount++ & 1 ? 1 : -1;
+		p->vel[0] = pvel(s * 30 * d[1] / 4096);
+		p->vel[1] = pvel(-s * 30 * d[0] / 4096);
+		break;
+	}
+	}
 }
 
-static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int smoke)
+static void particle_trail(const int32_t org[3], const qw_leaf *leaf, int type, const int32_t vel[3])
 {
 	if (fx_trail_n++ & fx_trail_mask)
 		return;
-	particle_trail_one(org, leaf, smoke);
+	particle_trail_one(org, leaf, type, vel);
 	if (fx_scale > 8)
-		particle_trail_one(org, leaf, smoke);
+		particle_trail_one(org, leaf, type, vel);
 }
 
 /* R_DrawParticles' run: the active list walked, a dead particle (its time
@@ -304,7 +371,8 @@ static void particles_tick(void)
 
 /* ----------------------------------------------------------- projectiles -- */
 
-enum { PJ_FREE, PJ_SPIKE, PJ_SSPIKE, PJ_GRENADE, PJ_ROCKET, PJ_EXPLOSION, PJ_BEAM, PJ_BUBBLE, PJ_BUBBLER };
+enum { PJ_FREE, PJ_SPIKE, PJ_SSPIKE, PJ_GRENADE, PJ_ROCKET, PJ_EXPLOSION, PJ_BEAM, PJ_BUBBLE, PJ_BUBBLER,
+       PJ_ZOMGIB, PJ_WIZSPIKE, PJ_LAVABALL };
 
 #define MAX_PROJ 48
 
@@ -319,7 +387,13 @@ typedef struct {
 	int      die;          /* tick                                         */
 	int      frame_tick;   /* an explosion: when its frame advances        */
 	int      frame;
-	int      hostile;      /* a trap's spike: it hits the player           */
+	int      dmg;          /* a grenade's blast: 120, an ogre's 40         */
+	int      landed;       /* a zombie's gib that missed: its next touch ends it */
+	int16_t  masset;       /* a monster's missile's streamed model         */
+	int16_t  s1, s2;       /* its sounds (bank): a gib's hit and miss, a
+	                          wizard's spike's hit                          */
+	edict_t *owner;        /* what fired it: NULL the player, else a monster
+	                          or a trap (its box passed, the damage its)   */
 	const qw_leaf *leaf;
 } proj_t;
 
@@ -345,8 +419,47 @@ static const qw_leaf *leaf_at(const int32_t org[3])
 	return world_point_leaf(w);
 }
 
+void game_trail(const int32_t org[3], int type, const int32_t vel[3])
+{
+	particle_trail(org, leaf_at(org), type, vel);
+}
+
 static void t_radius_damage(const int32_t org[3], int damage, int self_inflicted);
-static void t_damage(int damage, const int32_t inflictor[3]);
+static void t_damage_x256(int damage, const int32_t inflictor[3]);
+#define t_damage(d, inf) t_damage_x256((d) * 256, inf)
+
+/* SV_Move for a projectile (a point): MOVE_MISSILE for the missiles (the
+   monsters' boxes grown by 15), MOVE_NORMAL for a grenade; its owner's box
+   passed (the player's: entry 0) */
+static void proj_trace(const proj_t *p, const int32_t end[3], trace_t *tr)
+{
+	memset(clip_mover.box, 0, sizeof clip_mover.box);
+	clip_mover.pass       = p->owner ? p->owner->clip : 1;
+	clip_mover.nomonsters = 0;
+	clip_mover.missile    = p->type != PJ_GRENADE && p->type != PJ_ZOMGIB;
+	clip_trace_ent(0, p->org, end, tr);
+}
+
+/* T_Damage (other, the projectile, its owner, damage x256) */
+static void proj_damage(const proj_t *p, edict_t *other, int damage)
+{
+	if (other == ent_player) {
+		t_damage_x256(damage, p->org);
+		return;
+	}
+	edict_t *attacker = p->owner ? p->owner : ent_player;
+	ent_damage_x256(other, attacker, attacker, damage);
+}
+
+/* T_RadiusDamage (the projectile, its owner, damage, ignore): the edicts,
+   then the player (findradius's chain) */
+static void proj_radius_damage(edict_t *owner, const int32_t org[3], int damage, edict_t *ignore)
+{
+	edict_t *attacker = owner ? owner : ent_player;
+	ents_radius_damage(org, damage, attacker, ignore);
+	if (ignore != ent_player)
+		t_radius_damage(org, damage, attacker == ent_player);
+}
 
 /* TE_EXPLOSION + BecomeExplosion at org */
 static void explode_at(const int32_t org[3])
@@ -369,53 +482,75 @@ static void explode_at(const int32_t org[3])
 	}
 }
 
+/* GrenadeExplode, OgreGrenadeExplode (its own sound besides the
+   explosion's) */
+static void grenade_explode(proj_t *p)
+{
+	int32_t org[3] = { p->org[0], p->org[1], p->org[2] };
+	edict_t *owner = p->owner;
+	int dmg = p->dmg;
+	p->type = PJ_FREE;
+	proj_radius_damage(owner, org, dmg, ent_world);
+	if (owner)
+		snd_start(ENT_PROJ + (int) (p - projs), CHAN_VOICE, S_R_EXP3, org, 255, ATTN_NORM);
+	explode_at(org);
+}
+
 /* a missile (rocket / nail) or a grenade for this tick: SV_Physics_Toss */
 static void proj_move(proj_t *p)
 {
-	if (p->type == PJ_GRENADE) {
+	if (p->type == PJ_GRENADE || p->type == PJ_ZOMGIB) {
 		if (p->onground)
 			return;
 		p->grav_acc += 800 * game_dt;                 /* sv_gravity over the tick, exactly */
 		p->vel[2] -= p->grav_acc / GAME_HZ;
 		p->grav_acc %= GAME_HZ;
-		p->roll += DEG(300) / GAME_HZ * game_dt;      /* avelocity '300 300 300' */
-		p->pitch += DEG(300) / GAME_HZ * game_dt;
-		p->yaw += DEG(300) / GAME_HZ * game_dt;
+		if (p->type == PJ_GRENADE) {                  /* avelocity '300 300 300' */
+			p->roll += DEG(300) / GAME_HZ * game_dt;
+			p->pitch += DEG(300) / GAME_HZ * game_dt;
+			p->yaw += DEG(300) / GAME_HZ * game_dt;
+		} else if (!p->landed) {                      /* '3000 1000 2000' */
+			p->pitch += DEG(3000) / GAME_HZ * game_dt;
+			p->yaw += DEG(1000) / GAME_HZ * game_dt;
+			p->roll += DEG(2000) / GAME_HZ * game_dt;
+		}
+	} else if (p->type == PJ_LAVABALL) {              /* '200 100 300' */
+		p->pitch += DEG(200) / GAME_HZ * game_dt;
+		p->yaw += DEG(100) / GAME_HZ * game_dt;
+		p->roll += DEG(300) / GAME_HZ * game_dt;
 	}
 	int32_t end[3];
 	for (int k = 0; k < 3; k++)                       /* x 8 dt / 60 */
 		end[k] = p->org[k] + (int32_t) (((int64_t) p->vel[k] * SUB * 1092 * game_dt) >> 16);
 	trace_t tr;
-	clip_trace(0, p->org, end, &tr);
+	proj_trace(p, end, &tr);
 	int hit = tr.fraction < Q_FIX_ONE || tr.startsolid;
 	for (int k = 0; k < 3; k++)
 		p->org[k] = tr.startsolid ? p->org[k] : tr.endpos[k];
 	p->leaf = leaf_at(p->org);
-	if (p->hostile && !pl.dead && !level_intermission &&             /* a trap's spike on the player's box */
-	    p->org[0] >= pl.pm.pos[0] - 17 * SUB && p->org[0] <= pl.pm.pos[0] + 17 * SUB &&
-	    p->org[1] >= pl.pm.pos[1] - 17 * SUB && p->org[1] <= pl.pm.pos[1] + 17 * SUB &&
-	    p->org[2] >= pl.pm.pos[2] - 25 * SUB && p->org[2] <= pl.pm.pos[2] + 33 * SUB) {
-		int dmg = p->type == PJ_SSPIKE ? 18 : 9;
-		particle_effect(p->org, p->leaf, 73, dmg * 2);   /* spawn_touchblood */
-		t_damage(dmg, p->org);
-		p->type = PJ_FREE;
-		return;
-	}
 	if (!hit)
 		return;
 
-	if (clip_contents(0, p->org) == -6) {             /* CONTENTS_SKY: gone */
+	if (p->type != PJ_GRENADE && p->type != PJ_ZOMGIB &&   /* the missiles' touches: */
+	    clip_contents(0, p->org) == -6) {                  /* CONTENTS_SKY, gone */
 		p->type = PJ_FREE;
 		return;
 	}
-	edict_t *other = ent_from_trace(&tr);
+	edict_t *other = ent_from_trace(&tr);             /* NULL: the world */
 	switch (p->type) {
 	case PJ_SPIKE:
 	case PJ_SSPIKE:
+	case PJ_WIZSPIKE:
 		if (other && other->takedamage) {             /* spike_touch: spawn_touchblood */
-			int dmg = p->type == PJ_SPIKE ? 9 : 18;
+			int dmg = p->type == PJ_SSPIKE ? 18 : 9;
 			particle_effect(p->org, p->leaf, 73, dmg * 2);
-			ent_damage(other, ent_player, ent_player, dmg);
+			proj_damage(p, other, dmg * 256);
+			p->type = PJ_FREE;
+			break;
+		}
+		if (p->type == PJ_WIZSPIKE) {                 /* TE_WIZSPIKE */
+			particle_effect(p->org, p->leaf, 20, 30);
+			snd_start_idx(ENT_TEMP, 0, p->s1, p->org, 255, ATTN_NORM);
 			p->type = PJ_FREE;
 			break;
 		}
@@ -428,11 +563,15 @@ static void proj_move(proj_t *p)
 		}
 		p->type = PJ_FREE;
 		break;
-	case PJ_ROCKET: {                                 /* T_MissileTouch */
-		if (other && other->health)
-			ent_damage(other, ent_player, ent_player, 100 + (int) ((q_rand() & 0x7fff) * 20 / 0x8000));
-		t_radius_damage(p->org, 120, 1);
-		ents_radius_damage(p->org, 120, ent_player, other);
+	case PJ_ROCKET:
+	case PJ_LAVABALL: {                               /* T_MissileTouch */
+		if (other && other->health) {
+			int damg = 100 * 256 + (int) ((q_rand() & 0x7fff) * 20 * 256 / 0x8000);
+			if (other->mdef && other->mdef->kind == MK_SHAMBLER)
+				damg /= 2;
+			proj_damage(p, other, damg);
+		}
+		proj_radius_damage(p->owner, p->org, 120, other ? other : ent_world);
 		int32_t dir[3], org[3];
 		vnormalize(p->vel, dir);
 		for (int k = 0; k < 3; k++)
@@ -441,10 +580,35 @@ static void proj_move(proj_t *p)
 		explode_at(org);
 		break;
 	}
+	case PJ_ZOMGIB: {                                 /* ZombieGrenadeTouch */
+		int key = ENT_PROJ + (int) (p - projs);
+		if (p->landed) {                              /* (its touch now SUB_Remove) */
+			p->type = PJ_FREE;
+			break;
+		}
+		if (other && other->takedamage) {
+			proj_damage(p, other, 10 * 256);
+			snd_start_idx(key, CHAN_WEAPON, p->s1, p->org, 255, ATTN_NORM);
+			p->type = PJ_FREE;
+			break;
+		}
+		snd_start_idx(key, CHAN_WEAPON, p->s2, p->org, 255, ATTN_NORM);
+		p->vel[0] = p->vel[1] = p->vel[2] = 0;
+		p->landed = 1;
+		if (tr.plane_n[2] > 2867)                     /* SV_Physics_Toss: on a floor */
+			p->onground = 1;
+		break;
+	}
 	case PJ_GRENADE: {
-		/* ClipVelocity with overbounce 1.5; rests on a floor when slow */
+		if (other && other->takedamage == DAMAGE_AIM) {   /* GrenadeTouch: on a monster */
+			grenade_explode(p);
+			break;
+		}
+		/* ClipVelocity with overbounce 1.5; rests on a floor when slow
+		   (OgreGrenadeTouch's sound on the voice channel) */
 		int32_t n[3] = { tr.plane_n[0], tr.plane_n[1], tr.plane_n[2] };
-		snd_start(ENT_PROJ + (int) (p - projs), CHAN_WEAPON, S_BOUNCE, p->org, 255, ATTN_NORM);
+		snd_start(ENT_PROJ + (int) (p - projs), p->owner ? CHAN_VOICE : CHAN_WEAPON, S_BOUNCE, p->org, 255,
+		          ATTN_NORM);
 		int32_t dot = (p->vel[0] * n[0] + p->vel[1] * n[1] + p->vel[2] * n[2]) >> 12;
 		int32_t backoff = dot * 3 / 2;
 		for (int k = 0; k < 3; k++)
@@ -576,16 +740,12 @@ static void projs_tick(void)
 			break;
 		case PJ_GRENADE:
 			if (game_tick_count >= p->die) {          /* GrenadeExplode */
-				int32_t org[3] = { p->org[0], p->org[1], p->org[2] };
-				p->type = PJ_FREE;
-				t_radius_damage(org, 120, 1);
-				ents_radius_damage(org, 120, ent_player, 0);
-				explode_at(org);
+				grenade_explode(p);
 				break;
 			}
 			proj_move(p);
 			if (p->type == PJ_GRENADE && !p->onground)
-				particle_trail(p->org, p->leaf, 1);
+				particle_trail(p->org, p->leaf, TR_SMOKE, p->vel);
 			break;
 		default:                                      /* missiles */
 			if (game_tick_count >= p->die) {
@@ -593,8 +753,12 @@ static void projs_tick(void)
 				break;
 			}
 			proj_move(p);
-			if (p->type == PJ_ROCKET)
-				particle_trail(p->org, p->leaf, 0);
+			if (p->type == PJ_ROCKET || p->type == PJ_LAVABALL)
+				particle_trail(p->org, p->leaf, TR_ROCKET, p->vel);
+			else if (p->type == PJ_WIZSPIKE)
+				particle_trail(p->org, p->leaf, TR_TRACER, p->vel);
+			else if (p->type == PJ_ZOMGIB && !p->onground)
+				particle_trail(p->org, p->leaf, TR_SLIGHT_BLOOD, p->vel);
 			break;
 		}
 	}
@@ -630,19 +794,21 @@ static void player_die(void)
 }
 
 /* T_Damage on the player: armor absorbs its share, the rest is health;
-   the kick and the pain face (V_ParseDamage); momentum from the inflictor */
-static void t_damage(int damage, const int32_t inflictor[3])
+   the kick and the pain face (V_ParseDamage); momentum from the inflictor.
+   The damage x256 (the QC's float: a monster's melee, a blast's falloff):
+   save = ceil(armortype x damage), take = ceil(damage - save) */
+static void t_damage_x256(int damage, const int32_t inflictor[3])
 {
 	if (pl.dead || level_intermission)
 		return;
-	int save = (pl.armortype * damage + 99) / 100;        /* ceil */
+	int save = (int) (((int64_t) pl.armortype * damage + 25599) / 25600);   /* ceil */
 	if (save >= pl.armor) {
 		save = pl.armor;
 		pl.armortype = 0;
 		pl.items &= ~(IT_ARMOR1 | IT_ARMOR2 | IT_ARMOR3);
 	}
 	pl.armor -= save;
-	int take = damage - save;
+	int take = (damage - save * 256 + 255) >> 8;          /* ceil */
 	if (take < 0) take = 0;
 
 	/* for the client at the tick's end (damage_report: V_ParseDamage) */
@@ -657,7 +823,7 @@ static void t_damage(int damage, const int32_t inflictor[3])
 		for (int k = 0; k < 3; k++) d[k] = pl.pm.pos[k] - inflictor[k];
 		vnormalize(d, dir);
 		for (int k = 0; k < 3; k++)
-			pl.pm.vel[k] += dir[k] * damage * 8 / 4096;
+			pl.pm.vel[k] += (int32_t) ((int64_t) dir[k] * damage * 8 / (4096 * 256));
 		pl.pm.onground = 0;
 	}
 	if (pl.invincible_finished >= game_tick_count) {      /* invincibility */
@@ -724,30 +890,42 @@ static void damage_report(void)
 	pl.dmg_time  = TICKS(50);                                  /* v_kicktime 0.5 */
 }
 
-/* T_RadiusDamage on the player (the only thing that takes damage) */
+/* CanDamage (the player, from org): a clear line (MOVE_NOMONSTERS) to its
+   origin or to one of four points 15 units around it */
+static int can_damage_player(const int32_t org[3])
+{
+	static const int8_t off[5][2] = { { 0, 0 }, { 15, 15 }, { -15, -15 }, { -15, 15 }, { 15, -15 } };
+	memset(&clip_mover, 0, sizeof clip_mover);
+	clip_mover.nomonsters = 1;
+	for (int i = 0; i < 5; i++) {
+		int32_t p[3] = { pl.pm.pos[0] + off[i][0] * SUB, pl.pm.pos[1] + off[i][1] * SUB, pl.pm.pos[2] };
+		trace_t tr;
+		if (clip_trace_ent(0, org, p, &tr) >= Q_FIX_ONE)
+			return 1;
+	}
+	return 0;
+}
+
+/* T_RadiusDamage's part on the player: from its box's centre (origin + 4
+   units), damage - half the distance (x256: the QC's float), half when it
+   is its own attacker (then its quad), CanDamage's lines */
 static void t_radius_damage(const int32_t org[3], int damage, int self_inflicted)
 {
 	if (pl.dead)
 		return;
-	int32_t centre[3] = { pl.pm.pos[0], pl.pm.pos[1], pl.pm.pos[2] + 4 * SUB };
-	int32_t d[3];
-	for (int k = 0; k < 3; k++) d[k] = org[k] - centre[k];
-	int32_t dist = vlen(d) / SUB;
-	if (dist > damage + 40)
+	int32_t d[3] = { org[0] - pl.pm.pos[0], org[1] - pl.pm.pos[1], org[2] - pl.pm.pos[2] - 4 * SUB };
+	int32_t len = vlen(d);
+	if (len > (damage + 40) * SUB)                    /* findradius */
 		return;
-	int points = damage - dist / 2;
+	int points = damage * 256 - len * (256 / (2 * SUB));
 	if (self_inflicted) {
 		points /= 2;
 		if (game_quad_active())                       /* the attacker's quad: x4 */
 			points *= 4;
 	}
-	if (points <= 0)
+	if (points <= 0 || !can_damage_player(org))
 		return;
-	trace_t tr;                                       /* CanDamage: a clear line */
-	clip_trace(0, org, centre, &tr);
-	if (tr.fraction < Q_FIX_ONE)
-		return;
-	t_damage(points, org);
+	t_damage_x256(points, org);
 }
 
 /* --------------------------------------------------------------- weapons -- */
@@ -959,9 +1137,9 @@ static void launch_spike(const int32_t org[3], const int32_t dir[3], int super)
 	p->leaf = leaf_at(p->org);
 }
 
-/* trap_spikeshooter's launch_spike: its speed set after, a spike that
-   hurts the player (spike_touch on its box) */
-void game_launch_spike(const int32_t org[3], const int32_t dir[3], int speed, int super)
+/* trap_spikeshooter's launch_spike: its speed set after, the trap its
+   owner */
+void game_launch_spike(edict_t *owner, const int32_t org[3], const int32_t dir[3], int speed, int super)
 {
 	proj_t *p = proj_new(super ? PJ_SSPIKE : PJ_SPIKE);
 	if (!p) return;
@@ -970,9 +1148,34 @@ void game_launch_spike(const int32_t org[3], const int32_t dir[3], int speed, in
 		p->vel[k] = dir[k] * speed / 4096;
 	}
 	vectoangles(p->vel, &p->yaw, &p->pitch);
-	p->die     = game_tick_count + TICKS(600);
-	p->leaf    = leaf_at(p->org);
-	p->hostile = 1;
+	p->die   = game_tick_count + TICKS(600);
+	p->leaf  = leaf_at(p->org);
+	p->owner = owner;
+}
+
+void game_monster_missile(int kind, edict_t *owner, const int32_t org[3], const int32_t vel[3], int masset,
+                          int s1, int s2)
+{
+	static const uint8_t type[] = { PJ_GRENADE, PJ_ZOMGIB, PJ_WIZSPIKE, PJ_LAVABALL };
+	static const int16_t life[] = { TICKS(250), TICKS(250), TICKS(600), TICKS(600) };
+	proj_t *p = proj_new(type[kind]);
+	if (!p) return;
+	for (int k = 0; k < 3; k++) {
+		p->org[k] = org[k];
+		p->vel[k] = vel[k];
+	}
+	vectoangles(p->vel, &p->yaw, &p->pitch);
+	p->die    = game_tick_count + life[kind];
+	p->leaf   = leaf_at(p->org);
+	p->owner  = owner;
+	p->dmg    = 40;                                   /* (OgreGrenadeExplode's) */
+	p->masset = (int16_t) masset;
+	p->s1     = (int16_t) s1;
+	p->s2     = (int16_t) s2;
+#ifdef Q1PSX_BENCH
+	printf("proj: kind %d from edict %d at %d %d %d\n", kind, (int) (owner - edicts), (int) vel[0], (int) vel[1],
+	       (int) vel[2]);
+#endif
 }
 
 static void w_fire_spikes(int ox)
@@ -1021,6 +1224,7 @@ static void w_fire_grenade(void)
 	vectoangles(p->vel, &p->yaw, &p->pitch);
 	p->die  = game_tick_count + TICKS(250);
 	p->leaf = leaf_at(p->org);
+	p->dmg  = 120;
 }
 
 static void w_fire_rocket(void)
@@ -1041,6 +1245,67 @@ static void w_fire_rocket(void)
 	p->leaf = leaf_at(p->org);
 }
 
+/* the segment a-b cut to the cube of the asm traces (+-4095 units, the
+   maps' bounds: beyond, the void is solid and holds nothing); 0 if it
+   misses the cube */
+static int cut_to_world(int32_t a[3], int32_t b[3])
+{
+	const int32_t lim = 4095 * SUB;
+	int64_t t0 = 0, t1 = 1 << 16;                     /* the part kept, x65536 */
+	for (int k = 0; k < 3; k++) {
+		int32_t d = b[k] - a[k];
+		if (!d) {
+			if (a[k] < -lim || a[k] > lim)
+				return 0;
+			continue;
+		}
+		int64_t ta = ((int64_t) (-lim - a[k]) << 16) / d, tb = ((int64_t) (lim - a[k]) << 16) / d;
+		if (ta > tb) { int64_t t = ta; ta = tb; tb = t; }
+		if (ta > t0) t0 = ta;
+		if (tb < t1) t1 = tb;
+	}
+	if (t0 > t1)
+		return 0;
+	int32_t na[3], nb[3];
+	for (int k = 0; k < 3; k++) {
+		int64_t d = b[k] - a[k];
+		na[k] = a[k] + (int32_t) (d * t0 >> 16);
+		nb[k] = a[k] + (int32_t) (d * t1 >> 16);
+	}
+	__builtin_memcpy(a, na, sizeof na);
+	__builtin_memcpy(b, nb, sizeof nb);
+	return 1;
+}
+
+/* LightningDamage (from: the player or a shambler): three lines, each
+   thing hit once (its particles, T_Damage); the side lines' offset f is
+   1.06's (p2 - p1, its normalize discarded, then f_x = -f_y and f_y = f_x,
+   the new one, x16): up to 9600 units, mostly far outside the map where
+   nothing is hit. A hit's damage x 4 particles are a quarter of that here. */
+void game_lightning_damage(edict_t *from, const int32_t p1[3], const int32_t p2[3], int damage)
+{
+	int32_t f = -(p2[1] - p1[1]) * 16;                /* 1/8 units: units x16 x8 */
+	edict_t *e1 = 0, *e2 = 0;
+	for (int line = 0; line < 3; line++) {
+		int32_t o = line == 0 ? 0 : line == 1 ? f : -f;
+		int32_t a[3] = { p1[0] + o, p1[1] + o, p1[2] }, b[3] = { p2[0] + o, p2[1] + o, p2[2] };
+		edict_t *hit = ent_world;
+		if (cut_to_world(a, b)) {
+			ai_traceline(a, b, 0, from);
+			if (ai_trace_ent)
+				hit = ai_trace_ent;
+		}
+		if (hit != e1 && hit != e2 && hit->takedamage) {
+			particle_effect_dir(ai_trace_endpos, leaf_at(ai_trace_endpos), 225, damage, 119);
+			ent_damage(hit, from, from, damage);
+		}
+		if (line == 0)
+			e1 = hit;
+		else
+			e2 = hit;
+	}
+}
+
 static void w_fire_lightning(void)
 {
 	if (pl.ammo[AMMO_CELLS] < 1) {
@@ -1051,8 +1316,8 @@ static void w_fire_lightning(void)
 		int cells = pl.ammo[AMMO_CELLS];
 		pl.ammo[AMMO_CELLS] = 0;
 		w_set_current(w_best_weapon());
+		ents_radius_damage(pl.pm.pos, 35 * cells, ent_player, ent_world);
 		t_radius_damage(pl.pm.pos, 35 * cells, 1);
-		ents_radius_damage(pl.pm.pos, 35 * cells, ent_player, 0);
 		return;
 	}
 	int32_t f[3], r[3], u[3], org[3], end[3];
@@ -1067,17 +1332,24 @@ static void w_fire_lightning(void)
 		org[k] = pl.pm.pos[k] + (k == 2 ? 16 * SUB : 0);
 		end[k] = org[k] + 600 * SUB * f[k] / 4096;
 	}
+	/* traceline (org, org + v_forward x 600, TRUE, self): the beam passes
+	   the monsters */
 	trace_t tr;
-	clip_trace(0, org, end, &tr);
+	memset(&clip_mover, 0, sizeof clip_mover);
+	clip_mover.pass       = 1;
+	clip_mover.nomonsters = 1;
+	clip_trace_ent(0, org, end, &tr);
 	/* TE_LIGHTNING2: the beam, 0.2 s; one per player (replaced) */
 	proj_t *b = 0;
 	for (int i = 0; i < proj_top && !b; i++)
-		if (projs[i].type == PJ_BEAM)
+		if (projs[i].type == PJ_BEAM && !projs[i].owner)
 			b = &projs[i];
 	if (!b)
 		b = proj_new(PJ_BEAM);
 	if (b) {
-		b->type = PJ_BEAM;
+		b->type   = PJ_BEAM;
+		b->owner  = 0;
+		b->masset = -1;
 		for (int k = 0; k < 3; k++) {
 			b->org[k] = org[k];
 			b->end[k] = tr.endpos[k];
@@ -1085,16 +1357,34 @@ static void w_fire_lightning(void)
 		b->leaf = leaf_at(org);
 		b->die  = game_tick_count + TICKS(20);
 	}
-	if (tr.fraction < Q_FIX_ONE)                     /* sparks where it hits */
-		particle_effect(tr.endpos, leaf_at(tr.endpos), 225, 4);
-	/* LightningDamage on the beam's line (its two side lines are offset by
-	   the unnormalised beam x 16, the QC's `normalize (f);` discarded: far
-	   outside the map, they hit nothing) */
-	edict_t *hit = ent_from_trace(&tr);
-	if (hit && hit->takedamage) {
-		particle_effect(tr.endpos, leaf_at(tr.endpos), 225, 30);
-		ent_damage(hit, ent_player, ent_player, 30);
+	/* LightningDamage (self.origin, the end + v_forward x 4, self, 30) */
+	int32_t p2[3];
+	for (int k = 0; k < 3; k++)
+		p2[k] = tr.endpos[k] + 4 * SUB * f[k] / 4096;
+	game_lightning_damage(ent_player, pl.pm.pos, p2, 30);
+}
+
+/* TE_LIGHTNING1: a shambler's beam (bolt.mdl, streamed), 0.2 s, one per
+   entity (replaced) */
+void game_monster_beam(edict_t *owner, const int32_t org[3], const int32_t end[3], int masset)
+{
+	proj_t *b = 0;
+	for (int i = 0; i < proj_top && !b; i++)
+		if (projs[i].type == PJ_BEAM && projs[i].owner == owner)
+			b = &projs[i];
+	if (!b)
+		b = proj_new(PJ_BEAM);
+	if (!b)
+		return;
+	b->type   = PJ_BEAM;
+	b->owner  = owner;
+	b->masset = (int16_t) masset;
+	for (int k = 0; k < 3; k++) {
+		b->org[k] = org[k];
+		b->end[k] = end[k];
 	}
+	b->leaf = leaf_at(org);
+	b->die  = game_tick_count + TICKS(20);
 }
 
 /* W_Attack */
@@ -1208,6 +1498,28 @@ void game_damage_player(int damage, const int32_t inflictor[3])
 	t_damage(damage, inflictor);
 }
 
+void game_damage_player_x256(int damage, const int32_t inflictor[3])
+{
+	t_damage_x256(damage, inflictor);
+}
+
+void game_particles(const int32_t org[3], int colour, int count)
+{
+	particle_effect(org, leaf_at(org), colour, count);
+}
+
+void game_muzzle_flash(int key, const int32_t org[3], int yaw)
+{
+	int32_t f[3], r[3], u[3];
+	view_vectors(yaw, 0, f, r, u);
+	dlight_t *dl = dl_alloc(key, game_tick_count);
+	for (int k = 0; k < 3; k++)
+		dl->origin[k] = org[k] + (k == 2 ? 16 * SUB : 0) + 18 * SUB * f[k] / 4096;
+	dl->radius   = 200 + (int) (q_rand() & 31);
+	dl->minlight = 32;
+	dl->die      = game_tick_count + TICKS(10);
+}
+
 int game_intermission(void)
 {
 	return level_intermission;
@@ -1256,6 +1568,26 @@ void game_radius_damage_player(const int32_t org[3], int damage)
 void game_explosion(const int32_t org[3])
 {
 	explode_at(org);
+}
+
+/* the residency pass's (engine/ents.c): a running powerup's sounds (its
+   warnings and its end: streamed, the artifact's), always in while it
+   runs */
+void game_stream_wants(void)
+{
+	static const char *const snd[4][2] = {
+		{ "items/inv2.wav", "items/inv3.wav" }, { "items/protect2.wav", "items/protect3.wav" },
+		{ "items/damage2.wav", 0 }, { "items/suit2.wav", 0 },
+	};
+	const int32_t until[4] = { pl.invisible_finished, pl.invincible_finished, pl.super_damage_finished,
+	                           pl.radsuit_finished };
+	for (int p = 0; p < 4; p++)
+		if (until[p] > game_tick_count)
+			for (int k = 0; k < 2 && snd[p][k]; k++) {
+				int s = snd_find(snd[p][k]);
+				if (s >= SND_STREAM)
+					stream_want(s - SND_STREAM, STREAM_PIN);
+			}
 }
 
 /* CheckPowerups: the warnings 3 s before the end, the end */
@@ -1461,7 +1793,7 @@ void game_new_parms(void)
 static void spawn_at(const int32_t org[3], int yaw)
 {
 	memset(&pl.pm, 0, sizeof pl.pm);
-	memcpy(pl.pm.pos, org, sizeof pl.pm.pos);
+	__builtin_memcpy(pl.pm.pos, org, sizeof pl.pm.pos);
 	pl.pm.pos[2] += SUB;                          /* Quake drops it to the floor */
 	pl.pm.yaw     = yaw;
 	pl.weaponframe = 0;
@@ -1518,7 +1850,7 @@ void game_spawn_level(void)
 	if (game_serverflags) {                       /* return with a rune to start */
 		edict_t *s2 = ent_find_class(0, QE_INFO_PLAYER_START2);
 		if (s2) {
-			memcpy(org, s2->origin, sizeof org);
+			__builtin_memcpy(org, s2->origin, sizeof org);
 			yaw = s2->angle * ANG_TURN / 360;
 		}
 	}
@@ -1680,6 +2012,9 @@ void game_tick(const game_cmd_t *cmd)
 	pl.fire_was = pl.fire;
 	pl.fire     = cmd->fire;
 
+	if (!level_intermission) {                    /* PlayerPreThink: makevectors (self.v_angle) */
+		view_vectors(pl.pm.yaw, pl.pm.pitch, ai_v_forward, ai_v_right, ai_v_up);
+	}
 	if (level_intermission) {                     /* PlayerPreThink: IntermissionThink */
 		level_think(cmd);
 	} else if (pl.dead) {
@@ -1742,7 +2077,17 @@ void game_tick(const game_cmd_t *cmd)
 	}
 	if (!pl.dead && !level_intermission)
 		check_powerups();                         /* PlayerPostThink */
+#ifdef Q1PSX_BENCH
+	uint32_t et0 = prof_now();
+#endif
 	ents_tick();                                  /* the triggers, movers, thinks */
+#ifdef Q1PSX_BENCH
+	uint32_t et = prof_cycles(et0, prof_now());
+	game_ents_cycles += et;
+	if (et > game_ents_max)
+		game_ents_max = et;
+	game_ents_ticks++;
+#endif
 	projs_tick();
 	damage_report();                              /* SV_WriteClientdataToMessage's svc_damage */
 	/* the flashes fade: the bonus 100 % a second, the damage 150 % */
@@ -1795,7 +2140,7 @@ static int calc_roll(void)
 void game_view_pos(int32_t pos[3])
 {
 	if (level_intermission) {                     /* the intermission's spot: view_ofs 0 */
-		memcpy(pos, level_camera, 3 * sizeof *pos);
+		__builtin_memcpy(pos, level_camera, 3 * sizeof *pos);
 		return;
 	}
 	int bob = pl.dead ? 0 : calc_bob();
@@ -1938,13 +2283,13 @@ void game_render(void)
 	pl.muzzleflash = 0;
 	if (pl.dimlight) {                            /* EF_DIMLIGHT: the same key's light */
 		dlight_t *dl = dl_alloc(ENT_PLAYER, game_tick_count);
-		memcpy(dl->origin, pl.pm.pos, sizeof dl->origin);
+		__builtin_memcpy(dl->origin, pl.pm.pos, sizeof dl->origin);
 		dl->radius   = 200 + (int) (q_rand() & 31);
 		dl->minlight = 0;
 		dl->die      = game_tick_count + 1;
 	}
 	for (int i = 0; i < proj_top; i++)
-		if (projs[i].type == PJ_ROCKET) {
+		if (projs[i].type == PJ_ROCKET || projs[i].type == PJ_LAVABALL) {   /* EF_ROCKET */
 			dlight_t *dl = dl_alloc(ENT_PROJ + i, game_tick_count);
 			for (int k = 0; k < 3; k++) dl->origin[k] = projs[i].org[k];
 			dl->radius = 200;
@@ -2000,6 +2345,12 @@ void game_render(void)
 		case PJ_ROCKET:
 			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_MISSILE], 0, p->org, p->yaw, p->pitch, 0, light));
 			break;
+		case PJ_ZOMGIB:
+		case PJ_WIZSPIKE:
+		case PJ_LAVABALL:                             /* the monsters' (streamed: once in) */
+			if (stream_model(p->masset))
+				rl_add_model(p->leaf, rl_model_stream(p->masset, 0, p->org, p->yaw, p->pitch, p->roll, light));
+			break;
 		case PJ_EXPLOSION:
 			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_EXPLOD], p->frame, p->org, 0, 0, 0, 128));
 			break;
@@ -2010,7 +2361,15 @@ void game_render(void)
 			break;
 		case PJ_BEAM: {
 			/* CL_UpdateTEnts: a bolt every 60 units (the cooked bolt is
-			   twice Quake's 30), each rolled at random */
+			   twice Quake's 30), each rolled at random; a shambler's
+			   streamed one every 30 */
+			const qg_model *bolt = &gdata.models[QGM_BOLT];
+			int step = 60;
+			if (p->owner) {
+				if (!stream_model(p->masset))
+					break;
+				step = 30;
+			}
 			int32_t d[3], dir[3];
 			for (int k = 0; k < 3; k++) d[k] = p->end[k] - p->org[k];
 			int yaw, pitch;
@@ -2028,11 +2387,12 @@ void game_render(void)
 			while (at < len) {
 				int32_t w[3] = { org[0] / SUB, org[1] / SUB, org[2] / SUB };
 				const qw_leaf *leaf = world_point_leaf_from(top, w);
-				rl_add_model(leaf, rl_model(&gdata.models[QGM_BOLT], 0, org, yaw, pitch,
-				                            (int) (q_rand() & 4095), 128));
+				int roll = (int) (q_rand() & 4095);
+				rl_add_model(leaf, p->owner ? rl_model_stream(p->masset, 0, org, yaw, pitch, roll, 128)
+				                            : rl_model(bolt, 0, org, yaw, pitch, roll, 128));
 				for (int k = 0; k < 3; k++)
-					org[k] += 60 * SUB * dir[k] / 4096;
-				at += 60 * SUB;
+					org[k] += step * SUB * dir[k] / 4096;
+				at += step * SUB;
 			}
 			break;
 		}

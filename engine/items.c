@@ -5,9 +5,11 @@
  * the fireballs, the explosive boxes, the spike shooters. Each item is
  * dropped to the floor 0.2 s after the map starts (PlaceItem); the player
  * picks it up by touching its box (a unit wider, 15 across: FL_ITEM). The
- * models are the map's own (formats/qgame.h QIM_*), drawn in their leaf
- * with its light, the pickups turning (EF_ROTATE). Strings are id's (the
- * 1.06 QC's, reference/Quake/qw-qc).
+ * boxes (health, ammo, the explosive ones) are the map's own models
+ * (formats/qgame.h QIM_*); the alias models are streamed by their distance
+ * (engine/stream.h: the weapons, keys and runes always in), drawn with the
+ * monsters'; in their leaf with its light, the pickups turning (EF_ROTATE).
+ * Strings are id's (the 1.06 QC's, reference/Quake/qw-qc).
  */
 
 #include <stdio.h>
@@ -21,6 +23,7 @@
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
+#include "stream.h"
 #include "vid.h"
 #include "world.h"
 
@@ -38,18 +41,41 @@ static const int32_t box_weap[2][3]  = { { -16 * CLIP_SUB, -16 * CLIP_SUB, 0 }, 
 static const int32_t box_small[2][3] = { { -16 * CLIP_SUB, -16 * CLIP_SUB, -24 * CLIP_SUB },
                                          { 16 * CLIP_SUB, 16 * CLIP_SUB, 32 * CLIP_SUB } };
 
-/* setmodel: drawn (ents_model_list, at the lists' next rebuild), in the
-   leaf of its box's centre (ent_link) */
-static void set_model(edict_t *e, int qim)
+/* the alias models' streamed assets (tools/qcook/stream.c's names) */
+static const char *const qim_stream[QIM_COUNT] = {
+	[QIM_G_SHOT] = "progs/g_shot.mdl", [QIM_G_NAIL] = "progs/g_nail.mdl", [QIM_G_NAIL2] = "progs/g_nail2.mdl",
+	[QIM_G_ROCK] = "progs/g_rock.mdl", [QIM_G_ROCK2] = "progs/g_rock2.mdl", [QIM_G_LIGHT] = "progs/g_light.mdl",
+	[QIM_ARMOR1] = "progs/armor.mdl", [QIM_ARMOR2] = "progs/armor.mdl#1", [QIM_ARMOR3] = "progs/armor.mdl#2",
+	[QIM_W_S_KEY] = "progs/w_s_key.mdl", [QIM_W_G_KEY] = "progs/w_g_key.mdl",
+	[QIM_M_S_KEY] = "progs/m_s_key.mdl", [QIM_M_G_KEY] = "progs/m_g_key.mdl",
+	[QIM_B_S_KEY] = "progs/b_s_key.mdl", [QIM_B_G_KEY] = "progs/b_g_key.mdl",
+	[QIM_INVULNER] = "progs/invulner.mdl", [QIM_SUIT] = "progs/suit.mdl", [QIM_INVISIBL] = "progs/invisibl.mdl",
+	[QIM_QUADDAMA] = "progs/quaddama.mdl",
+	[QIM_END1] = "progs/end1.mdl", [QIM_END2] = "progs/end2.mdl", [QIM_END3] = "progs/end3.mdl",
+	[QIM_END4] = "progs/end4.mdl",
+	[QIM_FLAME] = "progs/flame.mdl", [QIM_FLAME2] = "progs/flame2.mdl", [QIM_LAVABALL] = "progs/lavaball.mdl",
+	[QIM_TELEPORT] = "progs/teleport.mdl",
+};
+
+/* setmodel: drawn (ents_model_list or ents_streamed_list, at the lists'
+   next rebuild), in the leaf of its box's centre (ent_link): the map's
+   own model, or the streamed one */
+void ent_set_qim(edict_t *e, int qim)
 {
 	e->item_model = world.model_of[qim];
+	e->masset     = -1;
+	if (e->item_model < 0 && qim_stream[qim])
+		e->masset = (int16_t) stream_find(qim_stream[qim]);
 	ent_link(e);
 }
+
+#define set_model ent_set_qim
 
 /* setmodel (self, string_null): not drawn any more */
 static void clear_model(edict_t *e)
 {
 	e->item_model = -1;
+	e->masset     = -1;
 }
 
 /* droptofloor: down to 256 units with the entity's box, hull 1's point
@@ -80,6 +106,7 @@ static int drop_to_floor(edict_t *e)
 		org[k] = tr.endpos[k] + off[k];
 	ent_setorigin(e, org);
 	e->flags |= 512;                              /* FL_ONGROUND */
+	e->groundentity = ent_from_trace(&tr) ? ent_from_trace(&tr) : ent_world;   /* (a lift carries it) */
 	return 1;
 }
 
@@ -458,7 +485,7 @@ static void spikeshooter_use(edict_t *self)
 		ent_sound(self, CHAN_VOICE, snd_find("enforcer/enfire.wav"), 255, ATTN_NORM);
 	else
 		ent_sound(self, CHAN_VOICE, snd_find("weapons/spike2.wav"), 255, ATTN_NORM);
-	game_launch_spike(self->origin, self->movedir, 500, self->spawnflags & SPAWNFLAG_SUPERSPIKE);
+	game_launch_spike(self, self->origin, self->movedir, 500, self->spawnflags & SPAWNFLAG_SUPERSPIKE);
 }
 
 static void shooter_think(edict_t *self)
@@ -496,6 +523,7 @@ static void toss_tick(edict_t *e)
 		return;
 	if (tr.plane_n[2] > 4096 * 7 / 10) {          /* on the ground: stops */
 		e->flags |= 512;
+		e->groundentity = ent_other;
 		e->velocity[0] = e->velocity[1] = e->velocity[2] = 0;
 	} else {                                      /* ClipVelocity, backoff 1 */
 		int32_t back = (e->velocity[0] * tr.plane_n[0] + e->velocity[1] * tr.plane_n[1] +
@@ -617,7 +645,7 @@ void items_physics(edict_t *e)
    outside a side of the 90 degree frustum (|x| <= z; |y| <= z x the
    viewport's rows / 320); the distances to the slanted planes taken
    conservatively (x sqrt 2 as 3 / 2, the vertical's 5 / 4) */
-static int in_view(const int32_t org[3], int radius_vu)
+int ent_in_view(const int32_t org[3], int radius_vu)
 {
 	int32_t v[3] = { org[0] * QW_VSCALE / CLIP_SUB, org[1] * QW_VSCALE / CLIP_SUB, org[2] * QW_VSCALE / CLIP_SUB };
 	const int16_t *r = r_state.rot;
@@ -646,11 +674,11 @@ void items_render(void)
 		edict_t *e = &edicts[ents_model_list[i]];
 		if (!e->inuse || e->item_model < 0)
 			continue;
-		const qw_leaf *leaf = e->leaves[0];
+		const qw_leaf *leaf = ent_model_leaf(e);
 		if (!leaf || leaf->visframe != vis)
 			continue;
 		const qg_model *m = &world.models[e->item_model];
-		if (!in_view(e->origin, m->radius))
+		if (!ent_in_view(e->origin, m->radius))
 			continue;
 		int frame = 0, flame = e->cnt && e->class != QE_MISC_TELEPORTTRAIN;   /* (a train's cnt: its own) */
 		if (flame)                                /* an animated group, 10 a second, its phase */

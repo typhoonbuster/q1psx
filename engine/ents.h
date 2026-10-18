@@ -79,25 +79,52 @@ struct edict_s {
 	int32_t  absmin[3], absmax[3];   /* in the world, a unit wider (SV_LinkEdict) */
 	int32_t  velocity[3];    /* units per second (a pusher's: its travel's)    */
 	int32_t  movedir[3];     /* x4096                                          */
-	int32_t  pos1[3], pos2[3];       /* the mover's ends                        */
-	int32_t  dest1[3], dest2[3];     /* the secret door's stops                 */
-	int32_t  finaldest[3];
-	int32_t  move_from[3];   /* SUB_CalcMove, exact in ticks: the position at  */
-	int32_t  move_delta[3];  /* ltime move_t0 plus delta x (ltime - t0) / ticks */
+	union {
+		struct {             /* a mover's (movers.c, subs.qc's SUB_CalcMove)   */
+			int32_t pos1[3], pos2[3];        /* the mover's ends                */
+			int32_t dest1[3], dest2[3];      /* the secret door's stops         */
+			int32_t finaldest[3];
+			int32_t move_from[3];  /* SUB_CalcMove, exact in ticks: the position at  */
+			int32_t move_delta[3]; /* ltime move_t0 plus delta x (ltime - t0) / ticks */
+		};
+		struct {             /* a monster's (monsters.c, ai.c), a gib's, a head's */
+			edict_t *oldenemy, *goalentity, *movetarget;
+			int32_t  pausetime, search_time, show_hostile, pain_finished;   /* ticks */
+			const struct mdef_s *mdef;       /* its kind (monsters.c)           */
+			uint16_t ang[3];       /* pitch, yaw, roll: 65536 a turn (anglemod's) */
+			int16_t  avel[3];      /* MOVETYPE_BOUNCE's avelocity, degrees a second */
+			int16_t  ideal_yaw;    /* degrees (vectoyaw's whole ones)              */
+			int16_t  yaw_speed;    /* degrees a think                             */
+			int16_t  view_ofs_z;   /* 1/CLIP_SUB units                            */
+			uint16_t mstate;       /* the next state of its kind's table          */
+			uint8_t  lefty, attack_state, deadflag, waterlevel;
+			int8_t   watertype;
+			uint8_t  ammo_shells, ammo_nails, ammo_rockets, ammo_cells;
+			int32_t  waitmin;      /* the wizard's next idle sound (ticks)        */
+			int32_t  water_at[3];  /* where its water level was last taken (the
+			                          same place: the same contents, no check) */
+			uint8_t  inpain;       /* the zombie's (zombie.qc)                    */
+			uint8_t  trail;        /* a thrown model's trail (game_trail's type + 1) */
+			uint8_t  mpad;
+		};
+	};
 	int32_t  move_t0, move_ticks;
 	int32_t  nextthink;      /* tick (a pusher's: its ltime), <= 0 = none      */
 	int32_t  ltime;          /* a pusher's local time, ticks                   */
 	int32_t  attack_finished;
 	ent_fn   think, think1, use, touch, blocked, th_die, th_pain;
 	edict_t *owner, *enemy, *trigger_field;
+	edict_t *groundentity;   /* what it stands on (a monster, a tossed thing):
+	                            a pusher carries it along                 */
 	int16_t  speed, wait, delay, lip, height, dmg, health, max_health;
-	int16_t  count, style, t_length, t_width, cnt, pad1;
+	int16_t  count, style, t_length, t_width, cnt;
+	int16_t  touch_slot;     /* its place in the touch list (engine/ents.c), -1 */
 	uint16_t target, targetname, killtarget, message, map;   /* strings (world_string) */
 	uint16_t classname;
 	const char *msgtext;     /* a message the QC sets (the map's: `message`)   */
 	const char *netname;     /* an item's name ("You got the ...")             */
 	int16_t  noise, noise1, noise2, noise3, noise4;   /* bank sounds (snd_find) */
-	int16_t  pad2;
+	int16_t  masset;         /* a streamed model (engine/stream.h), -1 none    */
 	uint32_t items;          /* a key door's key (IT_KEY1 / IT_KEY2), an item's */
 	uint32_t flags;
 	int32_t  aflag;          /* an item's amount (ammo, health, armor value)   */
@@ -150,6 +177,8 @@ void     ent_link(edict_t *e);                  /* SV_LinkEdict: setorigin / set
 void     ent_setmodel(edict_t *e, int model);   /* setmodel: the brush model's box */
 void     ent_setsize(edict_t *e, const int32_t mins[3], const int32_t maxs[3]);
 void     ent_setorigin(edict_t *e, const int32_t org[3]);
+const qw_leaf *ent_model_leaf(edict_t *e);      /* an alias model's: its centre's leaf (NULL:
+                                                   outside), found once it is drawn */
 void     ent_wake(edict_t *e);                  /* on the tick's list (a think or a move set) */
 edict_t *ent_find(edict_t *from, uint16_t targetname);   /* find(from, targetname, s) */
 edict_t *ent_find_class(edict_t *from, int cls);         /* find(from, classname, s)  */
@@ -163,8 +192,14 @@ void     init_trigger(edict_t *self);
 void     sub_null(edict_t *self);
 void     sub_remove(edict_t *self);
 
-/* combat.qc T_Damage on any edict (the player's goes to the game) */
+/* combat.qc T_Damage on any edict (the player's goes to the game): the
+   damage whole, or x256 (the QC's float damage, rounded up at the end) */
 void     ent_damage(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage);
+void     ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage);
+
+/* SV_TouchLinks for any edict: the triggers its box overlaps touched
+   (other = it) */
+void     ents_touch_links(edict_t *e);
 
 /* the edict a trace hit (its `ent`), NULL for the world */
 edict_t *ent_from_trace(const trace_t *tr);
@@ -173,22 +208,27 @@ edict_t *ent_from_trace(const trace_t *tr);
    touch, other = the player */
 void     ents_impact(int ent);
 
-/* T_RadiusDamage on the edicts (the player's is the game's): findradius
-   from `org` (1/8 units), damage - half the distance to each box centre,
-   half on the attacker, CanDamage's clear line */
+/* T_RadiusDamage on the edicts (the player's is the game's, after them:
+   findradius's chain runs from the last edict to the player): from `org`
+   (1/8 units), damage - half the distance to each box centre (x256), half
+   on the attacker and on a shambler, CanDamage's clear line */
 void     ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edict_t *ignore);
 
 /* the game's damage on the player (engine/game.c t_damage): inflictor's
-   box centre for the kick and the momentum, or NULL */
+   box centre for the kick and the momentum, or NULL; whole, or x256 */
 void game_damage_player(int damage, const int32_t inflictor[3]);
+void game_damage_player_x256(int damage, const int32_t inflictor[3]);
 
 /* the class files' spawn functions, the cooked entity in hand */
 void triggers_spawn(edict_t *e, const qw_ent *q);
 void movers_spawn(edict_t *e, const qw_ent *q);
+void movers_door_go_down(edict_t *self);         /* (boss.qc's lightning_fire) */
 void level_spawn(edict_t *e, const qw_ent *q);
 void items_spawn(edict_t *e, const qw_ent *q);   /* items, flames, fireballs, boxes, traps */
 void items_physics(edict_t *e);                  /* MOVETYPE_TOSS (the fireballs) */
 void items_render(void);                         /* the models into the render list */
+void ent_set_qim(edict_t *e, int qim);           /* setmodel: a map's own model (QIM_*),
+                                                    or its streamed one */
 int  ents_model_frame(int model);                /* the frame of the drawn edict with brush model
                                                     `model` (its textures' alternates), 0 none */
 
@@ -196,5 +236,23 @@ int  ents_model_frame(int model);                /* the frame of the drawn edict
    fireball: item_model >= 0), rebuilt with the other lists */
 extern uint16_t ents_model_list[];
 extern int      ents_num_models;
+
+/* the live edicts with a streamed model or a monster's kind (masset >= 0,
+   mdef: engine/monsters.c) */
+extern uint16_t ents_streamed_list[];
+extern int      ents_num_streamed;
+
+/* the residency pass (engine/stream.c): every asset the edicts use, wanted
+   by their distance from the player */
+void ents_stream_wants(void);
+
+/* a model about `org` (1/CLIP_SUB units) of radius `radius_vu` (vertex
+   units) may be in the view's frustum (items.c) */
+int  ent_in_view(const int32_t org[3], int radius_vu);
+
+#ifdef Q1PSX_BENCH
+int  ents_num_touch(void);             /* the touch list's length (the bench's) */
+void ents_area_stats(void);            /* the area nodes' lists (the bench's) */
+#endif
 
 #endif

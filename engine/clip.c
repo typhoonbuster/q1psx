@@ -143,6 +143,8 @@ static void set_endpos(trace_t *tr, int32_t f)
    side; anything that resolves the trace (an impact, or never leaving
    solid) ends it at once, as Quake's chain of "return false" does. One
    hull from one root: the world's, or a brush model's in its own space. */
+static int tr_sight;    /* the sweep a line of sight (clip_mover_t's sight) */
+
 static q_fixed trace_core(int hull, hnum root, const int32_t start[3], const int32_t end[3],
                           trace_t *tr)
 {
@@ -204,6 +206,10 @@ static q_fixed trace_core(int hull, hnum root, const int32_t start[3], const int
 			   time like Quake; the sweep's start is the last resort */
 			int32_t step = (uint32_t) (split[nsplit].f2 - split[nsplit].f1) / 10 + 1;
 			set_endpos(tr, fm);
+			if (tr_sight) {                      /* a line of sight: as found */
+				tr->fraction = fm >> (F_SHIFT - Q_FIX_SHIFT);
+				break;
+			}
 			for (int guard = 0; hull_contents(hull, root, tr->endpos) == QW_CONTENTS_SOLID; guard++) {
 				fm = guard < 16 && fm > step ? fm - step : 0;
 				set_endpos(tr, fm);
@@ -273,13 +279,35 @@ static qw_plane box_planes[6] = {
 	{ { 0, 0, 4096 }, 2, 0, 0 }, { { 0, 0, 4096 }, 2, 0, 0 },
 };
 
+clip_mover_t clip_mover;
+
+/* MOVE_MISSILE's mins2 / maxs2 */
+static const int32_t missile_box[6] = { -15 * CLIP_SUB, -15 * CLIP_SUB, -15 * CLIP_SUB,
+                                         15 * CLIP_SUB,  15 * CLIP_SUB,  15 * CLIP_SUB };
+
 /* SV_Move: the world, then (SV_ClipToLinks) every listed brush model whose
    box the swept box reaches, traced in the model's space (start and end
    less its origin, the hull of the mover's size) and taken when it is hit
    first or the sweep starts inside it; a start inside any of them marks
-   the trace. */
-q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+   the trace. The entries are tried by area node (clip.h): the nodes the
+   swept box reaches, in index order (Quake's depth-first walk), each one's
+   list in order. The mover's box (`box`: mins[3], maxs[3]) grows the
+   boxes, `box2` (MOVE_MISSILE's, else the same) bounds the sweep and grows
+   the monsters' boxes; all entries but `pass` (index + 1), the boxes left
+   out with `nomonsters`. */
+/* a node as the asm walks hold it (clip_box_node0's: bit 0 set, a leaf) */
+static hnum node0_hnum(uint32_t node)
 {
+	if (node & 1)
+		return ((const qw_leaf *) (uintptr_t) (node - 1))->contents;
+	return (hnum) (uintptr_t) node;
+}
+
+static q_fixed trace_move(int hull, const int32_t box[6], const int32_t box2[6], int pass,
+                          int nomonsters, uint32_t root0, int sight, const int32_t start[3],
+                          const int32_t end[3], trace_t *tr)
+{
+	tr_sight = sight;
 	if (!world.clipnodes || !world.root) {
 		memset(tr, 0, sizeof *tr);
 		tr->fraction = Q_FIX_ONE;
@@ -288,7 +316,7 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 			tr->endpos[i] = end[i];
 		return tr->fraction;
 	}
-	trace_core(hull, root_of(hull), start, end, tr);
+	trace_core(hull, hull == 0 && root0 ? node0_hnum(root0) : root_of(hull), start, end, tr);
 	if (!clip_num_bmodels)
 		return tr->fraction;
 
@@ -296,53 +324,88 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 	for (int k = 0; k < 3; k++) {
 		int32_t lo = start[k] < end[k] ? start[k] : end[k];
 		int32_t hi = start[k] < end[k] ? end[k] : start[k];
-		bmin[k] = lo + hull_box[hull][k] - CLIP_SUB;
-		bmax[k] = hi + hull_box[hull][k + 3] + CLIP_SUB;
+		bmin[k] = lo + box2[k] - CLIP_SUB;
+		bmax[k] = hi + box2[k + 3] + CLIP_SUB;
 	}
-	for (int i = 0; i < clip_num_bmodels; i++) {
-		const clip_bmodel_t *cb = &clip_bmodels[i];
-		const qw_bmodel     *bm = cb->bm;
-		int k;
-		for (k = 0; k < 3; k++)
-			if (bmin[k] > cb->absmax[k] || bmax[k] < cb->absmin[k])
-				break;
-		if (k < 3)
+	uint32_t reach = 1;                           /* the area nodes the box reaches */
+	for (int a = 0; a < CLIP_AREAS && (reach >> a); a++) {
+		if (!((reach >> a) & 1))
 			continue;
-		int32_t ls[3], le[3];
-		for (k = 0; k < 3; k++) {
-			ls[k] = start[k] - cb->origin[k];
-			le[k] = end[k] - cb->origin[k];
+		const clip_area_t *an = &clip_areas[a];
+		if (!(an->flags & CLIP_AREA_LEAF)) {
+			int axis = an->flags & CLIP_AREA_Y;
+			if (bmax[axis] > an->dist)
+				reach |= 2u << a;                     /* children[0]: the next node */
+			if (bmin[axis] < an->dist)
+				reach |= 1u << an->child1;
 		}
-		trace_t t;
-		if (!bm) {                                /* a SOLID_BBOX entity: its box grown by */
-			for (k = 0; k < 3; k++) {             /* the mover's (SV_HullForEntity) */
-				box_planes[2 * k].dist     = (cb->absmax[k] - cb->origin[k] - hull_box[hull][k]) * 4096;
-				box_planes[2 * k + 1].dist = (cb->absmin[k] - cb->origin[k] - hull_box[hull][k + 3]) * 4096;
+		for (uint16_t link = an->head; link; link = CLIP_ENTRY(link)->next) {
+			const clip_bmodel_t *cb = CLIP_ENTRY(link);
+			const qw_bmodel     *bm = cb->bm;
+			int i = cb->self - 1;
+			int k;
+			if (i + 1 == pass || ((uintptr_t) bm <= 1 && nomonsters))
+				continue;
+			const int32_t *lo = bmin, *hi = bmax;     /* (a blocked line of sight: */
+			if (sight && tr->fraction < Q_FIX_ONE)    /* the entries holding its start) */
+				lo = hi = start;
+			for (k = 0; k < 3; k++)
+				if (lo[k] > cb->absmax[k] || hi[k] < cb->absmin[k])
+					break;
+			if (k < 3)
+				continue;
+			int32_t ls[3], le[3];
+			for (k = 0; k < 3; k++) {
+				ls[k] = start[k] - cb->origin[k];
+				le[k] = end[k] - cb->origin[k];
 			}
-			const qw_clipnode *wc = world.clipnodes;
-			const qw_plane    *wp = world.planes;
-			world.clipnodes = box_clipnodes;      /* (the hull's tables, as the asm swaps s1 / s2) */
-			world.planes    = box_planes;
-			trace_core(1, 0, ls, le, &t);
-			world.clipnodes = wc;
-			world.planes    = wp;
-		} else {
-			hnum root = hull == 0 ? (hnum) bm->root : hull == 2 ? bm->hull2 : bm->hull1;
-			trace_core(hull, root, ls, le, &t);
-		}
-		for (k = 0; k < 3; k++)
-			t.endpos[k] += cb->origin[k];
-		if (t.allsolid || t.startsolid || t.fraction < tr->fraction) {
-			int was_startsolid = tr->startsolid;
-			t.ent = (int16_t) (i + 1);
-			*tr   = t;
-			if (was_startsolid)
+			trace_t t;
+			if ((uintptr_t) bm <= 1) {                /* a SOLID_BBOX entity: its box grown by */
+				const int32_t *g = bm ? box2 : box;   /* the mover's (SV_HullForEntity) */
+				for (k = 0; k < 3; k++) {
+					box_planes[2 * k].dist     = (cb->absmax[k] - cb->origin[k] - g[k]) * 4096;
+					box_planes[2 * k + 1].dist = (cb->absmin[k] - cb->origin[k] - g[k + 3]) * 4096;
+				}
+				const qw_clipnode *wc = world.clipnodes;
+				const qw_plane    *wp = world.planes;
+				world.clipnodes = box_clipnodes;      /* (the hull's tables, as the asm swaps s1 / s2) */
+				world.planes    = box_planes;
+				trace_core(1, 0, ls, le, &t);
+				world.clipnodes = wc;
+				world.planes    = wp;
+			} else {
+				hnum root = hull == 0 ? (hnum) bm->root : hull == 2 ? bm->hull2 : bm->hull1;
+				trace_core(hull, root, ls, le, &t);
+			}
+			for (k = 0; k < 3; k++)
+				t.endpos[k] += cb->origin[k];
+			if (t.allsolid || t.startsolid || t.fraction < tr->fraction) {
+				int was_startsolid = tr->startsolid;
+				t.ent = (int16_t) (i + 1);
+				*tr   = t;
+				if (was_startsolid)
+					tr->startsolid = 1;
+			} else if (t.startsolid) {
 				tr->startsolid = 1;
-		} else if (t.startsolid) {
-			tr->startsolid = 1;
+			}
 		}
 	}
 	return tr->fraction;
+}
+
+q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+{
+	return trace_move(hull, hull_box[hull], hull_box[hull], 1, 0, 0, 0, start, end, tr);   /* the player's box passed */
+}
+
+q_fixed clip_trace_ent(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+{
+	uint32_t root0 = clip_mover.root0;            /* (one sweep's) */
+	int      sight = clip_mover.sight;
+	clip_mover.root0 = 0;
+	clip_mover.sight = 0;
+	return trace_move(hull, clip_mover.box, clip_mover.missile ? missile_box : clip_mover.box,
+	                  clip_mover.pass, clip_mover.nomonsters, root0, sight, start, end, tr);
 }
 
 int clip_contents(int hull, const int32_t p[3])
@@ -350,4 +413,41 @@ int clip_contents(int hull, const int32_t p[3])
 	if (!world.clipnodes || !world.root)
 		return QW_CONTENTS_EMPTY;
 	return hull_contents(hull, root_of(hull), p);
+}
+
+uint32_t clip_box_node0(const int32_t mins[3], const int32_t maxs[3])
+{
+	if (!world.clipnodes || !world.root)
+		return 0;
+	uintptr_t n = (uintptr_t) root_of(0);
+	while (!(n & 1)) {
+		const qw_node  *nd = (const qw_node *) n;
+		const qw_plane *pl = plane_of(0, (hnum) n);
+		int32_t lo, hi;                           /* n.p - dist at the box's extremes */
+		if (pl->type < 3) {
+			lo = mins[pl->type] * 4096 - pl->dist;
+			hi = maxs[pl->type] * 4096 - pl->dist;
+		} else {
+			lo = hi = -pl->dist;
+			for (int k = 0; k < 3; k++) {
+				int32_t a = pl->n[k] * mins[k], b = pl->n[k] * maxs[k];
+				lo += a < b ? a : b;
+				hi += a < b ? b : a;
+			}
+		}
+		if (lo >= 0)
+			n = nd->child[0];
+		else if (hi < 0)
+			n = nd->child[1];
+		else
+			break;
+	}
+	return (uint32_t) n;
+}
+
+int clip_contents_node0(uint32_t node, const int32_t p[3])
+{
+	if (!world.clipnodes || !world.root || !node)
+		return QW_CONTENTS_EMPTY;
+	return hull_contents(0, node0_hnum(node), p);
 }

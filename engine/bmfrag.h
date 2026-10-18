@@ -23,12 +23,14 @@
 
 #include "ents.h"
 
-/* At a level's load, before its entities spawn: this level's caches to
-   make. After each spawn (the load's, a death's): room for each drawn brush
-   model's pieces in the level arena, once a level (a model without room
-   keeps the old way: drawn whole in one leaf), and the models cut where
-   they stand. */
+/* At a level's load: bmf_level first (this level's caches to make), then,
+   once the map's entities are loaded and before the stream manager takes
+   the level arena's rest, bmf_reserve (room for the pieces of every model
+   the entities name and the cook drew; a model without room keeps the old
+   way: drawn whole in one leaf). After each spawn (the load's, a death's):
+   bmf_load, the drawn models cut where they stand. */
 void bmf_level(void);
+void bmf_reserve(void);
 void bmf_load(void);
 
 /* This level's caches by brush model (NULL before the load, or without
