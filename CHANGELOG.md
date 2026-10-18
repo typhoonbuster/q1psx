@@ -1196,3 +1196,19 @@ followed by R0-R4.
   rate cap (60 / 45 / 30 / 15) in Graphics. The tick rate measured: 21 k
   to 48 k cycles a tick, a lower rate would save 2 to 4 % of a frame: not
   done.
+- **The fourth optimization pass** (after the second play test: still too slow, no monsters yet). §34: a PC sampler in the bench (`SAMPLE=1`),
+  the emulator's cost model re-measured (byte and halfword loads 3
+  cycles, word loads 2), pktview's occlusion statistics. Display lists
+  identical: the dynamic lights' node marking descends only the light's
+  side of a far plane (R_MarkLights), the brush models' leaf search starts
+  from their top node (e1m1 up to -23 %), the lights' squared distance by
+  the GTE's SQR, a polygon wholly behind the near plane or off one side of
+  the screen no longer goes through the slow path (the view models' backs:
+  the game bench -3.9 %, start -2.4 %).
+- **The tick rate setting** (2026-10-18). §35: 10, 20, 30, 32 (the
+  default) or 60 game ticks a second in Graphics; the time stays in 60ths,
+  a tick covers its polls and the rates act over them (pmove C and asm,
+  gravity's midpoint over a long tick so a jump keeps its height), the
+  view turns every vblank and the camera is drawn between two ticks. The
+  simulation's cost a vblank -31 % at 32 Hz, -64 % at 10.
+

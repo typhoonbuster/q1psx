@@ -167,8 +167,12 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 
 ## 5. Frame structure
 
-- **Simulation** runs at a fixed 60 Hz tick (Quake is tick-based). If a frame
-  overruns, the sim catches up; rendering never slows the game clock.
+- **Simulation** is tick-based (Quake). The game's time is in 60ths of a
+  second, counted by the vblank's polls; a tick runs every 60 / rate polls
+  (the tick rate setting: 10, 20, 30, 32 or 60), over the polls since the
+  last one, so a frame that overruns costs the game clock nothing. The view
+  turns on every poll; below 60 Hz the camera is drawn between the last two
+  ticks (`docs/porting-notes.md` §35).
 - **Rendering** is double-buffered: the CPU builds frame N+1's packets in
   arena B while the GPU DMA draws frame N from arena A. One `VSync` per frame
   is the target; an overrun shows as 30 fps on the overlay, never as tearing.
@@ -312,6 +316,10 @@ same viewpoint. It is not a second renderer, only the walk logic.
     (`docs/porting-notes.md` §21.1).
   - GPU fill and the final "is it 60 fps and clean" verdict stay on the GUI /
     real hardware.
+- **PC sampler** (`SAMPLE=1`): root counter 1 at 2 kHz counts the
+  interrupted address by 32-byte block over the measured frames. PCSX-Redux
+  takes interrupts only between its compiled blocks, so a sample stands for
+  the basic block that branched to it (`docs/porting-notes.md` §34.1).
 
 ## 10. Proposed roadmap (after phases 2-6)
 

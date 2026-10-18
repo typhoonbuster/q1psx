@@ -3724,9 +3724,160 @@ baked into their records, so the animation is done in VRAM:
   frame would save about half of that, 2 to 4 %; the renderer is the other
   90 %. Against that: the physics (pmove.s) and every timing of the game
   are built on 1/60 s ticks, and a camera moved 32 times a second needs
-  interpolating to stay smooth at 60 fps (a tick of lag). Not done: too
-  little for the cost. (A level's first items' drop, all in one tick 0.2 s
-  after the spawn, costs 270 k cycles once.)
+  interpolating to stay smooth at 60 fps (a tick of lag). Not done at
+  first ("too little for the cost"); the rule is that every cycle
+  counts: done the next day, §35. (The bench's worst tick, 270 k cycles,
+  is the bench's own `centerprint:` line written through the BIOS's TTY
+  when the walk crosses the skill hall's trigger, §34: the release build
+  prints nothing there.)
 - **pkt** in the bench lines: the most packet arena bytes a frame used, and
   FULL when a frame's walk ran out of it (its nearest records lost). The
   128 spawn views peak at 64.8 KB of the 94 KB.
+
+## §34 — The fourth optimization pass: measured with a PC sampler (2026-10-18)
+
+After the second play test: still too slow, and no monsters yet.
+
+### 34.1 Tools
+
+- **A PC sampler** (`SAMPLE=1 scripts/bench.sh`, CMake
+  `Q1PSX_BENCH_SAMPLE`): root counter 1 interrupts 2000 times a second over
+  the bench's measured frames (and the tick and tick-rate runs); the
+  handler counts the interrupted address (EPC) by 32-byte block of the
+  code; `prof_sample_print` writes every block hit on `samples` lines.
+  Symbolized offline with addr2line (and gas listings, `-Wa,-alcmn`, for
+  the addresses inside the asm macros).
+- **What a sample means on PCSX-Redux**: the emulator takes interrupts
+  only between its compiled blocks (the dynarec ends a block at every
+  branch; the interpreter checks at taken branches and jumps). A sample
+  at X stands for the time of the block that branched (or fell through)
+  to X, not for X: a sample is credited to the basic block ending at a
+  branch to its address.
+- **The cost model, re-measured** (micro-benchmarks, this build of
+  PCSX-Redux): `lw` 2 cycles, `lbu` / `lhu` / `lh` 3, `sw` and `swc2` 3,
+  `lwc2` about 2.4, ALU 2; a load from RAM costs what one from the
+  scratchpad does (no wait states). Byte and halfword loads cost more than
+  word loads here, and the console's RAM reads cost more than the
+  emulator says: unpacking a record's corner offsets with four `lbu`
+  instead of a `lw` and shifts saved 2 cycles a polygon on the emulator
+  and added three RAM reads on the console. Not kept.
+- **pktview `PKTVIEW_OCCL=1`**: per dumped frame, the polygons that end
+  with no pixel of their own, and why (off the draw area, under 2 x 2 px,
+  painted over), and the overdraw.
+
+### 34.2 Where the time goes
+
+- **Start's twelve views** (the release build's first map): the renderer
+  is 98 % of the busy time; the slow path (near and big polygons) 43 %,
+  most of it in its triangle loop (pop, unpack, off-screen test, three
+  edge tests: about 250 cycles a triangle, a fifth of them culled off
+  screen). View 0, the spawn, 658 k cycles: two vblanks.
+- **The game bench** (start's spawn, each weapon fired): the view model
+  costs 29 k to 117 k cycles a frame (4 to 14 %; the super shotgun the
+  most), the dynamic lights about 9 % of the samples when a weapon fires.
+- **A tick**: 21 k cycles standing or walking, 48 k firing the nailgun;
+  the collision traces are 40 to 48 % of it (the hull walk itself),
+  the player's touch pass 9 to 13 %.
+- **What is drawn for nothing** (start v0): 1253 polygons, 850 with a
+  pixel, 580 seen in the end; 263 under 2 x 2 px (far geometry inside
+  bigger records), 33 off the draw area; overdraw 1.15 to 1.5. Rejecting
+  the records whose sphere projects under 5 px saved 1.4 % on v0, cost
+  0.1 to 0.3 % on eight views of ten (the test on every record), and
+  changed 119 pixels on v0: not kept (a candidate for a graphics option,
+  the rule for anything that changes the picture, if it can be
+  made free when off).
+- **The bench's worst tick** (270 k to 330 k cycles once a run): 47 of its
+  53 samples in the BIOS: the bench's `centerprint:` line printed through
+  the TTY when the walk crosses the skill hall's trigger. The release
+  build prints nothing there.
+
+### 34.3 Changes (display lists identical: start's views, the game bench)
+
+- **R_MarkLights' one-side descent.** The dynamic lights' node marking
+  descended both children of every node it reached; Quake's descends only
+  the light's side of a plane farther than the radius. Here: farther than
+  radius + DL_PRUNE (64 vertex units), a margin over dl_sqrt's and the
+  roundings' error, so no vertex on the far side could have taken any
+  light. -4 k cycles a frame with one light, -10 to -14 k with several.
+- **A brush model's top node.** camera_side_leaf (§33) descended from the
+  root for each multi-leaf model in sight every frame. At link time the
+  model now keeps the deepest node whose region holds every point the
+  search may take (its box, 2 units beyond, truncated to units, a unit to
+  spare: world_box_topnode, the same integer test as the descent); the
+  search starts there. Checked against the root's descent on the 32 maps
+  (0 differences): e1m1's views with doors in sight -24.7 k cycles (-3 to
+  -23 %).
+- **The dynamic lights' squared distance on the GTE**: SQR squares the
+  vertex's offset's three terms at once (sf 0, exact) where three mult /
+  mflo pairs waited on HI / LO: -1.2 k cycles a frame with one light,
+  -19 k with the rocket's explosions.
+- **A polygon wholly behind the near plane** (CAREFUL's near exit, the
+  farthest corner's SZ under SP_ZNEAR too: the GTE's SZ is 0 behind the
+  eye) was sent to the slow path, which projected its corners and drew
+  nothing. Now skipped: the view models' backs (clipped at 5 units, as
+  Quake does) took that path every frame: -8.8 k to -62.6 k cycles on the
+  game bench.
+- **A polygon wholly off one side of the screen** (CAREFUL's far exits,
+  no corner near) is tested with the slow path's own rule (all x < 0,
+  all y < 0, all x >= 320, all y >= 240: its triangles would all be
+  culled; a saturated corner lies on the same side as its exact
+  projection) and skipped. The sign bits of the packed SXY words carry the
+  < 0 tests; `w - (240 << 16)` has the sign of y - 240 and
+  `(w << 16) - (320 << 16)` that of x - 320. Of the slow path's calls,
+  30 to 40 % drew nothing (7 to 38 a view on start, most of them off
+  screen).
+- **Totals**: start's views -0.9 to -3.6 % (-2.4 % summed), the game
+  bench -1.8 to -5.7 % (-3.9 %), e1m1's twelve views -3.2 %.
+
+## §35 — The tick rate setting (2026-10-18)
+
+The choice: 10, 20 (Quake's network rate), 30, 32 (the default) or 60 game
+ticks a second, in the settings.
+
+- **Time stays in 60ths of a second.** Every time of the game (nextthink,
+  die, attack_finished, the HUD's timers, every `TICKS()`) is unchanged; a
+  tick covers `game_dt` 60ths, the polls since the last one, and only the
+  rates act over it:
+  - pmove, C and asm (pmdiff 0 mismatches over ticks of 1 and of 2, 3, 6
+    and 1 60ths): friction, acceleration and the water's friction (tables
+    by dt), gravity, the move and the slide's remainder (x dt), the
+    PlayerPreThink drag (a table by dt and water level), the water jump's
+    count (-dt);
+  - over a tick longer than a 60th, the move adds gravity's midpoint
+    (g dt^2 / 2, pm_grav_mid): Quake's step moves at the tick's end speed,
+    which lowers a jump as the ticks lengthen (32 units at 10 Hz); with
+    it a jump tops out at 50 to 51 units at 32, 30 and 20 Hz, as at 60
+    (43 at 10 Hz, where a step of 32 units lifts the player off slopes
+    and a jump pressed in the air is lost, as in Quake);
+  - SV_Physics_Pusher's move (host_frametime: dt), the projectiles' and
+    the tossed items' moves and gravity, the screen flashes', the kick's
+    and the punch's decays;
+  - the particles and the dynamic lights' decay run each 60th of the tick
+    in turn: they move as at 60 Hz (the client's work in Quake).
+- **The scheduler** (main.c player_update): each vblank's poll turns the
+  view (Quake's client turns each frame); a tick runs when an accumulator
+  of `rate` a poll reaches 60 (at 32 Hz: 2, 2, ... 1 polls), with the last
+  poll's held buttons and every press since, fire and jump included
+  (CL_SendMove's `state & 3`: a tap between two ticks counts). At 60 Hz, a
+  tick per poll as before.
+- **The camera** is drawn between the last two ticks' views (CL_LerpPoint),
+  late by the longest tick less a poll (32 and 30 Hz: one vblank; 20: two;
+  10: five), the view model with it; no lerp across a jump of 64 units or
+  a spawn (game_view_cut). The view's position is a tick's, its angles a
+  poll's (game_view_pos, game_view_angles).
+- **Measured** (the game bench's `bench rate` lines: a second standing,
+  two walking, a jump held 0.2 s, a second falling, through the scheduler):
+
+| Rate | Walked in 2 s | Jump apex | Cycles a vblank |
+|---|---|---|---|
+| 60 Hz | 628 units | 50 units | 21.5 k |
+| 32 Hz | 626 | 51 | 14.8 k (-31 %) |
+| 30 Hz | 626 | 51 | 13.2 k (-38 %) |
+| 20 Hz | 628 | 51 | 10.6 k (-51 %) |
+| 10 Hz | 636 | 43 | 7.6 k (-64 %) |
+
+  A walking tick of 2 60ths costs about a third more than one of 1 (the
+  longer traces); a firing tick saves more (48 k a tick at 60 Hz). The
+  60 Hz path's own cost went down (the sticks' dead zone skipped on a
+  digital pad); pmove's dt factors cost about 80 cycles a tick.
+
