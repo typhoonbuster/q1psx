@@ -3826,8 +3826,29 @@ After the second play test: still too slow, and no monsters yet.
   `(w << 16) - (320 << 16)` that of x - 320. Of the slow path's calls,
   30 to 40 % drew nothing (7 to 38 a view on start, most of them off
   screen).
-- **Totals**: start's views -0.9 to -3.6 % (-2.4 % summed), the game
-  bench -1.8 to -5.7 % (-3.9 %), e1m1's twelve views -3.2 %.
+- **A node or leaf already inside the frustum** (no clip flag left) went
+  on loading its box into the GTE for a test it would not run; the flags
+  are now tested first (wn_inside): about -4 k cycles a frame.
+- **A world block's records under a node inside the frustum**: the walk
+  pushes a node with its clip flags after its box's test; with none left,
+  its faces (inside Quake's node bounds, which the cook widens by a unit)
+  lie inside every plane, and a record's sphere can be culled by none. The
+  record loop's world instance then reads only the sphere's depth and
+  skips the four plane tests: -7.7 k cycles on start's spawn view, -6.5 k
+  a frame on the game bench.
+- **Totals**: start's views -0.4 to -4.2 % (-2.9 % summed), the game
+  bench -3.3 to -6.6 % (-5.1 %), e1m1's twelve views -3.2 % (before the
+  last two steps). The 128 spawn views of the 32 maps identical to the
+  pass's start, 124 of them in one vblank.
+- **Checks**: `EMU_ARGS=-interpreter` gives the same hashes (start's views,
+  the game bench) and 0 physics mismatches; `DLIGHT_C=1` and `DLIGHT_C=2`
+  agree with the asm (they had not compiled since §25's pass left a
+  stray brace in dlight.c: fixed).
+- **Draw weapon** (Graphics, the debug menu): Quake's r_drawviewmodel. The
+  weapon costs 20 k to 95 k cycles a frame after the steps above (the
+  super shotgun the most: its barrels cross the near plane); off, it is
+  not drawn. On by default (what changes the picture is the
+  player's choice).
 
 ## §35 — The tick rate setting (2026-10-18)
 
