@@ -1791,47 +1791,56 @@ static const int weapon_model[W_COUNT] = { QGM_V_AXE, QGM_V_SHOT, QGM_V_SHOT2, Q
    twice its texels' size after the world. Its texels' packets (and the
    weapon's CLUT's) are hung, as they are, at the head of the ordering
    table when the frame shown changes: copied to the slot before anything
-   draws. The 3D gun's moves on the quad: the bob up and ahead (a shift,
-   and a scale about the view's centre at the gun's depth at rest), the
-   viewport's 2 units, the kick's and the damage's pitch (the camera's
-   pitch less the gun's: a shift), the lean's roll (a turn about the
-   view's centre); its light as the 3D gun's, the colour light x 128 /
-   QG_WS_L0. A chain is never hung again in the next frame (only when the
-   frame or the weapon changes), so the GPU never follows a link this
-   frame rewrites. */
-static int ws_shown = -1, ws_clut = -1;
+   draws. The 3D gun's moves relative to the camera on the quad: the bob's
+   forward part (V_CalcRefdef raises the view and the gun alike by the bob:
+   only the gun's 0.4 bob ahead shows, a scale about the view's centre at
+   the gun's depth at rest), the full screen's 2 units lower, the kick's
+   and the damage's pitch (the camera's pitch over the gun's: a shift),
+   the lean's roll (a turn about the view's centre); its light as the 3D
+   gun's, the colour light x 128 / QG_WS_L0. A chain is never hung again
+   in the next frame (only when the frame or the weapon changes), so the
+   GPU never follows a link this frame rewrites. The weapon's CLUT goes to
+   row 507 or 508 in turn (the GPU's CLUT cache keyed by the address never
+   serves the last weapon's); the quad leaves out the frame's last column
+   and row (transparent: a texel the GPU reads past its quad's edge is the
+   frame's own, never the slot's leftovers from a bigger frame). */
+static int ws_shown = -1, ws_clut = -1, ws_clut_row;
 
 void game_ws_invalidate(void)
 {
 	ws_shown = ws_clut = -1;
 }
 
-static void ws_draw(int wpn, int frame, int32_t bob, int light)
+static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3D */
 {
 	const qg_wsprite *ws = &gdata.wsprites[wpn];
 	if (frame < 0 || frame >= ws->count)
 		frame = 0;
 	int key = ws->first + frame;
 	const qg_wframe *fr = &gdata.wframes[key];
+	if (!fr->w)                                   /* (an axe's swing: the cook's 3D) */
+		return 0;
 	if (key != ws_shown) {                        /* (hung first: drawn after the CLUT's) */
 		addPrims(&vid_frame.ot[OT_SKY], gdata.wpix + fr->ofs, gdata.wpix + fr->ofs_last);
 		ws_shown = key;
 	}
 	if (wpn != ws_clut) {
-		uint8_t *c = gdata.wpix + ws->ofs_clut;
+		uint32_t *c = (uint32_t *) (gdata.wpix + ws->ofs_clut);
+		ws_clut_row ^= 1;
+		c[2] = (uint32_t) (QG_WCLUT_Y + ws_clut_row) << 16 | QG_WCLUT_X;   /* GP0(A0h)'s position */
 		addPrims(&vid_frame.ot[OT_SKY], c, c);
 		ws_clut = wpn;
 	}
 	POLY_FT4 *q = vid_alloc(sizeof *q);
 	if (!q)
-		return;
+		return 1;
 	int cy = r_viewport_rows() / 2;
 	int32_t a16 = ws->anchor;                     /* the gun's depth, 1/16 units */
 	int32_t b16 = bob * 16 / SUB;
 	int32_t s12 = a16 * 4096 / (a16 + b16 * 2 / 5);           /* ahead: the scale */
-	int32_t dy16 = -R_SCREEN_H * 16 * b16 / a16;              /* up: the shift, 1/16 px */
-	if (cy == VID_H / 2)                                      /* (no 2-unit fudge there) */
-		dy16 += R_SCREEN_H * 16 * 2 * 16 / a16;
+	int32_t dy16 = 0;                                         /* (1/16 px) */
+	if (cy == VID_H / 2)                                      /* (no 2-unit fudge there: */
+		dy16 = R_SCREEN_H * 16 * 2 * 16 / a16;                /*  2 units lower) */
 	int yaw, pitch, roll;
 	game_view_angles(&yaw, &pitch, &roll);
 	int k = pitch - pl.pm.pitch;                  /* the camera's pitch over the gun's */
@@ -1839,8 +1848,8 @@ static void ws_draw(int wpn, int frame, int32_t bob, int light)
 	int32_t cr = r_cos(roll), sr = r_sin(roll);
 	int16_t xy[4][2];
 	for (int c = 0; c < 4; c++) {
-		int32_t x16 = (fr->x + (c & 1) * 2 * fr->w) * 16;
-		int32_t y16 = (fr->y + (c >> 1) * 2 * fr->h) * 16 + dy16;
+		int32_t x16 = (fr->x + (c & 1) * 2 * (fr->w - 1)) * 16;
+		int32_t y16 = (fr->y + (c >> 1) * 2 * (fr->h - 1)) * 16 + dy16;
 		x16 = x16 * s12 >> 12;
 		y16 = (y16 * s12 >> 12) + kick16;
 		int32_t rx = (cr * x16 + sr * y16) >> 12, ry = (cr * y16 - sr * x16) >> 12;
@@ -1852,11 +1861,12 @@ static void ws_draw(int wpn, int frame, int32_t bob, int light)
 	if (col > 255) col = 255;
 	setRGB0(q, col, col, col);
 	setXY4(q, xy[0][0], xy[0][1], xy[1][0], xy[1][1], xy[2][0], xy[2][1], xy[3][0], xy[3][1]);
-	int u0 = gdata.wslot.u, v0 = gdata.wslot.v, u1 = u0 + fr->w, v1 = v0 + fr->h;
+	int u0 = gdata.wslot.u, v0 = gdata.wslot.v, u1 = u0 + fr->w - 1, v1 = v0 + fr->h - 1;
 	setUV4(q, u0, v0, u1, v0, u0, v1, u1, v1);
 	q->tpage = gdata.wslot.tpage;
-	q->clut  = (uint16_t) getClut(QG_WCLUT_X, QG_WCLUT_Y);
+	q->clut  = (uint16_t) getClut(QG_WCLUT_X, QG_WCLUT_Y + ws_clut_row);
 	vid_link(OT_WEAPON, q);
+	return 1;
 }
 
 void game_render(void)
@@ -1914,8 +1924,8 @@ void game_render(void)
 		if (light < 24) light = 24;                   /* always some light on the gun */
 		light += dl_add_at(org, game_tick_count) * 3 / 2;   /* (x the cook's light gain) */
 		if (light > 170) light = 170;                 /* (rlist.c ent_model's bound) */
-		if (game_draw_viewmodel == 2) {
-			ws_draw(pl.weapon, pl.weaponframe, bob, light);
+		if (game_draw_viewmodel == 2 && ws_draw(pl.weapon, pl.weaponframe, bob, light)) {
+			/* (the 2D gun) */
 		} else {
 			r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
 			                      pl.pm.yaw, -pl.pm.pitch, 0, light);

@@ -205,12 +205,18 @@ static const struct { uint16_t from, to, buttons; } pad_script[] = {
 	{ 2940, 2944, PAD_RIGHT },     /* HUD: q2 psx */
 	{ 3000, 3004, PAD_DOWN },
 	{ 3060, 3064, PAD_CROSS },     /* dynamic lights: off */
-	{ 3120, 3124, PAD_START }, { 3180, 3184, PAD_START }, { 3240, 3244, PAD_START },   /* out */
-	{ 3300, 3420, PAD_R2 },        /* two seconds of fire */
-	{ 3480, 3484, PAD_START },     /* the menu again */
-	{ 3540, 3544, PAD_CROSS },     /* Single Player */
-	{ 3600, 3604, PAD_CROSS },     /* New Game: "Are you sure" */
-	{ 3660, 3664, PAD_CROSS },     /* yes */
+	{ 3120, 3124, PAD_DOWN },
+	{ 3180, 3184, PAD_RIGHT },     /* draw weapon: 2D */
+	{ 3240, 3244, PAD_DOWN },
+	{ 3300, 3304, PAD_RIGHT },     /* draw distance: 2048 */
+	{ 3360, 3364, PAD_DOWN },
+	{ 3420, 3424, PAD_RIGHT },     /* flat shading: far */
+	{ 3480, 3484, PAD_START }, { 3540, 3544, PAD_START }, { 3600, 3604, PAD_START },   /* out */
+	{ 3660, 3780, PAD_R2 },        /* two seconds of fire */
+	{ 3840, 3844, PAD_START },     /* the menu again */
+	{ 3900, 3904, PAD_CROSS },     /* Single Player */
+	{ 3960, 3964, PAD_CROSS },     /* New Game: "Are you sure" */
+	{ 4020, 4024, PAD_CROSS },     /* yes */
 };
 static uint32_t script_vbl;
 

@@ -51,7 +51,9 @@
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
 
 #define QG_WCLUT_X  0
-#define QG_WCLUT_Y  507          /* the 2D weapon's CLUT: a free row under the aux CLUTs */
+#define QG_WCLUT_Y  507          /* the 2D weapon's CLUT: two free rows under the aux
+                                    CLUTs, 507 and 508, in turn at each weapon (the
+                                    GPU's CLUT cache never keeps the last one's) */
 
 #define QG_LIGHT_YAWS 16         /* light tables: one per 22.5 degrees of yaw */
 #define QG_NORMALS   162         /* Quake's vertex normals (anorms.h)         */
@@ -164,7 +166,10 @@ typedef struct {
 	int16_t  x, y;               /* its top-left, screen pixels from the
 	                                projection's centre (160, 96: the status
 	                                bar's viewport, the gun 2 units up)         */
-	uint8_t  w, h;               /* texels (drawn twice the size)               */
+	uint8_t  w, h;               /* texels, the last column and row transparent
+	                                (drawn without them, twice the size: the
+	                                GPU never reads past the frame's texels);
+	                                0: the frame is drawn 3D (larger than 80)   */
 	uint16_t pad;
 	uint32_t ofs;                /* its texels' first packet in the pixel block */
 	uint32_t ofs_last;           /* and its last (GP0(01h))                     */

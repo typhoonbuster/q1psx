@@ -4072,8 +4072,8 @@ off / 3D / 2D, 3D by default.
   absolute; the game arena grew to 224 KB (the overflow, the dynamic
   lights' tables past its end, wrote through a NULL into the BIOS: the
   arena now stops with a message instead).
-- **VRAM: one slot** (110 x 98 texels, the largest frame) placed among the
-  game's pictures at an even u (a halfword of 8bpp texels).
+- **VRAM: one slot** (68 x 66 texels, the largest 2D frame) placed among
+  the game's pictures at an even u (a halfword of 8bpp texels).
 - **The engine** (game.c `ws_draw`): when the frame shown changes, its
   chain (and on a weapon's change, its CLUT's) is hung as it is at the
   head of the ordering table (OT_SKY: copied before anything draws, in
@@ -4091,6 +4091,29 @@ off / 3D / 2D, 3D by default.
   yaw 0.
 - **Quake's R_DrawViewModel draws no gun under the Ring of Shadows**
   (`cl.items & IT_INVISIBILITY`): neither does the port now, 3D or 2D.
+- **The first test** (the gun moving far too much when walking, wrong pixel
+  borders, nothing in the release build's menu):
+  - the bob was counted twice: V_CalcRefdef raises the view by the bob as
+    it raises the gun (`r_refdef.vieworg[2] += cl.viewheight + bob`, the
+    port's game_view_pos too), so on screen the gun moves only by its 0.4
+    bob ahead; the quad had the whole bob's shift as well (30 to 60 px at
+    bob 4). Now the forward scale alone (about +-7 px, as the 3D gun);
+  - the quad was drawn over the frame's whole texels: a texel the GPU
+    reads past a scaled quad's edge was the slot's leftover from a bigger
+    frame. The frame's last column and row (its transparent margin) are
+    now left out of the quad;
+  - the full-screen HUD (240 rows) shows the gun 24 px lower and 2 units
+    lower still: the frames were cut at the status bar's 192 rows. They
+    are rendered on 216 rows now (the full screen's last needed row);
+  - a frame over 80 texels on a side stays 3D (the axe's four swings,
+    126 x 110 at most: the slot would not fit the game's pages, the
+    others' largest is 68 x 66);
+  - the weapon's CLUT goes to rows 507 and 508 in turn (a CLUT cache keyed
+    by the address never keeps the last weapon's);
+  - the release build's Graphics page has the rows (the scripted release
+    flow, `-DQ1PSX_PADSCRIPT=ON`, now sets the 2D gun, the draw distance
+    and the flat shading through it: its `settings:` lines show them): the
+    image run was older than them.
 - **Measured** (the game bench, PCSX-Redux, `PROFILE=0`, `VIEWMODEL=2`
   against the 3D gun): the axe -6.2 %, the shotgun -4.2 %, the super
   shotgun -11.6 % (-89 k cycles a frame), the nailguns -3.1 / -5.2 %, the

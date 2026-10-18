@@ -1460,9 +1460,10 @@ static void finales_cook(const uint8_t *pak, long pak_len, gbuf *table, gbuf *te
 /* The view models as pictures (Graphics: "Draw weapon: 2D", the
    idea: a flat image costs a quad where the model costs its triangles).
    Every frame of every v_*.mdl rendered as the eye sees it in the status
-   bar's viewport (320 x 192, the projection's centre (160, 96), H 160:
-   render.c), the gun at rest (at the eye, the viewport's 2 units up: the
-   engine adds the bob, the kick and the lean), the way Quake draws an
+   bar's viewport (the projection's centre (160, 96), H 160: render.c; 240
+   rows drawn, the full-screen viewport shows the gun's lower part), the
+   gun at rest (at the eye, the viewport's 2 units up: the engine adds the
+   bob's forward part, the kick and the lean), the way Quake draws an
    alias model: z-buffered, the triangles wound backwards dropped (the
    model's own winding, as cook_mdl reads it), clipped at 5 units
    (ALIAS_Z_CLIP_PLANE), each vertex lit by the light table of yaw 0 at
@@ -1475,12 +1476,17 @@ static void finales_cook(const uint8_t *pak, long pak_len, gbuf *table, gbuf *te
    black stays opaque). */
 
 #define WS_W     320
-#define WS_H     192
+#define WS_H     216          /* (the status bar's viewport is 192 rows: the rows
+                                 under it are the full screen's, the gun 24 + px
+                                 lower there) */
 #define WS_CX    160
 #define WS_CY    96
 #define WS_PROJ  160.0
 #define WS_NEAR  5.0
 #define WS_UP    2.0          /* the status bar's viewport fudge (game.c) */
+#define WS_MAX   80           /* a frame larger (texels, either side) stays 3D: the
+                                 axe's swings, which sweep the screen next to the
+                                 eye, would take a slot four times the others' */
 
 typedef struct { double x, y, z, s, t, l; } wsv;   /* view space (x right, y down, z ahead) */
 
@@ -1692,7 +1698,7 @@ static void ws_quantize(ws_weapon *w)
 {
 	static uint32_t cnt[32768];
 	memset(cnt, 0, sizeof cnt);
-	for (int f = 0; f < w->nframes; f++)
+	for (int f = 0; f < w->nframes; f++)              /* (a 3D frame: w 0) */
 		for (int i = 0; i < w->frames[f].w * w->frames[f].h; i++)
 			if (w->frames[f].rgb[i])
 				cnt[w->frames[f].rgb[i] & 0x7fff]++;
@@ -1802,10 +1808,15 @@ static void ws_prepare(void)
 		}
 		w->anchor = zn ? zs / zn : 20;
 		for (int f = 0; f < m->nframes; f++) {
-			ws_render(m, f, wind, dots0, &w->frames[f]);
-			if (w->frames[f].w > mw) mw = w->frames[f].w;
-			if (w->frames[f].h > mh) mh = w->frames[f].h;
-			texels += (long) w->frames[f].w * w->frames[f].h;
+			ws_frame *fr = &w->frames[f];
+			ws_render(m, f, wind, dots0, fr);
+			if (fr->w > WS_MAX || fr->h > WS_MAX) {      /* drawn 3D: no picture */
+				fr->w = fr->h = 0;
+				continue;
+			}
+			if (fr->w > mw) mw = fr->w;
+			if (fr->h > mh) mh = fr->h;
+			texels += (long) fr->w * fr->h;
 		}
 		ws_quantize(w);
 		if (getenv("QCOOK_WS"))
@@ -1973,6 +1984,8 @@ int cmd_game(int argc, char **argv)
 				fr[k].y = (int16_t) f->y;
 				fr[k].w = (uint8_t) f->w;
 				fr[k].h = (uint8_t) f->h;
+				if (!f->w)                  /* (drawn 3D) */
+					continue;
 				fr[k].ofs = (uint32_t) pix.len;
 				size_t bytes = (size_t) f->w * f->h, words = (bytes + 3) / 4;
 				uint32_t *data = xcalloc(words, 4);
