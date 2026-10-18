@@ -733,9 +733,12 @@ static void func_train(edict_t *self, int teleporttrain)
 	if (!teleporttrain) {
 		self->draw = 1;
 		ent_setmodel(self, self->model);
-	} else {                                      /* progs/teleport.mdl: a point (not drawn yet) */
-		static const int32_t box[3] = { -8 * CLIP_SUB, -8 * CLIP_SUB, -8 * CLIP_SUB };
-		static const int32_t box2[3] = { 8 * CLIP_SUB, 8 * CLIP_SUB, 8 * CLIP_SUB };
+	} else {                                      /* setmodel (progs/teleport.mdl): an alias
+		                                                 model's +-16 box (Mod_LoadAliasModel); its
+		                                                 avelocity turns nothing under SV_PushMove */
+		static const int32_t box[3] = { -16 * CLIP_SUB, -16 * CLIP_SUB, -16 * CLIP_SUB };
+		static const int32_t box2[3] = { 16 * CLIP_SUB, 16 * CLIP_SUB, 16 * CLIP_SUB };
+		self->item_model = world.model_of[QIM_TELEPORT];
 		ent_setsize(self, box, box2);
 	}
 	/* trains start on the second frame: their targets must have spawned */

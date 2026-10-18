@@ -651,10 +651,10 @@ void items_render(void)
 		const qg_model *m = &world.models[e->item_model];
 		if (!in_view(e->origin, m->radius))
 			continue;
-		int frame = 0;
-		if (e->cnt)                               /* an animated group, 10 a second, its phase */
+		int frame = 0, flame = e->cnt && e->class != QE_MISC_TELEPORTTRAIN;   /* (a train's cnt: its own) */
+		if (flame)                                /* an animated group, 10 a second, its phase */
 			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
-		int light = (m->flags & QGF_FLAT) && e->cnt ? 128
+		int light = (m->flags & QGF_FLAT) && flame ? 128
 		          : leaf->light + dl_add_at(e->origin, game_tick_count) * 3 / 2;
 		rl_add_model(leaf, rl_model(m, frame, e->origin, (m->flags & QGF_ROTATE) ? yaw : 0, 0, 0, light));
 	}
