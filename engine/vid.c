@@ -60,10 +60,9 @@ void *vid_ovl_alloc(int bytes)
 	uint32_t *p = vid_alloc(bytes);
 	if (!p)
 		return NULL;
-	setlen(p, (bytes - 4) / 4);
-	termPrim(p);
-	if (ovl_tail)
-		setaddr(ovl_tail, p);
+	p[0] = (uint32_t) (bytes - 4) / 4 << 24 | 0xffffffu;   /* setlen, termPrim */
+	if (ovl_tail)                                           /* setaddr, as words */
+		*ovl_tail = (*ovl_tail & 0xff000000u) | ((uint32_t) p & 0xffffffu);
 	else
 		ovl_head = p;
 	ovl_tail = p;

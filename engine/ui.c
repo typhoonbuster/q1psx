@@ -23,18 +23,18 @@ static void set_tpage(int tpage)
 	cur_tpage = tpage;
 }
 
+/* a SPRT, its words written whole (setSprt, setXY0, setUV0, setWH, setRGB0
+   and the clut, byte for byte: the halfword and byte stores cost more) */
 static void sprite(const qg_aux *a, int x, int y, int u, int v, int w, int h, int shade)
 {
 	set_tpage(a->tpage);
-	SPRT *s = vid_ovl_alloc(sizeof *s);
+	uint32_t *s = vid_ovl_alloc(sizeof (SPRT));
 	if (!s)
 		return;
-	setSprt(s);
-	setXY0(s, x, y);
-	setUV0(s, u, v);
-	setWH(s, w, h);
-	setRGB0(s, shade, shade, shade);
-	s->clut = a->clut;
+	s[1] = 0x64000000u | (uint32_t) shade * 0x010101u;
+	s[2] = (uint32_t) y << 16 | ((uint32_t) x & 0xffffu);
+	s[3] = (uint32_t) a->clut << 16 | (uint32_t) v << 8 | (uint32_t) u;
+	s[4] = (uint32_t) h << 16 | ((uint32_t) w & 0xffffu);
 }
 
 void ui_aux_shaded(int id, int x, int y, int shade)
