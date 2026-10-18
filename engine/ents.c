@@ -407,37 +407,81 @@ void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func
 
 /* ------------------------------------------------------------ combat.qc -- */
 
-/* T_Damage on an edict (no armor: only the player has some, the game's);
-   Killed: a pusher's or a trigger's th_die */
-void ent_damage(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage)
+/* combat.qc Killed: a pusher's or a trigger's th_die as it is; a
+   monster's: angry at its killer, counted, no more damage or touch, its
+   targets fired (monster_death_use), its th_die */
+static void killed(edict_t *targ, edict_t *attacker)
+{
+	if (targ->health < -99)
+		targ->health = -99;               /* don't let sbar look bad if a player */
+	if (targ->movetype == MOVETYPE_PUSH || targ->movetype == MOVETYPE_NONE) {
+		if (targ->th_die)
+			targ->th_die(targ);           /* doors, triggers, etc */
+		return;
+	}
+	targ->enemy = attacker;
+	if (targ->flags & FL_MONSTER)         /* bump the monster counter */
+		ent_killed_monsters++;
+	targ->takedamage = DAMAGE_NO;
+	targ->touch = sub_null;
+	if (targ->mdef)
+		monster_death_use(targ);
+	if (targ->th_die)
+		targ->th_die(targ);
+}
+
+/* combat.qc T_Damage, the damage x256 (the QC's damage is a float: a
+   melee's sum of randoms, a blast's falloff): the attacker's quad, the
+   armour (the player's, the game's), the health less the damage rounded
+   up, Killed, or the monster's anger (not at its own kind, but the
+   soldiers') and its pain */
+void ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage)
 {
 	if (!targ || !targ->takedamage)
 		return;
-	ent_damage_attacker = attacker;
+	ent_damage_attacker = attacker;       /* used by buttons and triggers to set activator */
+	if (attacker == ent_player && game_quad_active())
+		damage *= 4;
 	if (targ == ent_player) {
 		int32_t c[3];
 		if (inflictor && inflictor != ent_world) {
 			for (int k = 0; k < 3; k++)
 				c[k] = (inflictor->absmin[k] + inflictor->absmax[k]) / 2;
-			game_damage_player(damage, c);
+			game_damage_player_x256(damage, c);
 		} else {
-			game_damage_player(damage, 0);
+			game_damage_player_x256(damage, 0);
 		}
 		return;
 	}
-	if (attacker == ent_player && game_quad_active())
-		damage *= 4;
-	targ->health -= damage;
-	ELOG("ent: %s takes %d (health %d)\n", world_string(targ->classname), damage, targ->health);
+	int take = (damage + 255) >> 8;       /* ceil (no armour: only the player's) */
+	targ->health = (int16_t) (targ->health - take);
+	ELOG("ent: %s takes %d (health %d)\n", world_string(targ->classname), take, targ->health);
 	if (targ->health <= 0) {
-		if (targ->health < -99)
-			targ->health = -99;
-		if ((targ->movetype == MOVETYPE_PUSH || targ->movetype == MOVETYPE_NONE) && targ->th_die)
-			targ->th_die(targ);
+		killed(targ, attacker);
 		return;
 	}
-	if (targ->th_pain)
+	/* react to the damage */
+	if ((targ->flags & FL_MONSTER) && attacker && attacker != ent_world) {
+		/* get mad unless of the same class (except for soldiers) */
+		if (targ != attacker && attacker != targ->enemy &&
+		    (attacker->mdef != targ->mdef || (targ->mdef && targ->mdef->kind == MK_ARMY))) {
+			if (targ->enemy == ent_player)
+				targ->oldenemy = targ->enemy;
+			targ->enemy = attacker;
+			ai_found_target(targ);
+		}
+	}
+	if (targ->th_pain) {
+		ai_damage_take = take;
 		targ->th_pain(targ);
+		if (game_skill == 3)              /* nightmare mode monsters don't go into pain frames often */
+			targ->pain_finished = ent_time + TICKS(500);
+	}
+}
+
+void ent_damage(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage)
+{
+	ent_damage_x256(targ, inflictor, attacker, damage * 256);
 }
 
 edict_t *ent_from_trace(const trace_t *tr)
@@ -516,6 +560,7 @@ static void sync_player(void)
 {
 	edict_t *p = ent_player;
 	memcpy(p->origin, pl.pm.pos, sizeof p->origin);
+	memcpy(p->velocity, pl.pm.vel, sizeof p->velocity);
 	for (int k = 0; k < 3; k++) {
 		p->absmin[k] = p->origin[k] + player_mins[k] - CLIP_SUB;
 		p->absmax[k] = p->origin[k] + player_maxs[k] + CLIP_SUB;
@@ -673,6 +718,32 @@ static void rebuild_lists(void)
 	ents_relink = 1;
 }
 
+/* SV_TouchLinks: the SOLID_TRIGGER edicts the box of e overlaps, touched
+   by it (the player each tick; a monster when it moves) */
+void ents_touch_links(edict_t *e)
+{
+	if (e->solid == SOLID_NOT || !edicts)
+		return;
+	if (lists_dirty)
+		rebuild_lists();
+	for (int i = 0; i < num_touch; i++) {
+		edict_t *t = &edicts[touch_list[i]];
+		if (t == e || !t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
+			continue;
+		if (e->absmin[0] > t->absmax[0] || e->absmin[1] > t->absmax[1] || e->absmin[2] > t->absmax[2] ||
+		    e->absmax[0] < t->absmin[0] || e->absmax[1] < t->absmin[1] || e->absmax[2] < t->absmin[2])
+			continue;
+		edict_t *other = ent_other;
+		ent_other = e;
+		t->touch(t);
+		ent_other = other;
+		if (!e->inuse)
+			break;
+		if (lists_dirty)
+			rebuild_lists();
+	}
+}
+
 /* SV_TouchLinks for the player: the SOLID_TRIGGER edicts its box overlaps */
 static void touch_player(void)
 {
@@ -713,13 +784,25 @@ void ents_tick(void)
 			if (e->inuse) {
 				if (e->movetype == MOVETYPE_PUSH) {
 					physics_pusher(e);
+				} else if (e->mdef || e->masset >= 0) {   /* a monster, what it throws */
+					if (e->movetype == MOVETYPE_STEP)
+						ai_physics_step(e);
+					else if (e->movetype >= MOVETYPE_FLY && e->movetype != MOVETYPE_PUSH &&
+					         e->movetype != MOVETYPE_NOCLIP)
+						ai_physics_toss(e);
+					else
+						run_think(e);
 				} else {
 					run_think(e);                 /* SV_Physics_Toss: the think, then the move */
 					if (e->inuse && e->movetype == MOVETYPE_TOSS)
 						items_physics(e);
 				}
 			}
-			if (!e->inuse || (e->nextthink <= 0 && !e->move_ticks))
+			/* asleep: nothing to think, nothing moving (a monster or what
+			   it throws keeps falling while off the ground) */
+			if (!e->inuse || (e->nextthink <= 0 && !e->move_ticks &&
+			                  !((e->mdef || e->masset >= 0) && e->movetype >= MOVETYPE_STEP &&
+			                    e->movetype != MOVETYPE_PUSH && !(e->flags & FL_ONGROUND))))
 				active[w] &= ~(1u << b);
 		}
 	}

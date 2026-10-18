@@ -82,10 +82,15 @@ typedef struct {
 	uint32_t vram_texels, vram_used; /* texels of the free regions, used   */
 	uint32_t reads, read_bytes;      /* since the map's start              */
 	uint32_t evictions, failures;    /* assets dropped; placed nowhere     */
+	uint32_t halved;                 /* skins at their fallback (VRAM short) */
 	uint16_t resident, wanted;       /* assets, the last pass              */
 	uint16_t music_pauses;
 } stream_stats_t;
 extern stream_stats_t stream_stats;
 extern int stream_log;               /* print the loads and evictions      */
+
+#ifdef Q1PSX_BENCH
+void stream_dump(void);              /* before a frame's dump: the images' places */
+#endif
 
 #endif

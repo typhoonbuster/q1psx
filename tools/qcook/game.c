@@ -1538,6 +1538,16 @@ void qc_mdl_cook_compact(qc_mdl *q, buf_t *out)
 	free(done);
 	free(side);
 
+	/* the fallback's skin: the same reduction at twice the step */
+	model_spec sp2 = *ms->sp;
+	sp2.skin_div = div * 2;
+	model_src src2 = *ms;
+	src2.sp = &sp2;
+	model_prepare(&src2);
+	const image *im2 = src2.im;
+	int fx1q = two ? (half + 2 * div - 1) / (2 * div) : im2->w, bx0q = two ? half / (2 * div) : 0;
+	if (fx1q > im2->w) fx1q = im2->w;
+
 	/* the asset: header, frames, records, images */
 	qst_model h;
 	memset(&h, 0, sizeof h);
@@ -1571,8 +1581,18 @@ void qc_mdl_cook_compact(qc_mdl *q, buf_t *out)
 	cut_image(im, 0, fx1, &pix, &h.images[0].w, &h.images[0].h);
 	if (two) {
 		h.images[1].ofs = img_at + (uint32_t) pix.len;
+		h.images[1].x0  = (uint16_t) bx0;
 		cut_image(im, bx0, im->w, &pix, &h.images[1].w, &h.images[1].h);
 	}
+	h.small[0].ofs = img_at + (uint32_t) pix.len;
+	cut_image(im2, 0, fx1q, &pix, &h.small[0].w, &h.small[0].h);
+	if (two) {
+		h.small[1].ofs = img_at + (uint32_t) pix.len;
+		h.small[1].x0  = (uint16_t) bx0q;
+		cut_image(im2, bx0q, im2->w, &pix, &h.small[1].w, &h.small[1].h);
+	}
+	if (im->border != QST_BORDER || im2->border != QST_BORDER)
+		die("%s: a skin border of %d, the engine's is %d", q->file, im->border, QST_BORDER);
 	size_t start = out->len;
 	buf_put(out, &h, sizeof h);
 	for (int f = 0; f < m->nframes; f++)
@@ -1584,10 +1604,11 @@ void qc_mdl_cook_compact(qc_mdl *q, buf_t *out)
 	buf_put(out, pix.p, pix.len);
 	free(recs.p);
 	free(pix.p);
-	printf("qcook: %-22s %3d frames %4d verts %4d tris -> %3d records, skin %s %dx%d%s%dx%d, shift %d: "
-	       "%6zu B (%zu B of frames)\n", q->file, m->nframes, m->nverts, m->ntris, nrec,
+	printf("qcook: %-22s %3d frames %4d verts %4d tris -> %3d records, skin %s %dx%d%s%dx%d (or %dx%d), "
+	       "shift %d: %6zu B (%zu B of frames)\n", q->file, m->nframes, m->nverts, m->ntris, nrec,
 	       two ? "halves" : "whole", h.images[0].w, h.images[0].h, two ? " + " : "", two ? h.images[1].w : 0,
-	       two ? h.images[1].h : 0, shift, out->len - start, (size_t) m->nframes * m->nverts * 4);
+	       two ? h.images[1].h : 0, h.small[0].w, h.small[0].h, shift, out->len - start,
+	       (size_t) m->nframes * m->nverts * 4);
 }
 
 /* ------------------------------------------------------------------ main -- */

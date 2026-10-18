@@ -303,7 +303,8 @@ static const qw_leaf *leaf_at(const int32_t org[3])
 }
 
 static void t_radius_damage(const int32_t org[3], int damage, int self_inflicted);
-static void t_damage(int damage, const int32_t inflictor[3]);
+static void t_damage_x256(int damage, const int32_t inflictor[3]);
+#define t_damage(d, inf) t_damage_x256((d) * 256, inf)
 
 /* TE_EXPLOSION + BecomeExplosion at org */
 static void explode_at(const int32_t org[3])
@@ -587,19 +588,21 @@ static void player_die(void)
 }
 
 /* T_Damage on the player: armor absorbs its share, the rest is health;
-   the kick and the pain face (V_ParseDamage); momentum from the inflictor */
-static void t_damage(int damage, const int32_t inflictor[3])
+   the kick and the pain face (V_ParseDamage); momentum from the inflictor.
+   The damage x256 (the QC's float: a monster's melee, a blast's falloff):
+   save = ceil(armortype x damage), take = ceil(damage - save) */
+static void t_damage_x256(int damage, const int32_t inflictor[3])
 {
 	if (pl.dead || level_intermission)
 		return;
-	int save = (pl.armortype * damage + 99) / 100;        /* ceil */
+	int save = (int) (((int64_t) pl.armortype * damage + 25599) / 25600);   /* ceil */
 	if (save >= pl.armor) {
 		save = pl.armor;
 		pl.armortype = 0;
 		pl.items &= ~(IT_ARMOR1 | IT_ARMOR2 | IT_ARMOR3);
 	}
 	pl.armor -= save;
-	int take = damage - save;
+	int take = (damage - save * 256 + 255) >> 8;          /* ceil */
 	if (take < 0) take = 0;
 
 	/* for the client at the tick's end (damage_report: V_ParseDamage) */
@@ -614,7 +617,7 @@ static void t_damage(int damage, const int32_t inflictor[3])
 		for (int k = 0; k < 3; k++) d[k] = pl.pm.pos[k] - inflictor[k];
 		vnormalize(d, dir);
 		for (int k = 0; k < 3; k++)
-			pl.pm.vel[k] += dir[k] * damage * 8 / 4096;
+			pl.pm.vel[k] += (int32_t) ((int64_t) dir[k] * damage * 8 / (4096 * 256));
 		pl.pm.onground = 0;
 	}
 	if (pl.invincible_finished >= game_tick_count) {      /* invincibility */
@@ -1163,6 +1166,28 @@ static void w_weapon_frame(const game_cmd_t *cmd)
 void game_damage_player(int damage, const int32_t inflictor[3])
 {
 	t_damage(damage, inflictor);
+}
+
+void game_damage_player_x256(int damage, const int32_t inflictor[3])
+{
+	t_damage_x256(damage, inflictor);
+}
+
+void game_particles(const int32_t org[3], int colour, int count)
+{
+	particle_effect(org, leaf_at(org), colour, count);
+}
+
+void game_muzzle_flash(int key, const int32_t org[3], int yaw)
+{
+	int32_t f[3], r[3], u[3];
+	view_vectors(yaw, 0, f, r, u);
+	dlight_t *dl = dl_alloc(key, game_tick_count);
+	for (int k = 0; k < 3; k++)
+		dl->origin[k] = org[k] + (k == 2 ? 16 * SUB : 0) + 18 * SUB * f[k] / 4096;
+	dl->radius   = 200 + (int) (q_rand() & 31);
+	dl->minlight = 32;
+	dl->die      = game_tick_count + TICKS(10);
 }
 
 int game_intermission(void)

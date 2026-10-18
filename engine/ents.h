@@ -182,8 +182,14 @@ void     init_trigger(edict_t *self);
 void     sub_null(edict_t *self);
 void     sub_remove(edict_t *self);
 
-/* combat.qc T_Damage on any edict (the player's goes to the game) */
+/* combat.qc T_Damage on any edict (the player's goes to the game): the
+   damage whole, or x256 (the QC's float damage, rounded up at the end) */
 void     ent_damage(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage);
+void     ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int damage);
+
+/* SV_TouchLinks for any edict: the triggers its box overlaps touched
+   (other = it) */
+void     ents_touch_links(edict_t *e);
 
 /* the edict a trace hit (its `ent`), NULL for the world */
 edict_t *ent_from_trace(const trace_t *tr);
@@ -198,8 +204,9 @@ void     ents_impact(int ent);
 void     ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edict_t *ignore);
 
 /* the game's damage on the player (engine/game.c t_damage): inflictor's
-   box centre for the kick and the momentum, or NULL */
+   box centre for the kick and the momentum, or NULL; whole, or x256 */
 void game_damage_player(int damage, const int32_t inflictor[3]);
+void game_damage_player_x256(int damage, const int32_t inflictor[3]);
 
 /* the class files' spawn functions, the cooked entity in hand */
 void triggers_spawn(edict_t *e, const qw_ent *q);

@@ -45,21 +45,27 @@ typedef struct {
 	uint8_t   pad;
 } asset_t;
 
+#define VR_T 1                 /* vrect_t flags: the image placed transposed     */
+
 typedef struct {
 	uint8_t  page;             /* the texture page (qtex.h numbering)           */
-	uint8_t  pad;
+	uint8_t  flags;            /* VR_*                                          */
 	uint8_t  u, v;             /* page-relative texels                          */
-	uint16_t w, h;             /* texels                                        */
+	uint16_t w, h;             /* texels taken (transposed: the image's h, w)    */
 } vrect_t;
 
 typedef struct {
 	int16_t  asset;            /* -1: a free slot                              */
-	uint8_t  trim;             /* frames until its images' pixels are dropped  */
+	uint8_t  trim;             /* frames until its upload is done: then the
+	                              images' pixels go, its blocks may move again */
 	uint8_t  nimg;             /* images in VRAM                                */
 	uint8_t *ram;              /* its block in the RAM pool                     */
 	uint32_t ram_size;         /* the block's bytes (a multiple of 16)          */
+	uint8_t *tmp;              /* a transposed image's pixels, until the trim   */
+	uint32_t tmp_size;
 	vrect_t  img[2];
 	qw_tex   tex[2];           /* the images' texture words (the renderer's)    */
+	uint8_t  half;             /* the images are the fallback's (VRAM short)    */
 } res_t;
 
 static asset_t *assets;
@@ -78,6 +84,7 @@ static int      waiting = -1;  /* the asset whose read waits for the music's fad
 static uint32_t frame_no;
 
 #define ALIGN16(n) (((n) + 15u) & ~15u)
+#define ALIGN64(n) (((n) + 63u) & ~63u)
 
 /* ------------------------------------------------------------ directory -- */
 
@@ -95,6 +102,8 @@ static int read_sectors(int32_t lba, int n, void *dst)
 void stream_init(void)
 {
 	num_assets = 0;
+	for (int i = 0; i < MAX_RES; i++)
+		res[i].asset = -1;
 	CdlFILE file;
 	if (!CdSearchFile(&file, "\\STREAM.DAT;1")) {
 		printf("stream: no STREAM.DAT on the disc\n");
@@ -135,8 +144,6 @@ void stream_init(void)
 	}
 	num_assets = (int) n;
 	mem_level_release(mark);
-	for (int i = 0; i < MAX_RES; i++)
-		res[i].asset = -1;
 	printf("stream: STREAM.DAT, %d assets from sector %d\n", num_assets, (int) base_lba);
 }
 
@@ -157,34 +164,41 @@ int stream_find(const char *name)
 
 /* ------------------------------------------------------------- RAM pool -- */
 
-static int by_address(const void *a, const void *b)
-{
-	const res_t *x = *(res_t *const *) a, *y = *(res_t *const *) b;
-	return x->ram < y->ram ? -1 : x->ram > y->ram;
-}
+typedef struct { uint8_t **p; uint32_t size; int pinned; } block_t;
 
-/* every block slid down against the previous one (an asset being read
-   is never moved: a read is not in flight when this runs) */
+/* every block slid down against the previous one, but a block whose
+   upload the GPU has yet to take (its slot's trim): the blocks after it
+   slide down to its end. Not while a read is in flight. */
 static void ram_compact(void)
 {
-	res_t *order[MAX_RES];
+	block_t b[2 * MAX_RES];
 	int n = 0;
-	for (int i = 0; i < MAX_RES; i++)
-		if (res[i].asset >= 0 && res[i].ram)
-			order[n++] = &res[i];
+	for (int i = 0; i < MAX_RES; i++) {
+		res_t *r = &res[i];
+		if (r->asset < 0)
+			continue;
+		if (r->ram)
+			b[n++] = (block_t) { &r->ram, r->ram_size, r->trim != 0 };
+		if (r->tmp)
+			b[n++] = (block_t) { &r->tmp, r->tmp_size, r->trim != 0 };
+	}
 	for (int i = 1; i < n; i++)               /* (a few dozen: insertion sort) */
-		for (int j = i; j > 0 && by_address(&order[j - 1], &order[j]) > 0; j--) {
-			res_t *t = order[j];
-			order[j] = order[j - 1];
-			order[j - 1] = t;
+		for (int j = i; j > 0 && *b[j - 1].p > *b[j].p; j--) {
+			block_t t = b[j];
+			b[j] = b[j - 1];
+			b[j - 1] = t;
 		}
 	uint8_t *at = pool;
 	for (int i = 0; i < n; i++) {
-		if (order[i]->ram != at) {
-			memmove(at, order[i]->ram, order[i]->ram_size);
-			order[i]->ram = at;
+		if (b[i].pinned) {
+			at = *b[i].p + b[i].size;
+			continue;
 		}
-		at += order[i]->ram_size;
+		if (*b[i].p != at) {
+			memmove(at, *b[i].p, b[i].size);
+			*b[i].p = at;
+		}
+		at += b[i].size;
 	}
 	pool_top = at;
 }
@@ -194,12 +208,12 @@ static uint32_t ram_used(void)
 	uint32_t u = 0;
 	for (int i = 0; i < MAX_RES; i++)
 		if (res[i].asset >= 0)
-			u += res[i].ram_size;
+			u += res[i].ram_size + res[i].tmp_size;
 	return u;
 }
 
 /* n bytes at the pool's top, the pool compacted if they do not fit there
-   but would after; NULL if the free bytes are short */
+   (pinned blocks may leave it short); NULL if they do not fit */
 static uint8_t *ram_alloc(uint32_t n)
 {
 	n = ALIGN16(n);
@@ -207,6 +221,8 @@ static uint8_t *ram_alloc(uint32_t n)
 		if ((uint32_t) (pool_end - pool) - ram_used() < n)
 			return 0;
 		ram_compact();
+		if ((uint32_t) (pool_end - pool_top) < n)
+			return 0;
 	}
 	uint8_t *p = pool_top;
 	pool_top += n;
@@ -223,6 +239,7 @@ static void region_add(int page, int u, int v, int w, int h)
 		return;
 	vrect_t *r = &regions[num_regions++];
 	r->page = (uint8_t) page;
+	r->flags = 0;
 	r->u = (uint8_t) u;  r->v = (uint8_t) v;
 	r->w = (uint16_t) w; r->h = (uint16_t) h;
 	stream_stats.vram_texels += (uint32_t) (w * h);
@@ -253,61 +270,64 @@ static void regions_build(void)
 	}
 }
 
-static int overlaps(const vrect_t *a, int page, int u, int v, int w, int h)
+/* a w x h place at (u, v) of region rg overlapping no image */
+static int vram_fits(int u, int v, int w, int h, const vrect_t *rg)
 {
-	return a->page == page && u < a->u + a->w && a->u < u + w && v < a->v + a->h && a->v < v + h;
-}
-
-/* a free place for a w x h image that overlaps no other image: in each
-   region, its corner and the corners other images leave (to their right,
-   under them), the lowest then leftmost; 0 if none */
-static int vram_fits(int page, int u, int v, int w, int h, const vrect_t *rg)
-{
-	if (u & 1) u++;
 	if (u < rg->u || v < rg->v || u + w > rg->u + rg->w || v + h > rg->v + rg->h)
 		return 0;
 	for (int r = 0; r < MAX_RES; r++)
 		if (res[r].asset >= 0)
-			for (int k = 0; k < res[r].nimg; k++)
-				if (overlaps(&res[r].img[k], page, u, v, w, h))
+			for (int k = 0; k < res[r].nimg; k++) {
+				const vrect_t *a = &res[r].img[k];
+				if (a->page == rg->page && u < a->u + a->w && a->u < u + w && v < a->v + a->h &&
+				    a->v < v + h)
 					return 0;
+			}
 	return 1;
 }
 
+/* The place for a w x h image (or, transposed, h' x w with h' the even
+   width h makes), overlapping no other: in each region the corner and the
+   corners the images in its page leave (right of them, under them), the
+   best by the region's fit (its shorter side's leftover: a small image
+   goes to small room, the big room kept), then the lowest, the leftmost.
+   0 if none. */
 static int vram_place(int w, int h, vrect_t *out)
 {
-	int best = -1, bu = 0, bv = 0;
 	uint32_t bkey = ~0u;
-	for (int g = 0; g < num_regions; g++) {
-		const vrect_t *rg = &regions[g];
-		if (w > rg->w || h > rg->h)
-			continue;
-		/* candidates: the region's corner, then beside / under every image of its page */
-		int cu[1 + 2 * 2 * MAX_RES], cv[1 + 2 * 2 * MAX_RES], nc = 0;
-		cu[nc] = rg->u; cv[nc++] = rg->v;
-		for (int r = 0; r < MAX_RES; r++)
-			if (res[r].asset >= 0)
-				for (int k = 0; k < res[r].nimg; k++) {
-					const vrect_t *a = &res[r].img[k];
-					if (a->page != rg->page)
-						continue;
-					cu[nc] = a->u + a->w; cv[nc++] = a->v > rg->v ? a->v : rg->v;
-					cu[nc] = a->u > rg->u ? a->u : rg->u; cv[nc++] = a->v + a->h;
-				}
-		for (int c = 0; c < nc; c++) {
-			int u = (cu[c] + 1) & ~1, v = cv[c];
-			uint32_t key = (uint32_t) v << 9 | (uint32_t) u;
-			if (key >= bkey || !vram_fits(rg->page, u, v, w, h, rg))
+	for (int t = 0; t < 2; t++) {
+		int pw = t ? (h + 1) & ~1 : w, ph = t ? w : h;
+		for (int g = 0; g < num_regions; g++) {
+			const vrect_t *rg = &regions[g];
+			if (pw > rg->w || ph > rg->h)
 				continue;
-			best = g; bu = u; bv = v; bkey = key;
+			int ds = rg->w - pw, dl = rg->h - ph;
+			uint32_t fit = (uint32_t) (ds < dl ? ds : dl);
+			int cu[1 + 2 * 2 * MAX_RES], cv[1 + 2 * 2 * MAX_RES], nc = 0;
+			cu[nc] = rg->u; cv[nc++] = rg->v;
+			for (int r = 0; r < MAX_RES; r++)
+				if (res[r].asset >= 0)
+					for (int k = 0; k < res[r].nimg; k++) {
+						const vrect_t *a = &res[r].img[k];
+						if (a->page != rg->page)
+							continue;
+						cu[nc] = a->u + a->w; cv[nc++] = a->v > rg->v ? a->v : rg->v;
+						cu[nc] = a->u > rg->u ? a->u : rg->u; cv[nc++] = a->v + a->h;
+					}
+			for (int c = 0; c < nc; c++) {
+				int u = (cu[c] + 1) & ~1, v = cv[c];
+				uint32_t key = fit << 18 | (uint32_t) v << 9 | (uint32_t) u;
+				if (key >= bkey || !vram_fits(u, v, pw, ph, rg))
+					continue;
+				bkey = key;
+				out->page = rg->page;
+				out->flags = (uint8_t) (t ? VR_T : 0);
+				out->u = (uint8_t) u; out->v = (uint8_t) v;
+				out->w = (uint16_t) pw; out->h = (uint16_t) ph;
+			}
 		}
 	}
-	if (best < 0)
-		return 0;
-	out->page = regions[best].page;
-	out->u = (uint8_t) bu; out->v = (uint8_t) bv;
-	out->w = (uint16_t) w; out->h = (uint16_t) h;
-	return 1;
+	return bkey != ~0u;
 }
 
 static uint16_t page_tpage(int p)   /* 8bpp, no semi-transparency (game.c's) */
@@ -318,6 +338,15 @@ static uint16_t page_tpage(int p)   /* 8bpp, no semi-transparency (game.c's) */
 
 /* --------------------------------------------------------------- assets -- */
 
+static void slot_free(res_t *r)
+{
+	r->asset = -1;
+	r->ram   = r->tmp = 0;
+	r->ram_size = r->tmp_size = 0;
+	r->nimg  = 0;
+	r->trim  = 0;
+}
+
 static void evict(int a)
 {
 	asset_t *as = &assets[a];
@@ -326,11 +355,10 @@ static void evict(int a)
 	res_t *r = &res[as->res];
 	SLOG("stream: out %08x (%u B, last %u)\n", (unsigned) as->d.hash, (unsigned) r->ram_size,
 	     (unsigned) as->last);
+	if (r->trim)                              /* (its upload not taken yet) */
+		DrawSync(0);
 	mdl_forget(a);
-	r->asset = -1;
-	r->ram   = 0;
-	r->nimg  = 0;
-	r->trim  = 0;
+	slot_free(r);
 	as->state = A_DISC;
 	stream_stats.evictions++;
 }
@@ -364,59 +392,126 @@ static int free_slot(void)
 	return -1;
 }
 
-/* a model asset just read: its images to VRAM (room made by dropping what
-   is wanted less), their UVs into its records, its texture words */
+/* the images of one resolution placed in VRAM (room made by dropping
+   what is wanted less than `score`): 1, or 0 with none taken */
+static int place_images(res_t *r, const qst_image *img, int nimg, uint32_t score, vrect_t at[2])
+{
+	r->nimg = 0;
+	for (int k = 0; k < nimg; k++) {
+		while (!vram_place(img[k].w, img[k].h, &at[k])) {
+			int v = least_wanted(score, 1);
+			if (v < 0) {
+				r->nimg = 0;
+				return 0;
+			}
+			evict(v);
+		}
+		r->img[k] = at[k];                    /* (taken: the next image's place avoids it) */
+		r->nimg = (uint8_t) (k + 1);
+	}
+	return 1;
+}
+
+/* a model asset just read: its images to VRAM (at the skin's resolution,
+   or its fallback at half when no room is left for that; an image may go
+   transposed), their UVs into its records, its texture words */
 static int install_model(int a)
 {
 	asset_t *as = &assets[a];
 	res_t   *r  = &res[as->res];
-	qst_model *m = (qst_model *) r->ram;
 	uint32_t size = as->d.size;
+	const qst_model *m = (const qst_model *) r->ram;
 	if (m->num_images < 1 || m->num_images > 2 || m->ofs_records + m->len_records > size ||
 	    m->ofs_frames + (uint32_t) m->num_frames * m->num_verts * 4 > size) {
 		printf("stream: asset %08x is not a model this engine reads\n", (unsigned) as->d.hash);
 		return 0;
 	}
-	r->nimg = 0;
-	for (int k = 0; k < m->num_images; k++) {
-		const qst_image *im = &m->images[k];
-		if (im->ofs + (uint32_t) im->w * im->h > size) {
+	int nimg = m->num_images;
+	qst_image full[2], img[2];
+	memcpy(full, m->images, sizeof full);
+	memcpy(img, m->images, sizeof img);
+	for (int k = 0; k < nimg; k++)
+		if (m->images[k].ofs + (uint32_t) m->images[k].w * m->images[k].h > size ||
+		    m->small[k].ofs + (uint32_t) m->small[k].w * m->small[k].h > size) {
 			printf("stream: asset %08x: image out of bounds\n", (unsigned) as->d.hash);
 			return 0;
 		}
-		vrect_t at;
-		while (!vram_place(im->w, im->h, &at)) {
-			int v = least_wanted(as->last, 1);
-			if (v < 0) {
-				printf("stream: no VRAM for %08x's %dx%d image\n", (unsigned) as->d.hash, im->w, im->h);
-				return 0;
-			}
-			evict(v);
+	vrect_t at[2];
+	int half = 0;
+	if (!place_images(r, img, nimg, as->last, at)) {
+		memcpy(img, m->small, sizeof img);
+		if (!place_images(r, img, nimg, as->last, at)) {
+			printf("stream: no VRAM for %08x's %dx%d images\n", (unsigned) as->d.hash, img[0].w, img[0].h);
+			return 0;
 		}
-		r->img[k] = at;
-		r->nimg = (uint8_t) (k + 1);
-		SLOG("stream: %08x image %d %dx%d at page %d u %d v %d\n", (unsigned) as->d.hash, k, im->w, im->h,
-		     at.page, at.u, at.v);
-		RECT rc = { (int16_t) (QTEX_PAGE_X0 + (at.page % QTEX_PAGE_COLS) * 128 + at.u / 2),
-		            (int16_t) ((at.page / QTEX_PAGE_COLS) * 256 + at.v),
-		            (int16_t) (im->w / 2), (int16_t) im->h };
-		LoadImage(&rc, (const uint32_t *) (r->ram + im->ofs));   /* (64-byte padded by the cook) */
-		r->tex[k].clut   = gdata.clut;
-		r->tex[k].tpage  = page_tpage(at.page);
-		r->tex[k].window = 0xE2000000u;
+		half = 1;
+		stream_stats.halved++;
 	}
-	/* the records' UVs: from their image's corner to its place */
+	r->half = (uint8_t) half;
+	uint32_t tbytes = 0;
+	for (int k = 0; k < nimg; k++)
+		if (at[k].flags & VR_T)
+			tbytes += ALIGN64((uint32_t) at[k].w * at[k].h);
+	/* the transposed images' pixels (the read's block may move here) */
+	if (tbytes) {
+		r->tmp = ram_alloc(tbytes);
+		if (!r->tmp) {
+			printf("stream: no RAM to turn %08x's images\n", (unsigned) as->d.hash);
+			return 0;
+		}
+		r->tmp_size = ALIGN16(tbytes);
+	}
+	m = (const qst_model *) r->ram;
+	uint8_t *tp = r->tmp;
+	for (int k = 0; k < nimg; k++) {
+		const uint8_t *src = r->ram + img[k].ofs;
+		if (at[k].flags & VR_T) {                 /* row y of the image: column y here */
+			int tw = at[k].w;
+			for (int y = 0; y < tw; y++) {
+				int sy = y < img[k].h ? y : img[k].h - 1;   /* (the even width's edge column) */
+				for (int x = 0; x < img[k].w; x++)
+					tp[x * tw + y] = src[sy * img[k].w + x];
+			}
+			uint32_t n = (uint32_t) at[k].w * at[k].h;
+			memset(tp + n, 0, ALIGN64(n) - n);
+			src = tp;
+			tp += ALIGN64(n);
+		}
+		RECT rc = { (int16_t) (QTEX_PAGE_X0 + (at[k].page % QTEX_PAGE_COLS) * 128 + at[k].u / 2),
+		            (int16_t) ((at[k].page / QTEX_PAGE_COLS) * 256 + at[k].v),
+		            (int16_t) (at[k].w / 2), (int16_t) at[k].h };
+		LoadImage(&rc, (const uint32_t *) src);   /* (64-byte padded: the cook's, or above) */
+		r->tex[k].clut   = gdata.clut;
+		r->tex[k].tpage  = page_tpage(at[k].page);
+		r->tex[k].window = 0xE2000000u;
+		SLOG("stream: %08x image %d %dx%d at page %d u %d v %d%s%s\n", (unsigned) as->d.hash, k, img[k].w,
+		     img[k].h, at[k].page, at[k].u, at[k].v, at[k].flags & VR_T ? " turned" : "",
+		     half ? " (half)" : "");
+	}
+	/* the records' UVs: from their image's corner to its place (the half
+	   resolution's: the texel holding the full one's; turned: u and v
+	   swapped) */
 	uint8_t *p = r->ram + m->ofs_records, *end = p + m->len_records;
 	while (p < end) {
 		qw_record *rec = (qw_record *) p;
 		if (!rec->size)
 			break;
-		int k = rec->tex < r->nimg ? rec->tex : 0;
-		uint16_t add = (uint16_t) (r->img[k].u | r->img[k].v << 8);
+		int k = rec->tex < nimg ? rec->tex : 0;
+		uint16_t add = (uint16_t) (at[k].u | at[k].v << 8);
+		int x0f = full[k].x0, x0h = img[k].x0;
 		qw_tri *t = (qw_tri *) (p + rec->polys + rec->num_quads * sizeof(qw_quad));
 		for (int i = 0; i < rec->num_tris; i++)
-			for (int c = 0; c < 3; c++)
-				t[i].uv[c] = (uint16_t) (t[i].uv[c] + add);
+			for (int c = 0; c < 3; c++) {
+				uint16_t uv = t[i].uv[c];
+				if (half) {
+					int u = (((uv & 0xff) - QST_BORDER + x0f) >> 1) - x0h + QST_BORDER;
+					int v = (((uv >> 8) - QST_BORDER) >> 1) + QST_BORDER;
+					uv = (uint16_t) (u | v << 8);
+				}
+				if (at[k].flags & VR_T)
+					uv = (uint16_t) (uv >> 8 | uv << 8);
+				t[i].uv[c] = (uint16_t) (uv + add);
+			}
 		p += rec->size;
 	}
 	r->ram_size = ALIGN16(size);              /* the read's sector padding back */
@@ -437,10 +532,7 @@ static void read_done(int a, int ok)
 		     (unsigned) as->last);
 		return;
 	}
-	res_t *r = &res[as->res];
-	r->asset = -1;
-	r->ram   = 0;
-	r->nimg  = 0;
+	slot_free(&res[as->res]);
 	as->state   = A_DISC;
 	as->backoff = BACKOFF;
 	stream_stats.failures++;
@@ -463,11 +555,10 @@ static int reserve(int a)
 		evict(v);
 	}
 	res_t *r = &res[slot];
+	slot_free(r);
 	r->asset    = (int16_t) a;
 	r->ram      = dst;
 	r->ram_size = ALIGN16(bytes);
-	r->nimg     = 0;
-	r->trim     = 0;
 	as->res     = (uint8_t) slot;
 	as->state   = A_READING;
 	return slot;
@@ -490,7 +581,8 @@ static void start_read(int a)
 }
 
 /* the wanted asset to read next: the most wanted on the disc within its
-   reach, -1 if none */
+   reach (the biggest of equals first: its room found before the small
+   ones break it up), -1 if none */
 static int next_wanted(void)
 {
 	int best = -1;
@@ -498,7 +590,8 @@ static int next_wanted(void)
 		asset_t *as = &assets[a];
 		if (as->state != A_DISC || as->backoff || as->last > STREAM_REACH)
 			continue;
-		if (best < 0 || as->last < assets[best].last)
+		if (best < 0 || as->last < assets[best].last ||
+		    (as->last == assets[best].last && as->d.size > assets[best].d.size))
 			best = a;
 	}
 	return best;
@@ -545,25 +638,19 @@ void stream_abort(void)
 		CdReadSync(0, 0);                     /* (the drive idle before the next command) */
 		reading = -1;
 	}
-	waiting  = -1;
-	pool     = pool_top = pool_end = 0;      /* (the level arena is about to be reset) */
+	waiting = -1;
+	DrawSync(0);                              /* (no upload left reading the pool) */
+	pool = pool_top = pool_end = 0;           /* (the level arena is about to be reset) */
 	for (int a = 0; a < num_assets; a++)
 		assets[a].state = A_DISC;
 	for (int i = 0; i < MAX_RES; i++)
-		res[i].asset = -1;
+		slot_free(&res[i]);
 }
 
 void stream_map_start(uint32_t keep)
 {
 	stream_abort();
-	for (int i = 0; i < MAX_RES; i++) {
-		res[i].asset = -1;
-		res[i].ram   = 0;
-		res[i].nimg  = 0;
-		res[i].trim  = 0;
-	}
 	for (int a = 0; a < num_assets; a++) {
-		assets[a].state   = A_DISC;
 		assets[a].score   = assets[a].last = ~0u;
 		assets[a].backoff = 0;
 	}
@@ -580,14 +667,17 @@ void stream_map_start(uint32_t keep)
 	       (unsigned) stream_stats.vram_texels / 1024, num_regions);
 }
 
+/* the uploads the GPU took: the images' pixels go, the blocks may move */
 static void trims(void)
 {
 	for (int i = 0; i < MAX_RES; i++) {
 		res_t *r = &res[i];
 		if (r->asset < 0 || !r->trim || --r->trim)
 			continue;
-		const qst_model *m = (const qst_model *) r->ram;   /* the images' pixels go */
+		const qst_model *m = (const qst_model *) r->ram;
 		r->ram_size = ALIGN16(m->images[0].ofs);
+		r->tmp = 0;
+		r->tmp_size = 0;
 	}
 }
 
@@ -640,21 +730,42 @@ void stream_preload(void)
 	pass();
 	for (;;) {
 		int a = next_wanted();
-		if (a < 0 || reserve(a) < 0)
+		if (a < 0)
 			break;
+		if (reserve(a) < 0) {
+			assets[a].backoff = BACKOFF;
+			continue;
+		}
 		int n = (int) ((assets[a].d.size + QST_SECTOR - 1) / QST_SECTOR);
 		int ok = read_sectors(base_lba + (int32_t) assets[a].d.sector, n, res[assets[a].res].ram);
 		read_done(a, ok);
+		DrawSync(0);                          /* the images uploaded: their pixels go */
+		for (int i = 0; i < MAX_RES; i++)
+			if (res[i].asset >= 0 && res[i].trim)
+				res[i].trim = 1;
+		trims();
 	}
-	DrawSync(0);                              /* the images uploaded: their pixels go */
-	for (int i = 0; i < MAX_RES; i++)
-		if (res[i].asset >= 0 && res[i].trim)
-			res[i].trim = 1;
-	trims();
 	pass();
 	printf("stream: preloaded %d assets, %u KB of RAM, %u K texels of VRAM\n", stream_stats.resident,
 	       (unsigned) stream_stats.ram_used / 1024, (unsigned) stream_stats.vram_used / 1024);
 }
+
+#ifdef Q1PSX_BENCH
+/* the bench's frame dumps: where the resident images are (tools/pktview
+   puts them in its VRAM from STREAM.DAT): "S hash image page u v flags",
+   flags 1 turned, 2 the fallback's */
+void stream_dump(void)
+{
+	for (int i = 0; i < MAX_RES; i++) {
+		const res_t *r = &res[i];
+		if (r->asset < 0 || assets[r->asset].state != A_RES)
+			continue;
+		for (int k = 0; k < r->nimg; k++)
+			printf("S %08x %d %d %d %d %d\n", (unsigned) assets[r->asset].d.hash, k, r->img[k].page,
+			       r->img[k].u, r->img[k].v, (r->img[k].flags & VR_T ? 1 : 0) | (r->half ? 2 : 0));
+	}
+}
+#endif
 
 const qst_model *stream_model(int a)
 {

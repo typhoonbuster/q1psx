@@ -547,8 +547,13 @@ static void run_frame(int interactive, int dump)
 		PLAY_STEP("overlay");
 		draw_overlay();
 	}
-	if (dump)
+	if (dump) {
+#ifdef Q1PSX_BENCH
+		if (dump != 2)
+			stream_dump();              /* (pktview: the streamed skins' places) */
+#endif
 		vid_dump(dump == 2);
+	}
 	PLAY_STEP("flip");
 	uint32_t share = (uint32_t) vid_frame_vbl();
 	vid_flip();
@@ -1735,11 +1740,139 @@ static void bench_game(void)
 	       pad.type, pad.held, pad.lx, pad.ly, pad.rx, pad.ry);
 }
 
+#ifndef Q1PSX_BENCH_MONSTERS
+#define Q1PSX_BENCH_MONSTERS 0
+#endif
+
+/* the monsters' scenario: on MAP (default E1M1), the first monster of
+   each kind there: the player put 250 units in front of it, standing; the
+   monster wakes, fights (the player's health, its state, every half
+   second), then the player fires the shotgun at it until it dies (its
+   death, its backpack); dumps on the way */
+static void mon_log(const char *what, const edict_t *e)
+{
+	printf("mon %s t %d state %d frame %d pos %d %d %d yaw %d ideal %d health %d enemy %d as %d "
+	       "flags %x | player health %d armor %d | stream %d/%d in, %u reads, %u halved\n", what,
+	       (int) ent_time, e->mstate, e->frame, (int) e->origin[0] / CLIP_SUB, (int) e->origin[1] / CLIP_SUB,
+	       (int) e->origin[2] / CLIP_SUB, e->ang[1] * 360 / 65536, e->ideal_yaw, e->health,
+	       e->enemy ? (int) (e->enemy - edicts) : -1, e->attack_state, (unsigned) e->flags, pl.health,
+	       pl.armor, stream_stats.resident, stream_stats.wanted, (unsigned) stream_stats.reads,
+	       (unsigned) stream_stats.halved);
+}
+
+static void bench_monsters(void)
+{
+	const char *mapname = Q1PSX_BENCH_MAP[0] ? Q1PSX_BENCH_MAP : "E1M1";
+	int m = world_find_map(mapname);
+	if (m < 0 || !load_level(m, Q1PSX_BENCH_FID)) {
+		printf("mon: no %s\n", mapname);
+		return;
+	}
+	map_index = m;
+	stream_log = 1;
+	game_active = 1;
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	game_spawn();
+	ents_ticks(60, &cmd);                         /* the monsters' delayed starts */
+	for (int k = 0; k < MK_COUNT; k++) {
+		/* a monster of the kind with a free spot in its sight: 300 .. 100
+		   units off, its facing first, then around it */
+		edict_t *e = 0;
+		int32_t spot[3];
+		trace_t tr;
+		for (int i = 2; i < num_edicts && !e; i++) {
+			edict_t *c = &edicts[i];
+			if (!c->inuse || !c->mdef || c->mdef->kind != k || c->health <= 0)
+				continue;
+			static const int turns[8] = { 0, 45, -45, 90, -90, 135, -135, 180 };
+			for (int a = 0; a < 8 && !e; a++)
+				for (int d = 300; d >= 100 && !e; d -= 25) {
+					int yaw = (c->ang[1] >> 4) + turns[a] * ANG_TURN / 360;
+					spot[0] = c->origin[0] + d * CLIP_SUB * r_cos(yaw) / 4096;
+					spot[1] = c->origin[1] + d * CLIP_SUB * r_sin(yaw) / 4096;
+					spot[2] = c->origin[2];
+					clip_trace(1, spot, spot, &tr);
+					if (tr.startsolid || tr.allsolid)
+						continue;
+					int32_t ea[3] = { spot[0], spot[1], spot[2] + 22 * CLIP_SUB }, eb[3];
+					ai_view_org(c, eb);
+					if (ai_traceline(ea, eb, 1, c) >= Q_FIX_ONE)   /* in its sight */
+						e = c;
+				}
+		}
+		if (!e) {
+			printf("mon kind %d: no monster with a free spot in sight\n", k);
+			continue;
+		}
+		memcpy(pl.pm.pos, spot, sizeof pl.pm.pos);
+		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+		pl.health = 100;
+		pl.dead = 0;
+		ents_look_at(e->origin);
+		char name[32];
+		snprintf(name, sizeof name, "m%s_%d_a", mapname, k);
+		mon_log("start", e);
+		for (int t = 0; t < 8; t++) {             /* the stream's reads, while the frames run */
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			run_frame(0, 0);
+			stream_frame();
+		}
+		ents_dump(name);
+		for (int t = 0; t < 300; t++) {           /* it sees the player, fights */
+			ents_look_at(e->origin);
+			game_tick(&cmd);
+			if (t % 30 == 0) {
+				mon_log("fight", e);
+				if (t == 0)
+					printf("mon sees: visible %d checkclient %d range %d infront %d\n",
+					       ai_visible(e, ent_player), ai_checkclient(e) != 0, ai_range(e, ent_player),
+					       ai_infront(e, ent_player));
+
+			}
+			if (t == 150) {
+				snprintf(name, sizeof name, "m%s_%d_b", mapname, k);
+				ents_dump(name);
+			}
+			if (pl.dead)
+				break;
+		}
+		/* the player answers: the shotgun until it dies */
+		pl.health = 100;
+		pl.dead = 0;
+		pl.items |= IT_SHOTGUN;
+		pl.ammo[AMMO_SHELLS] = 100;
+		game_give_weapon(W_SHOTGUN);
+		cmd.fire = 1;
+		for (int t = 0; t < 600 && e->health > 0; t++) {
+			ents_look_at(e->origin);
+			game_tick(&cmd);
+			if (t % 30 == 0)
+				mon_log("shot", e);
+		}
+		cmd.fire = 0;
+		mon_log("killed", e);
+		for (int t = 0; t < 120; t++)             /* its death, its backpack */
+			game_tick(&cmd);
+		mon_log("dead", e);
+		snprintf(name, sizeof name, "m%s_%d_c", mapname, k);
+		ents_look_at(e->origin);
+		ents_dump(name);
+	}
+}
+
 static void run_bench(void)
 {
 	static char names[16][8];
 
 	printf("bench start\n");
+	if (Q1PSX_BENCH_MONSTERS) {
+		bench_monsters();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
 	if (Q1PSX_BENCH_MAPS) {
 		bench_maps();
 		printf("bench done\n");

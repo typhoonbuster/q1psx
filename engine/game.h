@@ -166,6 +166,13 @@ void game_radius_damage_player(const int32_t org[3], int damage);
 void game_explosion(const int32_t org[3]);         /* BecomeExplosion's */
 void game_launch_spike(const int32_t org[3], const int32_t dir[3], int speed, int super);
 
+/* R_RunParticleEffect at org, no velocity (TE_GUNSHOT: colour 0, 20;
+   SpawnBlood: 73, the damage x 2) */
+void game_particles(const int32_t org[3], int colour, int count);
+/* EF_MUZZLEFLASH's light (CL_RelinkEntities) for an entity at org (1/8
+   units) facing yaw (binary degrees), its dlight key */
+void game_muzzle_flash(int key, const int32_t org[3], int yaw);
+
 void game_save_parms(void);
 void game_new_parms(void);
 void game_spawn_level(void);

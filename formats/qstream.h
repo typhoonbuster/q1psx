@@ -73,15 +73,22 @@ typedef struct {
    and its back on the right half, and a triangle takes its texels from
    one half; the cook cuts the reduced skin there (when every triangle
    keeps to one), each half with its own border, so that the halves go to
-   VRAM apart, where narrower room is free. A record draws with one image
-   (its tex: 0 the front, 1 the back). */
+   VRAM apart, where narrower room is free (the engine may also lay one
+   transposed). A record draws with one image (its tex: 0 the front, 1 the
+   back). Each image comes twice: at the skin's resolution, then at half
+   of it, which the engine takes when VRAM has no room for the first
+   (the records' UVs are the first's: the engine halves them, from x0). */
+#define QST_BORDER 2         /* an image's border of its edge texels         */
+
 typedef struct {
 	uint16_t w, h;           /* texels, the border included (w even: a VRAM
 	                            halfword holds two)                         */
 	uint32_t ofs;            /* its pixels, from the asset's start: w x h
 	                            palette indices, then zeros to a multiple of
 	                            64 bytes (LoadImage's DMA unit)             */
-} qst_image;                 /* 8 bytes */
+	uint16_t x0;             /* its first column of the reduced skin         */
+	uint16_t pad;
+} qst_image;                 /* 12 bytes */
 
 typedef struct {
 	uint16_t num_frames;
@@ -101,10 +108,11 @@ typedef struct {
 	                            every frame                                  */
 	int32_t  scale[3];       /* vertex units per expanded step, x 65536      */
 	int32_t  origin[3];      /* the expanded 0's place, vertex units x 16    */
-	qst_image images[2];
-} qst_model;                 /* 64 bytes */
+	qst_image images[2];     /* at the skin's resolution                     */
+	qst_image small[2];      /* at half of it: VRAM's fallback               */
+} qst_model;                 /* 96 bytes */
 
-_Static_assert(sizeof(qst_asset) == 16 && sizeof(qst_model) == 64, "qstream.h: sizes");
+_Static_assert(sizeof(qst_asset) == 16 && sizeof(qst_model) == 96, "qstream.h: sizes");
 
 /* a sound asset: qst_sound, then its ADPCM data (len bytes, 16-aligned) */
 typedef struct {
