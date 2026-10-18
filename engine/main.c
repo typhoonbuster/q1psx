@@ -315,6 +315,9 @@ static int overlay_on = !Q1PSX_RELEASE;   /* START toggles (the debug build) */
 static int menu_shown = Q1PSX_RELEASE;     /* Quake's menu drawn (the release build; the bench's check) */
 static int release_in_game;                /* the release build: a game begun (New Game, or
                                               the menu left on the first map) */
+#if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
+static void release_start_map(void);
+#endif
 
 static void draw_overlay(void)
 {
@@ -375,8 +378,11 @@ static void run_frame(int interactive, int dump)
 		if (menu_active()) {                  /* the world paused under the menu */
 			menu_key(&pad);
 			nticks = 0;
-			if (!menu_active())
-				release_in_game = 1;          /* (left on the first map: playing it) */
+			if (!menu_active() && !release_in_game) {   /* left on the first map: playing it, */
+				if (settings.fidelity != fid_loaded || settings.tex4 != world.tex4)
+					release_start_map();      /* at the fidelity just chosen */
+				release_in_game = 1;
+			}
 		} else if (pad.pressed & PAD_START) {
 			menu_open();                      /* togglemenu */
 			nticks = 0;

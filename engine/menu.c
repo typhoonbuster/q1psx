@@ -63,6 +63,9 @@ void menu_open(void)
 {
 	m_state = M_MAIN;
 	m_entersound = 1;
+#if Q1PSX_PADSCRIPT
+	printf("menu: open\n");
+#endif
 }
 
 /* ------------------------------------------------------------- drawing -- */
@@ -213,8 +216,7 @@ static void graphics_draw(void)
 		m_print(220, y, val, shade);
 	}
 	draw_cursor(32 + graphics_cursor * 8);
-	if (hooks.in_game && hooks.in_game() &&
-	    (settings.fidelity != hooks.loaded_fid() || settings.tex4 != hooks.loaded_tex4())) {
+	if (hooks.loaded_fid && (settings.fidelity != hooks.loaded_fid() || settings.tex4 != hooks.loaded_tex4())) {
 		m_print_white(16, 32 + (GRAPHICS_ITEMS + 1) * 8, "The fidelity and the textures");
 		m_print_white(16, 32 + (GRAPHICS_ITEMS + 2) * 8, "change with the next level.");
 	}
@@ -280,6 +282,9 @@ static void main_key(int k)
 
 static void new_game(void)
 {
+#if Q1PSX_PADSCRIPT
+	printf("menu: new game\n");
+#endif
 	m_state = M_NONE;
 	if (hooks.new_game)
 		hooks.new_game();
@@ -441,6 +446,10 @@ void menu_key(const pad_t *p)
 	int k = pad_key(p);
 	if (k == K_NONE)
 		return;
+#if Q1PSX_PADSCRIPT
+	printf("menu: state %d key %d (main %d sp %d options %d graphics %d)\n", m_state, k, m_main_cursor,
+	       m_singleplayer_cursor, options_cursor, graphics_cursor);
+#endif
 	switch (m_state) {
 	case M_MAIN:         main_key(k); break;
 	case M_SINGLEPLAYER: singleplayer_key(k); break;

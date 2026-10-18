@@ -72,6 +72,11 @@ if(Q1PSX_RELEASE)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_RELEASE=1)
 endif()
 set(Q1PSX_FIDELITIES "low;medium;high;ultra" CACHE STRING "The fidelity levels put on the disc")
+# A scripted pad (engine/pad.c pad_script): the release flow checked headless
+option(Q1PSX_PADSCRIPT "Replace the pad by a scripted sequence of presses" OFF)
+if(Q1PSX_PADSCRIPT)
+	target_compile_definitions(q1psx PRIVATE Q1PSX_PADSCRIPT=1)
+endif()
 
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.

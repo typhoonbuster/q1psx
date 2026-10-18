@@ -1,3 +1,5 @@
+#include <stdio.h>
+
 #include "dlight.h"
 #include "hud.h"
 #include "render.h"
@@ -33,6 +35,11 @@ void settings_defaults(void)
 
 void settings_apply(void)
 {
+#if Q1PSX_PADSCRIPT
+	printf("settings: fid %d tex4 %d dither %d warp %d t %d budget %d hud %d dlights %d vol %d music %d\n",
+	       settings.fidelity, settings.tex4, settings.dither, settings.warp, settings.t, settings.budget,
+	       settings.hud, settings.dlights, settings.volume, settings.music);
+#endif
 	r_set_warp(settings.warp, warp_t_px[settings.t], warp_budgets[settings.budget]);
 	vid_set_dither(settings.dither);
 	hud_set_style(settings.hud);

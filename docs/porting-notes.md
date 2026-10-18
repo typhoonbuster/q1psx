@@ -3608,7 +3608,15 @@ fidelity taken out of the release disc into a disc of its own.
 - **Checking:** `BENCH_GAME=1 scripts/bench.sh` ends with the menu driven
   by key presses and a frame of each page dumped (`mmain`, `msingle`,
   `mnewgame`, `moptions`, `mgraphics`, `mgraphics_dyn`,
-  `mgraphics_budget`).
+  `mgraphics_budget`). The release flow itself runs headless with a
+  scripted pad (`-DQ1PSX_PADSCRIPT=ON`: engine/pad.c's `pad_script`
+  replaces the polls by presses at given vblanks, an analog pad's
+  answers): boot under the menu, Single Player, New Game (START loaded
+  again), a walk, the menu again, Options, Graphics (the warp to dynamic,
+  the budget skipped greyed, the dynamic lights off, the fidelity
+  changed), out, firing; the `menu:` and `settings:` lines trace it. A
+  fidelity changed before any game is taken when the menu is left (START
+  loaded again at it); during a game, at the next level.
 
 ## §32 — The animated textures (2026-10-18)
 

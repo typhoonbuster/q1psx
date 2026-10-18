@@ -185,11 +185,60 @@ static void snap_poll(volatile pad_snap *s)
 	}
 }
 
+#if Q1PSX_PADSCRIPT
+/* the release build's scripted check (CMake Q1PSX_PADSCRIPT): the pad's
+   polls replaced by presses at given vblanks */
+static const struct { uint16_t from, to, buttons; } pad_script[] = {
+	/* (the boot's loads take their vblanks: the presses come late, and a
+	   press during a load is lost, as a player's would be) */
+	{ 1500, 1504, PAD_CROSS },     /* Single Player */
+	{ 1560, 1564, PAD_CROSS },     /* New Game (START reloaded) */
+	{ 2100, 2160, PAD_UP },        /* a second's walk */
+	{ 2220, 2224, PAD_START },     /* the menu */
+	{ 2280, 2284, PAD_DOWN },      /* (Multiplayer greyed: Options) */
+	{ 2340, 2344, PAD_CROSS },     /* Options */
+	{ 2400, 2404, PAD_UP },        /* (to Graphics) */
+	{ 2460, 2464, PAD_CROSS },     /* Graphics */
+	{ 2520, 2524, PAD_DOWN }, { 2580, 2584, PAD_DOWN }, { 2640, 2644, PAD_DOWN },
+	{ 2700, 2704, PAD_RIGHT },     /* warp: dynamic */
+	{ 2760, 2764, PAD_DOWN }, { 2820, 2824, PAD_DOWN }, { 2880, 2884, PAD_DOWN },
+	{ 2940, 2944, PAD_RIGHT },     /* HUD: q2 psx */
+	{ 3000, 3004, PAD_DOWN },
+	{ 3060, 3064, PAD_CROSS },     /* dynamic lights: off */
+	{ 3120, 3124, PAD_START }, { 3180, 3184, PAD_START }, { 3240, 3244, PAD_START },   /* out */
+	{ 3300, 3420, PAD_R2 },        /* two seconds of fire */
+	{ 3480, 3484, PAD_START },     /* the menu again */
+	{ 3540, 3544, PAD_CROSS },     /* Single Player */
+	{ 3600, 3604, PAD_CROSS },     /* New Game: "Are you sure" */
+	{ 3660, 3664, PAD_CROSS },     /* yes */
+};
+static uint32_t script_vbl;
+
+static void script_poll(void)
+{
+	uint16_t b = 0;
+	for (unsigned i = 0; i < sizeof pad_script / sizeof pad_script[0]; i++)
+		if (script_vbl >= pad_script[i].from && script_vbl < pad_script[i].to)
+			b |= pad_script[i].buttons;
+	script_vbl++;
+	uint8_t *p = pad_buf[0];
+	p[0] = 0;                              /* data valid, a DualShock (analog), active low */
+	p[1] = 0x73;
+	p[2] = (uint8_t) ~b;
+	p[3] = (uint8_t) (~b >> 8);
+	p[4] = p[5] = p[6] = p[7] = 0x80;      /* the sticks centred */
+}
+#endif
+
 static void pad_vblank(void)
 {
 	if (!driver_on)
 		return;
+#if Q1PSX_PADSCRIPT
+	script_poll();
+#else
 	poll_sync();
+#endif
 	uint32_t h = ring_head;
 	snap_poll(&ring[h & (PAD_RING - 1)]);
 	ring_head = h + 1;
