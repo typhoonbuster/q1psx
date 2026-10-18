@@ -267,8 +267,6 @@ void dl_light_record(qw_record *q, const qw_node *node)
 		}
 		if (e->cutoff < 0)
 			continue;
-
-		}
 		if (!(dl_touched[id >> 5] & (1u << (id & 31)))) {   /* saved once a frame */
 			if (dl_save_n >= SAVE_MAX)
 				return;                      /* the frame's budget: the rest stays unlit */
