@@ -226,6 +226,9 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 {
 	int ncl = num_miptex;
 	int cl_rows = (ncl + QTEX4_CLUTS_PER_ROW - 1) / QTEX4_CLUTS_PER_ROW;
+	if (cl_rows > QTEX4_CLUT_ROWS)
+		die("%d textures: more 4-bit CLUTs than the CLUT area holds (%d)", ncl,
+		    QTEX4_CLUT_ROWS * QTEX4_CLUTS_PER_ROW);
 	int cl_w = 16 * (ncl < QTEX4_CLUTS_PER_ROW ? ncl : QTEX4_CLUTS_PER_ROW);
 	uint16_t  *clut = xcalloc((size_t) (cl_w * cl_rows) + 16, 2);
 	uint8_t   *nib  = xcalloc(QTEX_PAGES, PAGE_TEX * PAGE_TEX);

@@ -62,18 +62,24 @@ typedef struct {
    QTX3, so the world file's UVs and texture windows stay valid; each
    texture is quantized to its own 16 colours.
      pages  x = 320 + 64 * p, y = 0 (64 halfwords = 256 4bpp texels)
-     CLUTs  16 entries per texture (miptex index i) at x = 16 * (i % 60),
-            y = 480 + i / 60 (x < 960: the debug font is there)
+     CLUTs  16 entries per texture (texture index i) at x = 16 * (i % 20),
+            y = 481 + i / 20: under the framebuffers (x < 320), where no
+            texture page reaches (the second row's pages, from x 320, go
+            down to row 511), rows 481 .. 502 at most
+   The CLUT area, x 0 .. 319 of rows 480 .. 511: the Quake palette (QTX3)
+   row 480, the 4-bit CLUTs rows 481 .. 502, the game data's palette row
+   504, its aux pictures' CLUTs rows 505 .. (formats/qgame.h).
    Layout:
      qtex4_header
      qtex_rect[num_rects]     the CLUT block first, then the pages
      qtex4_tex[num_tex]       at ofs_tex: each texture's CLUT and tpage
                               words, which replace the world's qw_tex ones
      pixel data               as in QTX3 */
-#define QTEX4_MAGIC          "QTX4"
+#define QTEX4_MAGIC          "QTX5"
 #define QTEX4_PAGE_X0        320
-#define QTEX4_CLUT_Y         480
-#define QTEX4_CLUTS_PER_ROW  60
+#define QTEX4_CLUT_Y         481
+#define QTEX4_CLUTS_PER_ROW  20
+#define QTEX4_CLUT_ROWS      22
 
 typedef struct {
 	char     magic[4];       /* "QTX4"                                   */

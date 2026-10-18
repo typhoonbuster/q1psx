@@ -3581,18 +3581,17 @@ fidelity taken out of the release disc into a disc of its own.
   `volume`, 0.7, scales the voices; `bgmvolume`, 1, the SPU's CD input;
   the defaults keep the old mix: the master at full, the CD input at
   0.7, the voices x 0.7).
-- **The menu (engine/menu.c).** menu.c transcribed for the pad: the main
-  menu (qplaque, ttl_main, mainmenu with the spinning dot: Single Player,
-  Options; Multiplayer, Help / Ordering and Quit greyed), the single
-  player menu (New Game; Load and Save greyed: no saves yet), the new
-  game question when a game is under way (SCR_ModalMessage: "Are you
-  sure you want to start a new game?", Cross yes, Circle no), the
-  options (M_Options_Draw's rows and sliders: CD Music Volume and Sound
-  Volume work, Reset to defaults too; Customize controls, Go to console,
-  Screen size, Brightness, Mouse Speed, Always Run, Invert Mouse,
-  Lookspring and Lookstrafe greyed with Quake's values) and, in Video
-  Options' place, Graphics: fidelity, textures, dithering, warp control,
-  threshold, budget, HUD, dynamic lights. The pad stands for the keys:
+- **The menu (engine/menu.c).** menu.c transcribed for the pad, with only
+  what the port does (2026-10-18: the modes and options it does
+  not handle taken out rather than greyed): the main menu (qplaque,
+  ttl_main, mainmenu's Single Player and Options rows with the spinning
+  dot), the single player menu (sp_menu's New Game row), the new game
+  question when a game is under way (SCR_ModalMessage: "Are you sure you
+  want to start a new game?", Cross yes, Circle no), the options
+  (M_Options_Draw's Reset to defaults, CD Music Volume and Sound Volume
+  with their sliders) and, in Video Options' place, Graphics: fidelity
+  (only when the disc has more than one level), textures, dithering,
+  warp control, threshold, budget, HUD, dynamic lights. The pad stands for the keys:
   the d-pad for the arrows (repeating after half a second, ten a
   second), Cross ENTER, Triangle / Circle ESCAPE, START the menu key.
   The sounds are Quake's (menu1 to move, menu2 to enter, menu3 to
@@ -3604,6 +3603,17 @@ fidelity taken out of the release disc into a disc of its own.
   their floor (render.c: T never comes down below it), so it reads
   "Min threshold" there. (The example given put the threshold on the fixed mode alone: this is the one place the menu departs from it, on
   render.c's actual behaviour; to be confirmed.)
+- **The menu's colours, broken on the first test (2026-10-18).** The aux
+  pictures' CLUTs ran along row 504 from x 256, and the 4-bit textures'
+  along rows 480+ up to x 959; the second row's texture pages reach row
+  511 from x 320: a map whose sixth page is full (start at high, since the
+  items' and the animations' tiles) wrote its texels over the menu's
+  CLUTs (the plaque, the bronze text, the main menu in random colours),
+  and the game data's own pages lost a row (a line of the inventory bar)
+  to the aux CLUTs at boot. Every CLUT now lives under the framebuffers
+  (x < 320, rows 480 .. 511: architecture.md §4), and pktview loads the
+  game data before the map, the console's order, so the bench's frames
+  show what the console does.
 - **The fidelity and the textures during a game** take effect at the
   next level's load (the level's entities live in the level arena with
   its world: reloading the world mid-level would respawn them); the

@@ -24,24 +24,24 @@
 
 enum { M_NONE, M_MAIN, M_SINGLEPLAYER, M_NEWGAME, M_OPTIONS, M_GRAPHICS };
 
-#define MAIN_ITEMS          5
-#define SINGLEPLAYER_ITEMS  3
-#define OPTIONS_ITEMS      13
-#define GRAPHICS_ITEMS      8
+/* Only what the PlayStation port does: the main menu's Single Player and
+   Options (rows 0 and 2 of mainmenu.lmp), the single player menu's New Game
+   (row 0 of sp_menu.lmp), the options the port handles; the graphics page's
+   rows (its fidelity only when the disc carries more than one level) */
+static const uint8_t main_rows[]  = { 0, 2 };
+static const uint8_t sp_rows[]    = { 0 };
+#define MAIN_ITEMS         (int) sizeof main_rows
+#define SINGLEPLAYER_ITEMS (int) sizeof sp_rows
+enum { O_RESET, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
+enum { G_FID, G_TEX, G_DITHER, G_WARP, G_T, G_BUDGET, G_HUD, G_DLIGHTS, G_COUNT };
 #define SLIDER_RANGE       10
 #define GREY               56          /* a greyed entry's shade (128: as it is) */
 
 static int m_state = M_NONE;
-static int m_main_cursor, m_singleplayer_cursor, graphics_cursor;
-static int options_cursor = 2;         /* (the first two are greyed: Reset to defaults) */
+static int m_main_cursor, m_singleplayer_cursor, options_cursor, graphics_cursor;
 static int m_entersound;               /* menu2.wav after the frame is drawn */
 static menu_hooks_t hooks;
 static int frame_count;                /* the cursor animations' clock (realtime) */
-
-/* the entries with no PlayStation counterpart */
-static const uint8_t main_grey[MAIN_ITEMS]                 = { 0, 1, 0, 1, 1 };
-static const uint8_t singleplayer_grey[SINGLEPLAYER_ITEMS] = { 0, 1, 1 };
-static const uint8_t options_grey[OPTIONS_ITEMS]           = { 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 0 };
 
 void menu_init(const menu_hooks_t *h)
 {
@@ -75,11 +75,6 @@ static int aux_w(int id)
 	return gdata.aux ? gdata.aux[id].w : 0;
 }
 
-static int aux_h(int id)
-{
-	return gdata.aux ? gdata.aux[id].h : 0;
-}
-
 /* M_Print: the bronze characters (+128); M_PrintWhite */
 static void m_print(int x, int y, const char *s, int shade)
 {
@@ -98,33 +93,25 @@ static void draw_header(int title)
 	ui_aux(title, (320 - aux_w(title)) / 2, 4);
 }
 
-/* a big menu picture (mainmenu, sp_menu): its rows of 20 per entry, the
-   greyed ones darker; the spinning dot at the cursor */
-static void draw_big_menu(int pic, int items, const uint8_t *grey, int cursor)
+/* a big menu picture (mainmenu, sp_menu): the rows of 20 of the entries
+   kept, one under the other; the spinning dot at the cursor */
+static void draw_big_menu(int pic, const uint8_t *rows, int items, int cursor)
 {
-	for (int i = 0; i < items; i++) {
-		int h = i == items - 1 ? aux_h(pic) - i * 20 : 20;
-		ui_aux_rows(pic, 72, 32 + i * 20, i * 20, h, grey[i] ? GREY : 128);
-	}
+	for (int i = 0; i < items; i++)
+		ui_aux_rows(pic, 72, 32 + i * 20, rows[i] * 20, 20, 128);
 	int f = frame_count * 10 / 60 % 6;           /* (int) (host_time * 10) % 6 */
 	ui_aux(QGA_MENUDOT1 + f, 54, 32 + cursor * 20);
 }
 
 /* M_DrawSlider */
-static void draw_slider(int x, int y, int tenths, int shade)
+static void draw_slider(int x, int y, int tenths)
 {
-	ui_char(x - 8, y, 128, shade);
+	ui_char(x - 8, y, 128, 128);
 	int i;
 	for (i = 0; i < SLIDER_RANGE; i++)
-		ui_char(x + i * 8, y, 129, shade);
-	ui_char(x + i * 8, y, 130, shade);
-	ui_char(x + (SLIDER_RANGE - 1) * 8 * tenths / 10, y, 131, shade);
-}
-
-/* M_DrawCheckbox: "on" / "off" in the bronze characters */
-static void draw_checkbox(int x, int y, int on, int shade)
-{
-	m_print(x, y, on ? "on" : "off", shade);
+		ui_char(x + i * 8, y, 129, 128);
+	ui_char(x + i * 8, y, 130, 128);
+	ui_char(x + (SLIDER_RANGE - 1) * 8 * tenths / 10, y, 131, 128);
 }
 
 /* the options' and the graphics page's blinking cursor */
@@ -136,13 +123,13 @@ static void draw_cursor(int y)
 static void main_draw(void)
 {
 	draw_header(QGA_TTL_MAIN);
-	draw_big_menu(QGA_MAINMENU, MAIN_ITEMS, main_grey, m_main_cursor);
+	draw_big_menu(QGA_MAINMENU, main_rows, MAIN_ITEMS, m_main_cursor);
 }
 
 static void singleplayer_draw(void)
 {
 	draw_header(QGA_TTL_SGL);
-	draw_big_menu(QGA_SP_MENU, SINGLEPLAYER_ITEMS, singleplayer_grey, m_singleplayer_cursor);
+	draw_big_menu(QGA_SP_MENU, sp_rows, SINGLEPLAYER_ITEMS, m_singleplayer_cursor);
 }
 
 /* SCR_ModalMessage's screen: the text centred from 35 % down (SCR_DrawNotifyString) */
@@ -157,68 +144,65 @@ static void newgame_draw(void)
 static void options_draw(void)
 {
 	static const char *const label[OPTIONS_ITEMS] = {
-		"    Customize controls", "         Go to console", "     Reset to defaults",
-		"           Screen size", "            Brightness", "           Mouse Speed",
-		"       CD Music Volume", "          Sound Volume", "            Always Run",
-		"          Invert Mouse", "            Lookspring", "            Lookstrafe",
+		"     Reset to defaults", "       CD Music Volume", "          Sound Volume",
 		"              Graphics" };
 	draw_header(QGA_P_OPTION);
 	for (int i = 0; i < OPTIONS_ITEMS; i++)
-		m_print(16, 32 + i * 8, label[i], options_grey[i] ? GREY : 128);
-	draw_slider(220, 56, 7, GREY);                /* viewsize 100 of 30 .. 120 */
-	draw_slider(220, 64, 0, GREY);                /* gamma 1 */
-	draw_slider(220, 72, 2, GREY);                /* sensitivity 3 of 1 .. 11 */
-	draw_slider(220, 80, settings.music, 128);
-	draw_slider(220, 88, settings.volume, 128);
-	draw_checkbox(220, 96, 1, GREY);              /* (the walk is Triangle's) */
-	draw_checkbox(220, 104, 0, GREY);
-	draw_checkbox(220, 112, 0, GREY);
-	draw_checkbox(220, 120, 0, GREY);
+		m_print(16, 32 + i * 8, label[i], 128);
+	draw_slider(220, 32 + O_MUSIC * 8, settings.music);
+	draw_slider(220, 32 + O_SOUND * 8, settings.volume);
 	draw_cursor(32 + options_cursor * 8);
 }
 
-/* which graphics entries do nothing as the others are set: the budget is
-   the budget mode's alone; the fidelity has no other level on an ultra disc
-   (the threshold works in every mode: the fixed mode's, the others' floor) */
-static int graphics_grey(int i)
+/* the graphics page's rows: the fidelity only when the disc has a choice */
+static int graphics_rows(uint8_t rows[G_COUNT])
 {
-	switch (i) {
-	case 0:  return settings_fid_step(settings.fidelity, 1) == settings.fidelity;
-	case 5:  return settings.warp != R_WARP_BUDGET;
-	default: return 0;
-	}
+	int n = 0;
+	for (int g = 0; g < G_COUNT; g++)
+		if (g != G_FID || settings_fid_step(settings.fidelity, 1) != settings.fidelity)
+			rows[n++] = (uint8_t) g;
+	return n;
+}
+
+/* the budget does nothing outside the budget mode: greyed (the threshold
+   works in every mode: the fixed mode's, the others' floor) */
+static int graphics_grey(int g)
+{
+	return g == G_BUDGET && settings.warp != R_WARP_BUDGET;
 }
 
 static void graphics_draw(void)
 {
-	static const char *const label[GRAPHICS_ITEMS] = {
+	static const char *const label[G_COUNT] = {
 		"              Fidelity", "              Textures", "             Dithering",
 		"          Warp control", "             Threshold", "                Budget",
 		"                   HUD", "        Dynamic lights" };
+	uint8_t rows[G_COUNT];
+	int n = graphics_rows(rows);
 	char val[24];
 	draw_header(QGA_P_OPTION);
-	for (int i = 0; i < GRAPHICS_ITEMS; i++) {
-		int shade = graphics_grey(i) ? GREY : 128, y = 32 + i * 8;
-		const char *l = label[i];
-		if (i == 4 && settings.warp != R_WARP_FIXED)
+	for (int i = 0; i < n; i++) {
+		int g = rows[i], shade = graphics_grey(g) ? GREY : 128, y = 32 + i * 8;
+		const char *l = label[g];
+		if (g == G_T && settings.warp != R_WARP_FIXED)
 			l = "         Min threshold";          /* the dynamic modes' floor */
 		m_print(16, y, l, shade);
-		switch (i) {
-		case 0: snprintf(val, sizeof val, "%s", fidelity_name[settings.fidelity]); break;
-		case 1: snprintf(val, sizeof val, "%s", settings.tex4 ? "4-bit" : "8-bit"); break;
-		case 2: snprintf(val, sizeof val, "%s", settings.dither ? "on" : "off"); break;
-		case 3: snprintf(val, sizeof val, "%s", warp_mode_name[settings.warp]); break;
-		case 4: snprintf(val, sizeof val, "%d px", warp_t_px[settings.t]); break;
-		case 5: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
-		case 6: snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
-		default: snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
+		switch (g) {
+		case G_FID:    snprintf(val, sizeof val, "%s", fidelity_name[settings.fidelity]); break;
+		case G_TEX:    snprintf(val, sizeof val, "%s", settings.tex4 ? "4-bit" : "8-bit"); break;
+		case G_DITHER: snprintf(val, sizeof val, "%s", settings.dither ? "on" : "off"); break;
+		case G_WARP:   snprintf(val, sizeof val, "%s", warp_mode_name[settings.warp]); break;
+		case G_T:      snprintf(val, sizeof val, "%d px", warp_t_px[settings.t]); break;
+		case G_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
+		case G_HUD:    snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
+		default:       snprintf(val, sizeof val, "%s", settings.dlights ? "on" : "off"); break;
 		}
 		m_print(220, y, val, shade);
 	}
 	draw_cursor(32 + graphics_cursor * 8);
 	if (hooks.loaded_fid && (settings.fidelity != hooks.loaded_fid() || settings.tex4 != hooks.loaded_tex4())) {
-		m_print_white(16, 32 + (GRAPHICS_ITEMS + 1) * 8, "The fidelity and the textures");
-		m_print_white(16, 32 + (GRAPHICS_ITEMS + 2) * 8, "change with the next level.");
+		m_print_white(16, 32 + (n + 1) * 8, "The fidelity and the textures");
+		m_print_white(16, 32 + (n + 2) * 8, "change with the next level.");
 	}
 }
 
@@ -248,15 +232,9 @@ void menu_draw(void)
 
 enum { K_NONE, K_UP, K_DOWN, K_LEFT, K_RIGHT, K_ENTER, K_ESCAPE };
 
-/* the cursor over the entries that do something */
-static int step_cursor(int c, int d, int items, const uint8_t *grey, int (*grey_fn)(int))
+static int wrap(int v, int d, int n)
 {
-	for (int i = 0; i < items; i++) {
-		c = (c + items + d) % items;
-		if (!(grey ? grey[c] : grey_fn(c)))
-			break;
-	}
-	return c;
+	return (v + n + d) % n;
 }
 
 static void main_key(int k)
@@ -268,14 +246,11 @@ static void main_key(int k)
 	case K_DOWN:
 	case K_UP:
 		local_sound(S_MENU1);
-		m_main_cursor = step_cursor(m_main_cursor, k == K_DOWN ? 1 : -1, MAIN_ITEMS, main_grey, 0);
+		m_main_cursor = wrap(m_main_cursor, k == K_DOWN ? 1 : -1, MAIN_ITEMS);
 		break;
 	case K_ENTER:
 		m_entersound = 1;
-		if (m_main_cursor == 0)
-			m_state = M_SINGLEPLAYER;
-		else if (m_main_cursor == 2)
-			m_state = M_OPTIONS;
+		m_state = main_rows[m_main_cursor] == 0 ? M_SINGLEPLAYER : M_OPTIONS;
 		break;
 	}
 }
@@ -300,17 +275,14 @@ static void singleplayer_key(int k)
 	case K_DOWN:
 	case K_UP:
 		local_sound(S_MENU1);
-		m_singleplayer_cursor = step_cursor(m_singleplayer_cursor, k == K_DOWN ? 1 : -1,
-		                                    SINGLEPLAYER_ITEMS, singleplayer_grey, 0);
+		m_singleplayer_cursor = wrap(m_singleplayer_cursor, k == K_DOWN ? 1 : -1, SINGLEPLAYER_ITEMS);
 		break;
 	case K_ENTER:
 		m_entersound = 1;
-		if (m_singleplayer_cursor == 0) {
-			if (hooks.in_game && hooks.in_game())
-				m_state = M_NEWGAME;          /* "Are you sure ..." */
-			else
-				new_game();
-		}
+		if (hooks.in_game && hooks.in_game())
+			m_state = M_NEWGAME;              /* "Are you sure ..." */
+		else
+			new_game();
 		break;
 	}
 }
@@ -327,7 +299,7 @@ static void newgame_key(int k)
 static void options_adjust(int dir)
 {
 	local_sound(S_MENU3);
-	int *v = options_cursor == 6 ? &settings.music : options_cursor == 7 ? &settings.volume : 0;
+	int *v = options_cursor == O_MUSIC ? &settings.music : options_cursor == O_SOUND ? &settings.volume : 0;
 	if (!v)
 		return;
 	*v += dir;
@@ -345,13 +317,12 @@ static void options_key(int k)
 		break;
 	case K_ENTER:
 		m_entersound = 1;
-		if (options_cursor == 2) {                /* exec default.cfg */
+		if (options_cursor == O_RESET) {          /* exec default.cfg */
 			settings_defaults();
 			settings_apply();
-		} else if (options_cursor == 12) {
+		} else if (options_cursor == O_GRAPHICS) {
 			m_state = M_GRAPHICS;
-			if (graphics_grey(graphics_cursor))   /* (one fidelity on the disc) */
-				graphics_cursor = step_cursor(graphics_cursor, 1, GRAPHICS_ITEMS, 0, graphics_grey);
+			graphics_cursor = 0;
 		} else {
 			options_adjust(1);
 		}
@@ -359,7 +330,7 @@ static void options_key(int k)
 	case K_UP:
 	case K_DOWN:
 		local_sound(S_MENU1);
-		options_cursor = step_cursor(options_cursor, k == K_DOWN ? 1 : -1, OPTIONS_ITEMS, options_grey, 0);
+		options_cursor = wrap(options_cursor, k == K_DOWN ? 1 : -1, OPTIONS_ITEMS);
 		break;
 	case K_LEFT:
 	case K_RIGHT:
@@ -368,48 +339,49 @@ static void options_key(int k)
 	}
 }
 
-static int wrap(int v, int d, int n)
-{
-	return (v + n + d) % n;
-}
-
-static void graphics_adjust(int d)
+static void graphics_adjust(int g, int d)
 {
 	local_sound(S_MENU3);
-	switch (graphics_cursor) {
-	case 0: settings.fidelity = settings_fid_step(settings.fidelity, d); break;
-	case 1: settings.tex4 ^= 1; break;
-	case 2: settings.dither ^= 1; break;
-	case 3: settings.warp = wrap(settings.warp, d, R_WARP_MODES); break;
-	case 4: settings.t = wrap(settings.t, d, num_warp_t); break;
-	case 5: settings.budget = wrap(settings.budget, d, num_warp_budget); break;
-	case 6: settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
-	default: settings.dlights ^= 1; break;
+	switch (g) {
+	case G_FID:    settings.fidelity = settings_fid_step(settings.fidelity, d); break;
+	case G_TEX:    settings.tex4 ^= 1; break;
+	case G_DITHER: settings.dither ^= 1; break;
+	case G_WARP:   settings.warp = wrap(settings.warp, d, R_WARP_MODES); break;
+	case G_T:      settings.t = wrap(settings.t, d, num_warp_t); break;
+	case G_BUDGET: settings.budget = wrap(settings.budget, d, num_warp_budget); break;
+	case G_HUD:    settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
+	default:       settings.dlights ^= 1; break;
 	}
 	settings_apply();                             /* the fidelity and the textures: at a load */
 }
 
 static void graphics_key(int k)
 {
+	uint8_t rows[G_COUNT];
+	int n = graphics_rows(rows);
+	if (graphics_cursor >= n)
+		graphics_cursor = n - 1;
 	switch (k) {
 	case K_ESCAPE:
 		m_state = M_OPTIONS;
 		m_entersound = 1;
 		break;
 	case K_UP:
-	case K_DOWN:
+	case K_DOWN:                                  /* (the greyed budget skipped) */
 		local_sound(S_MENU1);
-		graphics_cursor = step_cursor(graphics_cursor, k == K_DOWN ? 1 : -1, GRAPHICS_ITEMS, 0, graphics_grey);
+		for (int i = 0; i < n; i++) {
+			graphics_cursor = wrap(graphics_cursor, k == K_DOWN ? 1 : -1, n);
+			if (!graphics_grey(rows[graphics_cursor]))
+				break;
+		}
 		break;
 	case K_LEFT:
 	case K_RIGHT:
 	case K_ENTER:
-		if (!graphics_grey(graphics_cursor))
-			graphics_adjust(k == K_LEFT ? -1 : 1);
+		if (!graphics_grey(rows[graphics_cursor]))
+			graphics_adjust(rows[graphics_cursor], k == K_LEFT ? -1 : 1);
 		break;
 	}
-	/* the entry under the cursor greyed by the change (the budget when the
-	   warp leaves the budget mode): the cursor stays, as on any entry */
 }
 
 /* the pad as Quake's keys: one a frame, the arrows repeating while held

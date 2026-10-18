@@ -147,16 +147,23 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
   - Tiles are packed, not on a fixed grid.
   - A tile never straddles a texture-page boundary (u ≤ 255 from the page
     base, v inside one 256-line half).
-- CLUT: Quake's palette, one 256-entry row at (0, 480); the game data's own
-  copy with index 255 transparent at (0, 504). A debug font lives in a
-  corner (x ≥ 960).
+- CLUTs: all under the framebuffers, x 0 .. 319 of rows 480 .. 511, the
+  one VRAM no texture page reaches (the second row's pages, from x 320, go
+  down to row 511): Quake's palette, one 256-entry row at (0, 480); the
+  4-bit textures' 16-entry CLUTs, 20 a row, rows 481 .. 502; the game
+  data's own copy of the palette with index 255 transparent at (0, 504);
+  its aux pictures' CLUTs, 20 a row, rows 505 .. 506. (Until 2026-10-18
+  the 4-bit and aux CLUTs ran along rows 480+ and 504 up to x 959: a map
+  whose sixth page was full overwrote the menu's CLUTs, and the game
+  data's pages lost a row to them.) A debug font lives in a corner
+  (x ≥ 960).
 - The game's images (pages 6..9) are packed by MaxRects with a 2-texel
   border of replicated edge texels around every skin and sprite sheet:
   the GPU's texture coordinates stray a texel past a triangle's edge.
 - 4-bit textures (menu option, `<MAP>_<N>.TX4`, `docs/porting-notes.md`
   §20): the same tiles at the same texel positions, pages at x = 320 + 64 p
   on the first half (y = 0), and one 16-entry CLUT per texture from
-  (0, 480), 60 per row.
+  (0, 481), 20 per row.
 
 ## 5. Frame structure
 

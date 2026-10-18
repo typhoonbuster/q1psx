@@ -32,7 +32,7 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM3"
+#define QGAME_MAGIC "QGM4"
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
@@ -130,10 +130,15 @@ typedef struct {
 /* The aux pictures: the intermission's and the menu's (gfx/ lumps) and the
    console font (gfx.wad conchars), 4bpp with 16 colours each, in the two
    4-bit pages of the last VRAM column (x 960: QG_AUX_X, y 0 and 256); their
-   CLUTs in row QG_CLUT_Y from x = QG_AUX_CLUT_X. Index 0 of a picture's
-   CLUT is its transparent colour when it has one. */
-#define QG_AUX_X       960
-#define QG_AUX_CLUT_X  256
+   CLUTs in the CLUT area under the framebuffers (formats/qtex.h), 20 a row
+   from (QG_AUX_CLUT_X, QG_AUX_CLUT_Y): picture i at x 16 (i % 20), y
+   QG_AUX_CLUT_Y + i / 20. (Row 504 from x 256 overlapped the map's sixth
+   page and the game's pages, x 320 .. 959: a map loaded over them.) Index 0
+   of a picture's CLUT is its transparent colour when it has one. */
+#define QG_AUX_X             960
+#define QG_AUX_CLUT_X        0
+#define QG_AUX_CLUT_Y        505
+#define QG_AUX_CLUTS_PER_ROW 20
 enum {
 	QGA_COMPLETE, QGA_INTER, QGA_FINALE_L, QGA_FINALE_R,   /* the intermission  */
 	QGA_CONCHARS, QGA_CONCHARS2, /* 128 x 64 each: 16 x 8 glyphs of 8 x 8, chars

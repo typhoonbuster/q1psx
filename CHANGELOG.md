@@ -1178,3 +1178,12 @@ followed by R0-R4.
   4-bit set's CLUT with it) at the head of the display list. When a map's
   pages are full, the models' textures are squeezed first and the
   animation left out last (start at ultra). pktview copies VRAM too.
+- **The menu's colours and its entries** (first test, 2026-10-18: a graphics bug, then the modes and options the port does not handle removed). The aux pictures' and the 4-bit textures' CLUTs
+  ran into the texture pages' rows (x >= 320, rows 480 .. 511): a map's
+  full sixth page overwrote the menu's palettes. Every CLUT now sits under
+  the framebuffers (x < 320, rows 480 .. 511); GAME.DAT is `QGM4`, the
+  4-bit sets `QTX5`; pktview loads the game data first as the console does.
+  The menu keeps only Single Player (New Game), Options (Reset to defaults,
+  the two volumes, Graphics), and the fidelity row only on a disc with a
+  choice. A row of the inventory bar, overwritten at boot by the old aux
+  CLUT row, is right again.

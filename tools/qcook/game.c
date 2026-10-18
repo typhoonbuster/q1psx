@@ -1551,7 +1551,8 @@ int cmd_game(int argc, char **argv)
 			const aux_img *a = &aux[i];
 			int vy = a->page * PT;
 			at[i].tpage = (uint16_t) (((QG_AUX_X & 0x3ff) >> 6) | ((vy >> 8) << 4));   /* 4bpp */
-			at[i].clut  = (uint16_t) ((QG_CLUT_Y << 6) | ((QG_AUX_CLUT_X + 16 * i) >> 4));
+			at[i].clut  = (uint16_t) (((QG_AUX_CLUT_Y + i / QG_AUX_CLUTS_PER_ROW) << 6) |
+			                          ((QG_AUX_CLUT_X + 16 * (i % QG_AUX_CLUTS_PER_ROW)) >> 4));
 			at[i].u = (uint8_t) a->u; at[i].v = (uint8_t) a->v;
 			at[i].w = (uint16_t) a->w; at[i].h = (uint16_t) a->h;
 		}
@@ -1596,12 +1597,15 @@ int cmd_game(int argc, char **argv)
 		gput(&f, &gpage[p][0][0], (size_t) page_rows[p] * PT);   /* 2 texels per halfword */
 		galign(&f, 32);
 	}
-	{	/* the aux CLUTs (one row), then the aux pages' used rows, 4 texels a halfword */
+	{	/* the aux CLUTs (20 a row), then the aux pages' used rows, 4 texels a halfword */
 		qtex_rect *r = &rects[1 + npages];
-		r->x = QG_AUX_CLUT_X; r->y = QG_CLUT_Y; r->w = (uint16_t) (16 * QGA_COUNT); r->h = 1;
+		int crows = (QGA_COUNT + QG_AUX_CLUTS_PER_ROW - 1) / QG_AUX_CLUTS_PER_ROW;
+		r->x = QG_AUX_CLUT_X; r->y = QG_AUX_CLUT_Y;
+		r->w = (uint16_t) (16 * QG_AUX_CLUTS_PER_ROW); r->h = (uint16_t) crows;
 		r->data_ofs = (uint32_t) f.len;
-		for (int i = 0; i < QGA_COUNT; i++)
-			gput(&f, aux[i].clut, sizeof aux[i].clut);
+		static const uint16_t none[16];
+		for (int i = 0; i < crows * QG_AUX_CLUTS_PER_ROW; i++)
+			gput(&f, i < QGA_COUNT ? aux[i].clut : none, sizeof none);
 		galign(&f, 32);
 		for (int p = 0; p < AUX_PAGES; p++) {
 			r = &rects[1 + npages + 1 + p];

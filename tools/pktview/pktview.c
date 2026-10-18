@@ -477,9 +477,9 @@ int main(int argc, char **argv)
 		return 2;
 	}
 	crc_init();
+	if (argc == 5)                       /* the console's order: the game data at boot, */
+		load_game(argv[4]);              /* then the map over it                         */
 	load_tex(argv[2]);
-	if (argc == 5)
-		load_game(argv[4]);
 	const char *dis = getenv("PKTVIEW_DITHER");
 	if (dis && dis[0] == '0')
 		dither_on = 0;
