@@ -310,10 +310,10 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 				fwrite(&w, 2, 1, f);
 			}
 	}
-	long total = ftell(f);
+	long file_len = ftell(f);
 	fclose(f);
 	printf("qcook: %s — 4bpp, %d CLUTs, file %ld B, rms error %.2f / 31 per channel\n",
-	       path, ncl, total, npx > 0 ? sqrt(err / npx / 3) : 0.0);
+	       path, ncl, file_len, npx > 0 ? sqrt(err / npx / 3) : 0.0);
 	free(clut);
 	free(nib);
 	free(tab);
@@ -321,15 +321,20 @@ static void write_tex4(const tex_set *ts, int num_miptex, const uint8_t *pages,
 
 /* ------------------------------------------------------------- build -- */
 
-void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
-               const fidelity_t *fid, const char *out_path, const char *out4_path)
+int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
+              const uint8_t palette[768], const fidelity_t *fid, const char *out_path,
+              const char *out4_path, int may_fail)
 {
 	memset(ts, 0, sizeof *ts);
-	ts->slots = xcalloc((size_t) b->num_miptex, sizeof *ts->slots);
+	int total = b->num_miptex + nextra;
+	ts->num   = total;
+	ts->slots = xcalloc((size_t) total + 1, sizeof *ts->slots);
 
 	/* which miptex do the drawn models' faces use? (the world's and the
-	   brush models' but the triggers') */
-	uint8_t *used  = xcalloc((size_t) b->num_miptex, 1);
+	   brush models' but the triggers'); the extras are */
+	uint8_t *used  = xcalloc((size_t) total + 1, 1);
+	for (int i = b->num_miptex; i < total; i++)
+		used[i] = 1;
 	uint8_t *drawn = xcalloc((size_t) b->num_models, 1);
 	ents_drawn_models(b, drawn);
 	for (int m = 0; m < b->num_models; m++) {
@@ -348,10 +353,11 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 	free(drawn);
 
 	/* tile size per texture */
-	pack_item *items = xcalloc((size_t) b->num_miptex, sizeof *items);
+	pack_item *items = xcalloc((size_t) total + 1, sizeof *items);
 	int nitems = 0;
-	for (int i = 0; i < b->num_miptex; i++) {
-		const bsp_miptex *m = &b->miptex[i];
+	for (int i = 0; i < total; i++) {
+		const bsp_miptex *m = i < b->num_miptex ? &b->miptex[i] : &extra[i - b->num_miptex].mt;
+		int skin = i >= b->num_miptex && extra[i - b->num_miptex].skin;
 		tex_slot *s = &ts->slots[i];
 		s->index = i;
 		if (!strncmp(m->name, "sky", 3))
@@ -360,8 +366,19 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 			s->flags |= QWF_LIQUID;
 		if (!used[i] || !m->w || !m->mip[0] || (s->flags & QWF_SKY))
 			continue;
+		if (skin) {                             /* a model's skin: as it is */
+			s->rep_w  = (m->w + 1) & ~1;        /* (halfword-aligned in 8bpp) */
+			s->rep_h  = m->h;
+			s->reps_x = s->reps_y = 1;
+			items[nitems].idx = i;
+			items[nitems].w   = s->rep_w;
+			items[nitems].h   = s->rep_h;
+			nitems++;
+			continue;
+		}
 
-		int w = m->w >> fid->tex_shift, h = m->h >> fid->tex_shift;
+		int shift = fid->tex_shift + (i >= b->num_miptex ? extra[i - b->num_miptex].shift : 0);
+		int w = m->w >> shift, h = m->h >> shift;
 		while (w > fid->tex_max || h > fid->tex_max) {
 			w >>= 1;
 			h >>= 1;
@@ -420,14 +437,32 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 						cy = y;
 					}
 				}
-		if (page < 0)
-			die("textures do not fit in %d VRAM pages at fidelity %s",
-			    QTEX_MAP_PAGES, fid->name);
+		if (page < 0) {
+			long need = 0, extras = 0;
+			for (int k = 0; k < nitems; k++) {
+				long ar = (long) ((items[k].w + 7) & ~7) * ((items[k].h + 7) & ~7);
+				need += ar;
+				if (items[k].idx >= b->num_miptex)
+					extras += ar;
+			}
+			if (may_fail) {
+				printf("qcook: %ld K texels (%ld K the models') overflow %d pages at %s\n",
+				       need / 1024, extras / 1024, QTEX_MAP_PAGES, fid->name);
+				free(pages);
+				free(items);
+				free(used);
+				return 0;
+			}
+			die("textures do not fit in %d VRAM pages at fidelity %s (%ld K texels, %ld K of them "
+			    "the models', item %d of %d: %dx%d)", QTEX_MAP_PAGES, fid->name, need / 1024,
+			    extras / 1024, n, nitems, it->w, it->h);
+		}
 		for (int yy = 0; yy < ch; yy++)
 			for (int xx = 0; xx < cw; xx++)
 				cell[page][cy + yy][cx + xx] = 1;
 
-		const bsp_miptex *m = &b->miptex[it->idx];
+		const bsp_miptex *m = it->idx < b->num_miptex ? &b->miptex[it->idx] : &extra[it->idx - b->num_miptex].mt;
+		int skin = it->idx >= b->num_miptex && extra[it->idx - b->num_miptex].skin;
 		int px = QTEX_PAGE_X0 + (page % QTEX_PAGE_COLS) * (PAGE_TEX / 2);
 		int py = (page / QTEX_PAGE_COLS) * PAGE_TEX;
 		s->present = 1;
@@ -448,8 +483,9 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 		uint8_t *img = pages + (size_t) page * PAGE_TEX * PAGE_TEX;
 		for (int y = 0; y < it->h; y++)
 			for (int xx = 0; xx < it->w; xx++)
-				img[(s->v0 + y) * PAGE_TEX + s->u0 + xx] =
-					sample(m, xx % s->rep_w, y % s->rep_h, s->rep_w, s->rep_h);
+				img[(s->v0 + y) * PAGE_TEX + s->u0 + xx] = skin
+					? m->mip[0][y * m->w + (xx < m->w ? xx : m->w - 1)]   /* (the pad: the last column) */
+					: sample(m, xx % s->rep_w, y % s->rep_h, s->rep_w, s->rep_h);
 
 		ts->bytes += (uint32_t) (it->w * it->h);
 		if (s->v0 + it->h > page_h[page])
@@ -493,16 +529,17 @@ void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
 	for (int p = 0; p < ts->pages_used; p++)
 		fwrite(pages + (size_t) p * PAGE_TEX * PAGE_TEX, 1,
 		       (size_t) page_h[p] * PAGE_TEX, f);
-	long total = ftell(f);
+	long file_len = ftell(f);
 	fclose(f);
 
 	printf("qcook: %s — %d tiles in %d pages, %u texel bytes, file %ld B\n",
-	       out_path, nitems, ts->pages_used, ts->bytes, total);
+	       out_path, nitems, ts->pages_used, ts->bytes, file_len);
 
 	if (out4_path)
-		write_tex4(ts, b->num_miptex, pages, page_h, palette, out4_path);
+		write_tex4(ts, total, pages, page_h, palette, out4_path);
 
 	free(pages);
 	free(items);
 	free(used);
+	return 1;
 }

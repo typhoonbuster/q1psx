@@ -23,7 +23,9 @@ int snd_log;
 #define V_STATIC    (V_DYNAMIC + NUM_DYNAMIC)
 #define NUM_STATIC  (24 - V_STATIC)
 
-#define MASTER_VOL  0x2ccc       /* Quake's volume cvar, 0.7                 */
+#define CD_VOL      0x2ccc       /* bgmvolume 1: the CD as loud as it was under
+                                    the old 0.7 master (the mix unchanged)  */
+static int sfx_tenths = 7;       /* Quake's volume cvar, 0.7: the voices'    */
 #define NOMINAL_CLIP_DIST 1000   /* snd_dma.c sound_nominal_clip_dist        */
 #define CLIP_UNITS  (NOMINAL_CLIP_DIST * 64 * R_POS_SUB)   /* x dist_mult: the silence line, 1/R_POS_SUB units */
 #define DIST_M(dist_mult) ((dist_mult) * 65536 / (CLIP_UNITS / 256))   /* dist x256 = len x DIST_M >> 16 */
@@ -97,14 +99,26 @@ static const char *const names[S_COUNT] = {
 	"items/itembk2.wav", "weapons/lock4.wav", "weapons/pkup.wav", "items/armor1.wav",
 	"items/damage3.wav", "misc/power.wav", "demon/dland2.wav",
 	"ambience/water1.wav", "ambience/wind2.wav",
+	"misc/secret.wav", "misc/trigger1.wav", "ambience/windfly.wav", "ambience/hum1.wav",
 };
 
 /* ------------------------------------------------------------------- spu -- */
 
 static void voice_set(int v, int left, int right)
 {
-	SPU_CH_VOL_L(v) = (uint16_t) (left << 6);        /* 255 -> 0x3fc0 */
-	SPU_CH_VOL_R(v) = (uint16_t) (right << 6);
+	SPU_CH_VOL_L(v) = (uint16_t) ((left << 6) * sfx_tenths / 10);   /* 255 -> 0x3fc0 x volume */
+	SPU_CH_VOL_R(v) = (uint16_t) ((right << 6) * sfx_tenths / 10);
+}
+
+void snd_set_volume(int tenths)
+{
+	sfx_tenths = tenths < 0 ? 0 : tenths > 10 ? 10 : tenths;
+}
+
+void snd_set_cd_volume(int tenths)
+{
+	int v = CD_VOL * (tenths < 0 ? 0 : tenths > 10 ? 10 : tenths) / 10;
+	SpuSetCommonCDVolume((int16_t) v, (int16_t) v);
 }
 
 /* key voice v on with the bank's sound s, `skip` ADPCM blocks in */
@@ -125,8 +139,8 @@ void snd_init(void)
 {
 	SpuInit();
 	SPU_CTRL = 0xc001;                               /* on, unmuted, CD audio in */
-	SpuSetCommonMasterVolume(MASTER_VOL, MASTER_VOL);
-	SpuSetCommonCDVolume(0x3fff, 0x3fff);
+	SpuSetCommonMasterVolume(0x3fff, 0x3fff);
+	SpuSetCommonCDVolume(CD_VOL, CD_VOL);
 	SpuSetKey(0, 0xffffff);
 	bank    = mem_game_alloc(QS_MAX_SOUNDS * sizeof *bank);
 	statics = mem_game_alloc(QS_MAX_STATICS * sizeof *statics);
@@ -321,11 +335,50 @@ static int pick_channel(int entnum, int entchannel)
 	return first_to_die;
 }
 
+int snd_find(const char *name)
+{
+	if (!strcmp(name, "misc/null.wav"))
+		return SND_NULL;
+	uint32_t h = qs_hash(name);
+	for (int s = 0; s < bank_n; s++)
+		if (bank[s].hash == h)
+			return s;
+	return SND_NONE;
+}
+
+void snd_add_static(const int32_t origin[3], int s, int vol, int atten)
+{
+	if (s < 0 || statics_n >= QS_MAX_STATICS)
+		return;
+	qs_static *st = &statics[statics_n++];
+	for (int k = 0; k < 3; k++)
+		st->origin[k] = origin[k] / R_POS_SUB;
+	st->sound  = (uint16_t) s;
+	st->volume = (uint8_t) vol;
+	st->atten  = (uint8_t) atten;
+}
+
 void snd_start(int entnum, int entchannel, int sfx, const int32_t origin[3], int vol, int atten)
 {
 	if (sfx < 0 || sfx >= S_COUNT || named[sfx] < 0)
 		return;
-	int s = named[sfx];
+	snd_start_idx(entnum, entchannel, named[sfx], origin, vol, atten);
+}
+
+void snd_start_idx(int entnum, int entchannel, int s, const int32_t origin[3], int vol, int atten)
+{
+	if (s == SND_NULL) {                         /* a silent sound replaces the channel's */
+		if (entchannel == 0)
+			return;
+		for (int i = 0; i < NUM_DYNAMIC; i++)
+			if (dyn[i].entnum == entnum && dyn[i].entchannel == entchannel && dyn[i].sfx >= 0) {
+				dyn[i].sfx = -1;
+				SpuSetKey(0, 1u << (V_DYNAMIC + i));
+			}
+		return;
+	}
+	if (s < 0 || s >= bank_n)
+		return;
 	int i = pick_channel(entnum, entchannel);
 	if (i < 0)
 		return;

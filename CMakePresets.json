@@ -18,10 +18,23 @@
 		{
 			"name":          "release",
 			"inherits":      "default",
-			"displayName":   "Release build (no renderer counters / stage timers)",
+			"displayName":   "Release build: Quake's menu, low to high fidelity, no debug tools",
 			"binaryDir":     "${sourceDir}/build-release",
 			"cacheVariables": {
-				"Q1PSX_PROFILE": "OFF"
+				"Q1PSX_PROFILE":     "OFF",
+				"Q1PSX_RELEASE":     "ON",
+				"Q1PSX_FIDELITIES":  "low;medium;high"
+			}
+		},
+		{
+			"name":          "release-ultra",
+			"inherits":      "default",
+			"displayName":   "Release build at the ultra fidelity alone",
+			"binaryDir":     "${sourceDir}/build-release-ultra",
+			"cacheVariables": {
+				"Q1PSX_PROFILE":     "OFF",
+				"Q1PSX_RELEASE":     "ON",
+				"Q1PSX_FIDELITIES":  "ultra"
 			}
 		},
 		{

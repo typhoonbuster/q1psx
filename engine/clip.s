@@ -546,8 +546,9 @@ ct_bm_next:
 	bne     $t8, $t0, 7b
 	nop
 	lw      $a0, PS_HULL($s7)            # the model's hull of that size
-	lw      $s3, BM_HULL1($t6)
+	beqz    $t6, ct_box                  # none: a SOLID_BBOX entity's box
 	li      $t1, 2
+	lw      $s3, BM_HULL1($t6)
 	beqz    $a0, 8f
 	lw      $t0, BM_HULL2($t6)
 	beq     $a0, $t1, 9f
@@ -563,6 +564,7 @@ ct_bm_trace:
 	addiu   $a1, $s7, PS_BSTART
 	bal     ct_core
 	addiu   $a2, $s7, PS_BEND
+ct_bm_done:
 	lw      $t4, PS_BMI($s7)
 	lw      $s0, PS_WTR($s7)             # the call's trace again
 	addiu   $t4, $t4, -CB_SIZE           # the model's entry
@@ -618,6 +620,56 @@ ct_bm_trace:
 	li      $t0, 1
 	b       ct_bm_reload
 	sw      $t0, TR_STARTSOLID($s0)
+
+# ct_box: SV_HullForBox. The entry's box (absmin / absmax less its origin)
+# grown by the mover's (hullmins = mins - the hull's maxs, hullmaxs = maxs
+# - the hull's mins) as the 6 axial planes' distances of the box hull
+# (ct_box_nodes), traced as a clip hull from its first node, the world's
+# tables back after. t4 = the entry, a0 = the call's hull.
+ct_box:
+	sll     $t6, $a0, 3
+	sll     $t7, $a0, 4
+	addu    $t6, $t6, $t7                # hull * 24
+	lui     $t7, %hi(ct_hull_box)
+	addiu   $t7, $t7, %lo(ct_hull_box)
+	addu    $t6, $t6, $t7                # the hull's box
+	lui     $t9, %hi(ct_box_planes)
+	addiu   $t9, $t9, %lo(ct_box_planes)
+	move    $t8, $zero                   # axis * 4
+1:	addu    $t0, $t4, $t8
+	lw      $t1, CB_ORG($t0)
+	lw      $t2, CB_ABSMAX($t0)
+	lw      $t3, CB_ABSMIN($t0)
+	addu    $t0, $t6, $t8
+	lw      $t5, 0($t0)                  # the hull's mins[k]
+	lw      $t7, 12($t0)                 # maxs[k]
+	subu    $t2, $t2, $t1
+	subu    $t2, $t2, $t5                # maxs - the hull's mins
+	subu    $t3, $t3, $t1
+	subu    $t3, $t3, $t7                # mins - the hull's maxs
+	sll     $t2, $t2, 12
+	sll     $t3, $t3, 12
+	sw      $t2, PL_DIST($t9)            # plane 2k: the max side
+	sw      $t3, 12+PL_DIST($t9)         # plane 2k + 1: the min side
+	addiu   $t8, $t8, 4
+	li      $t0, 12
+	bne     $t8, $t0, 1b
+	addiu   $t9, $t9, 24
+	lui     $s1, %hi(ct_box_nodes)
+	addiu   $s1, $s1, %lo(ct_box_nodes)
+	lui     $s2, %hi(ct_box_planes)
+	addiu   $s2, $s2, %lo(ct_box_planes)
+	move    $s3, $zero                   # its first node
+	li      $a0, 1                       # (a clip hull)
+	addiu   $s0, $s7, PS_BTRACE
+	addiu   $a1, $s7, PS_BSTART
+	bal     ct_core
+	addiu   $a2, $s7, PS_BEND
+	lui     $t5, %hi(world)              # the world's tables back
+	addiu   $t5, $t5, %lo(world)
+	lw      $s1, W_CLIPNODES($t5)
+	b       ct_bm_done
+	lw      $s2, W_PLANES($t5)
 
 # ct_core: one hull from one root. s0 = the trace_t to fill, s3 = the root
 # (hull 0: a node pointer), a0 = hull, a1 = start, a2 = end, s1 / s2 / s7
@@ -769,6 +821,35 @@ ct_hull_box:                             # the hulls' mins[3], maxs[3], 1/8 unit
 	.word   0, 0, 0, 0, 0, 0
 	.word   -16 * CLIP_SUB, -16 * CLIP_SUB, -24 * CLIP_SUB, 16 * CLIP_SUB, 16 * CLIP_SUB, 32 * CLIP_SUB
 	.word   -32 * CLIP_SUB, -32 * CLIP_SUB, -24 * CLIP_SUB, 32 * CLIP_SUB, 32 * CLIP_SUB, 64 * CLIP_SUB
+ct_box_nodes:                            # SV_InitBoxHull: node i on plane i (plane3 =
+	.hword  0,  QW_CONTENTS_EMPTY, 1     # i x 3), its outer side empty, the
+	.hword  3,  2, QW_CONTENTS_EMPTY     # inner one the next node (the last:
+	.hword  6,  QW_CONTENTS_EMPTY, 3     # solid)
+	.hword  9,  4, QW_CONTENTS_EMPTY
+	.hword  12, QW_CONTENTS_EMPTY, 5
+	.hword  15, QW_CONTENTS_SOLID, QW_CONTENTS_EMPTY
+
+	.section .data.ct_box_planes, "aw", @progbits
+	.align  2
+ct_box_planes:                           # qw_plane[6]: the normal, the axis (type), the
+	.hword  4096, 0, 0                   # distance (set per box, x4096)
+	.byte   0, 0
+	.word   0
+	.hword  4096, 0, 0
+	.byte   0, 0
+	.word   0
+	.hword  0, 4096, 0
+	.byte   1, 0
+	.word   0
+	.hword  0, 4096, 0
+	.byte   1, 0
+	.word   0
+	.hword  0, 0, 4096
+	.byte   2, 0
+	.word   0
+	.hword  0, 0, 4096
+	.byte   2, 0
+	.word   0
 
 # -----------------------------------------------------------------------------
 	.section .text.clip_contents, "ax", @progbits

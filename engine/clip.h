@@ -46,9 +46,11 @@ _Static_assert(sizeof(trace_t) == 44, "p_defs.inc TR_SIZE");
 
 /* The solid brush models the traces clip against besides the world
    (Quake's SOLID_BSP entities, SV_ClipToLinks): the game keeps the table
-   (engine/ents.c), in spawn order. Origins in 1/CLIP_SUB units. */
+   (engine/ents.c), in spawn order. Origins in 1/CLIP_SUB units. An entry
+   with no brush model is a SOLID_BBOX entity's box (absmin / absmax its
+   exact box: SV_HullForBox grows it by the mover's). */
 typedef struct {
-	const qw_bmodel *bm;
+	const qw_bmodel *bm;               /* NULL: a box */
 	int32_t          origin[3];
 	int32_t          absmin[3];        /* origin + the model's bounds: the box */
 	int32_t          absmax[3];        /* test against the swept box           */

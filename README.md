@@ -62,12 +62,25 @@ Details and fish notes: [`third_party/README.md`](third_party/README.md).
 
 ## Build
 
-> The project is at step R0: the image boots to a solid background. The asset cooker
-> (and its `scripts/cook.sh` step) returns in R2.
+The build cooks the Quake data it finds (`QUAKE_PAK0`, and `QUAKE_PAK1` for
+the registered episodes, in `local.env`) into the disc's files.
 
 ```bash
 cmake --preset default .      # configure (toolchain = $PSN00BSDK_LIBS/cmake/sdk.cmake)
 cmake --build ./build         # -> build/q1psx.bin + build/q1psx.cue
+```
+
+Three editions:
+
+| Preset | Directory | What it is |
+|---|---|---|
+| `default` | `build/` | The development build: a map menu (SELECT + START), the debug overlay (START), every fidelity level on the disc |
+| `release` | `build-release/` | Quake's own menu (START), no debug tools; the maps at low, medium and high fidelity |
+| `release-ultra` | `build-release-ultra/` | The same at the ultra fidelity alone |
+
+```bash
+cmake --preset release && cmake --build ./build-release
+cmake --preset release-ultra && cmake --build ./build-release-ultra
 ```
 
 Run the resulting image:

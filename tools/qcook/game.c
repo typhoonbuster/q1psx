@@ -244,6 +244,8 @@ typedef struct {
 	tvert **frames;                 /* [nframes][nverts]             */
 } mdl_t;
 
+static int mdl_skin_index;      /* the skin mdl_parse keeps (a map's armor: 0 .. 2) */
+
 static void mdl_parse(mdl_t *m, const uint8_t *d, uint32_t len, const char *name)
 {
 	if (len < 84 || memcmp(d, "IDPO", 4) || rdi(d + 4) != 6)
@@ -253,6 +255,8 @@ static void mdl_parse(mdl_t *m, const uint8_t *d, uint32_t len, const char *name
 		m->origin[k] = rdf(d + 20 + k * 4);
 	}
 	int nskins = rdi(d + 48);
+	if (mdl_skin_index >= nskins)
+		die("%s: no skin %d", name, mdl_skin_index);
 	m->skinw   = rdi(d + 52);
 	m->skinh   = rdi(d + 56);
 	m->nverts  = rdi(d + 60);
@@ -270,14 +274,14 @@ static void mdl_parse(mdl_t *m, const uint8_t *d, uint32_t len, const char *name
 		p += 4;
 		if (type == 0) {
 			NEED(sk);
-			if (s == 0) m->skin = p;
+			if (s == mdl_skin_index) m->skin = p;
 			p += sk;
 		} else {
 			NEED(4);
 			int nb = rdi(p);
 			p += 4 + 4 * nb;
 			NEED(sk * (size_t) nb);
-			if (s == 0) m->skin = p;
+			if (s == mdl_skin_index) m->skin = p;
 			p += sk * (size_t) nb;
 		}
 	}
@@ -1007,7 +1011,444 @@ static void pics_prepare(void)
 	}
 }
 
+
+/* ------------------------------------------------------------- aux pics -- */
+
+/* The intermission's, the menu's and the console font, 4bpp with their own
+   16 colours (formats/qgame.h QGA_*) in the two 4-bit pages at x 960. A
+   picture's colours: its own as they are when 16 do (15 and the
+   transparent one), else k-means over its pixels' colours. */
+typedef struct { const char *src; int id; int x0, w; } aux_spec;   /* "#conchars": gfx.wad's,
+                                                                     x0 its first row */
+static const aux_spec AUX[] = {
+	{ "gfx/complete.lmp", QGA_COMPLETE, 0, 0 },   { "gfx/inter.lmp", QGA_INTER, 0, 0 },
+	{ "gfx/finale.lmp", QGA_FINALE_L, 0, 144 },   { "gfx/finale.lmp", QGA_FINALE_R, 144, 144 },
+	{ "#conchars", QGA_CONCHARS, 0, 0 },          { "#conchars", QGA_CONCHARS2, 64, 0 },
+	{ "gfx/qplaque.lmp", QGA_QPLAQUE, 0, 0 },     { "gfx/ttl_main.lmp", QGA_TTL_MAIN, 0, 0 },
+	{ "gfx/mainmenu.lmp", QGA_MAINMENU, 0, 0 },
+	{ "gfx/menudot1.lmp", QGA_MENUDOT1 + 0, 0, 0 }, { "gfx/menudot2.lmp", QGA_MENUDOT1 + 1, 0, 0 },
+	{ "gfx/menudot3.lmp", QGA_MENUDOT1 + 2, 0, 0 }, { "gfx/menudot4.lmp", QGA_MENUDOT1 + 3, 0, 0 },
+	{ "gfx/menudot5.lmp", QGA_MENUDOT1 + 4, 0, 0 }, { "gfx/menudot6.lmp", QGA_MENUDOT1 + 5, 0, 0 },
+	{ "gfx/ttl_sgl.lmp", QGA_TTL_SGL, 0, 0 },     { "gfx/sp_menu.lmp", QGA_SP_MENU, 0, 0 },
+	{ "gfx/p_option.lmp", QGA_P_OPTION, 0, 0 },
+	{ "gfx/box_tl.lmp", QGA_BOX_TL, 0, 0 }, { "gfx/box_ml.lmp", QGA_BOX_ML, 0, 0 },
+	{ "gfx/box_bl.lmp", QGA_BOX_BL, 0, 0 }, { "gfx/box_tm.lmp", QGA_BOX_TM, 0, 0 },
+	{ "gfx/box_mm.lmp", QGA_BOX_MM, 0, 0 }, { "gfx/box_mm2.lmp", QGA_BOX_MM2, 0, 0 },
+	{ "gfx/box_bm.lmp", QGA_BOX_BM, 0, 0 }, { "gfx/box_tr.lmp", QGA_BOX_TR, 0, 0 },
+	{ "gfx/box_mr.lmp", QGA_BOX_MR, 0, 0 }, { "gfx/box_br.lmp", QGA_BOX_BR, 0, 0 },
+	{ "#disc", QGA_DISC, 0, 0 },
+};
+#define NUM_AUX (int) (sizeof AUX / sizeof AUX[0])
+#define AUX_PAGES 2
+
+typedef struct {
+	int      w, h;
+	uint8_t *px;            /* 4-bit indices, one per byte              */
+	uint16_t clut[16];
+	int      page, u, v;
+} aux_img;
+
+static aux_img aux[QGA_COUNT];
+static uint8_t apage[AUX_PAGES][PT][PT];   /* 4-bit indices, one per byte */
+static int     apage_rows[AUX_PAGES];
+static rect    afree[AUX_PAGES][MAX_FREE];
+static int     nafree[AUX_PAGES];
+
+static void afree_add(int p, rect r)
+{
+	if (r.w <= 0 || r.h <= 0) return;
+	for (int i = 0; i < nafree[p]; i++)
+		if (contains(&afree[p][i], &r)) return;
+	for (int i = 0; i < nafree[p]; )
+		if (contains(&r, &afree[p][i])) afree[p][i] = afree[p][--nafree[p]];
+		else i++;
+	if (nafree[p] >= MAX_FREE) die("MaxRects: too many free rectangles (aux)");
+	afree[p][nafree[p]++] = r;
+}
+
+static uint16_t rgb15(int r, int g, int b)
+{
+	uint16_t c = (uint16_t) ((r >> 3) | ((g >> 3) << 5) | ((b >> 3) << 10));
+	return c ? c : 0x8000;                       /* black, not transparent */
+}
+
+/* k-means on the picture's colours (weighted by use) into k clusters */
+static void aux_quantize(aux_img *a, const uint8_t *src, int trans_index)
+{
+	int used[256] = { 0 }, n = a->w * a->h, has_trans = 0;
+	for (int i = 0; i < n; i++) {
+		if (src[i] == trans_index) has_trans = 1;
+		else used[src[i]]++;
+	}
+	int k = has_trans ? 15 : 16, base = has_trans ? 1 : 0;
+	int cols[256], nc = 0;
+	for (int i = 0; i < 256; i++)
+		if (used[i]) cols[nc++] = i;
+	double cr[16], cg[16], cb[16];
+	int map[256];
+	if (nc <= k) {
+		for (int c = 0; c < nc; c++) {
+			cr[c] = palette[cols[c] * 3]; cg[c] = palette[cols[c] * 3 + 1]; cb[c] = palette[cols[c] * 3 + 2];
+			map[cols[c]] = c;
+		}
+		k = nc;
+	} else {
+		/* seeds: the most used colours, spread (farthest-first among them) */
+		int seed[16], ns = 0;
+		int best = 0;
+		for (int c = 0; c < nc; c++) if (used[cols[c]] > used[cols[best]]) best = c;
+		seed[ns++] = best;
+		while (ns < k) {
+			double bd = -1; int bi = 0;
+			for (int c = 0; c < nc; c++) {
+				double md = 1e30;
+				for (int s = 0; s < ns; s++) {
+					const uint8_t *p = &palette[cols[c] * 3], *q = &palette[cols[seed[s]] * 3];
+					double d = (p[0] - q[0]) * (p[0] - q[0]) + (p[1] - q[1]) * (p[1] - q[1]) + (p[2] - q[2]) * (p[2] - q[2]);
+					if (d < md) md = d;
+				}
+				md *= 1 + 0.02 * used[cols[c]];
+				if (md > bd) { bd = md; bi = c; }
+			}
+			seed[ns++] = bi;
+		}
+		for (int s = 0; s < k; s++) {
+			cr[s] = palette[cols[seed[s]] * 3]; cg[s] = palette[cols[seed[s]] * 3 + 1]; cb[s] = palette[cols[seed[s]] * 3 + 2];
+		}
+		for (int it = 0; it < 40; it++) {
+			double sr[16] = { 0 }, sg[16] = { 0 }, sb[16] = { 0 }, sw[16] = { 0 };
+			for (int c = 0; c < nc; c++) {
+				const uint8_t *p = &palette[cols[c] * 3];
+				double bd = 1e30; int bi = 0;
+				for (int s = 0; s < k; s++) {
+					double d = (p[0] - cr[s]) * (p[0] - cr[s]) + (p[1] - cg[s]) * (p[1] - cg[s]) + (p[2] - cb[s]) * (p[2] - cb[s]);
+					if (d < bd) { bd = d; bi = s; }
+				}
+				map[cols[c]] = bi;
+				double w = used[cols[c]];
+				sr[bi] += p[0] * w; sg[bi] += p[1] * w; sb[bi] += p[2] * w; sw[bi] += w;
+			}
+			for (int s = 0; s < k; s++)
+				if (sw[s] > 0) { cr[s] = sr[s] / sw[s]; cg[s] = sg[s] / sw[s]; cb[s] = sb[s] / sw[s]; }
+		}
+	}
+	memset(a->clut, 0, sizeof a->clut);              /* (entry 0: transparent when used) */
+	for (int s = 0; s < k; s++)
+		a->clut[base + s] = rgb15((int) lround(cr[s]), (int) lround(cg[s]), (int) lround(cb[s]));
+	a->px = xcalloc((size_t) n, 1);
+	for (int i = 0; i < n; i++)
+		a->px[i] = src[i] == trans_index ? 0 : (uint8_t) (base + map[src[i]]);
+}
+
+static void aux_prepare(const uint8_t *pak, long pak_len)
+{
+	if (NUM_AUX != QGA_COUNT) die("aux picture list: %d of %d", NUM_AUX, QGA_COUNT);
+	for (int i = 0; i < NUM_AUX; i++) {
+		const aux_spec *as = &AUX[i];
+		aux_img *a = &aux[as->id];
+		const uint8_t *d;
+		int lw, lh, trans = 255;
+		uint32_t size;
+		int conchars = !strcmp(as->src, "#conchars");
+		if (conchars) {
+			int type;
+			d  = wad_lump(as->src + 1, &size, &type);
+			if (size < 128 * 128) die("gfx.wad: conchars too small");
+			d += as->x0 * 128;                        /* the half's first row */
+			lw = 128;
+			lh = 64;
+			trans = 0;                                /* Draw_Character: 0 is transparent */
+		} else if (as->src[0] == '#') {               /* a gfx.wad picture */
+			int type;
+			d = wad_lump(as->src + 1, &size, &type);
+			if (type != 0x42 || size < 8) die("gfx.wad: %s is not a picture", as->src + 1);
+			lw = rdi(d); lh = rdi(d + 4);
+			if (lw < 1 || lh < 1 || (uint32_t) lw * (uint32_t) lh + 8 > size) die("gfx.wad: %s bad size", as->src + 1);
+			d += 8;
+		} else {
+			const uint8_t *f = pak_find(pak, pak_len, as->src, &size);
+			if (!f || size < 8) die("%s missing", as->src);
+			lw = rdi(f); lh = rdi(f + 4);
+			if (lw < 1 || lh < 1 || (uint32_t) lw * (uint32_t) lh + 8 > size) die("%s: bad picture", as->src);
+			d = f + 8;
+		}
+		int w = as->w ? as->w : lw;
+		int x0 = conchars ? 0 : as->x0;
+		if (x0 + w > lw || w > PT || lh > PT) die("%s: crop past its width", as->src);
+		a->w = w;
+		a->h = lh;
+		uint8_t *tmp = xmalloc((size_t) w * lh);
+		for (int y = 0; y < lh; y++)
+			memcpy(tmp + (size_t) y * w, d + (size_t) y * lw + x0, (size_t) w);
+		aux_quantize(a, tmp, trans);
+		free(tmp);
+	}
+	/* MaxRects over the two pages: several orders and fits tried, the
+	   first that places everything kept */
+	long total = 0;
+	int ok = 0;
+	for (int attempt = 0; attempt < 12 && !ok; attempt++) {
+		int sortkey = attempt % 4, fit = attempt / 4;   /* area, height, width, longer side; 3 fits */
+		int order[QGA_COUNT];
+		for (int i = 0; i < QGA_COUNT; i++) order[i] = i;
+		for (int i = 1; i < QGA_COUNT; i++)
+			for (int j = i; j > 0; j--) {
+				const aux_img *x = &aux[order[j]], *y = &aux[order[j - 1]];
+				int kx = sortkey == 0 ? x->w * x->h : sortkey == 1 ? x->h * 1024 + x->w
+				       : sortkey == 2 ? x->w * 1024 + x->h : (x->w > x->h ? x->w : x->h) * 1024 + x->w * x->h;
+				int ky = sortkey == 0 ? y->w * y->h : sortkey == 1 ? y->h * 1024 + y->w
+				       : sortkey == 2 ? y->w * 1024 + y->h : (y->w > y->h ? y->w : y->h) * 1024 + y->w * y->h;
+				if (kx <= ky) break;
+				int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
+			}
+		memset(apage, 0, sizeof apage);
+		memset(apage_rows, 0, sizeof apage_rows);
+		for (int p = 0; p < AUX_PAGES; p++) {
+			afree[p][0] = (rect) { 0, 0, PT, PT };
+			nafree[p] = 1;
+		}
+		total = 0;
+		ok = 1;
+		for (int n = 0; n < QGA_COUNT && ok; n++) {
+			aux_img *a = &aux[order[n]];
+			int bp = -1, bi = -1, bs = 1 << 30, bl = 1 << 30;
+			for (int p = 0; p < AUX_PAGES; p++)
+				for (int i = 0; i < nafree[p]; i++) {
+					const rect *f = &afree[p][i];
+					if (a->w > f->w || a->h > f->h) continue;
+					int ds, dl;
+					if (fit == 0) {                        /* best short side */
+						ds = f->w - a->w; dl = f->h - a->h;
+						if (ds > dl) { int t = ds; ds = dl; dl = t; }
+					} else if (fit == 1) {                 /* bottom-left */
+						ds = f->y + a->h; dl = f->x;
+					} else {                               /* best area */
+						ds = f->w * f->h - a->w * a->h; dl = f->w - a->w < f->h - a->h ? f->w - a->w : f->h - a->h;
+					}
+					if (ds < bs || (ds == bs && dl < bl)) { bs = ds; bl = dl; bp = p; bi = i; }
+				}
+			if (bp < 0) {
+				ok = 0;
+				break;
+			}
+			rect at = { afree[bp][bi].x, afree[bp][bi].y, a->w, a->h };
+			a->page = bp; a->u = at.x; a->v = at.y;
+			total += (long) a->w * a->h;
+			rect old[MAX_FREE];
+			int nold = nafree[bp];
+			memcpy(old, afree[bp], (size_t) nold * sizeof *old);
+			nafree[bp] = 0;
+			for (int i = 0; i < nold; i++) {
+				rect f = old[i];
+				if (at.x >= f.x + f.w || at.x + at.w <= f.x || at.y >= f.y + f.h || at.y + at.h <= f.y) {
+					afree_add(bp, f);
+					continue;
+				}
+				afree_add(bp, (rect) { f.x, f.y, at.x - f.x, f.h });
+				afree_add(bp, (rect) { at.x + at.w, f.y, f.x + f.w - (at.x + at.w), f.h });
+				afree_add(bp, (rect) { f.x, f.y, f.w, at.y - f.y });
+				afree_add(bp, (rect) { f.x, at.y + at.h, f.w, f.y + f.h - (at.y + at.h) });
+			}
+			if (at.y + a->h > apage_rows[bp])
+				apage_rows[bp] = at.y + a->h;
+			for (int y = 0; y < a->h; y++)
+				memcpy(&apage[bp][at.y + y][at.x], a->px + (size_t) y * a->w, (size_t) a->w);
+		}
+	}
+	if (!ok)
+		die("aux pictures: the two 4-bit pages are full");
+	printf("qcook: %d aux pictures, %ld K texels in two 4-bit pages (%d + %d rows)\n", QGA_COUNT,
+	       total / 1024, apage_rows[0], apage_rows[1]);
+}
+
+/* ------------------------------------------------------- a map's models -- */
+
+/* An alias model cooked for a map (tools/qcook/items.c): the same
+   preparation and records as GAME.DAT's, its skin placed among the map's
+   textures instead of the game's pages. */
+struct qc_mdl {
+	model_spec spec;
+	model_src  src;
+	char       file[64];
+	uint8_t   *bordered;            /* the skin with its border            */
+	int        bw, bh;
+};
+
+void qc_set_palette(const uint8_t *pal)
+{
+	palette = pal;
+}
+
+qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int skin, int skin_div, int flat)
+{
+	qc_mdl *q = xcalloc(1, sizeof *q);
+	snprintf(q->file, sizeof q->file, "%s", file);
+	q->spec.file     = q->file;
+	q->spec.flat     = flat;
+	q->spec.skin_div = skin_div;
+	q->spec.scale[0] = q->spec.scale[1] = q->spec.scale[2] = 1;
+	q->src.sp   = &q->spec;
+	q->src.data = data;
+	q->src.len  = len;
+	mdl_skin_index = skin;
+	model_prepare(&q->src);
+	mdl_skin_index = 0;
+	const image *im = q->src.im;
+	int b = im->border;
+	q->bw = im->w + 2 * b;
+	q->bh = im->h + 2 * b;
+	q->bordered = xmalloc((size_t) q->bw * q->bh);
+	for (int y = 0; y < q->bh; y++)                 /* the border: the edge texels again */
+		for (int x = 0; x < q->bw; x++) {
+			int sx = x - b, sy = y - b;
+			if (sx < 0) sx = 0;
+			if (sx >= im->w) sx = im->w - 1;
+			if (sy < 0) sy = 0;
+			if (sy >= im->h) sy = im->h - 1;
+			q->bordered[y * q->bw + x] = im->px[(size_t) sy * im->w + sx];
+		}
+	return q;
+}
+
+void qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px)
+{
+	*w  = q->bw;
+	*h  = q->bh;
+	*px = q->bordered;
+}
+
+int qc_mdl_flags(const qc_mdl *q)
+{
+	return q->src.mdl.flags;
+}
+
+void qc_mdl_cook(qc_mdl *q, int u0, int v0, buf_t *geo, void *qg_model_out)
+{
+	qg_model *out = qg_model_out;
+	image *im = q->src.im;
+	im->u    = u0 + im->border;
+	im->v    = v0 + im->border;
+	im->page = 0;
+	cook_mdl(&q->src, (gbuf *) geo, out);
+}
+
 /* ------------------------------------------------------------------ main -- */
+
+/* ------------------------------------------------------------- finales -- */
+
+/* The episodes' end texts are QuakeC strings: client.qc's ExitIntermission
+   sends them with SVC_FINALE. They are read from the pak's progs.dat by
+   walking that function's statements: each `world.model == "maps/..."`
+   test (EQ_S then IFNOT) guards a block, each WriteString argument (a
+   constant stored into OFS_PARM1) with a line break in it is a text
+   of the innermost block around it; e1m7's block holds two, the shareware
+   game's then the registered one's; the text outside every block is the
+   four runes' (intermission_running 3). */
+#define PR_OP_DONE    0
+#define PR_OP_EQ_S    12
+#define PR_OP_STORE_F 31
+#define PR_OP_STORE_S 33
+#define PR_OP_IFNOT   50
+#define PR_OFS_PARM1  7
+
+typedef struct { int first, end; char map[12]; int texts; } fin_block;
+
+static void finales_cook(const uint8_t *pak, long pak_len, gbuf *table, gbuf *texts, uint32_t *num)
+{
+	uint32_t len;
+	const uint8_t *d = pak_find(pak, pak_len, "progs.dat", &len);
+	*num = 0;
+	if (!d || len < 60) {
+		printf("qcook: no progs.dat: no episode end texts\n");
+		return;
+	}
+	const int32_t *hd = (const int32_t *) d;
+	int32_t ofs_st = hd[2], nst = hd[3], ofs_fn = hd[8], nfn = hd[9], ofs_str = hd[10], nstr = hd[11];
+	int32_t ofs_gl = hd[12], ngl = hd[13];
+	if (hd[0] != 6 || ofs_st + nst * 8 > (int32_t) len || ofs_fn + nfn * 36 > (int32_t) len ||
+	    ofs_str + nstr > (int32_t) len || ofs_gl + ngl * 4 > (int32_t) len)
+		die("progs.dat: not a version 6 progs");
+	const char *str = (const char *) d + ofs_str;
+	const int32_t *gl = (const int32_t *) (d + ofs_gl);
+	const uint8_t *st = d + ofs_st;
+	int first = -1;
+	for (int i = 0; i < nfn; i++) {
+		const int32_t *fn = (const int32_t *) (d + ofs_fn + i * 36);
+		if (fn[4] >= 0 && fn[4] < nstr && !strcmp(str + fn[4], "ExitIntermission"))
+			first = fn[0];
+	}
+	if (first <= 0) {
+		printf("qcook: progs.dat has no ExitIntermission: no episode end texts\n");
+		return;
+	}
+	#define ST_OP(i) (*(const uint16_t *) (st + (i) * 8))
+	#define ST_A(i)  (*(const int16_t *) (st + (i) * 8 + 2))
+	#define ST_B(i)  (*(const int16_t *) (st + (i) * 8 + 4))
+	/* a global's constant string ("" when it is none) */
+	#define GSTR(g)  ((g) >= 0 && (g) < ngl && gl[g] > 0 && gl[g] < nstr ? str + gl[g] : "")
+	fin_block blocks[16];
+	int nb = 0, last = first;
+	while (last < nst && ST_OP(last) != PR_OP_DONE)
+		last++;
+	for (int i = first; i < last; i++) {
+		if (ST_OP(i) != PR_OP_EQ_S || ST_OP(i + 1) != PR_OP_IFNOT || nb == 16)
+			continue;
+		const char *m = GSTR(ST_A(i));
+		if (strncmp(m, "maps/", 5))
+			m = GSTR(ST_B(i));
+		if (strncmp(m, "maps/", 5))
+			continue;
+		fin_block *b = &blocks[nb++];
+		b->first = i + 2;
+		b->end   = i + 1 + ST_B(i + 1);
+		b->texts = 0;
+		int k = 0;
+		for (const char *p = m + 5; *p && *p != '.' && k < 11; p++)
+			b->map[k++] = (char) (*p >= 'a' && *p <= 'z' ? *p - 32 : *p);
+		b->map[k] = 0;
+	}
+	for (int i = first; i < last; i++) {
+		if (ST_OP(i) < PR_OP_STORE_F || ST_OP(i) > PR_OP_STORE_S || ST_B(i) != PR_OFS_PARM1)
+			continue;                             /* (qcc copies a parameter with STORE_V) */
+		const char *t = GSTR(ST_A(i));
+		if (strlen(t) < 40 || !strchr(t, '\n'))
+			continue;
+		fin_block *in = 0;
+		for (int b = 0; b < nb; b++)
+			if (i >= blocks[b].first && i < blocks[b].end &&
+			    (!in || blocks[b].end - blocks[b].first < in->end - in->first))
+				in = &blocks[b];
+		qg_finale fz;
+		memset(&fz, 0, sizeof fz);
+		if (in) {
+			memcpy(fz.map, in->map, sizeof fz.map);
+			fz.flags = in->texts++ == 0 ? 0 : QGFIN_REGISTERED;
+		} else {
+			fz.flags = QGFIN_RUNES;
+		}
+		fz.len = (uint16_t) strlen(t);
+		fz.ofs = (uint32_t) texts->len;
+		gput(texts, t, strlen(t) + 1);
+		gput(table, &fz, sizeof fz);
+		(*num)++;
+	}
+	/* a block with two texts: its first is the shareware game's */
+	for (uint32_t i = 0; i < *num; i++) {
+		qg_finale *fz = (qg_finale *) table->p + i;
+		if (fz->flags == 0 && i + 1 < *num && !strcmp(fz[1].map, fz->map) && fz[1].flags == QGFIN_REGISTERED)
+			fz->flags = QGFIN_SHAREWARE;
+	}
+	for (uint32_t i = 0; i < *num; i++) {
+		const qg_finale *fz = (const qg_finale *) table->p + i;
+		printf("qcook: finale %-5s %s%s%s %u chars\n", fz->map[0] ? fz->map : "-",
+		       fz->flags & QGFIN_SHAREWARE ? "shareware" : "", fz->flags & QGFIN_REGISTERED ? "registered" : "",
+		       fz->flags & QGFIN_RUNES ? "runes" : "", fz->len);
+	}
+	#undef ST_OP
+	#undef ST_A
+	#undef ST_B
+	#undef GSTR
+}
 
 int cmd_game(int argc, char **argv)
 {
@@ -1029,6 +1470,7 @@ int cmd_game(int argc, char **argv)
 
 	/* every image first, placed together */
 	pics_prepare();
+	aux_prepare(pak, pak_len);
 	if (NUM_MODELS != QGM_COUNT) die("model list: %d of %d", NUM_MODELS, QGM_COUNT);
 	for (int i = 0; i < NUM_MODELS; i++) {
 		model_src *ms = &srcs[MODELS[i].id];
@@ -1094,7 +1536,7 @@ int cmd_game(int argc, char **argv)
 	memcpy(h.magic, QGAME_MAGIC, 4);
 	h.clut = (uint16_t) ((QG_CLUT_Y << 6) | (QG_CLUT_X >> 4));
 	gput(&f, &h, sizeof h);
-	h.num_rects = (uint32_t) (1 + npages);
+	h.num_rects = (uint32_t) (1 + npages + 1 + AUX_PAGES);
 	h.ofs_rects = (uint32_t) f.len;
 	size_t rects_at = f.len;
 	{ qtex_rect z; memset(&z, 0, sizeof z); for (uint32_t i = 0; i < h.num_rects; i++) gput(&f, &z, sizeof z); }
@@ -1102,7 +1544,35 @@ int cmd_game(int argc, char **argv)
 	h.num_pics = QGP_COUNT;   h.ofs_pics = (uint32_t) f.len;   gput(&f, pics, sizeof pics);
 	h.ofs_dots = (uint32_t) f.len; gput(&f, dots, sizeof dots); galign(&f, 4);
 	h.ofs_rgb  = (uint32_t) f.len; gput(&f, rgb, sizeof rgb);
-	h.ofs_geo  = (uint32_t) f.len; h.len_geo = (uint32_t) geo.len; gput(&f, geo.p, geo.len); galign(&f, 32);
+	h.ofs_geo  = (uint32_t) f.len; h.len_geo = (uint32_t) geo.len; gput(&f, geo.p, geo.len); galign(&f, 4);
+	{
+		static qg_aux at[QGA_COUNT];
+		for (int i = 0; i < QGA_COUNT; i++) {
+			const aux_img *a = &aux[i];
+			int vy = a->page * PT;
+			at[i].tpage = (uint16_t) (((QG_AUX_X & 0x3ff) >> 6) | ((vy >> 8) << 4));   /* 4bpp */
+			at[i].clut  = (uint16_t) ((QG_CLUT_Y << 6) | ((QG_AUX_CLUT_X + 16 * i) >> 4));
+			at[i].u = (uint8_t) a->u; at[i].v = (uint8_t) a->v;
+			at[i].w = (uint16_t) a->w; at[i].h = (uint16_t) a->h;
+		}
+		h.num_aux = QGA_COUNT; h.ofs_aux = (uint32_t) f.len; gput(&f, at, sizeof at);
+	}
+	{
+		gbuf ftab, ftxt;
+		memset(&ftab, 0, sizeof ftab);
+		memset(&ftxt, 0, sizeof ftxt);
+		finales_cook(pak, pak_len, &ftab, &ftxt, &h.num_finales);
+		galign(&ftxt, 4);
+		uint32_t tab_len = (uint32_t) ftab.len;
+		for (uint32_t i = 0; i < h.num_finales; i++)       /* offsets from the block's start */
+			((qg_finale *) ftab.p)[i].ofs += tab_len;
+		h.ofs_finales = (uint32_t) f.len;
+		h.len_finales = (uint32_t) (ftab.len + ftxt.len);
+		if (ftab.len) gput(&f, ftab.p, ftab.len);
+		if (ftxt.len) gput(&f, ftxt.p, ftxt.len);
+		galign(&f, 4);
+	}
+	galign(&f, 32);
 
 	qtex_rect *rects = xcalloc(h.num_rects, sizeof *rects);
 	rects[0].x = QG_CLUT_X; rects[0].y = QG_CLUT_Y; rects[0].w = 256; rects[0].h = 1;
@@ -1125,6 +1595,26 @@ int cmd_game(int argc, char **argv)
 		r->data_ofs = (uint32_t) f.len;
 		gput(&f, &gpage[p][0][0], (size_t) page_rows[p] * PT);   /* 2 texels per halfword */
 		galign(&f, 32);
+	}
+	{	/* the aux CLUTs (one row), then the aux pages' used rows, 4 texels a halfword */
+		qtex_rect *r = &rects[1 + npages];
+		r->x = QG_AUX_CLUT_X; r->y = QG_CLUT_Y; r->w = (uint16_t) (16 * QGA_COUNT); r->h = 1;
+		r->data_ofs = (uint32_t) f.len;
+		for (int i = 0; i < QGA_COUNT; i++)
+			gput(&f, aux[i].clut, sizeof aux[i].clut);
+		galign(&f, 32);
+		for (int p = 0; p < AUX_PAGES; p++) {
+			r = &rects[1 + npages + 1 + p];
+			int rows = apage_rows[p] ? apage_rows[p] : 1;
+			r->x = QG_AUX_X; r->y = (uint16_t) (p * PT); r->w = PT / 4; r->h = (uint16_t) rows;
+			r->data_ofs = (uint32_t) f.len;
+			for (int y = 0; y < rows; y++)
+				for (int x = 0; x < PT; x += 2) {
+					uint8_t b = (uint8_t) ((apage[p][y][x] & 15) | (apage[p][y][x + 1] & 15) << 4);
+					gput(&f, &b, 1);
+				}
+			galign(&f, 32);
+		}
 	}
 	memcpy(f.p + rects_at, rects, h.num_rects * sizeof *rects);
 	memcpy(f.p, &h, sizeof h);

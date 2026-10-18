@@ -26,23 +26,33 @@ static const char *disc_maps[NUM_QUAKE_MAPS];
 static int         num_disc_maps;
 
 static uint8_t map_on_disc[NUM_QUAKE_MAPS];
+static int     fid_mask;          /* the fidelity levels the disc's maps come in */
 
-/* cd_list_dir's call: a "<MAP>_0.WLD" marks its map present */
+/* cd_list_dir's call: a "<MAP>_<N>.WLD" marks its map present at level N
+   (the release disc carries low to high, the ultra one ultra only) */
 static void note_map_file(const char *name, uint32_t size)
 {
 	(void) size;
 	const char *s = name;
 	while (*s && *s != '_') s++;
-	if (strncmp(s, "_0.WLD", 6))
+	if (s[0] != '_' || s[1] < '0' || s[1] >= '0' + FIDELITY_LEVELS || strncmp(s + 2, ".WLD", 4))
 		return;
 	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
-		if (!strncmp(name, quake_maps[i], (size_t) (s - name)) && !quake_maps[i][s - name])
+		if (!strncmp(name, quake_maps[i], (size_t) (s - name)) && !quake_maps[i][s - name]) {
 			map_on_disc[i] = 1;
+			fid_mask |= 1 << (s[1] - '0');
+		}
+}
+
+int world_fid_mask(void)
+{
+	return fid_mask ? fid_mask : (1 << FIDELITY_LEVELS) - 1;
 }
 
 int world_scan_maps(void)
 {
 	num_disc_maps = 0;
+	fid_mask = 0;
 	memset(map_on_disc, 0, sizeof map_on_disc);
 	cd_list_dir("\\MAPS", note_map_file);         /* one directory read */
 	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
@@ -60,6 +70,23 @@ int world_num_maps(void)
 const char *world_map_name(int i)
 {
 	return i >= 0 && i < num_disc_maps ? disc_maps[i] : "?";
+}
+
+int world_find_map(const char *name)
+{
+	for (int i = 0; i < num_disc_maps; i++) {
+		const char *a = disc_maps[i], *b = name;
+		while (*a && *b && (*a | 0x20) == (*b | 0x20))
+			a++, b++;
+		if (!*a && !*b)
+			return i;
+	}
+	return -1;
+}
+
+int world_registered(void)
+{
+	return world_find_map("E2M1") >= 0;
 }
 
 /* load progress: bytes of the files before the current one, and in all */
@@ -213,6 +240,7 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 	world.vis_rowbytes = (world.vis_leaves + 7) >> 3;
 	world.root        = &world.nodes[h->root];
 	world.has_spawn   = (int) h->has_spawn;
+	world.map_name    = disc_maps[map];
 	world.spawn_yaw   = h->spawn_yaw;
 	memcpy(world.spawn, h->spawn, sizeof world.spawn);
 
@@ -260,6 +288,34 @@ int world_load(int map, int fid, int tex4, world_progress_fn progress)
 		                      ? (uint32_t) &world.leaves[r & 0x7fffffffu] | 1u
 		                      : (uint32_t) &world.nodes[r]) & 0x00ffffffu;
 	}
+	/* the map's own models (items, flames): their textures' words from the
+	   table (the 4-bit set's when loaded), a table each for its records */
+	world.num_models = h->num_models;
+	world.mgeo       = f + h->ofs_mgeo;
+	for (int i = 0; i < QIM_COUNT; i++)
+		world.model_of[i] = -1;
+	if (h->num_models) {
+		const qw_model *qm = (const qw_model *) (f + h->ofs_models);
+		world.models    = mem_level_alloc(h->num_models * sizeof *world.models);
+		world.model_tex = mem_level_alloc(h->num_models * sizeof *world.model_tex);
+		if (!world.models || !world.model_tex)
+			return 0;
+		for (uint32_t i = 0; i < h->num_models; i++) {
+			world.models[i] = qm[i].m;
+			qw_tex *t = mem_level_alloc(QW_MODEL_TEX * sizeof *t);
+			if (!t)
+				return 0;
+			for (int k = 0; k < qm[i].num_tex && k < QW_MODEL_TEX; k++)
+				t[k] = qm[i].tex[k] < world.num_tex ? world.textures[qm[i].tex[k]] : world.textures[0];
+			if (!(world.models[i].flags & QGF_FLAT))           /* (an alias model: no wrap) */
+				t[0].window = 0xE2000000u;
+			world.models[i].tex = t[0];
+			world.model_tex[i]  = t;
+			if (qm[i].qim < QIM_COUNT)
+				world.model_of[qm[i].qim] = (int16_t) i;
+		}
+	}
+
 	world.ents         = (const qw_ent *) (f + h->ofs_ents);
 	world.num_ents     = h->num_ents;
 	world.strings      = (const char *) (f + h->ofs_strings);

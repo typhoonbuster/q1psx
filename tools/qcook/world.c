@@ -1388,8 +1388,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 		buf_put(&f, b->leaves[i].ambient, 2);
 	buf_align4(&f);
 	h.ofs_tex = (uint32_t) f.len;
-	h.num_tex = (uint32_t) b->num_miptex;
-	for (int i = 0; i < b->num_miptex; i++) {
+	h.num_tex = (uint32_t) ts->num;
+	for (int i = 0; i < ts->num; i++) {
 		qw_tex t;
 		memset(&t, 0, sizeof t);
 		if (ts->slots[i].present) {
@@ -1453,6 +1453,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const fidelity_t *fid,
 	h.len_strings = (uint32_t) estr.len;
 	buf_put(&f, estr.p, estr.len);
 	buf_align4(&f);
+	items_write(&f, &h.ofs_models, &h.num_models, &h.ofs_mgeo, &h.len_mgeo);
 	memcpy(f.p, &h, sizeof h);
 
 	FILE *fp = fopen(out_path, "wb");

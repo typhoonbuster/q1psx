@@ -65,6 +65,10 @@ void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */
 void *vid_ovl_alloc(int bytes);                /* NULL when the arena is full */
 void  vid_ovl_append(void *head, void *tail);  /* a ready chain (terminated) at its end */
 void  vid_tint(int r, int g, int b);           /* a 50 % blend of a colour over the viewport */
+/* V_UpdatePalette's damage, bonus and powerup shifts over the viewport:
+   v the mid grey's (128) colour after them, contrast how much of a
+   colour's distance to the grey is kept (x256) */
+void  vid_shift(const int v[3], int contrast);
 
 /* The HUD's packets keep across frames (hud.c): the last VID_HUD_BYTES of
    each buffer's arena, past what vid_alloc hands out. A buffer's block is

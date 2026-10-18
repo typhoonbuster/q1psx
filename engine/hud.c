@@ -1,10 +1,15 @@
 #include <stdint.h>
 #include <psxgpu.h>
 
+#include <stdio.h>
+#include <string.h>
+
 #include "game.h"
 #include "gdata.h"
 #include "hud.h"
+#include "level.h"
 #include "render.h"
+#include "ui.h"
 #include "vid.h"
 
 const char *const hud_style_name[HUD_STYLES] = { "original", "q2 psx" };
@@ -22,8 +27,13 @@ static int cur_tpage = -1;
 typedef struct {
 	int32_t  style, dead, health, armor, weapon, ammo[AMMO_COUNT];
 	uint32_t items;
-	int32_t  pain, weapons_shown;
+	int32_t  face, weapons_shown;
+	uint32_t wflash;             /* the 7 weapon icons' frames, 3 bits each */
 } hud_state_t;
+
+/* cl.item_gettime: when each item bit came (CL_ParseClientdata) */
+static uint32_t seen_items;
+static int      item_gettime[32];
 typedef struct {
 	uint32_t    magic;
 	hud_state_t state;
@@ -134,18 +144,39 @@ static void smallnum(int x, int y, int value)
 	}
 }
 
+/* Sbar_DrawFace: the powerups' faces first */
 static int face_pic(void)
 {
+	if ((pl.items & (IT_INVISIBILITY | IT_INVULNERABILITY)) == (IT_INVISIBILITY | IT_INVULNERABILITY))
+		return QGP_FACE_INV2;
+	if (pl.items & IT_QUAD)
+		return QGP_FACE_QUAD;
+	if (pl.items & IT_INVISIBILITY)
+		return QGP_FACE_INVIS;
+	if (pl.items & IT_INVULNERABILITY)
+		return QGP_FACE_INVUL2;
 	int f = pl.health >= 100 ? 4 : pl.health / 20;
 	if (f < 0) f = 0;
 	return (game_tick_count <= pl.pain_until ? QGP_FACE_P1 : QGP_FACE1) + f;
 }
 
+/* the armour's picture by the item (-1: none) */
 static int armor_pic(void)
 {
 	if (pl.items & IT_ARMOR3) return QGP_ARMOR3;
 	if (pl.items & IT_ARMOR2) return QGP_ARMOR2;
-	return QGP_ARMOR1;
+	if (pl.items & IT_ARMOR1) return QGP_ARMOR1;
+	return -1;
+}
+
+/* Sbar_DrawInventory's flashon: a weapon just picked up cycles the 5 flash
+   frames at 10 a second for 1 s; then 1 the active one, 0 the others */
+static int weapon_frame(int i)
+{
+	int flashon = (game_tick_count - item_gettime[i]) * 10 / GAME_HZ;
+	if (flashon >= 10)
+		return pl.weapon == W_SHOTGUN + i ? 1 : 0;
+	return flashon % 5 + 2;
 }
 
 static int ammo_pic(void)
@@ -159,14 +190,16 @@ static int ammo_pic(void)
 	}
 }
 
-/* the 7 weapon icons: inv2 (selected) / inv, Quake's order */
+/* the 7 weapon icons: inv, inv2 (selected), inva1..5 (just picked up),
+   Quake's order */
 static void weapon_row(int x, int y)
 {
 	for (int i = 0; i < 7; i++) {
 		if (!(pl.items & (IT_SHOTGUN << i)))
 			continue;
-		int sel = pl.weapon == W_SHOTGUN + i;
-		pic((sel ? QGP_INV2_SHOTGUN : QGP_INV_SHOTGUN) + i, x + i * 24, y);
+		int f = weapon_frame(i);
+		pic(f == 0 ? QGP_INV_SHOTGUN + i : f == 1 ? QGP_INV2_SHOTGUN + i : QGP_INVA_SHOTGUN + (f - 2) * 7 + i,
+		    x + i * 24, y);
 	}
 }
 
@@ -208,9 +241,13 @@ static void draw_original(void)
 	}
 	pic(QGP_SBAR_L, 0, 216);
 	pic(QGP_SBAR_R, 160, 216);
-	num(24, 216, pl.armor, 3, pl.armor <= 25);
-	if (pl.armor > 0)
-		pic(armor_pic(), 0, 216);
+	if (pl.items & IT_INVULNERABILITY) {          /* 666 and the disc (hud_draw) */
+		num(24, 216, 666, 3, 1);
+	} else {
+		num(24, 216, pl.armor, 3, pl.armor <= 25);
+		if (armor_pic() >= 0)
+			pic(armor_pic(), 0, 216);
+	}
 	pic(face_pic(), 112, 216);
 	num(136, 216, pl.health, 3, pl.health <= 25);
 	int ap = ammo_pic();
@@ -227,8 +264,11 @@ static void draw_q2psx(void)
 		return;
 	pic(face_pic(), 8, 212);
 	num(36, 212, pl.health, 3, pl.health <= 25);
-	if (pl.armor > 0) {
-		pic(armor_pic(), 124, 212);
+	if (pl.items & IT_INVULNERABILITY) {          /* 666 and the disc (hud_draw) */
+		num(148, 212, 666, 3, 1);
+	} else if (pl.armor > 0) {
+		if (armor_pic() >= 0)
+			pic(armor_pic(), 124, 212);
 		num(148, 212, pl.armor, 3, pl.armor <= 25);
 	}
 	int ap = ammo_pic();
@@ -252,7 +292,11 @@ static void hud_state(hud_state_t *s)
 	for (int i = 0; i < AMMO_COUNT; i++)
 		s->ammo[i] = pl.ammo[i];
 	s->items  = pl.items;
-	s->pain   = game_tick_count <= pl.pain_until;
+	s->face   = face_pic();
+	s->wflash = 0;
+	for (int i = 0; i < 7; i++)
+		if (pl.items & (IT_SHOTGUN << i))
+			s->wflash |= (uint32_t) weapon_frame(i) << (3 * i);
 	s->weapons_shown = game_tick_count - pl.weapon_switch_tick < 2 * GAME_HZ;
 }
 
@@ -290,10 +334,209 @@ static void hud_copy(hud_block_t *b, const hud_block_t *o)
 	b->magic = HUD_MAGIC;
 }
 
+/* ------------------------------------------------------- centerprint -- */
+
+static char center_text[256];
+static int  center_until = -1;        /* game tick */
+
+void hud_centerprint(const char *s)
+{
+#ifdef Q1PSX_BENCH
+	printf("centerprint: %s\n", s);
+#endif
+	size_t n = strlen(s);
+	if (n >= sizeof center_text)
+		n = sizeof center_text - 1;
+	memcpy(center_text, s, n);
+	center_text[n] = 0;
+	center_until = game_tick_count + 2 * GAME_HZ;   /* scr_centertime 2 */
+}
+
+void hud_centerprint_clear(void)
+{
+	center_until = -1;
+}
+
+/* ------------------------------------------------------------- notify -- */
+
+#define NOTIFY_LINES 4                /* NUM_CON_TIMES */
+#define NOTIFY_WIDTH 38               /* con_linewidth: 320 / 8 - 2 */
+static char notify_text[NOTIFY_LINES][NOTIFY_WIDTH + 1];
+static int  notify_tick[NOTIFY_LINES];
+static int  notify_count;             /* lines printed (con_current + 1) */
+
+static void notify_line(const char *s, int n)
+{
+	char *t = notify_text[notify_count % NOTIFY_LINES];
+	memcpy(t, s, (size_t) n);
+	t[n] = 0;
+	notify_tick[notify_count % NOTIFY_LINES] = game_tick_count;
+	notify_count++;
+}
+
+/* Con_Print: lines at '\n', a word that does not fit to the next line */
+void hud_notify(const char *s)
+{
+#ifdef Q1PSX_BENCH
+	printf("notify: %s\n", s);
+#endif
+	while (*s) {
+		int n = 0, cut = -1;
+		while (s[n] && s[n] != '\n' && n < NOTIFY_WIDTH) {
+			if (s[n] == ' ')
+				cut = n;
+			n++;
+		}
+		if (s[n] && s[n] != '\n' && cut > 0)  /* wrap before the word */
+			n = cut;
+		notify_line(s, n);
+		s += n;
+		while (*s == ' ' || *s == '\n')
+			s++;
+	}
+}
+
+void hud_level_start(void)
+{
+	seen_items = 0;
+	notify_count = 0;
+	for (int i = 0; i < NOTIFY_LINES; i++)
+		notify_tick[i] = -1000000;
+}
+
+/* Con_DrawNotify: the lines younger than con_notifytime (3 s), from the top */
+static void draw_notify(void)
+{
+	int y = 0, first = notify_count - NOTIFY_LINES, began = 0;
+	for (int i = first < 0 ? 0 : first; i < notify_count; i++) {
+		int k = i % NOTIFY_LINES;
+		if (game_tick_count - notify_tick[k] > 3 * GAME_HZ)
+			continue;
+		if (!began) {
+			ui_begin();
+			began = 1;
+		}
+		ui_text(8, y, notify_text[k]);
+		y += 8;
+	}
+}
+
+/* SCR_DrawCenterString: each line centred, from 35 % of the screen down
+   (from 48 when there are more than 4 lines); during the finale the text
+   comes out 8 characters a second (`reveal` of them, -1 all) */
+static void draw_center_string(const char *text, int reveal)
+{
+	int lines = 1;
+	for (const char *p = text; *p; p++)
+		lines += *p == '\n';
+	int y = lines <= 4 ? VID_H * 35 / 100 : 48;
+	const char *p = text;
+	for (;;) {
+		int l = 0;
+		while (p[l] && p[l] != '\n' && l < 40)
+			l++;
+		int x = (VID_W - l * 8) / 2;
+		for (int j = 0; j < l; j++) {
+			if (reveal >= 0 && reveal-- == 0)
+				return;
+			ui_char(x + j * 8, y, (uint8_t) p[j], 128);
+		}
+		y += 8;
+		p += l;
+		if (*p == '\n')
+			p++;
+		if (!*p)
+			break;
+	}
+}
+
+/* a big-digit picture into the overlay chain (the HUD block is cached) */
+static int ovl_tpage = -1;
+static void ovl_pic(int id, int x, int y)
+{
+	const qg_pic *p = &gdata.pics[id];
+	if (p->tpage != ovl_tpage) {
+		DR_TPAGE *t = vid_ovl_alloc(sizeof *t);
+		if (!t)
+			return;
+		setDrawTPage(t, 0, 0, p->tpage);
+		ovl_tpage = p->tpage;
+	}
+	SPRT *s = vid_ovl_alloc(sizeof *s);
+	if (!s)
+		return;
+	setSprt(s);
+	setXY0(s, x, y);
+	setUV0(s, p->u, p->v);
+	setWH(s, p->w, p->h);
+	setRGB0(s, 128, 128, 128);
+	s->clut = gdata.clut;
+}
+
+/* Sbar_IntermissionNumber: right-aligned big digits */
+static void inter_number(int x, int y, int num, int digits)
+{
+	char str[12];
+	int l = 0, neg = num < 0;
+	unsigned u = (unsigned) (neg ? -num : num);
+	do { str[l++] = (char) ('0' + u % 10); u /= 10; } while (u && l < 10);
+	if (neg) str[l++] = '-';
+	int start = l > digits ? digits : l;
+	if (l < digits)
+		x += (digits - l) * 24;
+	for (int i = start - 1; i >= 0; i--) {
+		ovl_pic(str[i] == '-' ? QGP_NUM_MINUS : QGP_NUM_0 + (str[i] - '0'), x, y);
+		x += 24;
+	}
+}
+
+/* Sbar_IntermissionOverlay; Sbar_FinaleOverlay and the text */
+static void draw_intermission(void)
+{
+	ui_begin();
+	ovl_tpage = -1;
+	if (level_intermission == 1) {
+		ui_aux(QGA_COMPLETE, 64, 24);
+		ui_aux(QGA_INTER, 0, 56);
+		ovl_tpage = -1;
+		int secs = level_completed_ticks / GAME_HZ, dig = secs / 60, num = secs - dig * 60;
+		inter_number(160, 64, dig, 3);
+		ovl_pic(QGP_NUM_COLON, 234, 64);
+		ovl_pic(QGP_NUM_0 + num / 10, 246, 64);
+		ovl_pic(QGP_NUM_0 + num % 10, 266, 64);
+		inter_number(160, 104, level_found_secrets(), 3);
+		ovl_pic(QGP_NUM_SLASH, 232, 104);
+		inter_number(240, 104, level_total_secrets(), 3);
+		inter_number(160, 144, level_killed_monsters(), 3);
+		ovl_pic(QGP_NUM_SLASH, 232, 144);
+		inter_number(240, 144, level_total_monsters(), 3);
+	} else if (level_intermission >= 2 && level_finale_text) {   /* SVC_FINALE: cl.intermission 2 */
+		ui_aux(QGA_FINALE_L, (VID_W - 288) / 2, 16);
+		ui_aux(QGA_FINALE_R, (VID_W - 288) / 2 + 144, 16);
+		draw_center_string(level_finale_text, (game_tick_count - level_finale_tick) * 8 / GAME_HZ);
+	}
+}
+
 void hud_draw(void)
 {
 	if (!gdata.ok)
 		return;
+	if (level_intermission) {
+		draw_intermission();
+		return;
+	}
+	/* CL_ParseClientdata: the items just received */
+	uint32_t gained = pl.items & ~seen_items;
+	for (int j = 0; gained; j++, gained >>= 1)
+		if (gained & 1)
+			item_gettime[j] = game_tick_count;
+	seen_items = pl.items;
+
+	draw_notify();
+	if (game_tick_count <= center_until) {
+		ui_begin();
+		draw_center_string(center_text, -1);
+	}
 	hud_state_t now;
 	hud_state(&now);
 	hud_block_t *b = vid_hud_block(0);
@@ -319,4 +562,11 @@ void hud_draw(void)
 	}
 	if (b->head)
 		vid_ovl_append(b->head, b->tail);
+	if ((pl.items & IT_INVULNERABILITY) && !pl.dead) {   /* Sbar's draw_disc over the armour */
+		ui_begin();
+		if (style == HUD_ORIGINAL)
+			ui_aux(QGA_DISC, 0, 216);
+		else
+			ui_aux(QGA_DISC, 124, 212);
+	}
 }

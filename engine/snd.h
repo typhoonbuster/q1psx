@@ -33,6 +33,7 @@ enum {
 	S_MENU1, S_MENU2, S_MENU3, S_TALK,
 	S_ITEMBK2, S_LOCK4, S_PKUP, S_ARMOR1, S_DAMAGE3, S_POWER, S_DLAND2,
 	S_AMB_WATER1, S_AMB_WIND2,
+	S_SECRET, S_TRIGGER1, S_WINDFLY, S_HUM1,
 	S_COUNT
 };
 
@@ -51,8 +52,18 @@ enum {
 #define ENT_WORLD   0
 #define ENT_PLAYER  1
 #define ENT_PROJ    64
+#define ENT_EDICT   256     /* a map entity: + its edict index (engine/ents.c) */
+
+#define SND_NONE  (-1)      /* snd_find: not in this map's bank          */
+#define SND_NULL  (-2)      /* "misc/null.wav": playing it cuts the channel */
 
 void snd_init(void);
+
+/* the menu's volumes, in tenths (Quake's volume 0.7 and bgmvolume 1 by
+   default): the sound effects' (the voices', from their next update) and
+   the CD music's (the SPU's CD input) */
+void snd_set_volume(int tenths);
+void snd_set_cd_volume(int tenths);
 
 /* the map's bank: MAPS/<MAP>.SND into SPU RAM (through the level arena,
    which it resets: call it before the world loads). 0 if there is none. */
@@ -64,6 +75,20 @@ void snd_map_start(void);
 /* S_StartSound; `sfx` an S_* id (missing from this map's bank: nothing) */
 void snd_start(int entnum, int entchannel, int sfx, const int32_t origin[3], int vol, int atten);
 void snd_stop_all(void);
+
+/* the bank's sound of that name (the QC's names: "doors/drclos4.wav"),
+   SND_NULL for "misc/null.wav", else SND_NONE */
+int  snd_find(const char *name);
+
+/* S_StartSound with a bank sound (snd_find's); SND_NULL cuts what the
+   entity's channel plays (Quake starts a silent sound there), SND_NONE
+   does nothing */
+void snd_start_idx(int entnum, int entchannel, int s, const int32_t origin[3], int vol, int atten);
+
+/* PF_ambientsound at the map's start: one more static source (origin in
+   1/R_POS_SUB units, the bank sound, volume 0..255, attenuation x64).
+   Before snd_map_start. */
+void snd_add_static(const int32_t origin[3], int s, int vol, int atten);
 
 /* once per frame, after the game ticks: the listener (the camera) and
    `ticks` elapsed since the last update; respatializes every channel */

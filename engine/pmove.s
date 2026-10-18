@@ -103,7 +103,7 @@
 	nop
 .endm
 
-# PMCOPY to, tb, from, fb: the 20 words of a pmove_t from from(fb) to
+# PMCOPY to, tb, from, fb: the 21 words of a pmove_t from from(fb) to
 # to(tb), unrolled. Clobbers t0-t6.
 .macro PMCOPY to, tb, from, fb
 	lw      $t0,  \from+0(\fb)
@@ -140,12 +140,14 @@
 	lw      $t3, \from+68(\fb)
 	lw      $t4, \from+72(\fb)
 	lw      $t5, \from+76(\fb)
+	lw      $t6, \from+80(\fb)
 	sw      $t0, \to+56(\tb)
 	sw      $t1, \to+60(\tb)
 	sw      $t2, \to+64(\tb)
 	sw      $t3, \to+68(\tb)
 	sw      $t4, \to+72(\tb)
 	sw      $t5, \to+76(\tb)
+	sw      $t6, \to+80(\tb)
 .endm
 
 # the drag of PlayerPreThink's WaterMove by water level: 1 - 0.8 wl / 60, 0.16
@@ -175,6 +177,7 @@ pmove_step:
 	move    $s1, $a1                     # cmd
 
 	PMCOPY  PM_POS, $s7, 0, $s0            # pmove_t -> scratchpad
+	sw      $zero, PM_TOUCHED($s7)       # (nothing run into yet this tick)
 
 	lw      $a0, PM_YAW($s7)
 	jal     r_sin
@@ -900,7 +903,9 @@ categorize:
 	nop
 2:	b       9f                           # too steep
 	sw      $zero, PM_ONGROUND($s7)
-3:	li      $t0, 1
+3:	lh      $t0, PS_TRB+TR_ENT($s7)      # on the ground: 1 + what (the trace's ent)
+	nop
+	addiu   $t0, $t0, 1
 	sw      $t0, PM_ONGROUND($s7)
 	lw      $t0, PS_TRB+TR_STARTSOLID($s7)
 	lw      $t1, PS_TRB+TR_ALLSOLID($s7)
@@ -1113,12 +1118,16 @@ sm_bump:
 	li      $t1, Q_FIX_ONE
 	slt     $t2, $t0, $t1
 	beqz    $t2, sm_done                 # moved the whole way
+	lh      $t1, PS_TRB+TR_ENT($s7)      # (a brush model run into: SV_Impact's)
 	nop
-	lh      $t0, PS_TRB+TR_PLANE_N+4($s7)
-	li      $t1, 1
+	beqz    $t1, 8f
+	nop
+	sw      $t1, PM_TOUCHED($s7)
+8:	lh      $t0, PS_TRB+TR_PLANE_N+4($s7)
+	lh      $t1, PS_TRB+TR_ENT($s7)
 	slti    $t2, $t0, FLOOR_NZ + 1
 	bnez    $t2, 6f
-	nop
+	addiu   $t1, $t1, 1                  # (on the ground: 1 + the trace's ent)
 	ori     $s4, $s4, 1                  # floor
 	b       7f
 	sw      $t1, PM_ONGROUND($s7)

@@ -163,11 +163,13 @@ void dl_stamp_nodes(void)
 
 /* R_PushDlights: the live lights for the renderer, which lights each face
    block it draws (engine/r_world.s dr_lights -> dl_block) */
+int dl_enabled = 1;
+
 void dl_push(int now)
 {
 	dl_save_n = 0;
 	int n = 0;
-	for (int i = 0; i < MAX_DLIGHTS; i++) {
+	for (int i = 0; i < MAX_DLIGHTS && dl_enabled; i++) {
 		const dlight_t *l = &dlights[i];
 		if (l->die < now || !l->radius)
 			continue;
@@ -378,7 +380,7 @@ void dl_restore(void)
 int dl_add_at(const int32_t org[3], int now)
 {
 	int add = 0;
-	for (int i = 0; i < MAX_DLIGHTS; i++) {
+	for (int i = 0; i < MAX_DLIGHTS && dl_enabled; i++) {
 		const dlight_t *l = &dlights[i];
 		if (l->die < now || !l->radius)
 			continue;

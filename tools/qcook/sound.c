@@ -493,9 +493,11 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			const ambient_spec *a = &AMBIENTS[k];
 			if (strcmp(cls, a->classname)) continue;
 			if (!strcmp(a->classname, "trigger_teleport") && (spawnflags & 1)) continue;   /* SILENT */
-			if (!have_origin) continue;            /* (a brush entity: no origin; its hum
-			                                           needs the brush centre: the engine's
-			                                           entity spawn places it) */
+			if (!have_origin) {                    /* a brush entity: no origin; the engine
+			                                           places its hum at the brush centre */
+				sound_add(a->sound, SG_TELE, pak, pak_len, pak0, pak0_len);
+				continue;
+			}
 			if (nstatics >= QS_MAX_STATICS) die("too many static sounds");
 			qs_static *st = &statics[nstatics++];
 			for (int c = 0; c < 3; c++) st->origin[c] = (int32_t) lround(origin[c]);

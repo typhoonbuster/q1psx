@@ -22,7 +22,7 @@ int gdata_load(void)
 		return 0;
 	}
 	const qg_header *h = (const qg_header *) f;
-	if (h->num_models != QGM_COUNT || h->num_pics != QGP_COUNT ||
+	if (h->num_models != QGM_COUNT || h->num_pics != QGP_COUNT || h->num_aux != QGA_COUNT ||
 	    h->ofs_geo + h->len_geo > size) {
 		printf("gdata: GAME.DAT does not match this engine\n");
 		mem_level_release(mark);
@@ -37,10 +37,11 @@ int gdata_load(void)
 
 	/* tables and geometry to the game arena */
 	uint32_t tables = (uint32_t) (QGM_COUNT * sizeof(qg_model) + QGP_COUNT * sizeof(qg_pic) +
-	                              QG_LIGHT_YAWS * QG_NORMALS + 256 * 4);
+	                              QG_LIGHT_YAWS * QG_NORMALS + 256 * 4 + QGA_COUNT * sizeof(qg_aux));
 	uint8_t *t = mem_game_alloc(tables);
 	uint8_t *g = mem_game_alloc(h->len_geo);
-	if (!t || !g) {
+	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
+	if (!t || !g || (h->len_finales && !fin)) {
 		mem_level_release(mark);
 		return 0;
 	}
@@ -48,8 +49,14 @@ int gdata_load(void)
 	memcpy(p, f + h->ofs_models, QGM_COUNT * sizeof(qg_model)); gdata.models = (const qg_model *) p; p += QGM_COUNT * sizeof(qg_model);
 	memcpy(p, f + h->ofs_pics, QGP_COUNT * sizeof(qg_pic));     gdata.pics = (const qg_pic *) p;     p += QGP_COUNT * sizeof(qg_pic);
 	memcpy(p, f + h->ofs_dots, QG_LIGHT_YAWS * QG_NORMALS);      gdata.dots = p;                      p += QG_LIGHT_YAWS * QG_NORMALS;
-	memcpy(p, f + h->ofs_rgb, 256 * 4);                          gdata.rgb = (const uint32_t *) p;
+	memcpy(p, f + h->ofs_rgb, 256 * 4);                          gdata.rgb = (const uint32_t *) p;    p += 256 * 4;
+	memcpy(p, f + h->ofs_aux, QGA_COUNT * sizeof(qg_aux));       gdata.aux = (const qg_aux *) p;
 	memcpy(g, f + h->ofs_geo, h->len_geo);
+	if (fin) {
+		memcpy(fin, f + h->ofs_finales, h->len_finales);
+		gdata.finales     = (const qg_finale *) fin;
+		gdata.num_finales = h->num_finales;
+	}
 	gdata.geo  = g;
 	gdata.clut = h->clut;
 	gdata.ok   = 1;

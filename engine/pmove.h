@@ -31,7 +31,10 @@ typedef struct {
 	int32_t pos[3];       /* 1/CLIP_SUB world units (box origin)       */
 	int32_t vel[3];       /* units per second                          */
 	int     yaw, pitch;   /* binary degrees; pitch is aim only         */
-	int     onground;     /* 1 = standing on a walkable floor          */
+	int     onground;     /* standing on a walkable floor: 1 + the floor's
+	                         trace ent (1 the world, 2 + a clip_bmodels
+	                         entry: the plat it rides, engine/ents.c);
+	                         0 in the air                               */
 	int     noclip;       /* 1 = free flight, ignore the world         */
 
 	int32_t pos_acc[3];   /* sub-unit displacement carry               */
@@ -41,6 +44,9 @@ typedef struct {
 	int     waterjump;    /* ticks of FL_WATERJUMP left (teleport_time); 0 none */
 	int     jumpreleased; /* FL_JUMPRELEASED: no pogo while jump is held */
 	int32_t movedir[2];   /* the water jump's push, units/s (CheckWaterJump) */
+	int32_t touched;      /* this tick: the last brush model a slide ran into,
+	                         its trace ent (0 none): the game calls its touch
+	                         (SV_Impact: buttons, doors) */
 } pmove_t;
 
 /* One tick of intent. fwd / side are analog, -PM_AXIS .. PM_AXIS (a stick;
@@ -61,7 +67,7 @@ _Static_assert(__builtin_offsetof(pmove_t, vel) == 12 && __builtin_offsetof(pmov
                __builtin_offsetof(pmove_t, onground) == 32 && __builtin_offsetof(pmove_t, pos_acc) == 40 &&
                __builtin_offsetof(pmove_t, grav_acc) == 52 && __builtin_offsetof(pmove_t, waterlevel) == 56 &&
                __builtin_offsetof(pmove_t, waterjump) == 64 && __builtin_offsetof(pmove_t, movedir) == 72 &&
-               sizeof(pmove_t) == 80, "p_defs.inc PM_*");
+               __builtin_offsetof(pmove_t, touched) == 80 && sizeof(pmove_t) == 84, "p_defs.inc PM_*");
 _Static_assert(__builtin_offsetof(pmove_cmd_t, up) == 8 && __builtin_offsetof(pmove_cmd_t, walk) == 16 &&
                __builtin_offsetof(pmove_cmd_t, waterjump) == 20 && sizeof(pmove_cmd_t) == 24, "p_defs.inc CMD_*");
 

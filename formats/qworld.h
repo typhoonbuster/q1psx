@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWVA" (architecture.md §6), one per map and fidelity
+ * q1psx — cooked world "QWVB" (architecture.md §6), one per map and fidelity
  * level. Written by `qcook`, loaded by engine/world.c, walked by the asm
  * renderer (engine/r_*.s).
  *
@@ -43,7 +43,7 @@
 
 #include <stdint.h>
 
-#define QWORLD_MAGIC "QWVA"
+#define QWORLD_MAGIC "QWVB"
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
@@ -70,7 +70,7 @@ typedef struct {
 } qw_view;
 
 typedef struct {
-	char     magic[4];             /* "QWVA"                                  */
+	char     magic[4];             /* "QWVB"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
 	uint32_t num_leaves;           /* including leaf 0 (solid)                */
 	uint32_t num_marks;
@@ -102,6 +102,9 @@ typedef struct {
 	uint32_t worldtype;            /* worldspawn's: 0 medieval, 1 metal, 2 base */
 	uint32_t title;                /* string: worldspawn's message, the map's name */
 	uint32_t max_bm_depth;         /* deepest brush model subtree (<= QW_MAX_BM_DEPTH) */
+	uint32_t ofs_models, num_models;   /* qw_model[] (formats/qgame.h): the map's
+	                                  own models (items, flames)              */
+	uint32_t ofs_mgeo, len_mgeo;   /* their geometry block                    */
 } qw_header;
 
 /* A brush model: Quake's submodel. Bounds in the physics' units, spread by

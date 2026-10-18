@@ -21,6 +21,9 @@ typedef struct {
 	uint8_t        *geo;       /* the geometry block (records are patched
 	                              per draw: it is writable)                */
 	uint16_t        clut;      /* GPU CLUT word of the game palette        */
+	const qg_aux   *aux;       /* [QGA_COUNT]: 4-bit pictures (ui.h)       */
+	const qg_finale *finales;  /* the episodes' end texts, and their count */
+	uint32_t        num_finales;
 } gdata_t;
 
 extern gdata_t gdata;

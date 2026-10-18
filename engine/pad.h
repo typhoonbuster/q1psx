@@ -1,9 +1,12 @@
 /*
- * q1psx — controller input (port 1, BIOS pad driver).
+ * q1psx — controller input (port 1, the game's own poll in the vblank).
  *
- * pad_read() once per frame; `held` = buttons down now, `pressed` = buttons
- * that went down since the previous read. Bits are psxpad.h's PAD_* values,
- * active high (the BIOS buffer is active low; we flip it).
+ * The pad is polled every vblank and each poll kept (a ring of 8): the game
+ * takes them one per 60 Hz tick (pad_frame), so its input is sampled at
+ * 60 Hz whatever the frame rate; the menus read the frame's
+ * merged state (pad_read). `held` = buttons down, `pressed` = buttons that
+ * went down since the poll (or the read) before. Bits are psxpad.h's PAD_*
+ * values, active high (the pad answers active low; we flip it).
  *
  * Sticks: only in analog mode (DualShock / Dual Analog with the ANALOG
  * button's LED on: type 7, or 5 for the green-LED mode); centred, -128
@@ -27,9 +30,15 @@ typedef struct {
 	int      rx, ry;      /* right stick                                     */
 } pad_t;
 
-extern pad_t pad;
+extern pad_t pad;           /* the last frame's: held now, pressed since the read before */
 
 void pad_init(void);
-void pad_read(void);
+
+/* the polls since the last call, oldest first, one per vblank: at most
+   `max` (older ones dropped, their presses kept in the first); `pad` set
+   to the frame's merged state. Returns how many (0: no vblank since). */
+#define PAD_MAX_TICKS 4
+int  pad_frame(pad_t *ticks, int max);
+void pad_read(void);        /* pad_frame without the per-poll states (menus, loads) */
 
 #endif

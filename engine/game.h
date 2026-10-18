@@ -74,6 +74,18 @@ typedef struct {
 	int      viewheight;       /* 1/R_POS_SUB units above the box origin     */
 	int      fire, fire_was;   /* the fire button now / last tick            */
 	int      weapon_switch_tick;   /* when the weapon last changed (the HUD) */
+	int      teleport_time;    /* tick: a teleport's 0.7 s without backing up */
+	int      fly_sound;        /* tick: the next trigger_push wind sound      */
+	int      invisible_finished, invisible_time, invisible_sound;   /* the powerups' */
+	int      invincible_finished, invincible_time, invincible_sound;  /* ticks (0 none) */
+	int      super_damage_finished, super_time, super_sound;
+	int      radsuit_finished, rad_time;
+	int      bonus_pct;        /* the bonus flash, its percent x256 (V_UpdatePalette) */
+	int      damage_pct;       /* the damage flash, x256, and its colour */
+	uint8_t  damage_rgb[3];
+	int      dmg_take, dmg_save;   /* this tick's damage, sent at its end (svc_damage) */
+	int      dimlight;         /* EF_DIMLIGHT: the quad's, the pentagram's glow */
+	int32_t  dmg_from[3];      /* its last inflictor's centre (the world's: 0)  */
 } player_t;
 
 typedef struct {
@@ -111,5 +123,33 @@ int game_ammo_type(void);
 
 /* a Quake-style random number: 0 .. 65535 */
 uint32_t q_rand(void);
+
+/* ---- the map's entities' calls (engine/ents.c, triggers.c, level.c) ---- */
+void game_teleport(const int32_t org[3], const int16_t mangle[3]);   /* the player, there */
+void game_teleport_splash(const int32_t org[3]);   /* R_TeleportSplash */
+void game_spawn_bubble(const int32_t org[3]);      /* misc.qc make_bubbles' bubble */
+int  game_quad_active(void);
+int  game_intermission(void);
+void game_damage_player(int damage, const int32_t inflictor[3]);
+const char *game_finale_text(const char *map);     /* an episode's end, or NULL */
+
+/* the level changes (client.qc): the inventory kept leaving a level
+   (SetChangeParms), the player put in the new one with it
+   (PutClientInServer, DecodeLevelParms; info_player_start2 back in START
+   with a rune); a new game's (SetNewParms); the level started over after
+   a death (its entities spawned again, the parms it was entered with) */
+void game_bonus_flash(void);                       /* stuffcmd "bf" */
+void game_give_weapon(int w);                      /* a weapon picked up: to it */
+int  game_best_weapon(void);
+void game_select_best(void);
+void game_powerup(uint32_t item);                  /* its 30 s */
+void game_radius_damage_player(const int32_t org[3], int damage);
+void game_explosion(const int32_t org[3]);         /* BecomeExplosion's */
+void game_launch_spike(const int32_t org[3], const int32_t dir[3], int speed, int super);
+
+void game_save_parms(void);
+void game_new_parms(void);
+void game_spawn_level(void);
+void game_restart_level(void);
 
 #endif

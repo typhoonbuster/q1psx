@@ -62,6 +62,17 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_PROFILE=${_q1psx_profile})
 target_compile_options(q1psx PRIVATE
 	$<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_PROFILE=${_q1psx_profile}>)
 
+# The release editions (presets "release" and "release-ultra"): Quake's own
+# menu over the game (engine/menu.c), no debug overlay, no map menu, no
+# cheats; and the fidelity levels the disc carries: low to high on the
+# "release" disc, ultra alone on the "release-ultra" one (the default and
+# bench builds carry all four).
+option(Q1PSX_RELEASE "Quake's menu, no debug tools" OFF)
+if(Q1PSX_RELEASE)
+	target_compile_definitions(q1psx PRIVATE Q1PSX_RELEASE=1)
+endif()
+set(Q1PSX_FIDELITIES "low;medium;high;ultra" CACHE STRING "The fidelity levels put on the disc")
+
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.
 set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference, 2 the asm checked by the C")
@@ -81,6 +92,7 @@ set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
+set(Q1PSX_BENCH_ENTS 0 CACHE STRING "1: the map entities' scenarios (doors, buttons, plats, teleporters, the exit)")
 set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map, dumped")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 if(Q1PSX_BENCH)
@@ -89,7 +101,8 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
-		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS})
+		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
+		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS})
 	if(Q1PSX_BENCH_VIEW)
 		# five numbers: separate definitions (a quoted string with spaces does not
 		# survive the generator's command line)
@@ -182,6 +195,9 @@ foreach(_src ${_cooked})
 		continue()
 	endif()
 	set(_map "${CMAKE_MATCH_1}")
+	if(NOT "${CMAKE_MATCH_2}" IN_LIST Q1PSX_FIDELITIES)
+		continue()                                      # (another edition's level)
+	endif()
 	set(_fids low medium high ultra)
 	list(FIND _fids "${CMAKE_MATCH_2}" _n)
 	string(TOUPPER "${_map}_${_n}${_ext}" _name)        # E1M1_2.WLD
@@ -194,7 +210,7 @@ list(LENGTH _maps _nmaps)
 if(_nmaps EQUAL 0)
 	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")
 else()
-	message(STATUS "q1psx: bundling ${_nmaps} cooked maps x 4 fidelity levels")
+	message(STATUS "q1psx: bundling ${_nmaps} cooked maps at ${Q1PSX_FIDELITIES}")
 endif()
 
 # The music: cooked/music/trackNN.wav (scripts/cook.sh, from the rerelease's

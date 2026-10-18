@@ -70,8 +70,8 @@
 .set PS_SFM,     0x03C     #   split fraction,
 .set PS_SF2,     0x040     #   sub-sweep f2
 
-# ---- pmove_t (80 B) / pmove_cmd_t (24 B) --------------------------------------
-.set PMT_SIZE,      80
+# ---- pmove_t (84 B) / pmove_cmd_t (24 B) --------------------------------------
+.set PMT_SIZE,      84
 .set CMD_FWD,        0
 .set CMD_SIDE,       4
 .set CMD_UP,         8
@@ -94,40 +94,41 @@
 .set PM_WATERJUMP, 0x090    # ticks of FL_WATERJUMP left
 .set PM_JUMPREL,  0x094     # FL_JUMPRELEASED
 .set PM_MOVEDIR,  0x098     # int32[2]: the water jump's push
-.set PS_TRB,      0x0A0     # trace_t for every pmove trace (44 B)
-.set PS_SY,       0x0CC     # sin / cos of the yaw
-.set PS_CY,       0x0D0
-.set PS_WISH,     0x0D4     # wishdir[3]
-.set PS_MOVE,     0x0E0     # this tick's displacement[3]
-.set PS_FLATPOS,  0x0EC     # position / velocity before the flat slide
-.set PS_FLATVEL,  0x0F8
-.set PS_AFTER,    0x104     # position / velocity after it
-.set PS_FOUTVEL,  0x110
-.set PS_TO,       0x11C     # end point of a vertical trace[3]
-.set PS_SVEL,     0x128     # slide_move: vel[3]
-.set PS_PRIMAL,   0x134     #   primal velocity[3]
-.set PS_CUR,      0x140     #   current position[3]
-.set PS_REM,      0x14C     #   full-tick displacement[3]
-.set PS_DISP,     0x158     #   this bump's displacement[3]
-.set PS_END,      0x164     #   its end point[3]
-.set PS_NEWVEL,   0x170     #   clipped velocity candidate[3]
-.set PS_DIR,      0x17C     #   crease direction[3]
-.set PS_PLANES,   0x188     #   planes hit: 5 x 8 B (int16 n[3] + pad)
-.set PS_FWD3,     0x1B0     # water_move: the view's forward with its pitch[3]
-.set PS_WV,       0x1BC     #   wishvel[3], x64
-.set PS_PT,       0x1C8     # check_water's point[3]
+.set PM_TOUCHED,  0x0A0     # the last brush model a slide hit: its trace ent (SV_Impact)
+.set PS_TRB,      0x0A4     # trace_t for every pmove trace (44 B)
+.set PS_SY,       0x0D0     # sin / cos of the yaw
+.set PS_CY,       0x0D4
+.set PS_WISH,     0x0D8     # wishdir[3]
+.set PS_MOVE,     0x0E4     # this tick's displacement[3]
+.set PS_FLATPOS,  0x0F0     # position / velocity before the flat slide
+.set PS_FLATVEL,  0x0FC
+.set PS_AFTER,    0x108     # position / velocity after it
+.set PS_FOUTVEL,  0x114
+.set PS_TO,       0x120     # end point of a vertical trace[3]
+.set PS_SVEL,     0x12C     # slide_move: vel[3]
+.set PS_PRIMAL,   0x138     #   primal velocity[3]
+.set PS_CUR,      0x144     #   current position[3]
+.set PS_REM,      0x150     #   full-tick displacement[3]
+.set PS_DISP,     0x15C     #   this bump's displacement[3]
+.set PS_END,      0x168     #   its end point[3]
+.set PS_NEWVEL,   0x174     #   clipped velocity candidate[3]
+.set PS_DIR,      0x180     #   crease direction[3]
+.set PS_PLANES,   0x18C     #   planes hit: 5 x 8 B (int16 n[3] + pad)
+.set PS_FWD3,     0x1B4     # water_move: the view's forward with its pitch[3]
+.set PS_WV,       0x1C0     #   wishvel[3], x64
+.set PS_PT,       0x1CC     # check_water's point[3]
 
 # ---- scratchpad, clip_trace's brush models (after pmove's words) --------------
-.set PS_HULL,     0x1D4     # the call's hull, start, end and trace_t
-.set PS_WSTART,   0x1D8
-.set PS_WEND,     0x1DC
-.set PS_WTR,      0x1E0
-.set PS_CORERA,   0x1E4     # ct_core's return address
-.set PS_BMI,      0x1E8     # the clip_bmodels entry being tried, and the end
-.set PS_BMEND,    0x1EC
-.set PS_BMIDX,    0x24C     # its index + 1 (the trace's ent)
-.set PS_BMIN,     0x1F0     # the swept box[3], a unit wider (SV_MoveBounds)
-.set PS_BMAX,     0x1FC
-.set PS_BSTART,   0x208     # the sweep in the model's space[3]
-.set PS_BEND,     0x214
-.set PS_BTRACE,   0x220     # its trace_t (44 B, to 0x24C)
+.set PS_HULL,     0x1D8     # the call's hull, start, end and trace_t
+.set PS_WSTART,   0x1DC
+.set PS_WEND,     0x1E0
+.set PS_WTR,      0x1E4
+.set PS_CORERA,   0x1E8     # ct_core's return address
+.set PS_BMI,      0x1EC     # the clip_bmodels entry being tried, and the end
+.set PS_BMEND,    0x1F0
+.set PS_BMIDX,    0x250     # its index + 1 (the trace's ent)
+.set PS_BMIN,     0x1F4     # the swept box[3], a unit wider (SV_MoveBounds)
+.set PS_BMAX,     0x200
+.set PS_BSTART,   0x20C     # the sweep in the model's space[3]
+.set PS_BEND,     0x218
+.set PS_BTRACE,   0x224     # its trace_t (44 B, to 0x250)

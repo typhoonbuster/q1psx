@@ -123,6 +123,18 @@ void ents_cook(const ent_list *l, int num_models, buf_t *table, buf_t *strings,
    cooked, no textures packed for them) */
 void ents_drawn_models(const bsp_t *b, uint8_t *drawn);
 
+/* ------------------------------------------------------- a map's models -- */
+
+/* game.c: an alias model cooked for a map: its skin reduced (1 / skin_div)
+   with a border, then its records once the skin has a place in the map's
+   texture pages (u0, v0: the bordered image's corner, page-relative) */
+typedef struct qc_mdl qc_mdl;
+void    qc_set_palette(const uint8_t *pal);
+qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int skin, int skin_div, int flat);
+void    qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px);
+int     qc_mdl_flags(const qc_mdl *q);
+void    qc_mdl_cook(qc_mdl *q, int u0, int v0, buf_t *geo, void *qg_model_out);
+
 /* ---------------------------------------------------------------- sound -- */
 
 /* `qcook map --sounds`: the map's sound bank (formats/qsound.h, sound.c).
@@ -151,15 +163,44 @@ typedef struct {
 } tex_slot;
 
 typedef struct {
-	tex_slot *slots;         /* [num_miptex]                              */
+	tex_slot *slots;         /* [num]: the miptex, then the extras       */
+	int       num;           /* num_miptex + the extras                   */
 	int       pages_used;
 	uint32_t  bytes;         /* texture pixels uploaded                   */
 } tex_set;
 
+/* A texture the map's own models bring (tools/qcook/items.c): a BSP item's
+   miptex (it tiles: scaled to the fidelity, its power-of-two axes wrap), or
+   a model's skin, placed as it is. */
+typedef struct {
+	bsp_miptex mt;
+	int        skin;
+	int        shift;   /* a miptex's: levels below the fidelity's (the pages full) */
+} tex_extra;
+
 /* Writes the QTX3 set to out_path and, when out4_path is not NULL, the
-   same tiles in 4bpp (QTX4, 16 colours per texture) to out4_path. */
-void tex_build(tex_set *ts, const bsp_t *b, const uint8_t palette[768],
-               const fidelity_t *fid, const char *out_path, const char *out4_path);
+   same tiles in 4bpp (QTX4, 16 colours per texture) to out4_path. The
+   extras come after the map's miptex in the slots (and the table).
+   1 when done; 0 when the tiles overflow the map's pages and may_fail
+   (nothing written), else it dies. */
+int tex_build(tex_set *ts, const bsp_t *b, const tex_extra *extra, int nextra,
+              const uint8_t palette[768], const fidelity_t *fid, const char *out_path,
+              const char *out4_path, int may_fail);
+
+/* ------------------------------------------------------ the map's models -- */
+
+/* items.c: the models the map's entities use (their extras for tex_build),
+   cooked once their textures are placed, written as the world file's
+   models section */
+/* squeeze 0 as they are; when the map's pages overflow: 1 the boxes'
+   textures a level down, 2 the skins at half (the flames' kept), 3 the
+   flames' too, 4 the boxes' a level further */
+#define ITEMS_SQUEEZE_MAX 4
+void items_prepare(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
+                   long pak0_len, const uint8_t *palette, int squeeze, tex_extra **extra, int *nextra);
+void items_cook(const tex_set *ts, int first_extra);
+void items_write(buf_t *f, uint32_t *ofs_models, uint32_t *num_models, uint32_t *ofs_mgeo,
+                 uint32_t *len_mgeo);
 
 /* ---------------------------------------------------------------- world -- */
 

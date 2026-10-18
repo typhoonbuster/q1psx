@@ -23,6 +23,8 @@
 #include "game.h"
 #include "gdata.h"
 #include "hud.h"
+#include "level.h"
+#include "menu.h"
 #include "dlight.h"
 #include "mem.h"
 #include "music.h"
@@ -34,8 +36,14 @@
 #include "prof.h"
 #include "render.h"
 #include "rlist.h"
+#include "settings.h"
 #include "vid.h"
 #include "world.h"
+
+#ifndef Q1PSX_RELEASE
+#define Q1PSX_RELEASE 0       /* 1: Quake's menu (engine/menu.c), no debug overlay,
+                                 no map menu, no cheats (the release presets) */
+#endif
 
 /* ---------------------------------------------------------------- player -- */
 
@@ -50,10 +58,9 @@ static int      in_menu;        /* the map menu is up (normal build)   */
 static int      menu_sel;       /* the map highlighted in the menu      */
 static int      world_ok;
 static int      map_index;      /* into world_map_name(); R2 cycles it */
-static int      fid_wanted = 2; /* 0 low .. 3 ultra; L2 cycles it      */
 static int      fidelity   = 2; /* the level actually loaded (a map too
                                    big for the arena falls back lower)  */
-static int      fid_loaded = -1;/* the fid_wanted of the last load      */
+static int      fid_loaded = -1;/* the settings.fidelity of the last load      */
 
 #ifdef Q1PSX_BENCH
 #ifndef Q1PSX_BENCH_T
@@ -64,31 +71,15 @@ static int      fid_loaded = -1;/* the fid_wanted of the last load      */
 #endif
 #endif
 
-/* Menu settings (the bench has its own): the affine-warp control
-   (docs/porting-notes.md §19.4), the texture depth, dithering, the HUD. */
-static const uint8_t  warp_t_px[]    = { 1, 2, 4, 6, 8, 10, 12, 14, 16 };
-static const uint16_t warp_budgets[] = { 1000, 1500, 2000, 2500, 3000, 4000 };
-static const char *const warp_mode_name[R_WARP_MODES] = { "fixed", "dynamic", "budget" };
-#define NUM_WARP_T      (int) (sizeof warp_t_px / sizeof warp_t_px[0])
-#define NUM_WARP_BUDGET (int) (sizeof warp_budgets / sizeof warp_budgets[0])
-
-static int set_warp   = R_WARP_FIXED;
-static int set_t      = 4;      /* 8 px */
-static int set_budget = 2;      /* 2000 triangles */
-static int set_tex4   = 0;      /* 8-bit textures */
-static int set_dither = 1;
-static int set_hud    = HUD_ORIGINAL;
-
+/* The settings (engine/settings.c); the bench renders with its own. */
 static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
 	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T, 0);
 	vid_set_dither(1);
-	set_tex4 = Q1PSX_BENCH_TEX4;
+	settings.tex4 = Q1PSX_BENCH_TEX4;
 #else
-	r_set_warp(set_warp, warp_t_px[set_t], warp_budgets[set_budget]);
-	vid_set_dither(set_dither);
-	hud_set_style(set_hud);
+	settings_apply();
 #endif
 }
 
@@ -111,7 +102,7 @@ static void stick(int *x, int *y)
 	*y = *y * k / m;
 }
 
-/* Pad -> the game's command for this frame's ticks. Scheme B
+/* A pad poll -> the game's command for its tick. Scheme B
    (2026-10-17):
      analog pad   left stick walk / strafe (speed follows the stick), right
                   stick look (up / down inverted, finer near the centre);
@@ -125,87 +116,85 @@ static void stick(int *x, int *y)
      overlay; SELECT + START the map menu (run_frame).
    A DualShock is switched to analog mode by pad_init (engine/pad.c), so
    the digital scheme is for digital pads only.
-   Turning and looking advance per physics tick (`ticks` this frame), so
-   their speed does not depend on the frame rate. */
-static void player_cmd(game_cmd_t *cmd, int ticks)
+   Turning and looking advance per physics tick (one per poll), so their
+   speed does not depend on the frame rate. */
+static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 {
 	const int turn = 46, look = 34;          /* buttons: ~4 and ~3 degrees per tick */
 	const int stick_turn = 48, stick_look = 36;   /* right stick, full deflection */
-	int sel = pad.held & PAD_SELECT;
+	int sel = p->held & PAD_SELECT;
 	memset(cmd, 0, sizeof *cmd);
 	cmd->weapon_group = -1;
 
-	if (sel && (pad.pressed & PAD_CROSS))  pl.pm.noclip = !pl.pm.noclip;
-	if (sel && (pad.pressed & PAD_SQUARE)) game_spawn();
+#if !Q1PSX_RELEASE
+	if (sel && (p->pressed & PAD_CROSS))  pl.pm.noclip = !pl.pm.noclip;
+	if (sel && (p->pressed & PAD_SQUARE)) game_spawn();
+#endif
 
-	int lx = pad.lx, ly = pad.ly, rx = pad.rx, ry = pad.ry;
+	int lx = p->lx, ly = p->ly, rx = p->rx, ry = p->ry;
 	stick(&lx, &ly);
 	stick(&rx, &ry);
 
 	int yaw = 0, pitch = 0;
-	if (pad.analog) {
+	if (p->analog) {
 		yaw   -= stick_turn * rx * (rx < 0 ? -rx : rx) / (PM_AXIS * PM_AXIS);
 		pitch -= stick_look * ry * (ry < 0 ? -ry : ry) / (PM_AXIS * PM_AXIS);   /* inverted */
 		cmd->fwd  = -ly;                                /* stick up = forward */
 		cmd->side = lx;
-		if (pad.held & PAD_UP)    cmd->fwd  =  PM_AXIS;     /* (the d-pad too) */
-		if (pad.held & PAD_DOWN)  cmd->fwd  = -PM_AXIS;
-		if (pad.held & PAD_RIGHT) cmd->side =  PM_AXIS;
-		if (pad.held & PAD_LEFT)  cmd->side = -PM_AXIS;
+		if (p->held & PAD_UP)    cmd->fwd  =  PM_AXIS;     /* (the d-pad too) */
+		if (p->held & PAD_DOWN)  cmd->fwd  = -PM_AXIS;
+		if (p->held & PAD_RIGHT) cmd->side =  PM_AXIS;
+		if (p->held & PAD_LEFT)  cmd->side = -PM_AXIS;
 		if (!sel) {
-			cmd->fire = (pad.held & (PAD_R2 | PAD_SQUARE)) != 0;
-			cmd->jump = (pad.held & (PAD_L2 | PAD_CROSS)) != 0;   /* held: the swim up (PlayerJump) */
-			cmd->weapon_next = (pad.pressed & PAD_R1) != 0;
-			cmd->weapon_prev = (pad.pressed & PAD_L1) != 0;
-			cmd->walk   = (pad.held & PAD_TRIANGLE) != 0;
-			cmd->centre = (pad.pressed & PAD_CIRCLE) != 0;
-			if (pad.pressed & PAD_UP)    cmd->weapon_group = 0;
-			if (pad.pressed & PAD_RIGHT) cmd->weapon_group = 1;
-			if (pad.pressed & PAD_DOWN)  cmd->weapon_group = 2;
-			if (pad.pressed & PAD_LEFT)  cmd->weapon_group = 3;
+			cmd->fire = (p->held & (PAD_R2 | PAD_SQUARE)) != 0;
+			cmd->jump = (p->held & (PAD_L2 | PAD_CROSS)) != 0;   /* held: the swim up (PlayerJump) */
+			cmd->weapon_next = (p->pressed & PAD_R1) != 0;
+			cmd->weapon_prev = (p->pressed & PAD_L1) != 0;
+			cmd->walk   = (p->held & PAD_TRIANGLE) != 0;
+			cmd->centre = (p->pressed & PAD_CIRCLE) != 0;
+			if (p->pressed & PAD_UP)    cmd->weapon_group = 0;
+			if (p->pressed & PAD_RIGHT) cmd->weapon_group = 1;
+			if (p->pressed & PAD_DOWN)  cmd->weapon_group = 2;
+			if (p->pressed & PAD_LEFT)  cmd->weapon_group = 3;
 		}
 	} else {
-		if (pad.held & PAD_TRIANGLE) {                  /* +strafe, +klook */
-			if (pad.held & PAD_LEFT)  cmd->side = -PM_AXIS;
-			if (pad.held & PAD_RIGHT) cmd->side =  PM_AXIS;
-			if (pad.held & PAD_UP)    pitch -= look;
-			if (pad.held & PAD_DOWN)  pitch += look;
+		if (p->held & PAD_TRIANGLE) {                  /* +strafe, +klook */
+			if (p->held & PAD_LEFT)  cmd->side = -PM_AXIS;
+			if (p->held & PAD_RIGHT) cmd->side =  PM_AXIS;
+			if (p->held & PAD_UP)    pitch -= look;
+			if (p->held & PAD_DOWN)  pitch += look;
 		} else {
-			if (pad.held & PAD_UP)    cmd->fwd  =  PM_AXIS;
-			if (pad.held & PAD_DOWN)  cmd->fwd  = -PM_AXIS;
-			if (pad.held & PAD_LEFT)  yaw += turn;
-			if (pad.held & PAD_RIGHT) yaw -= turn;
+			if (p->held & PAD_UP)    cmd->fwd  =  PM_AXIS;
+			if (p->held & PAD_DOWN)  cmd->fwd  = -PM_AXIS;
+			if (p->held & PAD_LEFT)  yaw += turn;
+			if (p->held & PAD_RIGHT) yaw -= turn;
 		}
 		if (!sel) {
-			cmd->fire = (pad.held & (PAD_R2 | PAD_SQUARE)) != 0;
-			cmd->jump = (pad.held & (PAD_L2 | PAD_CROSS)) != 0;   /* held: the swim up (PlayerJump) */
-			cmd->weapon_next = (pad.pressed & PAD_R1) != 0;
-			cmd->weapon_prev = (pad.pressed & PAD_L1) != 0;
-			cmd->centre = (pad.pressed & PAD_CIRCLE) != 0;
+			cmd->fire = (p->held & (PAD_R2 | PAD_SQUARE)) != 0;
+			cmd->jump = (p->held & (PAD_L2 | PAD_CROSS)) != 0;   /* held: the swim up (PlayerJump) */
+			cmd->weapon_next = (p->pressed & PAD_R1) != 0;
+			cmd->weapon_prev = (p->pressed & PAD_L1) != 0;
+			cmd->centre = (p->pressed & PAD_CIRCLE) != 0;
 		}
 	}
 	if (pl.dead)
 		yaw = pitch = 0;
-	pl.pm.yaw   += yaw * ticks;
-	pl.pm.pitch += pitch * ticks;
+	pl.pm.yaw   += yaw;
+	pl.pm.pitch += pitch;
 	if (pl.pm.pitch >  1012) pl.pm.pitch =  1012;    /* +-89 degrees */
 	if (pl.pm.pitch < -1012) pl.pm.pitch = -1012;
 }
 
 /* The simulation is tick-based (Quake): one 60 Hz tick per vblank elapsed,
-   so a frame that took two vblanks advances the game twice. */
-static void player_update(void)
+   each with the pad as that vblank's poll saw it (pad_frame): a frame that
+   took two vblanks advances the game twice, on the two polls. */
+static void player_update(const pad_t *ticks, int n)
 {
 	uint32_t t0 = prof_now();
-	game_cmd_t cmd;
-	int ticks = (int) vid_stats.vbl;
-	if (ticks < 1) ticks = 1;
-	if (ticks > 4) ticks = 4;
-	player_cmd(&cmd, ticks);
-	for (int i = 0; i < ticks; i++) {
+	for (int i = 0; i < n; i++) {
+		game_cmd_t cmd;
+		player_cmd(&cmd, &ticks[i]);
 		game_tick(&cmd);
-		cmd.weapon_next = cmd.weapon_prev = cmd.centre = 0;   /* edges: first tick only (jump is held) */
-		cmd.weapon_group = -1;
 	}
 	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 	prof_add(PROF_SIM, t0, prof_now());
@@ -239,7 +228,7 @@ static void loading_screen(uint32_t done, uint32_t total)
 	int  fill = total ? (int) (done * BW / total) : 0;   /* < 2 MB: no overflow */
 
 	snprintf(line, sizeof line, "loading %s  (%s%s)", world_map_name(load_map),
-	         fidelity_name[load_fid], set_tex4 ? ", 4-bit" : "");
+	         fidelity_name[load_fid], settings.tex4 ? ", 4-bit" : "");
 	vid_text(BX, BY - 16, line);
 	snprintf(line, sizeof line, "%3d %%", total ? (int) (done * 100 / total) : 0);
 	vid_text(BX + BW - 40, BY + BH + 8, line);
@@ -264,7 +253,7 @@ static int load_level(int map, int fid)
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	for (int f = fid; f >= 0 && !world_ok; f--) {
 		load_fid = f;
-		world_ok = world_load(map, f, set_tex4, LOAD_PROGRESS);
+		world_ok = world_load(map, f, settings.tex4, LOAD_PROGRESS);
 		if (world_ok)
 			fidelity = f;
 	}
@@ -275,7 +264,7 @@ static int load_level(int map, int fid)
 			       fidelity_name[fid], fidelity_name[fidelity]);
 		r_bind_world();
 		ents_load();                            /* the map's entities */
-		ents_spawn();
+		ents_spawn(1);
 		snd_map_start();
 		music_play(snd_cd_track());
 	}
@@ -289,8 +278,8 @@ static void switch_level(int next_map)
 	if (next_map)
 		map_index = (map_index + 1) % (world_num_maps() ? world_num_maps() : 1);
 	else
-		fid_wanted = (fid_wanted + 1) % FIDELITY_LEVELS;
-	if (load_level(map_index, fid_wanted) && next_map)
+		settings.fidelity = settings_fid_step(settings.fidelity, 1);
+	if (load_level(map_index, settings.fidelity) && next_map)
 		game_spawn();
 }
 
@@ -319,7 +308,10 @@ static void frame_work(void)
 		game_render_done();
 }
 
-static int overlay_on = 1;   /* START toggles */
+static int overlay_on = !Q1PSX_RELEASE;   /* START toggles (the debug build) */
+static int menu_shown = Q1PSX_RELEASE;     /* Quake's menu drawn (the release build; the bench's check) */
+static int release_in_game;                /* the release build: a game begun (New Game, or
+                                              the menu left on the first map) */
 
 static void draw_overlay(void)
 {
@@ -351,7 +343,7 @@ static void draw_overlay(void)
 	         "pad %s type %d btn %04x%s",
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
 	         warp_mode_name[r_warp.mode], r_warp.t, r_warp.t_eff, (unsigned) r_warp.tris,
-	         world.tex4 ? "  4-bit" : "", set_dither ? "" : "  no dither",
+	         world.tex4 ? "  4-bit" : "", settings.dither ? "" : "  no dither",
 	         cam.pos[0] / CLIP_SUB, cam.pos[1] / CLIP_SUB, cam.pos[2] / CLIP_SUB,
 	         prof_stage[PROF_SIM], rl_num_items(),
 	         pad.connected ? "ok" : "--", pad.type, pad.held, sticks);
@@ -374,7 +366,19 @@ static void run_frame(int interactive, int dump)
 	uint32_t t0 = prof_now();
 	if (interactive) {
 		PLAY_STEP("pad");
-		pad_read();
+		pad_t ticks[PAD_MAX_TICKS];
+		int nticks = pad_frame(ticks, PAD_MAX_TICKS);
+#if Q1PSX_RELEASE
+		if (menu_active()) {                  /* the world paused under the menu */
+			menu_key(&pad);
+			nticks = 0;
+			if (!menu_active())
+				release_in_game = 1;          /* (left on the first map: playing it) */
+		} else if (pad.pressed & PAD_START) {
+			menu_open();                      /* togglemenu */
+			nticks = 0;
+		}
+#else
 		if ((pad.held & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START) &&
 		    (pad.pressed & (PAD_SELECT | PAD_START))) {
 			in_menu  = 1;                      /* SELECT + START: the map menu */
@@ -383,8 +387,23 @@ static void run_frame(int interactive, int dump)
 		}
 		if ((pad.pressed & PAD_START) && !(pad.held & PAD_SELECT))
 			overlay_on = !overlay_on;
+#endif
 		PLAY_STEP("player");
-		player_update();
+		player_update(ticks, nticks);
+	}
+	if (interactive) {                      /* a trigger_changelevel's map, between frames */
+		char next[16];
+		if (level_change_wanted(next)) {
+			int m = world_find_map(next);
+			if (m < 0) {
+				printf("level: %s is not on this disc\n", next);
+			} else {
+				game_save_parms();
+				map_index = m;
+				if (load_level(m, settings.fidelity))
+					game_spawn_level();
+			}
+		}
 	}
 	PLAY_STEP("render");
 	frame_work();
@@ -393,6 +412,8 @@ static void run_frame(int interactive, int dump)
 		game_view_tint();                   /* the contents' colour over the view */
 		PLAY_STEP("hud");
 		hud_draw();
+		if (menu_shown)
+			menu_draw();                    /* M_Draw: over everything */
 		uint32_t t2 = prof_now();
 		PLAY_STEP("snd");
 		snd_update(cam.pos, cam.yaw, cam.pitch, cam.roll, game_tick_count);
@@ -432,7 +453,7 @@ static const char *menu_msg = "";
    view of all the cooked maps is e3m4's (540 k cycles at high,
    BENCH_MAPS=1 scripts/bench.sh, R6.2); an episode-1 disc falls back to
    e1m8's (419 k). */
-static void menu_init(void)
+static void mapmenu_init(void)
 {
 	static const char *const heaviest[] = { "E3M4", "E1M8" };
 	menu_sel = 0;
@@ -459,13 +480,13 @@ static int opt_sel;
 static void opt_step(int d)
 {
 	switch (opt_sel) {
-	case OPT_FID:    fid_wanted = (fid_wanted + FIDELITY_LEVELS + d) % FIDELITY_LEVELS; break;
-	case OPT_TEX:    set_tex4 ^= 1; break;
-	case OPT_DITHER: set_dither ^= 1; break;
-	case OPT_WARP:   set_warp = (set_warp + R_WARP_MODES + d) % R_WARP_MODES; break;
-	case OPT_T:      set_t = (set_t + NUM_WARP_T + d) % NUM_WARP_T; break;
-	case OPT_BUDGET: set_budget = (set_budget + NUM_WARP_BUDGET + d) % NUM_WARP_BUDGET; break;
-	default:         set_hud = (set_hud + HUD_STYLES + d) % HUD_STYLES; break;
+	case OPT_FID:    settings.fidelity = settings_fid_step(settings.fidelity, d); break;
+	case OPT_TEX:    settings.tex4 ^= 1; break;
+	case OPT_DITHER: settings.dither ^= 1; break;
+	case OPT_WARP:   settings.warp = (settings.warp + R_WARP_MODES + d) % R_WARP_MODES; break;
+	case OPT_T:      settings.t = (settings.t + num_warp_t + d) % num_warp_t; break;
+	case OPT_BUDGET: settings.budget = (settings.budget + num_warp_budget + d) % num_warp_budget; break;
+	default:         settings.hud = (settings.hud + HUD_STYLES + d) % HUD_STYLES; break;
 	}
 	apply_settings();   /* warp, dithering, the HUD at once; textures, fidelity on load */
 }
@@ -478,13 +499,13 @@ static void opt_draw(void)
 	char line[48], val[16];
 	for (int o = 0; o < OPT_COUNT; o++) {
 		switch (o) {
-		case OPT_FID:    snprintf(val, sizeof val, "%s", fidelity_name[fid_wanted]); break;
-		case OPT_TEX:    snprintf(val, sizeof val, "%s", set_tex4 ? "4 bit" : "8 bit"); break;
-		case OPT_DITHER: snprintf(val, sizeof val, "%s", set_dither ? "on" : "off"); break;
-		case OPT_WARP:   snprintf(val, sizeof val, "%s", warp_mode_name[set_warp]); break;
-		case OPT_T:      snprintf(val, sizeof val, "%d px", warp_t_px[set_t]); break;
-		case OPT_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[set_budget]); break;
-		default:         snprintf(val, sizeof val, "%s", hud_style_name[set_hud]); break;
+		case OPT_FID:    snprintf(val, sizeof val, "%s", fidelity_name[settings.fidelity]); break;
+		case OPT_TEX:    snprintf(val, sizeof val, "%s", settings.tex4 ? "4 bit" : "8 bit"); break;
+		case OPT_DITHER: snprintf(val, sizeof val, "%s", settings.dither ? "on" : "off"); break;
+		case OPT_WARP:   snprintf(val, sizeof val, "%s", warp_mode_name[settings.warp]); break;
+		case OPT_T:      snprintf(val, sizeof val, "%d px", warp_t_px[settings.t]); break;
+		case OPT_BUDGET: snprintf(val, sizeof val, "%d tris", warp_budgets[settings.budget]); break;
+		default:         snprintf(val, sizeof val, "%s", hud_style_name[settings.hud]); break;
 		}
 		int x = 16 + (o % 2) * 152, y = 178 + (o / 2) * 10;
 		snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
@@ -497,7 +518,7 @@ static void opt_draw(void)
 /* One frame of the menu: d-pad picks a map, L2 / R2 an option and L1 / R1
    its value, Cross / START loads the map, Circle goes back to the loaded
    one (reloading it if the textures or the fidelity changed). */
-static void menu_frame(void)
+static void mapmenu_frame(void)
 {
 	int n = world_num_maps();
 
@@ -529,8 +550,8 @@ static void menu_frame(void)
 	if (pad.pressed & PAD_R1)
 		opt_step(1);
 	if ((pad.pressed & PAD_CIRCLE) && world_ok) {
-		if (world.tex4 != set_tex4 || fid_loaded != fid_wanted)
-			load_level(map_index, fid_wanted);   /* same map, same place */
+		if (world.tex4 != settings.tex4 || fid_loaded != settings.fidelity)
+			load_level(map_index, settings.fidelity);   /* same map, same place */
 		if (world_ok) {
 			in_menu = 0;                         /* back to the loaded map */
 			return;
@@ -539,7 +560,7 @@ static void menu_frame(void)
 	}
 	if (n && (pad.pressed & (PAD_CROSS | PAD_START))) {
 		map_index = menu_sel;
-		if (load_level(map_index, fid_wanted)) {
+		if (load_level(map_index, settings.fidelity)) {
 			game_spawn();
 			in_menu  = 0;
 			menu_msg = "";
@@ -691,6 +712,34 @@ static void bench_clip_diff(void)
 				       tc.plane_n[0], tc.plane_n[1], tc.plane_n[2], (int) tc.plane_d);
 		}
 	}
+	/* the box entries (SOLID_BBOX entities: SV_HullForBox), aimed at: sweeps
+	   from around each box through its centre and past it, every hull */
+	int boxes = 0, box_hits = 0;
+	for (int b = 0; b < clip_num_bmodels; b++) {
+		const clip_bmodel_t *cb = &clip_bmodels[b];
+		if (cb->bm || cb->absmin[0] > cb->absmax[0])
+			continue;
+		boxes++;
+		for (int i = 0; i < 64; i++) {
+			int32_t c[3], s[3], e[3];
+			for (int k = 0; k < 3; k++) {
+				c[k] = (cb->absmin[k] + cb->absmax[k]) / 2 + rng_pm(8 * CLIP_SUB);
+				s[k] = c[k] + rng_pm(96 * CLIP_SUB);
+				e[k] = 2 * c[k] - s[k];
+			}
+			int hull = i % 3;
+			trace_t ta, tc;
+			clip_trace(hull, s, e, &ta);
+			clip_trace_c(hull, s, e, &tc);
+			box_hits += tc.ent == b + 1;
+			if (memcmp(&ta, &tc, sizeof ta) && bad++ < 8)
+				printf("clipdiff MISMATCH box %d hull %d: asm f %d end %d %d %d ent %d / c f %d end %d %d %d ent %d\n",
+				       b, hull, (int) ta.fraction, (int) ta.endpos[0], (int) ta.endpos[1], (int) ta.endpos[2],
+				       ta.ent, (int) tc.fraction, (int) tc.endpos[0], (int) tc.endpos[1], (int) tc.endpos[2], tc.ent);
+		}
+	}
+	printf("clipdiff boxes %d: %d sweeps, %d hit the box, mismatches so far %d\n", boxes, boxes * 64,
+	       box_hits, bad);
 	int cbad = 0;
 	for (int i = 0; i < N; i++) {
 		int32_t p[3];
@@ -851,13 +900,17 @@ static void bench_maps(void)
 		printf("bench map %s fid %s arena %u KB\n", world_map_name(m), fidelity_name[fidelity],
 		       mem_level_used() / 1024);
 		if (Q1PSX_BENCH_PLAY) {                 /* the game's frames on the map, as a player's */
+			ents_check("load");
 			game_spawn();
+			ents_check("spawn");
 			game_active = 1;
 #if Q1PSX_BENCH_PLAY
 			play_trace = 2;
 #endif
-			for (int i = 0; i < 30; i++)
+			for (int i = 0; i < 30; i++) {
 				run_frame(1, 0);
+				ents_check("play frame");
+			}
 			game_active = 0;
 			printf("bench play %s ok\n", world_map_name(m));
 		}
@@ -899,6 +952,346 @@ static void bench_maps(void)
 /* The game at the spawn point: each weapon selected and fired for a few
    ticks, then a frame dumped (view model, projectiles, effects, HUD); both
    HUD styles. The cost of the frame goes in the bench line. */
+#ifndef Q1PSX_BENCH_ENTS
+#define Q1PSX_BENCH_ENTS 0    /* 1: the map entities' scenarios (ENTS=1 scripts/bench.sh) */
+#endif
+
+/* the player at the centre of a box, still */
+static void ents_place(const int32_t mn[3], const int32_t mx[3], int dz)
+{
+	for (int k = 0; k < 3; k++)
+		pl.pm.pos[k] = (mn[k] + mx[k]) / 2;
+	pl.pm.pos[2] += dz;
+	memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+	memset(pl.pm.pos_acc, 0, sizeof pl.pm.pos_acc);
+	pl.pm.onground = 0;
+}
+
+static void ents_ticks(int n, const game_cmd_t *cmd)
+{
+	for (int i = 0; i < n; i++)
+		game_tick(cmd);
+}
+
+/* the view at the player's eye toward a point */
+static void ents_look_at(const int32_t at[3])
+{
+	int32_t d[3];
+	for (int k = 0; k < 3; k++)
+		d[k] = at[k] - pl.pm.pos[k];
+	pl.pm.yaw = r_atan2(d[1], d[0]);
+	pl.pm.pitch = 0;
+	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+}
+
+static void ents_dump(const char *name)
+{
+	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+	for (int i = 0; i < 2; i++)
+		run_frame(0, 0);
+	printf("D %s\n", name);
+	run_frame(0, BENCH_DUMP);
+}
+
+static edict_t *ents_first(int cls, int (*ok)(const edict_t *))
+{
+	for (int i = 2; i < num_edicts; i++)
+		if (edicts[i].inuse && edicts[i].class == cls && (!ok || ok(&edicts[i])))
+			return &edicts[i];
+	return 0;
+}
+
+static int door_with_field(const edict_t *e) { return e->owner == e && e->trigger_field; }
+
+/* a spot in box [mn, mx] where the player fits, next to the edict e: its
+   centre pushed out along x or y past e's box */
+static int ents_free_spot(const edict_t *e, const int32_t mn[3], const int32_t mx[3])
+{
+	int32_t c[3];
+	ent_centre(e, c);
+	for (int a = 0; a < 4; a++) {
+		int k = a >> 1, s = a & 1 ? -1 : 1;
+		int32_t half = (e->absmax[k] - e->absmin[k]) / 2 + 24 * CLIP_SUB;
+		int32_t p[3] = { c[0], c[1], c[2] };
+		p[k] += s * half;
+		if (p[k] < mn[k] || p[k] > mx[k])
+			continue;
+		trace_t tr;
+		clip_trace(1, p, p, &tr);
+		if (tr.startsolid || tr.allsolid)
+			continue;
+		memcpy(pl.pm.pos, p, sizeof pl.pm.pos);
+		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+		pl.pm.onground = 0;
+		return 1;
+	}
+	return 0;
+}
+static int touch_button(const edict_t *e)    { return e->touch != 0 && !e->health; }
+static int drawn_item(const edict_t *e)      { return e->item_model >= 0 && e->touch != 0; }
+
+/* the items: the first of each kind seen from beside it, then walked onto
+   with a new game's kit (what it gives, what it says); a quad's 30 s */
+static void bench_items(const char *map, const game_cmd_t *cmd)
+{
+	static const uint8_t kinds[] = {
+		QE_ITEM_HEALTH, QE_ITEM_SHELLS, QE_ITEM_SPIKES, QE_ITEM_ROCKETS, QE_ITEM_CELLS,
+		QE_ITEM_ARMOR1, QE_ITEM_ARMOR2, QE_ITEM_ARMORINV, QE_WEAPON_SUPERSHOTGUN, QE_WEAPON_NAILGUN,
+		QE_WEAPON_SUPERNAILGUN, QE_WEAPON_GRENADELAUNCHER, QE_WEAPON_ROCKETLAUNCHER, QE_WEAPON_LIGHTNING,
+		QE_ITEM_KEY1, QE_ITEM_KEY2, QE_ITEM_SIGIL, QE_ITEM_ARTIFACT_INVULNERABILITY,
+		QE_ITEM_ARTIFACT_ENVIROSUIT, QE_ITEM_ARTIFACT_INVISIBILITY, QE_ITEM_ARTIFACT_SUPER_DAMAGE,
+		QE_LIGHT_TORCH_SMALL_WALLTORCH, QE_LIGHT_FLAME_LARGE_YELLOW, QE_LIGHT_FLAME_SMALL_YELLOW,
+		QE_MISC_EXPLOBOX, QE_MISC_EXPLOBOX2 };
+	char name[32];
+	pl.health = 50; pl.armor = 0; pl.armortype = 0;
+	pl.items  = IT_AXE | IT_SHOTGUN;
+	pl.ammo[AMMO_SHELLS] = 25; pl.ammo[AMMO_NAILS] = pl.ammo[AMMO_ROCKETS] = pl.ammo[AMMO_CELLS] = 0;
+	pl.weapon = W_SHOTGUN;
+	for (unsigned i = 0; i < sizeof kinds; i++) {
+		edict_t *e = ents_first(kinds[i], kinds[i] >= QE_LIGHT_TORCH_SMALL_WALLTORCH &&
+		                                  kinds[i] <= QE_LIGHT_FLAME_SMALL_WHITE ? 0 : drawn_item);
+		if (!e && kinds[i] >= QE_MISC_EXPLOBOX)
+			e = ents_first(kinds[i], 0);
+		if (!e || e->item_model < 0)
+			continue;
+		int32_t c[3], mn[3], mx[3];
+		ent_centre(e, c);
+		for (int k = 0; k < 3; k++) {
+			mn[k] = c[k] - 400 * CLIP_SUB;
+			mx[k] = c[k] + 400 * CLIP_SUB;
+		}
+		printf("item %s class %d at %d %d %d model %d\n", world_string(e->classname), e->class,
+		       (int) e->origin[0] / 8, (int) e->origin[1] / 8, (int) e->origin[2] / 8, e->item_model);
+		if (ents_free_spot(e, mn, mx)) {
+			ents_look_at(c);
+			snprintf(name, sizeof name, "i%s_%d", map, e->class);
+			ents_dump(name);
+		}
+		if (!e->touch)
+			continue;
+		ents_place(e->absmin, e->absmax, 0);
+		ents_ticks(3, cmd);
+		printf("item taken %d: health %d armor %d/%d items %08x ammo %d %d %d %d weapon %d\n",
+		       e->item_model < 0, pl.health, pl.armor, pl.armortype, (unsigned) pl.items,
+		       pl.ammo[0], pl.ammo[1], pl.ammo[2], pl.ammo[3], pl.weapon);
+	}
+	/* a quad: the tint, the face; its warning at 27 s, gone at 30 */
+	pl.items |= IT_QUAD;
+	game_powerup(IT_QUAD);
+	ents_ticks(2, cmd);
+	snprintf(name, sizeof name, "i%s_quad", map);
+	ents_dump(name);
+	ents_ticks(27 * 60, cmd);
+	printf("quad after 27 s: items %08x\n", (unsigned) pl.items);
+	ents_ticks(3 * 60 + 2, cmd);
+	printf("quad after 30 s: items %08x\n", (unsigned) pl.items);
+	/* a hurt: the flash (armour) */
+	pl.armor = 100; pl.armortype = 30; pl.items |= IT_ARMOR1;
+	int32_t from[3] = { pl.pm.pos[0] + 64 * CLIP_SUB, pl.pm.pos[1], pl.pm.pos[2] };
+	game_damage_player(30, from);
+	ents_ticks(1, cmd);
+	snprintf(name, sizeof name, "i%s_hurt", map);
+	ents_dump(name);
+	pl.health = 100;
+}
+static int free_teleport(const edict_t *e)   { return !e->targetname; }
+
+static void bench_ents(void)
+{
+	static const char *const maps[2] = { "E1M1", "START" };
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	ents_log = 1;
+	game_active = 1;
+	for (int mi = 0; mi < 2; mi++) {
+		int m = world_find_map(maps[mi]);
+		if (m < 0 || !load_level(m, Q1PSX_BENCH_FID))
+			continue;
+		map_index = m;
+		game_spawn();
+		printf("ents bench %s: %d edicts\n", maps[mi], num_edicts);
+		ents_ticks(30, &cmd);                         /* LinkDoors, the trains' first corner */
+		bench_items(maps[mi], &cmd);
+		game_spawn();
+
+		/* a door's field: the chain opens, waits, closes */
+		edict_t *d = ents_first(QE_FUNC_DOOR, door_with_field);
+		if (d) {
+			edict_t *f = d->trigger_field;
+			int32_t c[3];
+			if (!ents_free_spot(d, f->absmin, f->absmax))
+				ents_place(f->absmin, f->absmax, 0);
+			ent_centre(d, c);
+			printf("door *%d at %d %d %d, field %d..%d, player %d %d %d\n", d->model, (int) c[0] / 8,
+			       (int) c[1] / 8, (int) c[2] / 8, (int) f->absmin[0] / 8, (int) f->absmax[0] / 8,
+			       (int) pl.pm.pos[0] / 8, (int) pl.pm.pos[1] / 8, (int) pl.pm.pos[2] / 8);
+			for (int t = 0; t < 360; t++) {
+				game_tick(&cmd);
+				if (t % 30 == 0)
+					printf("door tick %d state %d origin %d %d %d ltime %d next %d\n", t, d->state,
+					       (int) d->origin[0], (int) d->origin[1], (int) d->origin[2], (int) d->ltime,
+					       (int) d->nextthink);
+				if (t == 90) {
+					ents_look_at(c);
+					ents_dump(mi ? "estart_door" : "ee1m1_door");
+				}
+				if (t == 100)                         /* away from the field: it can close */
+					pl.pm.pos[2] += 2000 * CLIP_SUB;
+			}
+		}
+
+		/* a button pressed */
+		edict_t *b = ents_first(QE_FUNC_BUTTON, touch_button);
+		if (b) {                                      /* walked into, along its movedir */
+			int32_t c[3];
+			ent_centre(b, c);
+			int64_t sz = 0;
+			for (int k = 0; k < 3; k++)
+				sz += (int64_t) b->movedir[k] * (b->maxs[k] - b->mins[k]);
+			int32_t back = (int32_t) ((sz < 0 ? -sz : sz) / 4096 / 2) + 40 * CLIP_SUB;
+			for (int k = 0; k < 3; k++)
+				pl.pm.pos[k] = c[k] - (int32_t) ((int64_t) b->movedir[k] * back / 4096);
+			pl.pm.pos[2] = c[2];
+			memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+			pl.pm.yaw = r_atan2(b->movedir[1], b->movedir[0]);
+			printf("button *%d at %d %d %d movedir %d %d %d, player %d %d %d\n", b->model, (int) c[0] / 8,
+			       (int) c[1] / 8, (int) c[2] / 8, (int) b->movedir[0], (int) b->movedir[1], (int) b->movedir[2],
+			       (int) pl.pm.pos[0] / 8, (int) pl.pm.pos[1] / 8, (int) pl.pm.pos[2] / 8);
+			game_cmd_t walk = cmd;
+			walk.fwd = PM_AXIS;
+			for (int t = 0; t < 150; t++) {
+				game_tick(t < 40 ? &walk : &cmd);
+				if (t % 15 == 0)
+					printf("button tick %d state %d origin %d %d %d player %d %d %d\n", t, b->state,
+					       (int) b->origin[0], (int) b->origin[1], (int) b->origin[2],
+					       (int) pl.pm.pos[0] / 8, (int) pl.pm.pos[1] / 8, (int) pl.pm.pos[2] / 8);
+			}
+		}
+
+		/* a plat ridden up */
+		edict_t *p = ents_first(QE_FUNC_PLAT, 0);
+		if (p && p->state == STATE_BOTTOM) {
+			int32_t mn[3], mx[3];
+			memcpy(mn, p->absmin, sizeof mn);
+			memcpy(mx, p->absmax, sizeof mx);
+			mn[2] = mx[2] = p->absmax[2] + 25 * CLIP_SUB;
+			ents_place(mn, mx, 0);
+			for (int t = 0; t < 240; t++) {
+				game_tick(&cmd);
+				if (t % 20 == 0)
+					printf("plat tick %d state %d z %d player z %d ground %d\n", t, p->state,
+					       (int) p->origin[2] / 8, (int) pl.pm.pos[2] / 8, pl.pm.onground);
+			}
+		}
+
+		/* a teleporter */
+		edict_t *tp = ents_first(QE_TRIGGER_TELEPORT, free_teleport);
+		if (tp) {
+			ents_place(tp->absmin, tp->absmax, 0);
+			int32_t before[3];
+			memcpy(before, pl.pm.pos, sizeof before);
+			ents_ticks(2, &cmd);
+			printf("teleport from %d %d %d to %d %d %d yaw %d vel %d %d %d\n", (int) before[0] / 8,
+			       (int) before[1] / 8, (int) before[2] / 8, (int) pl.pm.pos[0] / 8, (int) pl.pm.pos[1] / 8,
+			       (int) pl.pm.pos[2] / 8, pl.pm.yaw, (int) pl.pm.vel[0], (int) pl.pm.vel[1], (int) pl.pm.vel[2]);
+			ents_ticks(10, &cmd);
+			ents_dump(mi ? "estart_tele" : "ee1m1_tele");
+		}
+
+		/* a secret */
+		edict_t *se = ents_first(QE_TRIGGER_SECRET, 0);
+		if (se) {
+			ents_place(se->absmin, se->absmax, 0);
+			ents_ticks(3, &cmd);
+			printf("secrets %d of %d\n", ent_found_secrets, ent_total_secrets);
+			ents_dump(mi ? "estart_secret" : "ee1m1_secret");
+		}
+
+		/* the exit: the intermission, then the next map */
+		edict_t *cl = ents_first(QE_TRIGGER_CHANGELEVEL, 0);
+		if (cl) {
+			ents_place(cl->absmin, cl->absmax, 0);
+			ents_ticks(12, &cmd);
+			printf("changelevel to %s: intermission %d\n", world_string(cl->map), level_intermission);
+			ents_ticks(60, &cmd);
+			ents_dump(mi ? "estart_inter" : "ee1m1_inter");
+			ents_ticks(90, &cmd);
+			cmd.fire = 1;
+			ents_ticks(2, &cmd);
+			cmd.fire = 0;
+			char next[16];
+			if (level_change_wanted(next)) {
+				int nm = world_find_map(next);
+				printf("next map %s (disc %d)\n", next, nm);
+				if (nm >= 0) {
+					game_save_parms();
+					if (load_level(nm, Q1PSX_BENCH_FID)) {
+						game_spawn_level();
+						printf("now on %s, health %d items %08x shells %d\n", world.map_name, pl.health,
+						       (unsigned) pl.items, pl.ammo[AMMO_SHELLS]);
+						ents_ticks(10, &cmd);
+						ents_dump(mi ? "estart_next" : "ee1m1_next");
+					}
+				}
+			}
+		}
+	}
+	ents_log = 0;
+	game_active = 0;
+}
+
+/* the release build's menu (engine/menu.c) driven by pressed keys, a frame
+   of each page dumped: the main menu, single player, the new-game
+   question, the options, the graphics page in each warp mode (the greyed
+   entries), back out */
+static int  bench_yes(void) { return 1; }
+static int  bench_fid(void) { return Q1PSX_BENCH_FID; }
+static int  bench_tex(void) { return Q1PSX_BENCH_TEX4; }
+static void bench_menu_key(uint16_t buttons, const char *dump)
+{
+	pad_t p;
+	memset(&p, 0, sizeof p);
+	p.pressed = p.held = buttons;
+	menu_key(&p);
+	if (dump) {
+		for (int i = 0; i < 2; i++)
+			run_frame(0, 0);
+		printf("D %s\n", dump);
+		run_frame(0, BENCH_DUMP);
+	}
+}
+
+static void bench_menu(void)
+{
+	static const menu_hooks_t hooks = { 0, bench_yes, bench_fid, bench_tex };
+	menu_init(&hooks);
+	menu_open();
+	menu_shown = 1;
+	bench_menu_key(0, "mmain");
+	bench_menu_key(PAD_CROSS, "msingle");             /* Single Player */
+	bench_menu_key(PAD_CROSS, "mnewgame");            /* New Game: "Are you sure" */
+	bench_menu_key(PAD_CIRCLE, 0);                    /* no */
+	bench_menu_key(PAD_TRIANGLE, 0);                  /* back to the main menu */
+	bench_menu_key(PAD_DOWN, 0);                      /* (Multiplayer greyed: to Options) */
+	bench_menu_key(PAD_CROSS, "moptions");
+	bench_menu_key(PAD_UP, 0);                        /* (the greyed ones: to Graphics) */
+	bench_menu_key(PAD_CROSS, "mgraphics");
+	bench_menu_key(PAD_DOWN, 0);
+	bench_menu_key(PAD_DOWN, 0);
+	bench_menu_key(PAD_DOWN, 0);                      /* the warp control */
+	bench_menu_key(PAD_RIGHT, "mgraphics_dyn");       /* dynamic: the threshold a floor */
+	bench_menu_key(PAD_RIGHT, "mgraphics_budget");    /* budget: its budget live */
+	bench_menu_key(PAD_RIGHT, 0);                     /* back to fixed */
+	bench_menu_key(PAD_START, 0);                     /* out: options, main, the game */
+	bench_menu_key(PAD_START, 0);
+	bench_menu_key(PAD_START, 0);
+	printf("menu after START x3: %s\n", menu_active() ? "still up" : "closed");
+	menu_shown = 0;
+	apply_settings();                                 /* the bench's own again */
+	hud_set_style(HUD_ORIGINAL);
+}
+
 static void bench_game(void)
 {
 	snd_log = 1;                                      /* every sound start, for the diff */
@@ -1018,6 +1411,7 @@ static void bench_game(void)
 			printf("water: no point in water found on this map\n");
 		}
 	}
+	bench_menu();
 	game_active = 0;
 	pad_read();                                       /* the interrupt-driven poll, seen once */
 	printf("pad poll: %s type %d held %04x sticks %d %d %d %d\n", pad.connected ? "connected" : "absent",
@@ -1034,6 +1428,11 @@ static void run_bench(void)
 		printf("bench done\n");
 		for (;;)
 			run_frame(0, 0);
+	}
+	if (Q1PSX_BENCH_ENTS) {
+		bench_ents();
+		printf("bench done\n");
+		return;
 	}
 	if (Q1PSX_BENCH_GAME) {
 		bench_game();
@@ -1131,6 +1530,28 @@ static void run_bench(void)
 
 /* ---------------------------------------------------------------- main -- */
 
+#if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
+/* the release menu's hooks: "map start" with a new game's parms */
+static void release_start_map(void)
+{
+	int m = world_find_map("START");
+	map_index = m >= 0 ? m : 0;
+	game_new_parms();
+	if (load_level(map_index, settings.fidelity))
+		game_spawn_level();
+}
+
+static void release_new_game(void)
+{
+	release_start_map();
+	release_in_game = 1;
+}
+
+static int release_started(void) { return release_in_game; }
+static int release_fid(void)     { return fid_loaded; }
+static int release_tex4(void)    { return world.tex4; }
+#endif
+
 int main(void)
 {
 	/* the BIOS console (printf) goes out on SIO1 at its boot-time baud rate;
@@ -1146,26 +1567,41 @@ int main(void)
 	music_init();
 	r_init();
 	vid_set_bg(40, 44, 60);   /* flat "sky" until R3.4 */
-	apply_settings();
 
 	printf("q1psx\n");
 
 	world_scan_maps();
+	settings_fid_mask = world_fid_mask();
+	settings_defaults();
+	apply_settings();
 	gdata_load();
 	dl_init();
 	game_init();
 #ifdef Q1PSX_BENCH
-	fid_wanted = Q1PSX_BENCH_FID;
-	if (load_level(map_index, fid_wanted))
+	settings.fidelity = Q1PSX_BENCH_FID;
+	if (!Q1PSX_BENCH_MAPS && Q1PSX_BENCH_MAP[0] && world_find_map(Q1PSX_BENCH_MAP) >= 0)
+		map_index = world_find_map(Q1PSX_BENCH_MAP);  /* MAP=: the physics diffs there too */
+	if (load_level(map_index, settings.fidelity))
 		player_spawn();
 	run_bench();
+#elif Q1PSX_RELEASE
+	/* Quake starts its demo loop under the menu; with no demos to play,
+	   the first map waits under it, a new game's kit in hand */
+	static const menu_hooks_t hooks = { release_new_game, release_started, release_fid, release_tex4 };
+	menu_init(&hooks);
+	game_active = 1;
+	release_start_map();
+	release_in_game = 0;
+	menu_open();
+	for (;;)
+		run_frame(1, 0);
 #else
-	menu_init();
+	mapmenu_init();
 	in_menu = 1;
 	game_active = 1;
 	for (;;) {
 		if (in_menu)
-			menu_frame();
+			mapmenu_frame();
 		else
 			run_frame(1, 0);
 	}

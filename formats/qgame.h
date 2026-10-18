@@ -32,7 +32,7 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM1"
+#define QGAME_MAGIC "QGM3"
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
@@ -52,9 +52,13 @@ enum {
 
 #define QGF_SPRITE   1           /* record k = frame k's quad: draw that one only */
 #define QGF_FLAT     2           /* no directional light (a small model)          */
+#define QGF_MAP      4           /* a map's model (formats/qworld.h's models
+                                    section): its geometry in the map's block,
+                                    its textures among the map's               */
+#define QGF_ROTATE   8           /* EF_ROTATE: the pickups turn, 100 deg / s   */
 
 typedef struct {
-	uint16_t id;                 /* QGM_*                                        */
+	uint16_t id;                 /* QGM_* (a map's model: QIM_*)                 */
 	uint16_t flags;              /* QGF_*                                        */
 	uint16_t num_frames;
 	uint16_t num_verts;          /* per frame: the pool entries                  */
@@ -65,6 +69,32 @@ typedef struct {
 	uint32_t len_records;
 	qw_tex   tex;                /* the skin: CLUT, tpage, window (none)         */
 } qg_model;                      /* 32 bytes */
+
+/* A map's own models (the items', the flames', the explosive boxes'): its
+   world file's models section (qw_header ofs_models), each the cooked
+   model (frames and records as GAME.DAT's, offsets in the section's
+   geometry block) and the entries of the map's texture table its records'
+   tex 0 .. num_tex - 1 stand for (a skin among the map's textures, or a
+   BSP item's few). Only the models the map's entities use are cooked. */
+enum {
+	QIM_G_SHOT, QIM_G_NAIL, QIM_G_NAIL2, QIM_G_ROCK, QIM_G_ROCK2, QIM_G_LIGHT,
+	QIM_ARMOR1, QIM_ARMOR2, QIM_ARMOR3,             /* armor.mdl's three skins */
+	QIM_W_S_KEY, QIM_W_G_KEY, QIM_M_S_KEY, QIM_M_G_KEY, QIM_B_S_KEY, QIM_B_G_KEY,
+	QIM_INVULNER, QIM_SUIT, QIM_INVISIBL, QIM_QUADDAMA,
+	QIM_END1, QIM_END2, QIM_END3, QIM_END4,
+	QIM_FLAME, QIM_FLAME2, QIM_LAVABALL, QIM_TELEPORT,
+	QIM_B_BH10, QIM_B_BH25, QIM_B_BH100, QIM_B_SHELL0, QIM_B_SHELL1, QIM_B_NAIL0, QIM_B_NAIL1,
+	QIM_B_ROCK0, QIM_B_ROCK1, QIM_B_BATT0, QIM_B_BATT1, QIM_B_EXPLOB, QIM_B_EXBOX2,
+	QIM_COUNT
+};
+#define QW_MODEL_TEX 6
+
+typedef struct {
+	uint16_t qim;                /* QIM_*                                        */
+	uint16_t num_tex;
+	uint16_t tex[QW_MODEL_TEX];  /* the map texture table's entries              */
+	qg_model m;
+} qw_model;                      /* 48 bytes */
 
 /* pictures, in this order in the file (gfx.wad lumps) */
 enum {
@@ -97,6 +127,34 @@ typedef struct {
 	uint16_t w, h;               /* texels                                       */
 } qg_pic;                        /* 8 bytes */
 
+/* The aux pictures: the intermission's and the menu's (gfx/ lumps) and the
+   console font (gfx.wad conchars), 4bpp with 16 colours each, in the two
+   4-bit pages of the last VRAM column (x 960: QG_AUX_X, y 0 and 256); their
+   CLUTs in row QG_CLUT_Y from x = QG_AUX_CLUT_X. Index 0 of a picture's
+   CLUT is its transparent colour when it has one. */
+#define QG_AUX_X       960
+#define QG_AUX_CLUT_X  256
+enum {
+	QGA_COMPLETE, QGA_INTER, QGA_FINALE_L, QGA_FINALE_R,   /* the intermission  */
+	QGA_CONCHARS, QGA_CONCHARS2, /* 128 x 64 each: 16 x 8 glyphs of 8 x 8, chars
+	                                0..127 then 128..255 (the bronze ones)       */
+	QGA_QPLAQUE, QGA_TTL_MAIN, QGA_MAINMENU,
+	QGA_MENUDOT1,                /* 6 frames of the spinning cursor              */
+	QGA_TTL_SGL = QGA_MENUDOT1 + 6, QGA_SP_MENU, QGA_P_OPTION,
+	QGA_BOX_TL, QGA_BOX_ML, QGA_BOX_BL, QGA_BOX_TM, QGA_BOX_MM, QGA_BOX_MM2, QGA_BOX_BM,
+	QGA_BOX_TR, QGA_BOX_MR, QGA_BOX_BR,
+	QGA_DISC,                    /* the armour slot under invulnerability (Sbar)   */
+	QGA_COUNT                    /* (vidmodes, loading and pause: no room left) */
+};
+
+typedef struct {
+	uint16_t tpage;              /* GPU tpage word, 4bpp                         */
+	uint16_t clut;               /* its CLUT                                     */
+	uint8_t  u, v;
+	uint16_t w, h;
+	uint16_t pad;
+} qg_aux;                        /* 12 bytes */
+
 typedef struct {
 	char     magic[4];           /* "QGM1"                                       */
 	uint32_t num_rects, ofs_rects;   /* qtex_rect[]: the CLUT row, then the pages' used rows */
@@ -110,6 +168,24 @@ typedef struct {
 	uint32_t ofs_geo, len_geo;   /* the models' geometry block (frames, records) */
 	uint16_t clut;               /* GPU CLUT word of the game palette            */
 	uint16_t pad;
+	uint32_t num_aux, ofs_aux;   /* qg_aux[QGA_COUNT] (their pixels and CLUTs are
+	                                among the rects)                             */
+	uint32_t num_finales, ofs_finales, len_finales;   /* qg_finale[num_finales]
+	                                then their texts (the block's len bytes)     */
 } qg_header;
+
+/* The episodes' end texts (client.qc ExitIntermission's SVC_FINALE strings,
+   read from the pak's progs.dat): the map whose intermission shows it, which
+   edition (e1m7 has one for the shareware, one for the registered game), or
+   the four runes' text after the end of an episode. */
+#define QGFIN_SHAREWARE  1
+#define QGFIN_REGISTERED 2
+#define QGFIN_RUNES      4
+typedef struct {
+	char     map[12];            /* "E1M7" ("" for the runes' text)            */
+	uint16_t flags;              /* QGFIN_*, 0: either edition                 */
+	uint16_t len;
+	uint32_t ofs;                /* from the block's start, NUL-ended          */
+} qg_finale;                     /* 20 bytes */
 
 #endif

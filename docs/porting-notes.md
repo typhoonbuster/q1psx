@@ -3327,3 +3327,285 @@ where the map put them until the next stages move them.
   view, +0.15 k at START's spawn in the game bench (5.04 k → 5.19 k).
   Next: Quake's area nodes (SV_CreateAreaNode) with the movers'
   relinking, so a trace only tests the models of its cells.
+
+## §29 — The map's entities, stages 2 to 4: triggers, movers, the level's end, the items (2026-10-18)
+
+The rest of the mechanics, in the order chosen, native C transcribed from
+id's QC (the 1.06 strings from `reference/Quake/qw-qc`): the triggers
+and teleporters and the level's end, then the movers, then the items.
+The monsters (8.1) are still left out at the spawn; everything here
+works without them and leaves their hooks (`th_pain`, `th_die`, the
+kill count, `trigger_monsterjump`'s box).
+
+### 29.1 The runtime (engine/ents.c, ents.h)
+
+- **Edicts as the QC sees them.** `edict_t` carries the fields the
+  transcribed QC uses (think / think1 / use / touch / blocked / th_die /
+  th_pain as C function pointers, nextthink and ltime in ticks, the
+  movers' pos1 / pos2 / dest / finaldest, wait / delay / speed / lip /
+  dmg / health / count / sounds, target / targetname / killtarget /
+  message / map as offsets into the cooked string pool, items, flags);
+  the QC's globals `other`, `activator`, `damage_attacker` are
+  `ent_other`, `ent_activator`, `ent_damage_attacker`. Strings compare
+  by their offsets (the cook's pool is deduplicated).
+- **The tick.** `ents_tick` runs after the player's move each tick:
+  the player's edict synced from `pl`, its touch pass (SV_TouchLinks:
+  every SOLID_TRIGGER edict with a touch whose absbox overlaps the
+  player's; an item's box is 15 units wider, FL_ITEM), then the thinks
+  and the pushers in edict order over an active bitmap (an edict with
+  nothing pending leaves it). SV_Physics_Pusher with its local `ltime`:
+  the move happens while `ltime` runs, the think when `nextthink` falls
+  inside the tick's movetime, exactly as Quake. SUB_CalcMove is exact
+  in ticks (the position at tick n is `from + delta x n / ticks`, the
+  last tick lands on the destination) instead of a velocity integrated
+  in floats.
+- **Pushing the player.** SV_PushMove: a pusher moving into the player
+  or carrying it (the player's ground entity, from pmove's `onground =
+  1 + the floor's trace ent`) moves it by the same amount through the
+  traces (the pusher taken out of them meanwhile); a player left stuck
+  puts the pusher back (`ltime` and origin) and calls its `blocked`
+  (the doors' crush damage, the plats' reversal).
+- **SV_Impact.** pmove reports the last brush model a slide ran into
+  (`pmove_t.touched`, the C and the asm both); the game calls its touch
+  with `other` = the player: buttons pressed by walking into them,
+  doors opened by touching them.
+- **Damage on edicts.** `ent_damage` (T_Damage for a shootable door,
+  button, trigger or barrel: health, `th_pain` / `th_die`, the quad x4
+  from the player), `ents_radius_damage` (T_RadiusDamage with
+  CanDamage's traces), `game_damage_player` for what hurts the player
+  (trigger_hurt, a crushing door, a trap's spike).
+- **The skill.** ED_LoadFromFile's filter: an entity flagged not easy
+  (256), not medium (512) or not hard (1024) is not spawned on that
+  skill (`game_skill`, 1 until START's skill gates set it for the next
+  map, as the `skill` cvar).
+
+### 29.2 Triggers, teleporters, the level's end (engine/triggers.c, level.c)
+
+triggers.qc and misc.qc: trigger_multiple / once / secret (the "You
+found a secret area!" message, the count), relay, counter ("There are
+more to go...", "Only N more to go...", "Sequence completed!"),
+teleport (the fog at both ends, the destination's angles, 300 u/s
+forward, `teleport_time` 0.7 s during which the player cannot back up:
+sv_user.c's hack on the command), push (the wind sound every 1.5 s),
+hurt, setskill, onlyregistered (registered = the disc carries E2M1),
+monsterjump (box only), the walls, the bubbles' spawner. client.qc's
+level end: trigger_changelevel, execute_changelevel (the intermission
+camera from a random info_intermission, the CD's track 3, the HUD
+replaced by the stats: "Completed", the time, the secrets and the
+kills over Quake's pictures), IntermissionThink (fire or jump after 2
+s), ExitIntermission and GotoNextMap. The map change happens outside
+the tick (`level_change_wanted`, main.c loads the map and spawns the
+player with the parms: SetChangeParms / DecodeLevelParms, the keys and
+powerups taken away, the health within 50 .. 100, at least 25 shells;
+START with a rune sends the player to info_player_start2). A death
+restarts the level with the inventory it was entered with.
+
+**The episodes' ends.** ExitIntermission's texts (SVC_FINALE: e1m7's
+for the shareware game and for the registered one, e2m6, e3m6, e4m7,
+and the four runes' text) are QuakeC strings of the pak's progs.dat:
+`qcook game` walks that function's statements (each `world.model ==
+"maps/..."` test, EQ_S then IFNOT, guards a block; each WriteString
+argument with a line break in it, a constant qcc copies into OFS_PARM1,
+belongs to the innermost block around it; outside every block: the
+runes') and writes them to GAME.DAT (`qg_finale`, 2.7 KB). The text
+comes out 8 characters a second over the finale picture; the shareware
+game's sell screen is not reproduced.
+
+### 29.3 Doors, plats, buttons, trains (engine/movers.c)
+
+doors.qc, plats.qc, buttons.qc, transcribed: linked doors (LinkDoors:
+the touching doors of a group open together, the field around them
+that opens them), keys ("You need the silver key", "... runekey", "...
+keycard" by worldtype), shootable doors, toggles, secret doors (their
+two moves), plats and their inside trigger, buttons (touched, shot or
+used), trains along their path_corners, misc_teleporttrain. The QC's
+`frame` (a button's or func_wall's `+a` textures) is kept in the edict:
+the renderer does not animate textures yet (`+0..+9`, `+a`). The travel is the 1.06 QC's: `pos2 = pos1 + movedir
+x (|movedir . size| - lip)`.
+
+### 29.4 The items (engine/items.c, tools/qcook/items.c)
+
+- **The models.** Each map cooks its own models (formats/qgame.h
+  `QIM_*`, the world file's models section `qw_model` + geometry): the
+  items' alias models (skins at a quarter of their resolution), the
+  ammo and health boxes (the pak's `maps/b_*.bsp`, cut into records over
+  their own textures: they tile like the world's), the torches' and
+  flames' models (half resolution, fullbright), the fireball, the
+  explosive boxes. Only what the map's entities use is cooked. Their
+  textures go among the map's (tex_build's extras); when a map's six
+  pages overflow (start and e1m5 at ultra), the models' textures are
+  squeezed by levels (the boxes' a mip down, then the skins at half, then
+  the flames', then the boxes' once more) until they fit: start at ultra
+  ends at level 3, e1m5 at level 2, the other levels and maps at 0.
+  Identical box textures (the ammo boxes' `rockettop`) are shared.
+- **The game.** items.qc: health (rotten 15, normal 25, mega 100 and its
+  rot down to 100), armour (30 / 60 / 80 %: 100, 150, 200), ammo
+  (shells 20 / 40, nails 25 / 50, rockets 5 / 10, cells 6 / 12, the old
+  `item_weapon`), weapons (the ammo they come with, the switch to the
+  better one: W_BestWeapon's order), keys (their names and sounds by
+  worldtype), the rune (serverflags), the four powerups (30 s each), the
+  messages ("You got the shells", "You receive 25 health", "You got the
+  Quad Damage"...) on the notify lines, the bonus flash ("bf"). Each item
+  drops to the floor 0.2 s after the map starts (PlaceItem: the box
+  through hull 1, offset by the hull's mins less the box's; "fell out of
+  level" removes it). misc.qc: the flames (animated 10 a second), the
+  fireballs (fire_fly, MOVETYPE_TOSS: gravity 800, the brush models only,
+  SV_Impact on what they hit, the player hurt through its touch pass),
+  the explosive boxes (20 health, 160 of radius damage, the explosion),
+  the spike shooters (spikes that hurt the player: 9, 18 for a super
+  spike) and their timed variant.
+- **Powerups (client.qc CheckPowerups, combat.qc).** The ring, the
+  pentagram (T_Damage absorbs nothing: the armour still takes its share
+  and the screen still flashes, as in the QC's order, then the health is
+  spared, protect3 every 2 s), the quad (x4 on what the player deals, its
+  own explosions included; damage3 once a second when firing), the suit
+  (no slime burns, lava every second instead of 0.2 s, air kept); the
+  warnings 3 s before the end ("Quad Damage is wearing off", ...) with
+  their sounds and a bonus flash each second; EF_DIMLIGHT (a 200-unit
+  light on the player) under the quad or the pentagram; PlayerDie clears
+  the times and the ring.
+- **The screen's colour (V_UpdatePalette).** Quake lerps the palette
+  toward each shift's colour by its percent: the contents (water, slime,
+  lava), the damage (by armour against blood, 3 x the damage's count, up
+  to 150, fading 150 a second), the bonus (gold, 50, fading 100 a
+  second), the powerup (quad blue, suit green, ring grey, pentagram
+  yellow). The GPU can only blend a flat as B + F, B - F or (B + F) / 2:
+  the contents keep their 50 % blend; the others are composed on the mid
+  grey (128) and drawn as an added and a subtracted flat while the kept
+  contrast is above 3/4, else as the half blend whose flat lands the
+  grey where Quake's lerp does (`vid_shift`). Exact on the grey,
+  approximate on the light and dark ends.
+- **The damage report.** Quake accumulates a frame's damage (dmg_take,
+  dmg_save) and the client reacts once (V_ParseDamage: the flash, the
+  kick from the last inflictor, the pain face); the game does the same
+  per tick (`damage_report`), the world's inflictor (lava, falls) kicking
+  from the map's origin as Quake's does.
+- **The HUD.** The faces of the powerups (Sbar_DrawFace's order), 666 and
+  the disc for the pentagram (gfx.wad's `disc`, an aux picture now), the
+  inventory's weapons flashing for a second when picked up (cl.item_
+  gettime: also at a level's start, as Quake's client starts with no
+  items), the armour's picture by its item, the notify lines
+  (Con_DrawNotify: the last four printed, 3 s, from the top, word-
+  wrapped at 38 columns).
+
+### 29.5 Box hulls (engine/clip.c, clip.s)
+
+A SOLID_BBOX entity without a brush model (the explosive boxes, the
+monsters to come) goes into the traces' table with no `qw_bmodel`: its
+exact box. The trace builds Quake's box hull for it (SV_InitBoxHull's
+six clipnodes on six axial planes, SV_HullForBox's distances: the box
+grown by the mover's, `mins - the hull's maxs` to `maxs - the hull's
+mins`) and traces it as a clip hull: the C swaps the world's clipnode
+and plane tables for the box's around `trace_core`, the asm swaps s1 /
+s2 around `ct_core` (one more branch per traced model, the box's
+distances written per trace). The player walks into the barrels, the
+shots and the nails hit them, the explosions chain.
+
+### 29.6 Checking
+
+- `ENTS=1 scripts/bench.sh 2400` (the entity bench, extended): the
+  first item of each kind on e1m1 and start, seen from beside it and
+  walked onto with a new game's kit: what it gives and says (megahealth
+  50 -> 150, shells 25 -> 45, nails 25, armour 100 / 30 then 150 / 60,
+  the super shotgun and the nailgun switched to with their ammo, the suit
+  and the quad), the quad's warning at 27 s and its end at 30, a hurt
+  with armour (the red flash, the pain face); the torches' flames on
+  start. Then the doors, button, plat, teleporter, secret and
+  changelevel scenario of stage 3 unchanged.
+- The world views: START's flames are drawn now (18 to 161 pixels per
+  view, the torches in sight); the references refreshed after a look.
+
+## §30 — The game loop decoupled from the frame (2026-10-18)
+
+The question of 2026-10-17: does a slow frame slow the game or its
+controls, as Quake keeps them apart? Before this step the game's time
+was already the vblanks' (a frame ran as many 1/60 s ticks as vblanks it
+took, 1 to 4), but the pad was read once per frame: at 30 fps every pair
+of ticks got the same command, and a press shorter than a frame could
+be missed.
+
+- **One poll per tick.** The pad driver polls the pad in the vblank
+  callback (§25); each poll is now kept in a ring of 8 snapshots (the
+  buttons, the sticks, the type; written by the interrupt, read by the
+  frame, the reader 2 slots behind the writer so a slot is never read
+  while written). `pad_frame` hands the frame the polls since the last
+  one, oldest first: `player_update` runs one game tick per poll, each
+  with the command built from that poll (`player_cmd`: the presses are
+  that poll's edges, the turning one tick's worth). At 60 fps a frame
+  takes one poll and runs one tick, as before; at 30 fps two polls, two
+  ticks, two different commands. Beyond 4 polls (a load), the older ones
+  are dropped, their presses carried into the first kept one.
+- **The menus** read the frame's merged state (`pad_read`: held now,
+  pressed = any press since the last read).
+- **Why the ticks stay in the frame loop.** Running them inside the
+  vblank interrupt would decouple them from the renderer entirely, but
+  the physics (pmove.s, clip.s) borrows the renderer's scratchpad areas:
+  a tick cannot interrupt a frame. The game's time and input are the
+  vblank's; only the moment the ticks run is the frame's. Quake's own
+  split is the same in spirit: the client samples a usercmd per frame
+  and the server runs the physics at the frame's rate; here both come at
+  60 Hz whatever the picture does.
+
+## §31 — Quake's menu and the release editions (2026-10-18)
+
+The goal: Quake's own menu in the release build only (the
+default build keeps its debug map menu and overlay), with a graphics
+page holding every rendering setting plus the dynamic lights on / off,
+the settings that do nothing in the current mode greyed; and the ultra
+fidelity taken out of the release disc into a disc of its own.
+
+- **The editions (CMakePresets.json, CMakeLists.txt).** `release`:
+  `Q1PSX_RELEASE` (Quake's menu, no debug overlay, no map menu, no
+  SELECT cheats), the renderer's counters off, the maps at low, medium
+  and high (`Q1PSX_FIDELITIES`); `release-ultra`: the same with the maps
+  at ultra alone (build-release-ultra). The default and bench builds
+  carry all four levels. The engine reads the levels from the disc
+  (`world_scan_maps`: any `<MAP>_<N>.WLD`, `world_fid_mask`), and the
+  settings step through those only.
+- **The settings (engine/settings.c).** Moved out of main.c and shared by
+  both menus: the fidelity and the texture depth (taken at a map's
+  load), dithering, the warp control (fixed / dynamic / budget), the
+  threshold, the budget, the HUD style, the dynamic lights (new: when
+  off, no light is pushed to the renderer nor added to the models; the
+  game still allocates and decays them), the volumes (new: Quake's
+  `volume`, 0.7, scales the voices; `bgmvolume`, 1, the SPU's CD input;
+  the defaults keep the old mix: the master at full, the CD input at
+  0.7, the voices x 0.7).
+- **The menu (engine/menu.c).** menu.c transcribed for the pad: the main
+  menu (qplaque, ttl_main, mainmenu with the spinning dot: Single Player,
+  Options; Multiplayer, Help / Ordering and Quit greyed), the single
+  player menu (New Game; Load and Save greyed: no saves yet), the new
+  game question when a game is under way (SCR_ModalMessage: "Are you
+  sure you want to start a new game?", Cross yes, Circle no), the
+  options (M_Options_Draw's rows and sliders: CD Music Volume and Sound
+  Volume work, Reset to defaults too; Customize controls, Go to console,
+  Screen size, Brightness, Mouse Speed, Always Run, Invert Mouse,
+  Lookspring and Lookstrafe greyed with Quake's values) and, in Video
+  Options' place, Graphics: fidelity, textures, dithering, warp control,
+  threshold, budget, HUD, dynamic lights. The pad stands for the keys:
+  the d-pad for the arrows (repeating after half a second, ten a
+  second), Cross ENTER, Triangle / Circle ESCAPE, START the menu key.
+  The sounds are Quake's (menu1 to move, menu2 to enter, menu3 to
+  change). The cursor skips greyed entries.
+- **What is greyed, and the threshold.** The budget is the budget mode's
+  alone: greyed in the fixed and dynamic modes. The fidelity is greyed on
+  the ultra disc (one level). The threshold is not greyed: in the fixed
+  mode it is the threshold, and the dynamic and budget modes use it as
+  their floor (render.c: T never comes down below it), so it reads
+  "Min threshold" there. (The example given put the threshold on the fixed mode alone: this is the one place the menu departs from it, on
+  render.c's actual behaviour; to be confirmed.)
+- **The fidelity and the textures during a game** take effect at the
+  next level's load (the level's entities live in the level arena with
+  its world: reloading the world mid-level would respawn them); the
+  graphics page says so when they differ from the level's.
+- **Quake's flow.** In single player the world stops while a menu is up
+  (host.c: "always pause in single player if in console or menus"):
+  no tick runs. Quake boots into its demo loop under the menu; with no
+  demos to play (they need the monsters), the release build boots on
+  START with a new game's kit, paused under the main menu: leaving the
+  menu plays START, New Game starts it over. The menu is drawn last,
+  over the HUD, with Draw_FadeScreen's darkening.
+- **Checking:** `BENCH_GAME=1 scripts/bench.sh` ends with the menu driven
+  by key presses and a frame of each page dumped (`mmain`, `msingle`,
+  `mnewgame`, `moptions`, `mgraphics`, `mgraphics_dyn`,
+  `mgraphics_budget`).

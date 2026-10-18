@@ -158,10 +158,12 @@ static int slide_move(pmove_t *pm, const int32_t move[3])
 		}
 		if (tr.fraction >= Q_FIX_ONE)
 			break;
+		if (tr.ent)                      /* a brush model run into (SV_Impact) */
+			pm->touched = tr.ent;
 
 		if (tr.plane_n[2] > FLOOR_NZ) {
 			blocked |= 1;
-			pm->onground = 1;
+			pm->onground = 1 + tr.ent;
 		} else {
 			blocked |= 2;
 		}
@@ -260,7 +262,7 @@ static void categorize_position(pmove_t *pm)
 	if (tr.fraction >= Q_FIX_ONE || tr.plane_n[2] < FLOOR_NZ) {
 		pm->onground = 0;
 	} else {
-		pm->onground = 1;
+		pm->onground = 1 + tr.ent;
 		if (!tr.startsolid && !tr.allsolid) {
 			pm->pos[0] = tr.endpos[0];
 			pm->pos[1] = tr.endpos[1];
@@ -395,6 +397,7 @@ static int32_t horiz_dist2(const int32_t a[3], const int32_t b[3])
 
 void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 {
+	pm->touched = 0;
 	int32_t sy = r_sin(pm->yaw), cy = r_cos(pm->yaw);
 	int32_t right[3] = { sy, -cy, 0 };            /* Quake AngleVectors, roll 0 */
 

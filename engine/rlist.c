@@ -63,8 +63,14 @@ static void ent_model(r_ent_t *e, const qg_model *m, int frame, int light)
 {
 	if (frame < 0 || frame >= m->num_frames)
 		frame = 0;
-	e->pool = (uint32_t) gd_frame(m, frame);
-	const uint8_t *recs = gd_records(m);
+	const uint8_t *recs;
+	if (m->flags & QGF_MAP) {               /* a map's own model: its block, its textures */
+		e->pool = (uint32_t) ((const qw_vert *) (world.mgeo + m->ofs_frames) + (uint32_t) frame * m->num_verts);
+		recs    = world.mgeo + m->ofs_records;
+	} else {
+		e->pool = (uint32_t) gd_frame(m, frame);
+		recs    = gd_records(m);
+	}
 	if (m->flags & QGF_SPRITE) {            /* record k = frame k */
 		const uint8_t *r = recs;
 		for (int k = 0; k < frame; k++)
@@ -75,7 +81,7 @@ static void ent_model(r_ent_t *e, const qg_model *m, int frame, int light)
 		e->recs     = (uint32_t) recs;
 		e->recs_end = (uint32_t) (recs + m->len_records);
 	}
-	e->tex = (uint32_t) &m->tex;
+	e->tex = (m->flags & QGF_MAP) ? (uint32_t) world.model_tex[m - world.models] : (uint32_t) &m->tex;
 	if (light > 170) light = 170;
 	if (light < 0) light = 0;
 	e->light = (uint32_t) light;

@@ -4,6 +4,8 @@
 #include <psxgpu.h>
 
 #include "prof.h"
+#include "gdata.h"
+#include "ui.h"
 #include "vid.h"
 
 typedef struct {
@@ -84,6 +86,52 @@ void vid_tint(int r, int g, int b)
 	setRGB0(t, r, g, b);
 }
 
+static void blend_tile(int mode, int r, int g, int b)
+{
+	DR_TPAGE *tp = vid_ovl_alloc(sizeof *tp);
+	if (!tp)
+		return;
+	setDrawTPage(tp, 0, 0, getTPage(0, mode, 0, 0));
+	TILE *t = vid_ovl_alloc(sizeof *t);
+	if (!t)
+		return;
+	setTile(t);
+	setSemiTrans(t, 1);
+	setXY0(t, 0, 0);
+	setWH(t, VID_W, viewport_rows);
+	setRGB0(t, r, g, b);
+}
+
+/* Quake lerps each palette colour toward a shift's colour (r += pct *
+   (dest - r) >> 8); the GPU blends a flat only as B + F, B - F or
+   (B + F) / 2. The lerps are taken exact on the mid grey: kept contrast
+   from 3/4 up, its offset added and subtracted (B + F, B - F); below, the
+   half blend whose flat lands the grey on its colour ((128 + F) / 2 = v) */
+void vid_shift(const int v[3], int contrast)
+{
+	if (contrast >= 192) {
+		int add[3], sub[3], any_add = 0, any_sub = 0;
+		for (int k = 0; k < 3; k++) {
+			int d = v[k] - 128;
+			add[k] = d > 0 ? (d > 255 ? 255 : d) : 0;
+			sub[k] = d < 0 ? (-d > 255 ? 255 : -d) : 0;
+			any_add |= add[k];
+			any_sub |= sub[k];
+		}
+		if (any_add)
+			blend_tile(1, add[0], add[1], add[2]);
+		if (any_sub)
+			blend_tile(2, sub[0], sub[1], sub[2]);
+		return;
+	}
+	int f[3];
+	for (int k = 0; k < 3; k++) {
+		f[k] = 2 * v[k] - 128;
+		f[k] = f[k] < 0 ? 0 : f[k] > 255 ? 255 : f[k];
+	}
+	blend_tile(0, f[0], f[1], f[2]);
+}
+
 void vid_ovl_append(void *head, void *tail)
 {
 	if (ovl_tail)
@@ -152,6 +200,11 @@ void vid_link(int bucket, void *packet)
 
 void vid_text(int x, int y, const char *s)
 {
+	if (gdata.aux) {                     /* Quake's console font (ui.h) */
+		ui_begin();
+		ui_text(x, y, s);
+		return;
+	}
 	/* FntSort emits one SPRT per glyph (~4 words) + a DR_TPAGE */
 	int need = 20 * ((int) strlen(s) + 2);
 	if (vid_frame.pkt + need > vid_frame.end) {

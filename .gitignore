@@ -30,6 +30,7 @@ rogue/
 # --- PS1 build / CD image output ---
 /build/
 /build-bench/
+/build-release-ultra/
 *.o
 *.a
 *.elf

@@ -258,6 +258,21 @@ static const int32_t hull_box[3][6] = {
 	{ -32 * CLIP_SUB, -32 * CLIP_SUB, -24 * CLIP_SUB, 32 * CLIP_SUB, 32 * CLIP_SUB, 64 * CLIP_SUB },
 };
 
+/* SV_InitBoxHull / SV_HullForBox: a box as a 6-node clip hull on axial
+   planes (node i on plane i: axis i / 2, the box's max for an even i, its
+   min for an odd one; the outer side empty, the inner one the next node,
+   the last one solid), the distances set for each box traced */
+static const qw_clipnode box_clipnodes[6] = {
+	{ 0,  { QW_CONTENTS_EMPTY, 1 } }, { 3,  { 2, QW_CONTENTS_EMPTY } },
+	{ 6,  { QW_CONTENTS_EMPTY, 3 } }, { 9,  { 4, QW_CONTENTS_EMPTY } },
+	{ 12, { QW_CONTENTS_EMPTY, 5 } }, { 15, { QW_CONTENTS_SOLID, QW_CONTENTS_EMPTY } },
+};
+static qw_plane box_planes[6] = {
+	{ { 4096, 0, 0 }, 0, 0, 0 }, { { 4096, 0, 0 }, 0, 0, 0 },
+	{ { 0, 4096, 0 }, 1, 0, 0 }, { { 0, 4096, 0 }, 1, 0, 0 },
+	{ { 0, 0, 4096 }, 2, 0, 0 }, { { 0, 0, 4096 }, 2, 0, 0 },
+};
+
 /* SV_Move: the world, then (SV_ClipToLinks) every listed brush model whose
    box the swept box reaches, traced in the model's space (start and end
    less its origin, the hull of the mover's size) and taken when it is hit
@@ -298,9 +313,23 @@ q_fixed clip_trace(int hull, const int32_t start[3], const int32_t end[3], trace
 			ls[k] = start[k] - cb->origin[k];
 			le[k] = end[k] - cb->origin[k];
 		}
-		hnum root = hull == 0 ? (hnum) bm->root : hull == 2 ? bm->hull2 : bm->hull1;
 		trace_t t;
-		trace_core(hull, root, ls, le, &t);
+		if (!bm) {                                /* a SOLID_BBOX entity: its box grown by */
+			for (k = 0; k < 3; k++) {             /* the mover's (SV_HullForEntity) */
+				box_planes[2 * k].dist     = (cb->absmax[k] - cb->origin[k] - hull_box[hull][k]) * 4096;
+				box_planes[2 * k + 1].dist = (cb->absmin[k] - cb->origin[k] - hull_box[hull][k + 3]) * 4096;
+			}
+			const qw_clipnode *wc = world.clipnodes;
+			const qw_plane    *wp = world.planes;
+			world.clipnodes = box_clipnodes;      /* (the hull's tables, as the asm swaps s1 / s2) */
+			world.planes    = box_planes;
+			trace_core(1, 0, ls, le, &t);
+			world.clipnodes = wc;
+			world.planes    = wp;
+		} else {
+			hnum root = hull == 0 ? (hnum) bm->root : hull == 2 ? bm->hull2 : bm->hull1;
+			trace_core(hull, root, ls, le, &t);
+		}
 		for (k = 0; k < 3; k++)
 			t.endpos[k] += cb->origin[k];
 		if (t.allsolid || t.startsolid || t.fraction < tr->fraction) {

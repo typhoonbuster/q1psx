@@ -52,13 +52,15 @@ MUSIC=${MUSIC:-0}
 MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
+ENTS=${ENTS:-0}
 FIDNAME=$(echo low medium high ultra | cut -d' ' -f$((FID + 1)))
 
 cmake --preset bench -DQ1PSX_BENCH_FID="$FID" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
-      -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
+      -DQ1PSX_BENCH_ENTS="$ENTS" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
 	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
 
@@ -70,6 +72,7 @@ grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' 
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0
+[ "$ENTS" = 1 ] && MAP=E1M1          # (its dumps: e1m1's textures, the first map)
 
 # Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
 # output can be checked without a screen (the game's dumps need GAME.DAT's

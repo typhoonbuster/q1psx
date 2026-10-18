@@ -18,6 +18,21 @@ extern const char *const hud_style_name[HUD_STYLES];
 
 void hud_set_style(int style);   /* sets the renderer's and the GPU's viewport */
 int  hud_style(void);
-void hud_draw(void);             /* this frame's HUD, from the player's state */
+void hud_draw(void);             /* this frame's HUD, from the player's state;
+                                    the intermission's overlay instead during it,
+                                    the centerprint over it */
+
+/* SCR_CenterPrint: a message centred on the screen for 2 s (lines split
+   at '\n') */
+void hud_centerprint(const char *s);
+void hud_centerprint_clear(void);
+
+/* Con_Printf's lines in the notify area (Con_DrawNotify): the last 4 at the
+   top of the screen, 3 s each (sprint: "You got the Shotgun") */
+void hud_notify(const char *s);
+
+/* a level's start (the client's state cleared: every item counts as just
+   picked up, the inventory's weapons flash; no message left) */
+void hud_level_start(void);
 
 #endif

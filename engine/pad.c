@@ -150,10 +150,49 @@ static void poll_sync(void)
 	}
 }
 
+/* the polls, as the game takes them: written in the vblank, read by the
+   frame (a single writer and a single reader; the reader stays 2 slots
+   behind the writer so a slot is never read while it is written) */
+#define PAD_RING 8
+typedef struct {
+	uint16_t held;
+	int8_t   lx, ly, rx, ry;
+	uint8_t  type, connected, analog, pad;
+} pad_snap;
+static volatile pad_snap ring[PAD_RING];
+static volatile uint32_t ring_head;      /* polls written */
+static uint32_t          ring_tail;      /* polls taken   */
+static uint16_t          last_held;      /* the last taken poll's buttons */
+
+/* the poll's answer (pad_buf) as a snapshot. stat 0 = data valid. Every
+   pad type carries the button word at the same place (digital, analog,
+   DualShock in either mode), so the type is not filtered: an earlier
+   filter (4/5/7 only) silently dropped all input from PCSX-Redux's pad. */
+static void snap_poll(volatile pad_snap *s)
+{
+	const PADTYPE *p = (const PADTYPE *) pad_buf[0];
+	s->connected = p->stat == 0;
+	s->type      = p->type;
+	s->held      = s->connected ? (uint16_t) ~p->btn : 0;
+	s->analog    = s->connected && (p->type == PAD_ID_ANALOG || p->type == PAD_ID_ANALOG_STICK);
+	if (s->analog) {
+		s->lx = (int8_t) ((int) p->ls_x - 128);
+		s->ly = (int8_t) ((int) p->ls_y - 128);
+		s->rx = (int8_t) ((int) p->rs_x - 128);
+		s->ry = (int8_t) ((int) p->rs_y - 128);
+	} else {
+		s->lx = s->ly = s->rx = s->ry = 0;
+	}
+}
+
 static void pad_vblank(void)
 {
-	if (driver_on)
-		poll_sync();
+	if (!driver_on)
+		return;
+	poll_sync();
+	uint32_t h = ring_head;
+	snap_poll(&ring[h & (PAD_RING - 1)]);
+	ring_head = h + 1;
 }
 
 static void driver_start(void)
@@ -181,36 +220,43 @@ void pad_init(void)
 	driver_start();
 }
 
-void pad_read(void)
+static void snap_to_pad(const volatile pad_snap *s, pad_t *p)
 {
-	const PADTYPE *p = (const PADTYPE *) pad_buf[0];
-	uint16_t now = 0;
+	p->held      = s->held;
+	p->pressed   = s->held & (uint16_t) ~last_held;
+	p->connected = s->connected;
+	p->type      = s->type;
+	p->analog    = s->analog;
+	p->lx = s->lx; p->ly = s->ly; p->rx = s->rx; p->ry = s->ry;
+	last_held    = s->held;
+}
 
-	/* stat 0 = data valid. Every pad type carries the button word at the same
-	   place (digital, analog, DualShock in either mode), so do not filter on
-	   the type: an earlier filter (4/5/7 only) silently dropped all input
-	   from PCSX-Redux's pad. */
-	pad.connected = p->stat == 0;
-	pad.type      = p->type;
-	if (pad.connected)
-		now = (uint16_t) ~p->btn;
-
-	pad.analog = pad.connected && (p->type == PAD_ID_ANALOG || p->type == PAD_ID_ANALOG_STICK);
-	if (pad.analog) {
-		pad.lx = (int) p->ls_x - 128;
-		pad.ly = (int) p->ls_y - 128;
-		pad.rx = (int) p->rs_x - 128;
-		pad.ry = (int) p->rs_y - 128;
-	} else {
-		pad.lx = pad.ly = pad.rx = pad.ry = 0;
+int pad_frame(pad_t *ticks, int max)
+{
+	uint32_t head = ring_head;
+	if (head - ring_tail > PAD_RING - 2)        /* a long frame (a load): the oldest gone */
+		ring_tail = head - (PAD_RING - 2);
+	uint16_t pressed = 0, carried = 0;
+	int n = 0;
+	pad_t p = pad;
+	while (ring_tail != head) {
+		snap_to_pad(&ring[ring_tail & (PAD_RING - 1)], &p);
+		ring_tail++;
+		pressed |= p.pressed;
+		if (head - ring_tail >= (uint32_t) max) {   /* beyond the frame's ticks: its presses carried */
+			carried |= p.pressed;
+			continue;
+		}
+		p.pressed |= carried;
+		carried = 0;
+		ticks[n++] = p;
 	}
-
-	pad.pressed = now & (uint16_t) ~pad.held;
-	pad.held    = now;
+	pad = p;
+	pad.pressed = pressed;
 
 	/* a pad plugged in later, or one that missed the commands at boot: two
 	   more tries, two seconds apart, while it reports digital */
-	if (pad.connected && p->type == PAD_ID_DIGITAL) {
+	if (pad.connected && pad.type == PAD_ID_DIGITAL) {
 		if (++digital_frames >= 120 && attempts < 3) {
 			digital_frames = 0;
 			attempts++;
@@ -221,7 +267,13 @@ void pad_read(void)
 		}
 	} else {
 		digital_frames = 0;
-		if (pad.connected && p->type != PAD_ID_CONFIG_MODE)
+		if (pad.connected && pad.type != PAD_ID_CONFIG_MODE)
 			attempts = 0;
 	}
+	return n;
+}
+
+void pad_read(void)
+{
+	pad_frame(0, 0);
 }

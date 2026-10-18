@@ -13,6 +13,7 @@
 
 #include <stdint.h>
 
+#include "qgame.h"
 #include "qtex.h"
 #include "qworld.h"
 
@@ -50,6 +51,12 @@ typedef struct {
 	const char    *strings;         /* the entities' strings (offsets)      */
 	uint32_t       worldtype;       /* 0 medieval, 1 metal, 2 base          */
 	const char    *title;           /* the map's name (worldspawn message)  */
+	const char    *map_name;        /* the disc's name: "START", "E1M1"...  */
+	qg_model      *models;          /* [num_models]: the map's own (QGF_MAP) */
+	uint32_t       num_models;
+	const qw_tex **model_tex;       /* [num_models]: each one's texture table */
+	uint8_t       *mgeo;            /* their geometry block                  */
+	int16_t        model_of[QIM_COUNT];   /* QIM_* -> models index, -1 none  */
 	uint32_t       max_bm_depth;
 } world_t;
 
@@ -68,7 +75,10 @@ extern const char *const fidelity_name[FIDELITY_LEVELS];
    returns how many. Call once after cd_init. */
 int         world_scan_maps(void);
 int         world_num_maps(void);
+int         world_fid_mask(void);    /* bit n: the maps come at fidelity n */
 const char *world_map_name(int map);   /* "START", "E1M1", ... */
+int         world_find_map(const char *name);   /* by name, any case; -1 if absent */
+int         world_registered(void);    /* the disc carries the registered episodes */
 
 /* Load progress: `done` of `total` bytes (texture file + world file). Called
    about once per frame while the CD reads, and once per step in between; it

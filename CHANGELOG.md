@@ -1139,3 +1139,34 @@ followed by R0-R4.
   spawn and 5.8 k on e1m1's door view with 5 models drawn (the visible
   models listed per PVS stamp, the leaves as pointers, a static model's
   matrix copied from the view's).
+- **Triggers, teleporters, the level's end, doors, plats, buttons,
+  trains, items** (2026-10-17; stages 2 to 4). Details:
+  `docs/porting-notes.md` §29. The edicts run as the QC does (think /
+  touch / use / blocked, SV_Physics_Pusher with its `ltime`, SUB_CalcMove
+  exact in ticks, the player pushed and carried, SV_Impact through pmove's
+  new `touched`, damage on edicts, the skill filter); triggers.qc and
+  misc.qc (multiple, once, secret, relay, counter, teleport, push, hurt,
+  setskill, onlyregistered); client.qc's level end (the intermission with
+  its stats, the next map with the parms, the episodes' end texts read
+  from progs.dat by `qcook game`); doors.qc, plats.qc, buttons.qc
+  (linked doors, keys, secret doors, plats, buttons, trains); items.qc
+  and misc.qc (health, armour, ammo, weapons, keys, the rune, the four
+  powerups with their warnings, flames, fireballs, explosive boxes, spike
+  shooters), their models cooked per map (squeezed at ultra on the two
+  maps whose pages overflowed); the screen's colour shifts (damage, bonus,
+  powerups) on the GPU's blends; the HUD's powerup faces, 666 and the
+  disc, the weapons' flash, the notify lines; box hulls in the traces
+  (SV_HullForBox, C and asm) for the barrels. Every map recooked; GAME.DAT
+  is `QGM3`, the world `QWVB`.
+- **The game loop on the vblank** (2026-10-17). §30: the
+  pad's polls kept per vblank in a ring, one game tick per poll with that
+  poll's command; the time and the input at 60 Hz whatever the frame rate.
+- **Quake's menu and the release editions** (2026-10-18). §31: the
+  `release` preset boots START under Quake's main menu (Single Player /
+  New Game, Options with Quake's rows, the volumes working, the rest
+  greyed; a Graphics page with every rendering setting and the dynamic
+  lights' switch, the budget greyed outside the budget mode, the threshold
+  a floor in the dynamic modes); the world paused under the menu; low to
+  high fidelity on its disc, ultra alone on the `release-ultra` disc. The
+  settings moved to `engine/settings.c`, shared with the debug build's
+  map menu; the sound effects' and the music's volumes separate.

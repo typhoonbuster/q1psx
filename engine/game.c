@@ -3,8 +3,11 @@
 
 #include "clip.h"
 #include "dlight.h"
+#include "ents.h"
 #include "game.h"
 #include "gdata.h"
+#include "hud.h"
+#include "level.h"
 #include "prof.h"
 #include "q_fixed.h"
 #include "render.h"
@@ -17,6 +20,7 @@ player_t pl;
 int      game_tick_count;
 
 #define SUB CLIP_SUB                            /* 8 position sub-units per world unit */
+#undef TICKS                                    /* (ents.h's: the same, with 60) */
 #define TICKS(sec100) ((sec100) * GAME_HZ / 100)   /* hundredths of a second -> ticks */
 #define DEG(d) ((d) * ANG_TURN / 360)
 
@@ -257,6 +261,7 @@ typedef struct {
 	int      die;          /* tick                                         */
 	int      frame_tick;   /* an explosion: when its frame advances        */
 	int      frame;
+	int      hostile;      /* a trap's spike: it hits the player           */
 	const qw_leaf *leaf;
 } proj_t;
 
@@ -283,6 +288,7 @@ static const qw_leaf *leaf_at(const int32_t org[3])
 }
 
 static void t_radius_damage(const int32_t org[3], int damage, int self_inflicted);
+static void t_damage(int damage, const int32_t inflictor[3]);
 
 /* TE_EXPLOSION + BecomeExplosion at org */
 static void explode_at(const int32_t org[3])
@@ -327,6 +333,16 @@ static void proj_move(proj_t *p)
 	for (int k = 0; k < 3; k++)
 		p->org[k] = tr.startsolid ? p->org[k] : tr.endpos[k];
 	p->leaf = leaf_at(p->org);
+	if (p->hostile && !pl.dead && !level_intermission &&             /* a trap's spike on the player's box */
+	    p->org[0] >= pl.pm.pos[0] - 17 * SUB && p->org[0] <= pl.pm.pos[0] + 17 * SUB &&
+	    p->org[1] >= pl.pm.pos[1] - 17 * SUB && p->org[1] <= pl.pm.pos[1] + 17 * SUB &&
+	    p->org[2] >= pl.pm.pos[2] - 25 * SUB && p->org[2] <= pl.pm.pos[2] + 33 * SUB) {
+		int dmg = p->type == PJ_SSPIKE ? 18 : 9;
+		particle_effect(p->org, p->leaf, 73, dmg * 2);   /* spawn_touchblood */
+		t_damage(dmg, p->org);
+		p->type = PJ_FREE;
+		return;
+	}
 	if (!hit)
 		return;
 
@@ -334,9 +350,17 @@ static void proj_move(proj_t *p)
 		p->type = PJ_FREE;
 		return;
 	}
+	edict_t *other = ent_from_trace(&tr);
 	switch (p->type) {
 	case PJ_SPIKE:
 	case PJ_SSPIKE:
+		if (other && other->takedamage) {             /* spike_touch: spawn_touchblood */
+			int dmg = p->type == PJ_SPIKE ? 9 : 18;
+			particle_effect(p->org, p->leaf, 73, dmg * 2);
+			ent_damage(other, ent_player, ent_player, dmg);
+			p->type = PJ_FREE;
+			break;
+		}
 		particle_effect(p->org, p->leaf, 0, p->type == PJ_SPIKE ? 10 : 20);   /* TE_SPIKE */
 		if (q_rand() % 5)
 			snd_start(ENT_TEMP, 0, S_TINK1, p->org, 255, ATTN_NORM);
@@ -346,8 +370,11 @@ static void proj_move(proj_t *p)
 		}
 		p->type = PJ_FREE;
 		break;
-	case PJ_ROCKET: {
+	case PJ_ROCKET: {                                 /* T_MissileTouch */
+		if (other && other->health)
+			ent_damage(other, ent_player, ent_player, 100 + (int) ((q_rand() & 0x7fff) * 20 / 0x8000));
 		t_radius_damage(p->org, 120, 1);
+		ents_radius_damage(p->org, 120, ent_player, other);
 		int32_t dir[3], org[3];
 		vnormalize(p->vel, dir);
 		for (int k = 0; k < 3; k++)
@@ -494,6 +521,7 @@ static void projs_tick(void)
 				int32_t org[3] = { p->org[0], p->org[1], p->org[2] };
 				p->type = PJ_FREE;
 				t_radius_damage(org, 120, 1);
+				ents_radius_damage(org, 120, ent_player, 0);
 				explode_at(org);
 				break;
 			}
@@ -530,6 +558,11 @@ static void player_die(void)
 	} else {
 		snd_start(ENT_PLAYER, CHAN_VOICE, S_DEATH1 + rand_rint(4) - 1, pl.pm.pos, 255, ATTN_NONE);
 	}
+	/* PlayerDie: the ring goes, every powerup's time (the other items stay
+	   on the status bar until the respawn: CheckPowerups no longer runs) */
+	pl.items &= ~IT_INVISIBILITY;
+	pl.invisible_finished = pl.invincible_finished = 0;
+	pl.super_damage_finished = pl.radsuit_finished = 0;
 	pl.dead       = 1;
 	pl.death_tick = game_tick_count;
 	pl.weaponframe = 0;
@@ -542,7 +575,7 @@ static void player_die(void)
    the kick and the pain face (V_ParseDamage); momentum from the inflictor */
 static void t_damage(int damage, const int32_t inflictor[3])
 {
-	if (pl.dead)
+	if (pl.dead || level_intermission)
 		return;
 	int save = (pl.armortype * damage + 99) / 100;        /* ceil */
 	if (save >= pl.armor) {
@@ -554,28 +587,27 @@ static void t_damage(int damage, const int32_t inflictor[3])
 	int take = damage - save;
 	if (take < 0) take = 0;
 
-	/* the client's reaction: the face, the kick */
-	pl.pain_until = game_tick_count + TICKS(20);
-	int count = (take + save) / 2;
-	if (count < 10) count = 10;
-	if (inflictor) {
-		int32_t from[3], d[3], f[3], r[3], u[3];
-		for (int k = 0; k < 3; k++) d[k] = inflictor[k] - pl.pm.pos[k];
-		vnormalize(d, from);
-		view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
-		int32_t side_r = (from[0] * r[0] + from[1] * r[1] + from[2] * r[2]) >> 12;
-		int32_t side_f = (from[0] * f[0] + from[1] * f[1] + from[2] * f[2]) >> 12;
-		pl.dmg_roll  = DEG(1) * count * side_r * 6 / 10 / 4096;   /* v_kickroll 0.6 */
-		pl.dmg_pitch = DEG(1) * count * side_f * 6 / 10 / 4096;   /* v_kickpitch 0.6 */
-		pl.dmg_time  = TICKS(50);                                  /* v_kicktime 0.5 */
+	/* for the client at the tick's end (damage_report: V_ParseDamage) */
+	pl.dmg_take += take;
+	pl.dmg_save += save;
+	for (int k = 0; k < 3; k++)
+		pl.dmg_from[k] = inflictor ? inflictor[k] : 0;    /* the world's origin */
 
+	if (inflictor) {
 		/* momentum: dir from the inflictor, x damage x 8 */
-		int32_t dir[3];
+		int32_t d[3], dir[3];
 		for (int k = 0; k < 3; k++) d[k] = pl.pm.pos[k] - inflictor[k];
 		vnormalize(d, dir);
 		for (int k = 0; k < 3; k++)
 			pl.pm.vel[k] += dir[k] * damage * 8 / 4096;
 		pl.pm.onground = 0;
+	}
+	if (pl.invincible_finished >= game_tick_count) {      /* invincibility */
+		if (pl.invincible_sound < game_tick_count) {
+			snd_start_idx(ENT_PLAYER, CHAN_ITEM, snd_find("items/protect3.wav"), pl.pm.pos, 255, ATTN_NORM);
+			pl.invincible_sound = game_tick_count + TICKS(200);
+		}
+		return;
 	}
 	pl.health -= take;
 	if (pl.health <= 0) {
@@ -605,6 +637,35 @@ static void t_damage(int damage, const int32_t inflictor[3])
 	snd_start(ENT_PLAYER, CHAN_VOICE, S_PAIN1 + rand_rint(5) - 1, pl.pm.pos, 255, ATTN_NORM);
 }
 
+/* V_ParseDamage: the tick's damage seen by the client, once: the face,
+   the flash (its colour by armour against blood), the kick from the last
+   inflictor */
+static void damage_report(void)
+{
+	int take = pl.dmg_take, save = pl.dmg_save;
+	pl.dmg_take = pl.dmg_save = 0;
+	if (!take && !save)
+		return;
+	pl.pain_until = game_tick_count + TICKS(20);
+	int count = (take + save) / 2;
+	if (count < 10) count = 10;
+	pl.damage_pct += 3 * count * 256;
+	if (pl.damage_pct > 150 * 256)
+		pl.damage_pct = 150 * 256;
+	if (save > take) { pl.damage_rgb[0] = 200; pl.damage_rgb[1] = 100; pl.damage_rgb[2] = 100; }
+	else if (save)   { pl.damage_rgb[0] = 220; pl.damage_rgb[1] = 50;  pl.damage_rgb[2] = 50; }
+	else             { pl.damage_rgb[0] = 255; pl.damage_rgb[1] = 0;   pl.damage_rgb[2] = 0; }
+	int32_t from[3], d[3], f[3], r[3], u[3];
+	for (int k = 0; k < 3; k++) d[k] = pl.dmg_from[k] - pl.pm.pos[k];
+	vnormalize(d, from);
+	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
+	int32_t side_r = (from[0] * r[0] + from[1] * r[1] + from[2] * r[2]) >> 12;
+	int32_t side_f = (from[0] * f[0] + from[1] * f[1] + from[2] * f[2]) >> 12;
+	pl.dmg_roll  = DEG(1) * count * side_r * 6 / 10 / 4096;   /* v_kickroll 0.6 */
+	pl.dmg_pitch = DEG(1) * count * side_f * 6 / 10 / 4096;   /* v_kickpitch 0.6 */
+	pl.dmg_time  = TICKS(50);                                  /* v_kicktime 0.5 */
+}
+
 /* T_RadiusDamage on the player (the only thing that takes damage) */
 static void t_radius_damage(const int32_t org[3], int damage, int self_inflicted)
 {
@@ -617,8 +678,11 @@ static void t_radius_damage(const int32_t org[3], int damage, int self_inflicted
 	if (dist > damage + 40)
 		return;
 	int points = damage - dist / 2;
-	if (self_inflicted)
+	if (self_inflicted) {
 		points /= 2;
+		if (game_quad_active())                       /* the attacker's quad: x4 */
+			points *= 4;
+	}
 	if (points <= 0)
 		return;
 	trace_t tr;                                       /* CanDamage: a clear line */
@@ -749,10 +813,16 @@ static void w_fire_axe(void)
 	clip_trace(0, src, end, &tr);
 	if (tr.fraction >= Q_FIX_ONE)
 		return;
-	int32_t org[3];                                 /* hit wall: TE_GUNSHOT */
+	int32_t org[3];
 	for (int k = 0; k < 3; k++)
 		org[k] = tr.endpos[k] - 4 * SUB * f[k] / 4096;
-	snd_start(ENT_PLAYER, CHAN_WEAPON, S_AXHIT2, pl.pm.pos, 255, ATTN_NORM);
+	edict_t *hit = ent_from_trace(&tr);
+	if (hit && hit->takedamage) {                    /* SpawnBlood, 20 */
+		particle_effect(org, leaf_at(org), 73, 40);
+		ent_damage(hit, ent_player, ent_player, 20);
+		return;
+	}
+	snd_start(ENT_PLAYER, CHAN_WEAPON, S_AXHIT2, pl.pm.pos, 255, ATTN_NORM);   /* hit wall: TE_GUNSHOT */
 	particle_effect(org, leaf_at(org), 0, 20);
 }
 
@@ -764,6 +834,8 @@ static void fire_bullets(int count, int32_t spread_x, int32_t spread_y)
 	src[0] = pl.pm.pos[0] + 10 * SUB * f[0] / 4096;
 	src[1] = pl.pm.pos[1] + 10 * SUB * f[1] / 4096;
 	src[2] = pl.pm.pos[2] - 24 * SUB + 56 * SUB * 7 / 10;   /* absmin_z + size_z x 0.7 */
+	edict_t *multi_ent = 0;                         /* ClearMultiDamage */
+	int      multi_damage = 0;
 	while (count-- > 0) {
 		int32_t dir[3], end[3];
 		int32_t cx = crandom(4096) * spread_x >> 12, cy = crandom(4096) * spread_y >> 12;
@@ -775,11 +847,25 @@ static void fire_bullets(int count, int32_t spread_x, int32_t spread_y)
 		clip_trace(0, src, end, &tr);
 		if (tr.fraction >= Q_FIX_ONE)
 			continue;
-		int32_t org[3];                             /* TraceAttack: TE_GUNSHOT */
+		int32_t org[3];                             /* TraceAttack */
 		for (int k = 0; k < 3; k++)
 			org[k] = tr.endpos[k] - 4 * SUB * dir[k] / 4096;
-		particle_effect(org, leaf_at(org), 0, 20);
+		edict_t *hit = ent_from_trace(&tr);
+		if (hit && hit->takedamage) {               /* SpawnBlood, AddMultiDamage */
+			particle_effect(org, leaf_at(org), 73, 8);
+			if (hit != multi_ent) {
+				if (multi_ent)
+					ent_damage(multi_ent, ent_player, ent_player, multi_damage);
+				multi_ent    = hit;
+				multi_damage = 0;
+			}
+			multi_damage += 4;
+			continue;
+		}
+		particle_effect(org, leaf_at(org), 0, 20);  /* TE_GUNSHOT */
 	}
+	if (multi_ent)                                  /* ApplyMultiDamage */
+		ent_damage(multi_ent, ent_player, ent_player, multi_damage);
 }
 
 static void w_fire_shotgun(void)
@@ -813,6 +899,22 @@ static void launch_spike(const int32_t org[3], const int32_t dir[3], int super)
 	vectoangles(p->vel, &p->yaw, &p->pitch);
 	p->die  = game_tick_count + TICKS(600);
 	p->leaf = leaf_at(p->org);
+}
+
+/* trap_spikeshooter's launch_spike: its speed set after, a spike that
+   hurts the player (spike_touch on its box) */
+void game_launch_spike(const int32_t org[3], const int32_t dir[3], int speed, int super)
+{
+	proj_t *p = proj_new(super ? PJ_SSPIKE : PJ_SPIKE);
+	if (!p) return;
+	for (int k = 0; k < 3; k++) {
+		p->org[k] = org[k];
+		p->vel[k] = dir[k] * speed / 4096;
+	}
+	vectoangles(p->vel, &p->yaw, &p->pitch);
+	p->die     = game_tick_count + TICKS(600);
+	p->leaf    = leaf_at(p->org);
+	p->hostile = 1;
 }
 
 static void w_fire_spikes(int ox)
@@ -892,6 +994,7 @@ static void w_fire_lightning(void)
 		pl.ammo[AMMO_CELLS] = 0;
 		w_set_current(w_best_weapon());
 		t_radius_damage(pl.pm.pos, 35 * cells, 1);
+		ents_radius_damage(pl.pm.pos, 35 * cells, ent_player, 0);
 		return;
 	}
 	int32_t f[3], r[3], u[3], org[3], end[3];
@@ -926,6 +1029,14 @@ static void w_fire_lightning(void)
 	}
 	if (tr.fraction < Q_FIX_ONE)                     /* sparks where it hits */
 		particle_effect(tr.endpos, leaf_at(tr.endpos), 225, 4);
+	/* LightningDamage on the beam's line (its two side lines are offset by
+	   the unnormalised beam x 16, the QC's `normalize (f);` discarded: far
+	   outside the map, they hit nothing) */
+	edict_t *hit = ent_from_trace(&tr);
+	if (hit && hit->takedamage) {
+		particle_effect(tr.endpos, leaf_at(tr.endpos), 225, 30);
+		ent_damage(hit, ent_player, ent_player, 30);
+	}
 }
 
 /* W_Attack */
@@ -933,6 +1044,10 @@ static void w_attack(void)
 {
 	if (w_has_no_ammo())
 		return;
+	if (pl.super_damage_finished > game_tick_count && pl.super_sound < game_tick_count) {   /* SuperDamageSound */
+		pl.super_sound = game_tick_count + TICKS(100);
+		snd_start(ENT_PLAYER, CHAN_BODY, S_DAMAGE3, pl.pm.pos, 255, ATTN_NORM);
+	}
 	switch (pl.weapon) {
 	case W_AXE:
 		snd_start(ENT_PLAYER, CHAN_WEAPON, S_AX1, pl.pm.pos, 255, ATTN_NORM);
@@ -1028,6 +1143,337 @@ static void w_weapon_frame(const game_cmd_t *cmd)
 		w_attack();
 }
 
+/* ------------------------------------------------- the entities' calls -- */
+
+void game_damage_player(int damage, const int32_t inflictor[3])
+{
+	t_damage(damage, inflictor);
+}
+
+int game_intermission(void)
+{
+	return level_intermission;
+}
+
+int game_quad_active(void)
+{
+	return pl.super_damage_finished > game_tick_count;
+}
+
+void game_bonus_flash(void)
+{
+	pl.bonus_pct = 50 * 256;                          /* cl.cshifts[CSHIFT_BONUS]: 50 % */
+}
+
+void game_give_weapon(int w)
+{
+	pl.items |= weapon_item[w];
+	w_set_current(w);                                 /* (single player: self.weapon = new) */
+}
+
+int game_best_weapon(void)
+{
+	return w_best_weapon();
+}
+
+void game_select_best(void)
+{
+	w_set_current(w_best_weapon());
+}
+
+void game_powerup(uint32_t item)
+{
+	int t = game_tick_count + TICKS(3000);
+	if (item & IT_SUIT)           { pl.rad_time = 1;       pl.radsuit_finished = t; }
+	if (item & IT_INVULNERABILITY) { pl.invincible_time = 1; pl.invincible_finished = t; }
+	if (item & IT_INVISIBILITY)   { pl.invisible_time = 1;  pl.invisible_finished = t; }
+	if (item & IT_QUAD)           { pl.super_time = 1;      pl.super_damage_finished = t; }
+}
+
+void game_radius_damage_player(const int32_t org[3], int damage)
+{
+	t_radius_damage(org, damage, 0);
+}
+
+void game_explosion(const int32_t org[3])
+{
+	explode_at(org);
+}
+
+/* CheckPowerups: the warnings 3 s before the end, the end */
+static void check_powerups(void)
+{
+	int now = game_tick_count;
+	if (pl.invisible_finished) {
+		if (pl.invisible_sound < now) {
+			snd_start_idx(ENT_PLAYER, CHAN_AUTO, snd_find("items/inv3.wav"), pl.pm.pos, 127, ATTN_IDLE);
+			pl.invisible_sound = now + TICKS(100) + (int) ((q_rand() & 0x7fff) * TICKS(300) / 0x8000);
+		}
+		if (pl.invisible_finished < now + TICKS(300)) {
+			if (pl.invisible_time == 1) {
+				hud_notify("Ring of Shadows magic is fading");
+				game_bonus_flash();
+				snd_start_idx(ENT_PLAYER, CHAN_AUTO, snd_find("items/inv2.wav"), pl.pm.pos, 255, ATTN_NORM);
+				pl.invisible_time = now + TICKS(100);
+			}
+			if (pl.invisible_time < now) {
+				pl.invisible_time = now + TICKS(100);
+				game_bonus_flash();
+			}
+		}
+		if (pl.invisible_finished < now) {
+			pl.items &= ~IT_INVISIBILITY;
+			pl.invisible_finished = pl.invisible_time = 0;
+		}
+	}
+	if (pl.invincible_finished) {
+		if (pl.invincible_finished < now + TICKS(300)) {
+			if (pl.invincible_time == 1) {
+				hud_notify("Protection is almost burned out");
+				game_bonus_flash();
+				snd_start_idx(ENT_PLAYER, CHAN_AUTO, snd_find("items/protect2.wav"), pl.pm.pos, 255, ATTN_NORM);
+				pl.invincible_time = now + TICKS(100);
+			}
+			if (pl.invincible_time < now) {
+				pl.invincible_time = now + TICKS(100);
+				game_bonus_flash();
+			}
+		}
+		if (pl.invincible_finished < now) {
+			pl.items &= ~IT_INVULNERABILITY;
+			pl.invincible_time = pl.invincible_finished = 0;
+		}
+		pl.dimlight = pl.invincible_finished > now;
+	}
+	if (pl.super_damage_finished) {
+		if (pl.super_damage_finished < now + TICKS(300)) {
+			if (pl.super_time == 1) {
+				hud_notify("Quad Damage is wearing off");
+				game_bonus_flash();
+				snd_start_idx(ENT_PLAYER, CHAN_AUTO, snd_find("items/damage2.wav"), pl.pm.pos, 255, ATTN_NORM);
+				pl.super_time = now + TICKS(100);
+			}
+			if (pl.super_time < now) {
+				pl.super_time = now + TICKS(100);
+				game_bonus_flash();
+			}
+		}
+		if (pl.super_damage_finished < now) {
+			pl.items &= ~IT_QUAD;
+			pl.super_damage_finished = pl.super_time = 0;
+		}
+		pl.dimlight = pl.super_damage_finished > now;
+	}
+	if (pl.radsuit_finished) {
+		pl.air_finished = now + TICKS(1200);          /* don't drown */
+		if (pl.radsuit_finished < now + TICKS(300)) {
+			if (pl.rad_time == 1) {
+				hud_notify("Air supply in Biosuit expiring");
+				game_bonus_flash();
+				snd_start_idx(ENT_PLAYER, CHAN_AUTO, snd_find("items/suit2.wav"), pl.pm.pos, 255, ATTN_NORM);
+				pl.rad_time = now + TICKS(100);
+			}
+			if (pl.rad_time < now) {
+				pl.rad_time = now + TICKS(100);
+				game_bonus_flash();
+			}
+		}
+		if (pl.radsuit_finished < now) {
+			pl.items &= ~IT_SUIT;
+			pl.rad_time = pl.radsuit_finished = 0;
+		}
+	}
+}
+
+/* teleport_touch's move of the player: the destination's origin and
+   angles (fixangle), its forward at 300, no ground, no backing up for 0.7 s */
+void game_teleport(const int32_t org[3], const int16_t mangle[3])
+{
+	int32_t f[3], r[3], u[3];
+	pl.pm.pitch = DEG(mangle[0]);
+	pl.pm.yaw   = DEG(mangle[1]);
+	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
+	for (int k = 0; k < 3; k++) {
+		pl.pm.pos[k]     = org[k];
+		pl.pm.pos_acc[k] = 0;
+		pl.pm.vel[k]     = f[k] * 300 / 4096;
+	}
+	pl.pm.onground   = 0;
+	pl.teleport_time = game_tick_count + TICKS(70);
+}
+
+/* R_TeleportSplash, every other point of its grid (the pool is smaller) */
+void game_teleport_splash(const int32_t org[3])
+{
+	const qw_leaf *leaf = leaf_at(org);
+	for (int i = -16; i < 16; i += 8)
+		for (int j = -16; j < 16; j += 8)
+			for (int k = -24; k < 32; k += 8) {
+				particle_t *p = particle_new();
+				if (!p)
+					return;
+				p->die    = game_tick_count + TICKS(20) + (int) (q_rand() & 7) * TICKS(2);
+				p->colour = (uint8_t) (7 + (q_rand() & 7));
+				p->type   = PT_SLOWGRAV;
+				p->leaf   = leaf;
+				int32_t dir[3] = { j * 8, i * 8, k * 8 }, n[3];
+				p->org[0] = org[0] + (i + (int32_t) (q_rand() & 3)) * SUB;
+				p->org[1] = org[1] + (j + (int32_t) (q_rand() & 3)) * SUB;
+				p->org[2] = org[2] + (k + (int32_t) (q_rand() & 3)) * SUB;
+				vnormalize(dir, n);
+				int32_t vel = 50 + (int32_t) (q_rand() & 63);
+				for (int c = 0; c < 3; c++)
+					p->vel[c] = pvel(n[c] * vel / 4096);
+			}
+}
+
+void game_spawn_bubble(const int32_t org[3])
+{
+	static const int32_t up[3] = { 0, 0, 15 };
+	bubble_spawn(org, up, 0, 0);
+}
+
+/* ExitIntermission's SVC_FINALE text for a map (the edition's: e1m7 has
+   one for the shareware game), or the four runes' (map NULL) */
+const char *game_finale_text(const char *map)
+{
+	int registered = world_registered();
+	for (uint32_t i = 0; i < gdata.num_finales; i++) {
+		const qg_finale *f = &gdata.finales[i];
+		if (!map) {
+			if (f->flags & QGFIN_RUNES)
+				return (const char *) gdata.finales + f->ofs;
+			continue;
+		}
+		if ((f->flags & QGFIN_RUNES) || strcmp(f->map, map))
+			continue;
+		if ((f->flags & QGFIN_SHAREWARE) && registered)
+			continue;
+		if ((f->flags & QGFIN_REGISTERED) && !registered)
+			continue;
+		return (const char *) gdata.finales + f->ofs;
+	}
+	return 0;
+}
+
+/* ------------------------------------------------------------- the parms -- */
+
+static struct {
+	int      valid;
+	uint32_t items;
+	int      health, armor, armortype, weapon;
+	int      ammo[AMMO_COUNT];
+} parms, level_parms;                    /* the next level's; the current one's at its start */
+
+/* SetChangeParms: the keys and powerups go, the health within 50 .. 100,
+   at least 25 shells */
+void game_save_parms(void)
+{
+	if (pl.health <= 0) {
+		game_new_parms();
+		return;
+	}
+	parms.valid  = 1;
+	parms.items  = pl.items & ~(IT_KEY1 | IT_KEY2 | IT_INVISIBILITY | IT_INVULNERABILITY | IT_SUIT | IT_QUAD);
+	parms.health = pl.health > 100 ? 100 : pl.health < 50 ? 50 : pl.health;
+	parms.armor  = pl.armor;
+	parms.armortype = pl.armortype;
+	for (int i = 0; i < AMMO_COUNT; i++)
+		parms.ammo[i] = pl.ammo[i];
+	if (parms.ammo[AMMO_SHELLS] < 25)
+		parms.ammo[AMMO_SHELLS] = 25;
+	parms.weapon = pl.weapon;
+}
+
+/* SetNewParms: the axe, the shotgun, 25 shells, 100 health */
+void game_new_parms(void)
+{
+	memset(&parms, 0, sizeof parms);
+	parms.valid  = 1;
+	parms.items  = IT_SHOTGUN | IT_AXE;
+	parms.health = 100;
+	parms.ammo[AMMO_SHELLS] = 25;
+	parms.weapon = W_SHOTGUN;
+}
+
+/* the player's state as a spawn clears it, at a spot */
+static void spawn_at(const int32_t org[3], int yaw)
+{
+	memset(&pl.pm, 0, sizeof pl.pm);
+	memcpy(pl.pm.pos, org, sizeof pl.pm.pos);
+	pl.pm.pos[2] += SUB;                          /* Quake drops it to the floor */
+	pl.pm.yaw     = yaw;
+	pl.weaponframe = 0;
+	pl.anim        = 0;
+	pl.attack_finished = game_tick_count;
+	pl.punch = pl.dmg_time = pl.dmg_roll = pl.dmg_pitch = 0;
+	pl.pain_until  = 0;
+	pl.pain_finished = pl.t_width = pl.jump_flag = 0;
+	pl.air_finished = game_tick_count + TICKS(1200);  /* PutClientInServer: 12 s of air */
+	pl.dmgtime = pl.dmg = pl.inwater = pl.swim_flag = 0;
+	pl.teleport_time = pl.fly_sound = 0;
+	pl.dead        = 0;
+	pl.viewheight  = PM_EYE_HEIGHT * SUB;
+	pl.weapon_switch_tick = game_tick_count - TICKS(200);
+	pl.muzzleflash = 0;
+	/* PutClientInServer: no powerup carried over, no flash */
+	pl.invisible_finished = pl.invisible_time = pl.invisible_sound = 0;
+	pl.invincible_finished = pl.invincible_time = pl.invincible_sound = 0;
+	pl.super_damage_finished = pl.super_time = pl.super_sound = 0;
+	pl.radsuit_finished = pl.rad_time = 0;
+	pl.bonus_pct = pl.damage_pct = 0;
+	pl.dmg_take = pl.dmg_save = 0;
+	pl.dimlight = 0;
+	memset(projs, 0, sizeof projs);
+	proj_top = 0;
+	particles_clear();
+	dl_clear();
+	hud_centerprint_clear();
+	hud_level_start();
+}
+
+static void parms_apply(void)
+{
+	pl.items     = parms.items;
+	pl.health    = parms.health;
+	pl.armor     = parms.armor;
+	pl.armortype = parms.armortype;
+	for (int i = 0; i < AMMO_COUNT; i++)
+		pl.ammo[i] = parms.ammo[i];
+	pl.weapon    = parms.weapon;
+	level_parms  = parms;
+}
+
+/* PutClientInServer with DecodeLevelParms: SelectSpawnPoint's spot */
+void game_spawn_level(void)
+{
+	if (!parms.valid)
+		game_new_parms();
+	if (game_serverflags && world.map_name && !strcmp(world.map_name, "START"))
+		game_new_parms();                         /* take away all stuff on starting new episode */
+	int32_t org[3] = { world.spawn[0] * SUB, world.spawn[1] * SUB, world.spawn[2] * SUB };
+	int yaw = world.spawn_yaw * ANG_TURN / 360;
+	if (game_serverflags) {                       /* return with a rune to start */
+		edict_t *s2 = ent_find_class(0, QE_INFO_PLAYER_START2);
+		if (s2) {
+			memcpy(org, s2->origin, sizeof org);
+			yaw = s2->angle * ANG_TURN / 360;
+		}
+	}
+	spawn_at(org, yaw);
+	parms_apply();
+	level_begin();
+}
+
+/* respawn in single player: the level from its start ("restart"), the
+   inventory it was entered with */
+void game_restart_level(void)
+{
+	ents_spawn(0);
+	parms = level_parms;
+	game_spawn_level();
+}
+
 /* ---------------------------------------------------------------- player -- */
 
 void game_init(void)
@@ -1039,7 +1485,8 @@ void game_init(void)
 	game_tick_count = 0;
 }
 
-/* at the spawn point, with everything (CheatCommand) until items exist */
+/* at the spawn point, with everything (CheatCommand): the bench's and the
+   debug menu's start */
 void game_spawn(void)
 {
 	memset(&pl.pm, 0, sizeof pl.pm);
@@ -1047,6 +1494,7 @@ void game_spawn(void)
 	pl.pm.pos[1] = world.spawn[1] * SUB;
 	pl.pm.pos[2] = (world.spawn[2] + 1) * SUB;     /* Quake drops it to the floor */
 	pl.pm.yaw    = world.spawn_yaw * ANG_TURN / 360;
+	pl.teleport_time = pl.fly_sound = 0;
 	pl.health    = 100;
 	pl.armor     = 200;                             /* mal: full armor too */
 	pl.armortype = 80;
@@ -1070,10 +1518,26 @@ void game_spawn(void)
 	pl.viewheight  = PM_EYE_HEIGHT * SUB;
 	pl.weapon_switch_tick = game_tick_count - TICKS(200);
 	pl.muzzleflash = 0;
+	/* PutClientInServer: no powerup carried over, no flash */
+	pl.invisible_finished = pl.invisible_time = pl.invisible_sound = 0;
+	pl.invincible_finished = pl.invincible_time = pl.invincible_sound = 0;
+	pl.super_damage_finished = pl.super_time = pl.super_sound = 0;
+	pl.radsuit_finished = pl.rad_time = 0;
+	pl.bonus_pct = pl.damage_pct = 0;
+	pl.dmg_take = pl.dmg_save = 0;
+	pl.dimlight = 0;
 	memset(projs, 0, sizeof projs);
 	proj_top = 0;
 	particles_clear();
 	dl_clear();
+	hud_centerprint_clear();
+	hud_level_start();
+	parms.valid = 1;                              /* (a restart keeps the kit) */
+	parms.items = pl.items; parms.health = pl.health; parms.armor = pl.armor;
+	parms.armortype = pl.armortype; parms.weapon = pl.weapon;
+	for (int i = 0; i < AMMO_COUNT; i++) parms.ammo[i] = pl.ammo[i];
+	level_parms = parms;
+	level_begin();
 }
 
 /* client.qc WaterMove: 12 s of air, then the drowning (2, 4, .. 10 a
@@ -1108,12 +1572,12 @@ static void player_water(void)
 		return;
 	}
 	if (wt == QW_CONTENTS_LAVA) {
-		if (pl.dmgtime < now) {                       /* (no envirosuit yet) */
-			pl.dmgtime = now + TICKS(20);
+		if (pl.dmgtime < now) {
+			pl.dmgtime = now + (pl.radsuit_finished > now ? TICKS(100) : TICKS(20));
 			t_damage(10 * wl, 0);
 		}
 	} else if (wt == QW_CONTENTS_SLIME) {
-		if (pl.dmgtime < now) {
+		if (pl.dmgtime < now && pl.radsuit_finished < now) {
 			pl.dmgtime = now + TICKS(100);
 			t_damage(4 * wl, 0);
 		}
@@ -1152,10 +1616,14 @@ void game_tick(const game_cmd_t *cmd)
 	pl.fire_was = pl.fire;
 	pl.fire     = cmd->fire;
 
-	if (pl.dead) {
-		/* respawn on fire after a second (the body stays where it fell) */
-		if (pl.fire && !pl.fire_was && game_tick_count > pl.death_tick + TICKS(100))
-			game_spawn();
+	if (level_intermission) {                     /* PlayerPreThink: IntermissionThink */
+		level_think(cmd);
+	} else if (pl.dead) {
+		/* respawn on fire after a second: the level starts over */
+		if (pl.fire && !pl.fire_was && game_tick_count > pl.death_tick + TICKS(100)) {
+			game_restart_level();
+			return;
+		}
 	} else {
 		pmove_cmd_t pc;
 		pc.fwd  = cmd->fwd;
@@ -1166,6 +1634,9 @@ void game_tick(const game_cmd_t *cmd)
 		pc.waterjump = 0;
 		if (cmd->centre)
 			pl.pm.pitch = 0;
+		/* SV_AirMove: no backing into the teleporter for 0.7 s */
+		if (game_tick_count < pl.teleport_time && pc.fwd < 0 && pl.pm.waterlevel < 2)
+			pc.fwd = 0;
 		/* PlayerPreThink: WaterMove, CheckWaterJump, PlayerJump's sounds (the
 		   velocities they set go through pmove_step, in Quake's order) */
 		player_water();
@@ -1186,6 +1657,8 @@ void game_tick(const game_cmd_t *cmd)
 		}
 		pl.jump_flag = pl.pm.vel[2];
 		pmove_step(&pl.pm, &pc);
+		if (pl.pm.touched)                        /* SV_Impact: a brush model run into */
+			ents_impact(pl.pm.touched);
 		w_weapon_frame(cmd);
 		anim_tick();
 		/* PlayerPostThink: landed (in the water: the splash) */
@@ -1202,7 +1675,16 @@ void game_tick(const game_cmd_t *cmd)
 		}
 	dead:;
 	}
+	if (!pl.dead && !level_intermission)
+		check_powerups();                         /* PlayerPostThink */
+	ents_tick();                                  /* the triggers, movers, thinks */
 	projs_tick();
+	damage_report();                              /* SV_WriteClientdataToMessage's svc_damage */
+	/* the flashes fade: the bonus 100 % a second, the damage 150 % */
+	pl.bonus_pct  -= 100 * 256 / GAME_HZ;
+	pl.damage_pct -= 150 * 256 / GAME_HZ;
+	if (pl.bonus_pct < 0)  pl.bonus_pct = 0;
+	if (pl.damage_pct < 0) pl.damage_pct = 0;
 	particles_tick();
 	dl_decay(game_tick_count);
 
@@ -1243,6 +1725,13 @@ static int calc_roll(void)
 
 void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll)
 {
+	if (level_intermission) {                     /* the intermission's spot: view_ofs 0 */
+		memcpy(pos, level_camera, 3 * sizeof *pos);
+		*pitch = level_camera_angles[0];
+		*yaw   = level_camera_angles[1];
+		*roll  = level_camera_angles[2];
+		return;
+	}
 	int bob = pl.dead ? 0 : calc_bob();
 	pos[0] = pl.pm.pos[0];
 	pos[1] = pl.pm.pos[1];
@@ -1281,6 +1770,13 @@ void game_render(void)
 		dl->die      = game_tick_count + TICKS(10);
 	}
 	pl.muzzleflash = 0;
+	if (pl.dimlight) {                            /* EF_DIMLIGHT: the same key's light */
+		dlight_t *dl = dl_alloc(ENT_PLAYER, game_tick_count);
+		memcpy(dl->origin, pl.pm.pos, sizeof dl->origin);
+		dl->radius   = 200 + (int) (q_rand() & 31);
+		dl->minlight = 0;
+		dl->die      = game_tick_count + 1;
+	}
 	for (int i = 0; i < proj_top; i++)
 		if (projs[i].type == PJ_ROCKET) {
 			dlight_t *dl = dl_alloc(ENT_PROJ + i, game_tick_count);
@@ -1296,7 +1792,7 @@ void game_render(void)
 	/* the view model: at the eye, bobbing (V_CalcRefdef), lit by the eye's
 	   leaf; a little lower with the full-screen viewport than with the
 	   status bar's (Quake's viewsize fudge) */
-	if (!pl.dead) {
+	if (!pl.dead && !level_intermission) {
 		int32_t f[3], r[3], u[3], org[3];
 		int bob = calc_bob();
 		view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
@@ -1375,16 +1871,46 @@ void game_render(void)
    water; the slime's and lava's 150 are shown at 50 % too) */
 void game_view_tint(void)
 {
-	if (!r_state.view_leaf)
-		return;
-	const qw_leaf *l = (const qw_leaf *) (r_state.view_leaf | 0x80000000u);
-	switch (l->contents) {
-	case QW_CONTENTS_WATER: vid_tint(130, 80, 50); break;
-	case QW_CONTENTS_SOLID:
-	case QW_CONTENTS_SLIME: vid_tint(0, 25, 5);    break;
-	case QW_CONTENTS_LAVA:  vid_tint(255, 80, 0);  break;
-	default: break;
+	if (r_state.view_leaf) {
+		const qw_leaf *l = (const qw_leaf *) (r_state.view_leaf | 0x80000000u);
+		switch (l->contents) {
+		case QW_CONTENTS_WATER: vid_tint(130, 80, 50); break;
+		case QW_CONTENTS_SOLID:
+		case QW_CONTENTS_SLIME: vid_tint(0, 25, 5);    break;
+		case QW_CONTENTS_LAVA:  vid_tint(255, 80, 0);  break;
+		default: break;
+		}
 	}
+	/* V_UpdatePalette's other shifts, in its order: the damage, the bonus,
+	   the powerup (V_CalcPowerupCshift); each lerps the palette toward its
+	   colour by its percent, followed here on the mid grey (vid_shift) */
+	int shifts[3][4], n = 0;
+	if (pl.damage_pct >= 256) {
+		shifts[n][0] = pl.damage_rgb[0]; shifts[n][1] = pl.damage_rgb[1]; shifts[n][2] = pl.damage_rgb[2];
+		shifts[n++][3] = pl.damage_pct >> 8;
+	}
+	if (pl.bonus_pct >= 256) {
+		shifts[n][0] = 215; shifts[n][1] = 186; shifts[n][2] = 69;
+		shifts[n++][3] = pl.bonus_pct >> 8;
+	}
+	static const int16_t powerup[4][4] = {
+		{ 0, 0, 255, 30 }, { 0, 255, 0, 20 }, { 100, 100, 100, 100 }, { 255, 255, 0, 30 } };
+	int pu = (pl.items & IT_QUAD) ? 0 : (pl.items & IT_SUIT) ? 1 : (pl.items & IT_INVISIBILITY) ? 2 :
+	         (pl.items & IT_INVULNERABILITY) ? 3 : -1;
+	if (pu >= 0) {
+		for (int k = 0; k < 4; k++)
+			shifts[n][k] = powerup[pu][k];
+		n++;
+	}
+	if (!n)
+		return;
+	int v[3] = { 128, 128, 128 }, contrast = 256;
+	for (int i = 0; i < n; i++) {
+		for (int k = 0; k < 3; k++)
+			v[k] += (shifts[i][3] * (shifts[i][k] - v[k])) >> 8;
+		contrast = contrast * (256 - shifts[i][3]) >> 8;
+	}
+	vid_shift(v, contrast);
 }
 
 void game_render_done(void)

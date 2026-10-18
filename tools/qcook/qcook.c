@@ -364,8 +364,16 @@ static int cmd_map(int argc, char **argv)
 	       map, fid->name, bsp.num_nodes, bsp.num_leaves,
 	       bsp.models[0].numfaces, bsp.num_miptex);
 
-	tex_set ts;
-	tex_build(&ts, &bsp, pal, fid, out_tex, out_tex4);
+	tex_set    ts;
+	tex_extra *extra;
+	int        nextra;
+	for (int squeeze = 0; ; squeeze++) {          /* the models' textures reduced if need be */
+		items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, squeeze, &extra, &nextra);
+		if (tex_build(&ts, &bsp, extra, nextra, pal, fid, out_tex, out_tex4, squeeze < ITEMS_SQUEEZE_MAX))
+			break;
+		printf("qcook: the models' textures squeezed to level %d\n", squeeze + 1);
+	}
+	items_cook(&ts, bsp.num_miptex);
 	world_build(&bsp, &ts, fid, out_wld);
 	if (out_snd)
 		sound_build(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, out_snd);

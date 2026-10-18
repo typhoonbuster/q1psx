@@ -39,6 +39,9 @@ typedef struct {
 } dlight_t;
 
 extern dlight_t dlights[MAX_DLIGHTS];
+extern int      dl_enabled;                /* the menu's dynamic lights: 0 = none pushed,
+                                              none added to the models (the game still
+                                              allocates and decays them) */
 extern uint32_t dl_save_n;                 /* records saved this frame */
 extern uint16_t dl_sqrt[1024];           /* sqrt(i << 11): the lights, snd.c */
 
