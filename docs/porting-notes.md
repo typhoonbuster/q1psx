@@ -3860,6 +3860,19 @@ After the second play test: still too slow, and no monsters yet.
 
   (A picture's trade-off, the player's setting: the defaults left as
   they are.)
+- **Outside the renderer** (display lists identical):
+  - the UI's sprites and the overlay chain's tags written as whole words
+    (setSprt / setXY0 / setUV0 / setWH / setRGB0 wrote bytes and
+    halfwords, the tag went through bitfields), and a line of text built
+    in one run (`ui_chars`: one tpage check, one arena block chained as
+    the calls would chain it): the HUD with a centerprint up 7.8 k -> 5.3 k
+    cycles a frame;
+  - a sound voice's volume registers written only when they change (every
+    voice was set every frame, a multiply, a divide and two SPU writes
+    each): -1.4 k cycles a frame standing, -0.5 k walking;
+  - the lightning's bolts (one every 60 units, each looking its leaf up
+    from the root every frame) descend from the beam box's top node:
+    -3.7 k cycles a frame on the lightning view.
 - **Draw weapon** (Graphics, the debug menu): Quake's r_drawviewmodel. The
   weapon costs 20 k to 95 k cycles a frame after the steps above (the
   super shotgun the most: its barrels cross the near plane); off, it is
