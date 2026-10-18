@@ -28,7 +28,7 @@
 #   cooked/id1/<map>.snd        QSB1 sounds                       -> disc <MAP>.SND
 # and once per model level, the game data (weapon models, projectiles, the
 # HUD; formats/qgame.h):
-#   cooked/id1/game_<N>.dat     QGM5                              -> disc GAME_<N>.DAT
+#   cooked/id1/game_<N>.dat     QGM6                              -> disc GAME_<N>.DAT
 # and the music, as 44.1 kHz stereo WAV for mkpsxiso's audio tracks:
 #   cooked/music/trackNN.wav                              -> CD-DA track NN
 # Jobs run in parallel; each one's log is shown only if it fails.

@@ -161,25 +161,25 @@ void settings_value(int row, char *buf, int size)
 
 /* What each value gains and costs: the speed first, then the picture. The
    numbers are the port's measures (docs/porting-notes.md §34, §35, §37,
-   §39): frame cycles on PCSX-Redux; the textures' GPU side (the texture
-   cache) only shows on the console. */
+   §38, §39): frame cycles on PCSX-Redux; the textures' GPU side (the
+   texture cache) only shows on the console. */
 static const char *const level_hint[4][QL_LEVELS][2] = {
 	{ { "+ 1/16 the texels: lighter GPU, loads", "- blurry, quarter-size textures" },
 	  { "+ 1/4 the texels: lighter GPU, loads",  "- softer, half-size textures" },
 	  { "Quake's textures, up to 128 texels",    "lower: lighter on the GPU, blurrier" },
 	  { "- more texels: GPU, VRAM, loading",     "+ doors, arches, signs at full size" } },
-	{ { "+ about 2% fewer polygons",             "- hairline cracks may show" },
+	{ { "+ under 1% faster on average",          "- hairline cracks may show" },
 	  { "", "" },
 	  { "Quake's faces, no cracks",              "ultra: finer light, more polygons" },
-	  { "- about 40% more polygons, more RAM",   "+ finer light across walls, floors" } },
-	{ { "+ about 9% fewer item triangles",       "- coarser items and projectiles" },
-	  { "+ about 5% fewer item triangles",       "- slightly coarser items" },
+	  { "- 3% slower, heavy views up to 24%",    "+ finer light across walls, floors" } },
+	{ { "+ about 1% faster with items in view",  "- coarser items, torches and rockets" },
+	  { "+ under 1% faster with items in view",  "- slightly coarser items, torches" },
 	  { "Quake's own models",                    "lower: fewer item triangles" },
 	  { "", "" } },
-	{ { "+ a quarter of the particles",          "- sparse sparks, blood, explosions" },
-	  { "+ half the particles",                  "- thinner sparks and explosions" },
+	{ { "+ about 1% faster in fights",           "- sparse sparks, blood, explosions" },
+	  { "+ under 1% faster in fights",           "- thinner sparks and explosions" },
 	  { "The port's particles",                  "ultra: twice as many, lower: fewer" },
-	  { "- twice the particles: slower fights",  "+ fuller explosions, sparks, trails" } },
+	  { "- 1 to 2% slower in fights",            "+ fuller explosions, sparks, trails" } },
 };
 
 void settings_hint(int row, const char *line[2])

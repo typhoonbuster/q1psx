@@ -1252,11 +1252,16 @@ followed by R0-R4.
   QWVD), its UVs the finest texture level's, mapped at load onto the
   texture set's tiles (`<MAP>_T<n>.TEX`, QTX6 / QTX7: the texture table,
   the UV maps, the animations); the map's models per model level
-  (`<MAP>_M<n>.MDL`, QMM1), the game data too (`GAME_<n>.DAT`, QGM5).
+  (`<MAP>_M<n>.MDL`, QMM1), the game data too (`GAME_<n>.DAT`, QGM6).
   At high every map but three draws the same polygons as before (the
   textures over 128 texels: a texel of rounding on a few vertices), and
-  the disc carries every combination in less room (all levels 100 MB of
-  cooked data, 125 before; the release disc 747 MB, 774 before). The
-  Graphics page and the debug map menu show, under the rows, what the
-  highlighted value gains and costs; the debug menu's rows no longer run
-  into its help line.
+  the disc carries every combination in less room (the maps' cooked data
+  103 MB for every level, 125 before; the release disc 747 MB, 774
+  before). The Graphics page and the debug map menu show, under the rows,
+  what the highlighted value gains and costs, in the port's measures
+  (PCSX-Redux frame cycles against high: geometry low -0.7 %, ultra +2.6 %
+  with the heaviest view +24 %; models low -1.0 %; effects low -0.4 %,
+  ultra +0.7 %, a rocket's blast +1.9 %; the textures' gain the console's
+  GPU and the loads); the debug menu's rows no longer run into its help
+  line. Every map loads at every geometry level, at ultra textures and
+  geometry too (release-ultra's), and plays on DuckStation.

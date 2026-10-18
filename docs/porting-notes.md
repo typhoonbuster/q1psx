@@ -4122,3 +4122,213 @@ off / 3D / 2D, 3D by default.
   now reads a packet's 255 words and follows a CPU-to-VRAM copy across
   packets). DuckStation: every map played with the 2D gun, no GP0 error.
 
+
+## §39 — Four quality settings, and what each option costs (2026-10-18)
+
+Next: the fidelity split into textures, models, map geometry and effects, and on every option
+a hint of what it gains and costs, subtle and part of the menu.
+The one fidelity setting (low .. ultra) only ever changed the textures (and,
+through them, about 5 % of the polygons at low and medium); it becomes four
+settings, each with its own levels (`formats/qlevels.h`: a level's number is
+the same on every axis, 2 = high is the default of each):
+
+| Axis | Low | Medium | High | Ultra |
+|---|---|---|---|---|
+| Textures | ¼ of the resolution | ½ | native ≤ 128 | native ≤ 256 |
+| Map geometry | no T-junction repair | — | Quake's faces, repaired | + a light grid every 128 texels |
+| Models | items, torches, the rocket: ≤ 3 units of error, up to half the triangles | ≤ 1.5 units, up to a quarter | Quake's | — |
+| Effects | ¼ of the particles | ½ | the port's | ×2 (a 512 pool) |
+
+### 39.1 The format: the world no longer depends on the textures
+
+A world file was cooked per fidelity because its faces are cut on texture
+repetitions (a byte of UV: a power-of-two axis every 256 texels of the
+level's resolution, another at every repetition) and its polygons carry
+their UVs pre-packed, page-relative. Cooking every texture level with every
+geometry level would not fit the disc (the CD-DA music takes ~600 MB; four
+texture levels by three geometry levels: ~250 MB of worlds). The choice
+(2026-10-18): worlds independent of the textures:
+
+- **One layout for every level** (`tools/qcook/tex.c`, `tex_build` with no
+  output: the canonical set). The slots sized at the finest texture level
+  (ultra, the models' skins as they are, the animations kept). The world's
+  faces are cut for it and its UVs written for it, tile-relative (no page
+  position); the map's own models' UVs too, from their skin's corner inside
+  its border.
+- **The texture set maps it** (`QTX6` / `QTX7`, `formats/qtex.h`): besides
+  the pages, the map's texture table (`qw_tex[num_slots]`: CLUT, tpage,
+  texture window, the 4-bit set's own words), one `qtex_uvmap` per slot
+  (`u' = u0 + ((u * su + rnd) >> 15)`: the tile's corner on an axis that
+  does not wrap, the level's scale, rounding for a miptex, truncating for a
+  skin as the cook divides it) and the animated textures' tiles (`qw_anim`:
+  they moved from the world). A level whose pages had no room for the
+  animations keeps the slots: a display slot draws its chain's first frame.
+- **The loader** (`engine/world.c`): the texture file's tables are moved to
+  the bottom of the level arena (the pixels are in VRAM, the rest of the
+  file goes), then the world's record stream has its UVs mapped once, the
+  map's models file (`<MAP>_M<n>.MDL`, `QMM1`: the items' and flames' models,
+  out of the world: per model level) likewise through each model's table.
+  Then everything is as before: the renderer reads `world.textures` and
+  the records' UVs as it always did.
+- **Names on the disc**: `<MAP>_T<n>.TEX` / `.TX4`, `<MAP>_G<n>.WLD`,
+  `<MAP>_M<n>.MDL`, `GAME_<n>.DAT` (n the level); the engine reads each
+  axis's levels from the directory (`world_level_mask`), the menus step
+  through those. The editions (`Q1PSX_TEXTURE_LEVELS`,
+  `Q1PSX_GEOMETRY_LEVELS`): release textures low to high and geometry low
+  and high, release-ultra both at ultra; every model level on every disc.
+- **What it costs, what it saves.** At high every face below 129 texels is
+  cut and mapped exactly as before: START's 12 views give identical display
+  lists, the game bench's frames too; over the 32 maps, 29 draw the same
+  polygons (0 to 59 of ~35 000 UVs a texel off: the textures over 128
+  texels, at half resolution at high, mapped from their full size: a
+  rounding the 8-bit UVs cannot avoid) and 3 have 6 to 14 more polygons
+  (256-wide textures, now cut every 256 of their texels). Low and medium
+  textures no longer remove polygons (their bigger cells did: 257 k
+  polygons over the maps against 271 k); they keep the rest: a quarter or a
+  sixteenth of the texels, faster loads, the GPU's texture cache (the
+  console's, not the emulator's). The disc: the maps' cooked data
+  (textures, worlds, models) 103 MB for every level of every axis (125 MB
+  for the four fidelities); the release disc 747 MB (774), the default
+  791 MB (816), release-ultra 722 MB.
+
+### 39.2 The levels
+
+- **Textures**: the resolution, as the fidelity was (`tex_levels[]`,
+  `tools/qcook/qcook.c`; the small textures are no longer repeated in their
+  tile at low and medium: the world's cuts are the finest level's).
+- **Map geometry** (`tools/qcook/world.c`): low leaves the T-junctions
+  unrepaired (-2.3 % polygons on start, -3.1 % on e3m4; a hairline crack can
+  show where a face's edge meets another's vertex); ultra cuts every cell
+  again every 128 texels from its corner (`QL_LIGHT_GRID`: luxel-aligned,
+  the UVs still from the cell's corner), so the vertex light follows
+  Quake's lightmap closer: +37 % polygons on start (+44 % e1m1), +12 % of
+  world RAM. (On the global texel grid instead: +52 %; every 64 texels:
+  +120 %, e3m4 1 MB.) A map too big for the arena falls back to a lower
+  geometry level (none does: 39.5).
+- **Models** (`tools/qcook/decim.c`): half-edge collapses, so no vertex
+  moves and every animation frame stays Quake's; a collapse's cost is the
+  distance from the kept vertex to the planes the removed one stood on, in
+  five dimensions (the position and the skin coordinates, Garland and
+  Heckbert's quadrics with Hoppe's attributes: a collapse that slides the
+  texture costs as one that bends the surface), averaged over every frame;
+  the seam moves only along itself, an open edge only along itself (planes
+  across it hold the outline), no triangle turns over in any frame. Low: up
+  to half the triangles, no error over 3 units; medium: a quarter, 1.5.
+  Quake's models are lean: over the 32 maps' items, -8.7 % of their
+  triangles at low, -4.5 % at medium (the armour, the biggest key, none;
+  the torch 122 to 98 / 106); in the game data only the rocket (58: 54 /
+  56), the spikes and the grenade under the 24 triangles a model needs to
+  be reduced. The records then gather what is left otherwise, and a few
+  models carry a vertex slot or three more than Quake's (the floor
+  shotgun at low: 82 triangles, 55 slots, against 84 and 52); a slot costs
+  about 35 cycles in the record loop's RTPT, a drawn triangle more than
+  twice that. **The view models stay Quake's at every level**: measured on
+  the screen (an error of a unit at 8 units from the eye is 20 px), they
+  lose nothing under 4 px; at 12 px, for 1 to 3 % of a frame, the super
+  shotgun's barrels lost their outline and a few triangles turned from the
+  eye. The game data comes per model level (`GAME_<n>.DAT`, `QGM6`: §38's
+  2D weapons took `QGM5` the same day, the merge bumped it), its geometry
+  block sized for the largest level in the game arena, so another level's
+  models replace the loaded ones before a map's load (`gdata_set_models`).
+- **Effects** (`engine/game.c`, at once): the particles each effect makes
+  in eighths of the port's (low 2, medium 4, high 8, ultra 16: an
+  explosion 12 / 24 / 48 / 96 of Quake's 1024), a rocket's or grenade's
+  trail every 4th / 2nd tick or twice a tick, the teleport splash's grid
+  thinned or (ultra) at Quake's own height spacing, the pool 256 or 512
+  (ultra: 10 KB more of BSS; the game arena, full since the 2D guns, has
+  no room for it). High is the port's exactly (the same `q_rand`
+  sequence: the game bench's frames identical).
+
+### 39.3 The hints
+
+Every row of the Graphics page says what its value does: two lines under
+the rows, centred, in Quake's bronze at a dimmer shade (88 against the
+rows' 128: subtle, the menu's own font and colour), the speed first, then
+the picture; "+" a gain, "-" a cost, neither for a default
+(`settings_hint`, `engine/settings.c`: one table both menus read, at most
+38 characters a line). The numbers are the port's measures (39.4, §34,
+§35, §37, §38: the 2D gun -4.4 % over the game bench, up to -11.6 %).
+The levels that wait for a load show one white line under them: "Takes
+effect at the next level". The debug map menu shows the same two lines;
+its maps went to three columns of 11 so that its 16 options and the hint
+fit above its help line (its 13 options ran into it).
+
+### 39.4 Measured
+
+Frame cycles on PCSX-Redux (`PROFILE=0`, the release's renderer), each
+level against high on the same axis, the other axes at high; START's 12
+views, the 128 spawn views (`BENCH_MAPS=1`, four a map) and the game
+bench's 12 scenarios (START's spawn, each weapon fired, the HUD, a walk at
+60 and 32 Hz):
+
+| Level | Scenarios | Total | Per scenario | Heaviest frame |
+|---|---|---|---|---|
+| Textures low / medium / ultra | START | +0.0 / +0.0 / -0.1 % | within 0.2 % | 637 k, as at high |
+| Geometry low | START | -0.5 % | -1.6 .. +1.4 % | 637 k → 635 k |
+| Geometry low | 128 views | -0.7 % (median -0.2 %) | -9.6 % (E3M5 v0) .. +5.1 % (E4M8 v0) | 738 k → 731 k |
+| Geometry ultra | START | -3.3 % | -13.0 % (v1) .. +10.9 % (v0, the spawn) | 637 k → 707 k |
+| Geometry ultra | 128 views | +2.6 % (median +2.8 %) | -19.5 % (E3M2 v1) .. +85 % (END v2, 68 k → 126 k) | 738 k → 913 k (E1M8 v0, +24 %) |
+| Models low / medium | game bench | -1.0 / -0.6 % | -1.2 / -0.8 % at the spawn, -0.3 / -0.1 % walking | 1091 k → 1082 k / 1085 k |
+| Effects low / medium / ultra | game bench | -0.4 / -0.5 / +0.7 % | the rocket's blast -1.2 / -4.7 / +1.9 % | 1091 k → 1077 k / 1040 k / 1111 k |
+
+- **The textures** change nothing the emulator counts: the CPU does the
+  same work at every resolution. What a lower level saves is the
+  console's: the GPU's 2 KB texture cache hits more often, VRAM, and the
+  load (START's set 387 KB at high, 151 KB at medium, 80 KB at low: about
+  a second less at the drive's double speed).
+- **The ultra geometry moves work** from the slow path to the record loop
+  (START, `PROFILE=1`, the 12 views summed): the records' stage +30 %
+  (+520 k cycles), the slow path -35 % (-655 k): the near, big polygons
+  come cut in 128-texel cells already, and it splits 41 % fewer
+  triangles. A view whose slow path is busy gets faster (START v1 -13 %,
+  E3M2 v1 -19.5 %), a far and wide one slower (the spawn +11 %, E1M8 v0
+  +24 %); five of the 128 views go over a frame, four at high (E1M5 v0,
+  486 k → 578 k, joins them).
+- **The low geometry** saves 2.3 % of START's polygons for -0.7 % over the
+  maps, and a view can lose: a near polygon without its T-junction
+  vertices is fanned into longer triangles that the warp threshold splits
+  more (E4M8 v0, `PROFILE=1`: 222 → 235 slow-path triangles, +5.1 %).
+- **The models**: the gain is the map's items and torches (START's spawn,
+  torches and weapons in view: -8.5 k cycles a frame at low; the guns'
+  share, the `ents` stage, the same); walking START -0.3 %.
+- **The effects**: the particles' own cost is the `ents` stage's change:
+  the rocket's blast 33.2 k cycles a frame at high, 23.6 k at low, 26.8 k
+  at medium, 46.2 k at ultra (the grenade's 23.0 k: 18.6 / 19.8 / 27.7 k).
+  Beyond that the scenes differ: the particles draw on the game's random
+  sequence (`q_rand`, which the items, the sounds and the triggers share,
+  as Quake's `rand()`), so another count shifts every later draw (medium's
+  -4.7 % on the blast, +1.1 to +2.0 % on the walks: other scenes, not the
+  particles' cost). The bench never fills the pool: a full one (256, 512 at
+  ultra) costs in proportion.
+- **The hints** say it so: textures "lighter GPU, loads" (the console's,
+  unmeasured here); geometry low "under 1% faster on average", ultra "3%
+  slower, heavy views up to 24%"; models "about 1%" / "under 1% faster
+  with items in view"; effects "about 1%" / "under 1% faster in fights",
+  ultra "1 to 2% slower".
+
+### 39.5 Checking
+
+- **At high** (the default): `scripts/dlcheck.sh` on START's 12 views:
+  display lists identical to the single-fidelity build's high; the 128
+  spawn views: 8 differ (the textures over 128 texels, 0 to 1 % of their
+  pixels); the game bench's `H` lines identical to master's (with the 2D
+  weapons) but for the menu's pages (the Graphics page's rows and hints),
+  its `snd` lines the menu's five sounds more.
+- **Every level loads**: the bench at geometry 0, 2, 3 on the 32 maps,
+  textures 0, 1, 3 and models 0, 1 on START, effects 0, 1, 3 on the game
+  bench: no fallback at any geometry level (the arena's fullest map, E4M7:
+  1003 / 1005 / 1135 KB of 1152); textures and geometry both at ultra
+  (release-ultra's only levels, `BENCH_MAPS=1`): the 32 maps load, E4M7
+  1135 KB.
+- **DuckStation** headless (`PLAY=1 BENCH_MAPS=1`; textures low, geometry
+  ultra, models low, effects ultra): the 32 maps load and play 30 frames
+  each, no GP0 error, no invalid read.
+- **The editions' discs** build (release 747 MB, release-ultra 722 MB, the
+  default 791 MB) and the scripted release flow (TESTING 10.3) sets the
+  four rows.
+- **The menu** (`mgraphics*.png`): the two lines under the rows, the next
+  level's note in white, nothing over the status bar.
+- **Left to the console and an eye on screen**: the textures' GPU side; the
+  four rows and their hints on a TV; a level changed in a game (the next
+  level's load); the low geometry's cracks, the ultra geometry's light,
+  the reduced items and torches.

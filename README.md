@@ -80,8 +80,9 @@ Three editions:
 
 Four quality settings, chosen in Graphics (`docs/porting-notes.md` §39):
 textures (their resolution), map geometry (crack repair, the light grid),
-models (the alias models' triangles) and effects (the particles). Every
-model and effects level is on every disc.
+models (the items', torches' and rocket's triangles; the guns stay
+Quake's) and effects (the particles). Every model and effects level is on
+every disc.
 
 ```bash
 cmake --preset release && cmake --build ./build-release
