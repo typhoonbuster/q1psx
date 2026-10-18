@@ -104,8 +104,17 @@ static const char *const names[S_COUNT] = {
 
 /* ------------------------------------------------------------------- spu -- */
 
+/* what each voice's volume registers were last set to, before the scale
+   (-1: unknown): an unchanged voice is not written again (the SPU keeps
+   them; the volumes are set for every voice every frame) */
+static int16_t voice_in[24][2];
+
 static void voice_set(int v, int left, int right)
 {
+	if (voice_in[v][0] == left && voice_in[v][1] == right)
+		return;
+	voice_in[v][0] = (int16_t) left;
+	voice_in[v][1] = (int16_t) right;
 	SPU_CH_VOL_L(v) = (uint16_t) ((left << 6) * sfx_tenths / 10);   /* 255 -> 0x3fc0 x volume */
 	SPU_CH_VOL_R(v) = (uint16_t) ((right << 6) * sfx_tenths / 10);
 }
@@ -113,6 +122,7 @@ static void voice_set(int v, int left, int right)
 void snd_set_volume(int tenths)
 {
 	sfx_tenths = tenths < 0 ? 0 : tenths > 10 ? 10 : tenths;
+	memset(voice_in, 0xff, sizeof voice_in);         /* every voice again, scaled anew */
 }
 
 void snd_set_cd_volume(int tenths)
@@ -138,6 +148,7 @@ static void voice_start(int v, int s, int left, int right, int skip)
 void snd_init(void)
 {
 	SpuInit();
+	memset(voice_in, 0xff, sizeof voice_in);
 	SPU_CTRL = 0xc001;                               /* on, unmuted, CD audio in */
 	SpuSetCommonMasterVolume(0x3fff, 0x3fff);
 	SpuSetCommonCDVolume(CD_VOL, CD_VOL);
