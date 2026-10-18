@@ -4099,3 +4099,246 @@ off / 3D / 2D, 3D by default.
   now reads a packet's 255 words and follows a CPU-to-VRAM copy across
   packets). DuckStation: every map played with the 2D gun, no GP0 error.
 
+
+## §39 — Streaming, the monsters, the SPU pool (2026-10-18)
+
+Next: the resources loaded into RAM only within a distance of the player (as SM64 does), the
+monsters and their behaviour, the same loading on the fly while playing, a loading pool for the
+monsters and the items, the keys and the weapons always first even when something else is loaded. Three choices made: a CD read during the game
+pauses the CD-DA music (a fade) and resumes it where it was, the reads
+grouped, most at the map's load; every sound with a place in the map goes
+to a pool loaded by distance (the player's and the weapons' stay
+resident), at full quality; far monsters run Quake's AI as they are, only
+their drawing waits for their model.
+
+### 39.1 The disc: STREAM.DAT
+
+`qcook stream` writes one file for every map (formats/qstream.h, `QST1`):
+a directory sorted by `qs_hash` of the pak name, every asset on a sector
+of its own, each with its group (a monster's model, head and sounds side
+by side). 167 assets for the shareware: the nine monsters' models and
+heads, their projectiles (w_spike, s_light, bolt, bolt3, lavaball,
+zom_gib), the gibs, the backpack, the items' alias models (weapons,
+armour skins 0-2 as `armor.mdl#1` / `#2`, keys, the rune, powerups, the
+flames) and 120 sounds (the monsters', the entities': doors, plats,
+buttons, triggers, items, keys, the ambient entities').
+
+- **Models: the compact format.** A frame is Quake's own trivertx words
+  (x | z << 8 | y << 16 | normal << 24): the engine expands the frame it
+  draws into the renderer's 8-byte vertices with two ANDs and a shift a
+  vertex (engine/mdl_expand.s, into a 24 KB cache of expanded frames);
+  the model's scale and origin go into its GTE matrix (Quake's
+  R_AliasSetUpTransform does the same), a shift keeps a big model's
+  steps in the GTE's 4.12 (the boss: 2). The skin is cut in two halves
+  (front and back, by the triangles' onseam side) with a 2-texel border,
+  at half the pak's resolution (heads, gibs, projectiles, items: a
+  quarter; flames: a half), with a fallback at half that.
+- **Sounds:** a 64-byte header (pitch, flags, ticks, length) and the SPU
+  ADPCM at the WAV's own rate: every piece of a sound read in 16 KB is a
+  whole number of the SPU DMA's 64-byte units.
+
+### 39.2 The pools and the passes
+
+Four caches, each of the one above (engine/stream.h): the disc; RAM (what
+the level arena leaves once the map is in: 309 to 373 KB at high, a bump
+allocator compacted when a block no longer fits); VRAM (the map's
+texture pages' free rows, the 4-bit pages, GAME.DAT's free rectangles);
+SPU RAM past the map's bank (§39.4).
+
+- **Wants.** Every 8 frames a pass asks the edicts what they use and how
+  much: a distance (Chebyshev, world units) from the player, `STREAM_PIN`
+  for what must always be in. A monster's kind is wanted at its nearest
+  monster's distance, its whole group (model, head, sounds); a head, a
+  gib, a pack, an item at its own; the keys, the rune and the weapons
+  pinned (the priority: they evict anything else); an entity's
+  sounds (its `noise` fields) at its box centre; a static source's sound
+  at its distance over its reach (ATTN_STATIC's 333 units weigh as
+  ATTN_NORM's 1000); a running powerup's warnings pinned. Models are
+  wanted to 2500 units, sounds to 1500.
+- **Loads.** One CD read at a time, the most wanted first, room made by
+  dropping only what is wanted less (never a pinned asset). A model is
+  read whole into its RAM block, its skin placed (best fit among the
+  regions, turned 90 degrees when it fits better so; upright when no RAM
+  is left for its turned pixels; at half resolution when VRAM is short),
+  uploaded, the pixels dropped once the GPU took them (the block pinned
+  against the compaction until then). A sound goes through a 16 KB
+  staging buffer, piece by piece, each piece's samples DMAed to its
+  place in SPU RAM before the next is read; its place chosen as the
+  smallest gap that holds it, a victim chosen as the least wanted sound
+  whose block with the gaps around it would make room (not just any
+  less-wanted one: no evicting for nothing).
+- **Failures.** A read error backs off a second; an asset with no room
+  even with everything wanted less dropped waits until the assets wanted
+  as much hold less (RAM, VRAM or SPU) — no rereading the same 64 KB
+  every second; a broken asset never comes back.
+- **The music.** A read waits for the CD-DA's fade, the music stays
+  suspended while reads follow each other and resumes where it was once
+  nothing is wanted (engine/music.c `music_suspend` / `music_resume`).
+- **The map's start** (the loading screen) reads everything wanted at
+  once, nearest first; the game then streams what the player walks to.
+
+### 39.3 The monsters
+
+All nine kinds of the shareware (army, dog, ogre and marksman, knight,
+zombie, wizard, demon, shambler, Chthon) in native C, transcribed from the
+shareware's `progs.dat` 1.06 itself: a throwaway disassembler of its
+bytecode, and a generator that writes each kind's state table (frame,
+next state, action, argument) from the frame functions' statements, the
+frame names taken from the rerelease's `$frame` lists (the same models).
+A state is a QC frame function, `name =[ $frame, next ] { code }`: one
+think runs its action (ai_stand, ai_run(dist)...) or the kind's own code.
+
+- **1.06, not the rerelease**, where they differ: the knight's attack
+  skips a frame the rerelease put back; OgreCheckAttack works out a
+  chance and then throws whatever it is; the marksman is monster_ogre
+  under its own classname (CheckAnyAttack's generic CheckAttack, no
+  sight sound, a kind apart for T_Damage's anger); ZombieFireGrenade's
+  offset uses the vectors of the last makevectors before its own (the
+  engine keeps QC's `v_forward / v_right / v_up`: every makevectors of
+  the AI, and the player's view's each tick, PlayerPreThink's), so does
+  the shambler's smash; LightningDamage's side lines are offset by the
+  unnormalised beam (`f_x = -f_y; f_y = f_x` with the new f_x), up to
+  9600 units off.
+- **The AI** (engine/ai.c): ai.qc, fight.qc, monsters.qc, sv_move.c
+  (movestep, step direction, chase, close enough, check bottom),
+  checkclient with the player's PVS row; SV_Physics_Step and
+  SV_Physics_Toss for what monsters throw; T_Damage with the QC's float
+  damage kept x256, Killed, the anger (not at their own kind but the
+  soldiers'); the ground entity kept (a lift carries a monster).
+- **Combat on both sides:** the player's projectiles and a monster's are
+  the game's projectiles with an owner (its box passed, the damage its);
+  MOVE_MISSILE (the monsters' boxes grown by 15 for a missile: SV_Move's
+  mins2 / maxs2, in the asm trace too, a clip entry marked a monster's);
+  T_RadiusDamage x256, half on a shambler, findradius's order (the last
+  edict first, the player last), CanDamage's lines through the monsters
+  (MOVE_NOMONSTERS: before, a monster's own box hid it from every
+  blast); the grenade exploding on a monster (GrenadeTouch's
+  DAMAGE_AIM); the lightning gun's beam through the monsters to the wall
+  and LightningDamage's three lines (the "sparks" where it hit, not
+  Quake's, gone).
+- **The kinds' own:** the ogre's grenades (40) and chainsaw with its
+  meat; the zombies' flesh (10), their falls, their getting up when
+  there is room, the crucified ones; the scrag's two spikes fired by
+  helper entities 0.8 and 0.3 s after the cast, its strafing; the
+  fiend's and the dog's leaps (their touch); the shambler's claws, smash
+  and lightning (the glow in its hands an entity of its own); Chthon
+  risen by its trigger, its lava balls (leading the player on hard),
+  E1M7's `event_lightning` between the two doors targeted "lightning".
+- **The world for monsters:** a teleporter takes any living creature
+  (it took the player whoever touched it), the telefrag at the arrival
+  (spawn_tdeath), trigger_push and trigger_monsterjump, the forced
+  retouch for every edict, SV_PushMove for every edict (riders carried,
+  a monster in a door's way blocking it: door_blocked's damage).
+- **The model effects** (the MDL's flags, now in the stream's models):
+  the gibs' and heads' blood trails, the zombie flesh's, the scrag's
+  green tracer, the lava ball's fire and light, the backpack turning.
+
+### 39.4 The SPU pool
+
+The map's bank (formats/qsound.h, now `QSB2`) keeps only what the player
+and the weapons need (world.qc's and W_Precache's sounds, the
+environment's): 364 to 388 KB with nothing halved (before: 504 KB with
+26 sounds at half their rate). The rest of SPU RAM (about 130 KB) is the
+pool: a sound handle is the bank's index, or `SND_STREAM` + the streamed
+asset; a streamed sound plays only while its samples are in; a static
+source names its sound by hash, its looping voice keyed on when its
+samples arrive; a sound leaving SPU RAM first stops the voices playing it.
+
+### 39.5 What a crowd costs
+
+The bench's crowd (`MONSTERS=2 SAMPLE=1 MAP=E1M3 scripts/bench.sh`): every
+monster of E1M3 (47) awake and after the player for 600 ticks, the
+entities' tick timed, the PC sampler on, and (bench builds) the traces'
+cost by caller (visible, the walk's, CheckBottom's corners and lines, the
+flyers', the touch passes). First measure: `ents_tick` 830 k cycles a
+tick on average, 5 M at worst. Every change below keeps the results
+(the asm against clip.c, call by call; the scenarios' logs), Quake's
+order included where Quake has one:
+
+- **Quake's area nodes** (SV_CreateAreaNode, SV_LinkEdict, SV_ClipToLinks,
+  SV_TouchLinks; engine/ents.c, clip.h): the world's box halved four
+  times across its longer side, 31 nodes numbered in Quake's walk order;
+  a solid entry, a trigger, linked (appended, as InsertLinkBefore does) in
+  the deepest node its box does not straddle. A trace tries the lists of
+  the nodes its swept box reaches (a stack, children[0] walked first),
+  skipping the subtrees with no entry (two bits a node, kept by counts);
+  the touch passes gather the triggers the same way and touch them after
+  (each one tested again on its turn: a touch spawns, removes and moves
+  edicts). Before, every trace tried the 105 entries and every touch pass
+  the 84 triggers.
+- **SV_CheckBottom from one node** (`clip_box_node0`, clip.h): its four
+  points under the corners and its five lines down all lie in one box
+  under the monster; one walk from the root to the deepest node whose
+  region holds the box (the box's extreme corners against each plane, by
+  the walks' own test; general planes on the GTE), the points and lines
+  from there. The corners: 7.4 k cycles to 1.6 k (and 2.5 k for the box's
+  walk), a line 10 k to 3.3 k.
+- **visible()'s line of sight** (clip_mover's `sight`, clip.h): visible
+  only asks whether the line is clear. Once the world stops it, its
+  impact is left where found (no backing out of residual solid: the
+  fraction stays under 1 either way), and only the entries holding the
+  line's start are tried while it is blocked: SV_ClipToLinks takes a
+  trace that starts inside an entry whatever its fraction, so only such
+  an entry can clear the line again (the whole swept box comes back when
+  one does). The brush models a long line's box reaches were 70 % of its
+  cost: 23.7 k cycles to 8.0 k. The bench checks 4000 random lines a map:
+  the same verdict as the whole trace, the asm as clip.c. (The trace's
+  other results are not Quake's then: no caller reads them after
+  visible, each one traces its own line.)
+- **The backing out of residual solid from a node** (the asm only): the
+  walk from the root, before any split, also notes the first node whose
+  plane the sweep does not clear by more than a sub-unit's step on each
+  axis (`GUARD_M`, above any plane's |n|_1); every endpos (set_endpos
+  rounds within a sub-unit of the sweep) is on the sweep's side of every
+  plane above it, so the contents walk from there meets the root's. A
+  monster's step 4.5 k cycles to 4.2 k.
+- **The player's moves** (the bench's `pmove cost`: settle, run, jump, the
+  wall, back): E1M3 46.1 k cycles a tick to 22.9 k; start 16.5 k to
+  15.3 k (its few entries cost a flat list less than the area walk, the
+  backing out's node more than makes up for it).
+- **Smaller ones**: the swept box from the scratchpad's start and delta,
+  unrolled; a relink in the same node only moves the entry to its list's
+  end; the game code's `memcpy` calls inlined (`-fno-builtin` made each
+  a call); the water transition's contents taken again only when the
+  origin moved; the clip entries' reject loop in registers; the touch
+  boxes in whole units (int16); an alias model's leaf found when it is
+  drawn, not at every link.
+
+The crowd now: `ents_tick` 287 k cycles a tick on average, 1.8 to 2.3 M
+at worst (a tick where most of the 47 think: woken together, they think
+together, as in Quake). Its parts a tick: the visible lines 63 k, the
+steps' traces 60 k, the touch passes 22 k, CheckBottom 27 k and its
+box's walk 19 k, the flyers 11 k.
+
+### 39.6 Checking
+
+- **The physics diffs** (`VIEWS=0 scripts/bench.sh`, `MAP=E1M3` too):
+  clip.s against clip.c on 4000 random sweeps, 3008 sweeps at the box
+  entries (47 monsters on E1M3) as entities too, 4000 contents, 1000
+  CheckBottom boxes (the node asm against C, the points and lines from
+  it against the root's), 4000 lines of sight; pmove.s against pmove.c
+  on 9000 ticks: no mismatch.
+- **The monsters' scenarios** (`MONSTERS=1 MAP=... scripts/bench.sh`):
+  for each kind, a monster with a free spot on its floor in its sight;
+  the player stands there 300 ticks (it sees him, comes, attacks), then
+  shoots it with the shotgun (pictures at each step). E1M1: the soldier
+  and the dog fight and die, their sounds streamed in on the approach.
+  E1M2: soldier, ogre (the player killed with grenades and chainsaw),
+  knight. E1M3: ogre, wizard (its spikes), demon (its leaps, its claws),
+  the zombie getting up (the shotgun never gibs it: Quake's). E1M5 and
+  E1M7: the shambler (its lightning kills the player), the demon, the
+  zombie's flesh. The items bench (`ENTS=1`): every item streamed in and
+  taken (the armours' skins, the weapons, the artifacts, the flames).
+- **The crowd** above, E1M3; E1M1's: 20 monsters, 260 k cycles a tick.
+
+### 39.7 Left
+
+- Chthon in a scenario: the bench wakes it by its `use` (its trigger) on
+  E1M7, with its lava balls and `event_lightning`'s doors not seen yet.
+- The CD-DA's pause and resume around a read on a console (DuckStation
+  headless first): only seen on PCSX-Redux.
+- A crowd thinking together still costs a tick of 2 M cycles: spreading
+  the thinks over the ticks would move them from Quake's times (a choice
+  left open).
+- The touch passes (22 k a tick in the crowd) and the CheckBottom box's
+  walk (19 k) are C and C-shaped asm: candidates for the next pass.

@@ -22,7 +22,9 @@
 #         no pictures, a run several times shorter (the console is slow).
 #         MONSTERS=1 runs the monsters' scenarios (MAP=, default E1M1: a
 #         monster of each kind there woken, fighting, killed; "mon" lines,
-#         dumps m<map>_<kind>_<step>).
+#         dumps m<map>_<kind>_<step>; then the crowd: every monster of the
+#         map awake, the entities' cost a second); MONSTERS=2 the crowd
+#         alone (SAMPLE=1: its PC samples, "samples crowd").
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds
@@ -84,10 +86,11 @@ LOG="$ROOT/build-bench/bench.log" \
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
-[ "$MONSTERS" = 1 ] && grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400
+[ "$MONSTERS" != 0 ] && grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400
+[ "$MONSTERS" = 2 ] && exit 0
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0
 [ "$ENTS" = 1 ] && MAP=E1M1          # (its dumps: e1m1's textures, the first map)
-[ "$MONSTERS" = 1 ] && MAP=${MAP:-E1M1}
+[ "$MONSTERS" != 0 ] && MAP=${MAP:-E1M1}
 
 # Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
 # output can be checked without a screen (the game's dumps need GAME.DAT's

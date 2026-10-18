@@ -21,40 +21,26 @@
 #define SUB   CLIP_SUB
 #define NEVER 0x3fffffff         /* pausetime 99999999: a time never reached */
 
-/* the kinds the port has (engine/m_*.c); the others stand still, drawn */
-extern const mdef_t mdef_army;
+/* the kinds (engine/m_*.c) */
+extern const mdef_t mdef_army, mdef_dog, mdef_ogre, mdef_ogre_marksman, mdef_knight, mdef_zombie, mdef_wizard,
+                    mdef_demon, mdef_shambler, mdef_boss;
 
 static const mdef_t *const KINDS[MK_COUNT] = {
-	[MK_ARMY] = &mdef_army,
-};
-
-/* the kinds without their code yet: drawn standing (their model and box) */
-static const struct {
-	const char *assets[MK_ASSETS];
-	int16_t     mins[3], maxs[3];
-	uint8_t     stand;
-} STATUES[MK_COUNT] = {
-	[MK_DOG]      = { { "progs/dog.mdl", "progs/h_dog.mdl" }, { -32, -32, -24 }, { 32, 32, 40 }, 69 },
-	[MK_OGRE]     = { { "progs/ogre.mdl", "progs/h_ogre.mdl" }, { -32, -32, -24 }, { 32, 32, 64 }, 0 },
-	[MK_KNIGHT]   = { { "progs/knight.mdl", "progs/h_knight.mdl" }, { -16, -16, -24 }, { 16, 16, 40 }, 0 },
-	[MK_ZOMBIE]   = { { "progs/zombie.mdl", "progs/h_zombie.mdl", "progs/zom_gib.mdl" },
-	                  { -16, -16, -24 }, { 16, 16, 40 }, 0 },
-	[MK_WIZARD]   = { { "progs/wizard.mdl", "progs/h_wizard.mdl", "progs/w_spike.mdl" },
-	                  { -16, -16, -24 }, { 16, 16, 40 }, 0 },
-	[MK_DEMON]    = { { "progs/demon.mdl", "progs/h_demon.mdl" }, { -32, -32, -24 }, { 32, 32, 64 }, 0 },
-	[MK_SHAMBLER] = { { "progs/shambler.mdl", "progs/h_shams.mdl", "progs/s_light.mdl", "progs/bolt.mdl" },
-	                  { -32, -32, -24 }, { 32, 32, 64 }, 0 },
-	[MK_BOSS]     = { { "progs/boss.mdl", "progs/lavaball.mdl" }, { -128, -128, -24 }, { 128, 128, 256 }, 0 },
+	[MK_ARMY]     = &mdef_army,
+	[MK_DOG]      = &mdef_dog,
+	[MK_OGRE]     = &mdef_ogre,
+	[MK_KNIGHT]   = &mdef_knight,
+	[MK_ZOMBIE]   = &mdef_zombie,
+	[MK_WIZARD]   = &mdef_wizard,
+	[MK_DEMON]    = &mdef_demon,
+	[MK_SHAMBLER] = &mdef_shambler,
+	[MK_BOSS]     = &mdef_boss,
 };
 
 static int16_t kind_asset[MK_COUNT][MK_ASSETS];   /* the stream's indices, -1 none */
 static int16_t gib_asset[4];                      /* gib1..3, zom_gib              */
 static int16_t backpack_asset;
 
-static const char *kind_asset_name(int k, int i)
-{
-	return KINDS[k] ? KINDS[k]->assets[i] : STATUES[k].assets[i];
-}
 
 void monsters_map_start(void)
 {
@@ -62,16 +48,15 @@ void monsters_map_start(void)
 	                                     "progs/zom_gib.mdl" };
 	for (int k = 0; k < MK_COUNT; k++) {
 		for (int i = 0; i < MK_ASSETS; i++) {
-			const char *n = kind_asset_name(k, i);
+			const char *n = KINDS[k]->assets[i];
 			kind_asset[k][i] = (int16_t) (n ? stream_find(n) : -1);
 		}
-		if (KINDS[k] && KINDS[k]->map_start)
+		if (KINDS[k]->map_start)
 			KINDS[k]->map_start();
-		if (KINDS[k])                     /* (a table's rows miscounted: caught here) */
-			for (int s = 0; s < KINDS[k]->num_states; s++)
-				if (KINDS[k]->states[s].next >= KINDS[k]->num_states ||
-				    (KINDS[k]->states[s].act == A_CUSTOM && !KINDS[k]->custom))
-					printf("monsters: %s state %d is wrong\n", KINDS[k]->classname, s);
+		for (int s = 0; s < KINDS[k]->num_states; s++)   /* (a table's rows miscounted: caught here) */
+			if (KINDS[k]->states[s].next >= KINDS[k]->num_states ||
+			    (KINDS[k]->states[s].act == A_CUSTOM && !KINDS[k]->custom))
+				printf("monsters: %s state %d is wrong\n", KINDS[k]->classname, s);
 	}
 	for (int i = 0; i < 4; i++)
 		gib_asset[i] = (int16_t) stream_find(gibs[i]);
@@ -121,6 +106,8 @@ void monster_state(edict_t *self, int s)
 	case A_BACK:    ai_back(self, st->arg); break;
 	case A_TURN:    ai_turn(self); break;
 	case A_MELEE:   ai_melee(self); break;
+	case A_CHARGESIDE: ai_charge_side(self); break;
+	case A_MELEESIDE:  ai_melee_side(self); break;
 	case A_CUSTOM:  m->custom(self, st->arg); break;
 	default:        break;
 	}
@@ -129,6 +116,14 @@ void monster_state(edict_t *self, int s)
 void monster_think(edict_t *self)
 {
 	monster_state(self, self->mstate);
+}
+
+void monster_think_at(edict_t *self, int s, int ticks)
+{
+	self->mstate    = (uint16_t) s;
+	self->think     = monster_think;
+	self->nextthink = ent_time + ticks;
+	ent_wake(self);
 }
 
 /* -------------------------------------------------------- monsters.qc -- */
@@ -183,6 +178,7 @@ static void walkmonster_start_go(edict_t *self)
 	self->view_ofs_z = 25 * SUB;
 	self->use = monster_use;
 	self->flags |= FL_MONSTER;
+	ent_link(self);                       /* (its clip entry marked a monster's: clip.h) */
 	if (self->target) {
 		self->goalentity = self->movetarget = ent_find(0, self->target);
 		if (self->goalentity) {
@@ -220,6 +216,7 @@ static void flymonster_start_go(edict_t *self)
 	self->use = monster_use;
 	self->flags |= FL_FLY;
 	self->flags |= FL_MONSTER;
+	ent_link(self);                       /* (its clip entry marked a monster's: clip.h) */
 	if (!ai_walkmove(self, 0, 0))
 		printf("flymonster in wall at: %d %d %d\n", (int) self->origin[0] / SUB, (int) self->origin[1] / SUB,
 		       (int) self->origin[2] / SUB);
@@ -260,20 +257,8 @@ void monsters_spawn(edict_t *e, const qw_ent *q)
 	e->ang[1] = (uint16_t) ((e->angle % 360 + 360) % 360 * 65536 / 360);
 	const mdef_t *m = KINDS[k];
 	int32_t mins[3], maxs[3];
-	if (!m) {                             /* (no code yet: it stands, drawn) */
-		e->solid    = SOLID_SLIDEBOX;
-		e->movetype = MOVETYPE_NONE;
-		e->frame    = STATUES[k].stand;
-		e->masset   = k == MK_BOSS ? -1 : kind_asset[k][0];   /* (the boss: no model until it rises) */
-		for (int i = 0; i < 3; i++) {
-			mins[i] = STATUES[k].mins[i] * SUB;
-			maxs[i] = STATUES[k].maxs[i] * SUB;
-		}
-		ent_setsize(e, mins, maxs);
-		e->mdef = 0;
-		ent_total_monsters++;
-		return;
-	}
+	if (e->class == QE_MONSTER_OGRE_MARKSMAN)
+		m = &mdef_ogre_marksman;
 	/* the kind's spawn function's part every monster shares */
 	e->mdef     = m;
 	e->solid    = SOLID_SLIDEBOX;
@@ -287,7 +272,19 @@ void monsters_spawn(edict_t *e, const qw_ent *q)
 	ent_setsize(e, mins, maxs);
 	e->th_pain = m->th_pain;
 	e->th_die  = m->th_die;
+	if (m->spawn && m->spawn(e))
+		return;
 	monster_start(e);
+}
+
+int monster_asset(const edict_t *self, int i)
+{
+	return self->mdef ? kind_asset[self->mdef->kind][i] : -1;
+}
+
+int monsters_kind_asset(int kind, int i)
+{
+	return kind_asset[kind][i];
 }
 
 /* ----------------------------------------------------- gibs, backpack -- */
@@ -308,7 +305,7 @@ void throw_gib(edict_t *self, int gib, int dm)
 	edict_t *n = ent_spawn();
 	if (!n)
 		return;
-	memcpy(n->origin, self->origin, sizeof n->origin);
+	__builtin_memcpy(n->origin, self->origin, sizeof n->origin);
 	n->masset = gib_asset[gib];
 	static const int32_t zero[3] = { 0, 0, 0 };
 	ent_setsize(n, zero, zero);
@@ -322,6 +319,7 @@ void throw_gib(edict_t *self, int gib, int dm)
 	n->nextthink = ent_time + TICKS(1000) + (int32_t) (frand() * TICKS(1000) >> 16);
 	n->frame     = 0;
 	n->flags     = 0;
+	n->trail     = gib < 3 ? TR_BLOOD + 1 : TR_SLIGHT_BLOOD + 1;   /* EF_GIB, EF_ZOMGIB */
 	ent_wake(n);
 }
 
@@ -342,8 +340,35 @@ void throw_head(edict_t *self, int dm)
 	self->flags &= ~FL_ONGROUND;
 	self->avel[0] = self->avel[2] = 0;
 	self->avel[1] = (int16_t) (600 * crand() >> 16);
+	self->trail   = TR_BLOOD + 1;                /* the heads: EF_GIB */
 	ent_link(self);
 	ent_wake(self);
+}
+
+/* weapons.qc SpawnMeatSpray: a bit of flesh thrown from org (zom_gib.mdl,
+   bouncing, gone in a second) */
+void spawn_meat_spray(edict_t *self, const int32_t org[3], const int32_t vel[3])
+{
+	edict_t *n = ent_spawn();
+	if (!n)
+		return;
+	n->owner    = self;
+	n->movetype = MOVETYPE_BOUNCE;
+	n->solid    = SOLID_NOT;
+	for (int k = 0; k < 3; k++)
+		n->velocity[k] = vel[k];
+	n->velocity[2] += 250 + (int32_t) (50 * frand() >> 16);
+	n->avel[0] = 3000;
+	n->avel[1] = 1000;
+	n->avel[2] = 2000;
+	n->nextthink = ent_time + TICKS(100);
+	n->think     = sub_remove;
+	n->masset    = gib_asset[3];
+	n->trail     = TR_SLIGHT_BLOOD + 1;          /* EF_ZOMGIB */
+	static const int32_t zero[3] = { 0, 0, 0 };
+	ent_setsize(n, zero, zero);
+	ent_setorigin(n, org);
+	ent_wake(n);
 }
 
 /* BackpackTouch (1.06): the ammo to the player, its weapon kept */
@@ -379,7 +404,7 @@ void drop_backpack(edict_t *self)
 	edict_t *item = ent_spawn();
 	if (!item)
 		return;
-	memcpy(item->origin, self->origin, sizeof item->origin);
+	__builtin_memcpy(item->origin, self->origin, sizeof item->origin);
 	item->origin[2] -= 24 * SUB;
 	item->ammo_shells  = self->ammo_shells;
 	item->ammo_nails   = self->ammo_nails;
@@ -413,9 +438,18 @@ static uint32_t cheb(const int32_t a[3], const int32_t b[3])
 	return d / SUB;
 }
 
+/* the items the game must always have (the keys and the
+   weapons first, whatever else is in): the keys, the runes, the weapons */
+static int pinned(const edict_t *e)
+{
+	return e->class == QE_ITEM_KEY1 || e->class == QE_ITEM_KEY2 || e->class == QE_ITEM_SIGIL ||
+	       (e->class >= QE_WEAPON_SUPERSHOTGUN && e->class <= QE_WEAPON_LIGHTNING);
+}
+
 /* the kinds' assets at their nearest monster's distance (Chebyshev, world
    units), the gibs with the nearest of all; a streamed model of another
-   edict's (a head, a gib, a pack) at its own */
+   edict's (a head, a gib, a pack, an item) at its own, the keys' and the
+   weapons' always */
 void monsters_stream_wants(void)
 {
 	uint32_t near[MK_COUNT];
@@ -434,13 +468,14 @@ void monsters_stream_wants(void)
 			if (d < near[k])
 				near[k] = d;
 		} else if (e->masset >= 0) {
-			stream_want(e->masset, d);
+			stream_want(e->masset, pinned(e) ? STREAM_PIN : d);
 		}
 	}
 	uint32_t gibs = ~0u;
 	for (int k = 0; k < MK_COUNT; k++) {
 		if (near[k] == ~0u)
 			continue;
+		stream_want_group(kind_asset[k][0], near[k]);   /* its model, head, sounds */
 		for (int i = 0; i < MK_ASSETS; i++)
 			stream_want(kind_asset[k][i], near[k]);
 		if (near[k] < gibs)
@@ -448,25 +483,41 @@ void monsters_stream_wants(void)
 	}
 	for (int i = 0; i < 3; i++)
 		stream_want(gib_asset[i], gibs);
-	if (near[MK_ARMY] != ~0u)
-		stream_want(backpack_asset, near[MK_ARMY]);
 }
+
+#ifdef Q1PSX_BENCH
+int monsters_drawn;
+#endif
 
 void monsters_render(void)
 {
 	uint16_t vis = (uint16_t) r_state.visframe;
+#ifdef Q1PSX_BENCH
+	monsters_drawn = 0;
+#endif
 	for (int i = 0; i < ents_num_streamed; i++) {
 		edict_t *e = &edicts[ents_streamed_list[i]];
 		if (!e->inuse || e->masset < 0)
 			continue;
-		const qw_leaf *leaf = e->leaves[0];
+		const qw_leaf *leaf = ent_model_leaf(e);
 		if (!leaf || leaf->visframe != vis)
 			continue;
 		const qst_model *m = stream_model(e->masset);
 		if (!m || !ent_in_view(e->origin, m->radius))
 			continue;
-		int light = leaf->light + dl_add_at(e->origin, game_tick_count) * 3 / 2;
-		rl_add_model(leaf, rl_model_stream(e->masset, e->frame, e->origin, e->ang[1] >> 4, e->ang[0] >> 4,
-		                                   e->ang[2] >> 4, light));
+#ifdef Q1PSX_BENCH
+		monsters_drawn++;
+#endif
+		/* an item's flame: an animated group, 10 a second, its phase; lit
+		   by itself (fullbright) */
+		int frame = e->frame, flame = !e->mdef && e->cnt && e->class != QE_MISC_TELEPORTTRAIN;
+		if (flame)
+			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
+		int light = (m->flags & QSTM_FLAT) && flame ? 128
+		          : leaf->light + dl_add_at(e->origin, game_tick_count) * 3 / 2;
+		int yaw = QSTM_EF(m->flags) & QSTM_EF_ROTATE ? (game_tick_count % 216) * ANG_TURN / 216   /* 100 a second */
+		                                             : e->ang[1] >> 4;
+		rl_add_model(leaf, rl_model_stream(e->masset, frame, e->origin, yaw, e->ang[0] >> 4, e->ang[2] >> 4,
+		                                   light));
 	}
 }

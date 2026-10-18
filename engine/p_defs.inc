@@ -14,12 +14,21 @@
 .set TR_PLANE_D,    40
 .set TR_SIZE,       44
 
-# ---- clip_bmodel_t (16 B, engine/clip.h) / qw_bmodel (40 B, formats/qworld.h)
+# ---- clip_bmodel_t (48 B, engine/clip.h) / qw_bmodel (40 B, formats/qworld.h)
 .set CB_BM,          0     # the qw_bmodel
 .set CB_ORG,         4     # int32 origin[3], 1/8 units
 .set CB_ABSMIN,     16     # int32[3]: origin + the model's bounds
 .set CB_ABSMAX,     28
-.set CB_SIZE,       40
+.set CB_NEXT,       40     # uint16: its area's next entry, (index + 1) x CB_SIZE, 0 the end
+.set CB_SELF,       45     # uint8: its index + 1
+.set CB_SIZE,       48
+
+# ---- clip_area_t (8 B, engine/clip.h): Quake's area nodes ---------------------
+# its first word: int16 dist (the split, 1/8 units) | flags << 16 (bit 0 the
+# axis y, bit 1 children[0]'s subtree holds entries, bit 2 children[1]'s,
+# bit 7 a leaf) | uint8 children[1] << 24 (children[0]: the next node)
+.set CA_HEAD,        4     # uint16: the list's first entry, as CB_NEXT
+.set CA_SIZE,        8
 .set BM_MINS,        0     # int32[3], 1/8 units, a unit spread
 .set BM_MAXS,       12
 .set BM_ROOT,       24     # hull 0: its render nodes' root (KUSEG pointer)
@@ -54,6 +63,7 @@
 # ---- constants (engine/clip.c) ------------------------------------------------
 .set CLIP_SUB,       8
 .set DIST_EPS,    4096
+.set GUARD_M,     7168     # > |n|_1 of any plane (x4096): a sub-unit's step on each axis
 .set F_ONE,    0x10000     # sweep fractions are 16-bit
 .set Q_FIX_ONE,   4096
 
@@ -125,8 +135,7 @@
 .set PS_WEND,     0x1E0
 .set PS_WTR,      0x1E4
 .set PS_CORERA,   0x1E8     # ct_core's return address
-.set PS_BMI,      0x1EC     # the clip_bmodels entry being tried, and the end
-.set PS_BMEND,    0x1F0
+.set PS_BMI,      0x1EC     # the clip_bmodels entry being tried
 .set PS_BMIDX,    0x250     # its index + 1 (the trace's ent)
 .set PS_DT,       0x254     # pmove_step: the tick's length (CMD_DT), and what
 .set PS_DT4,      0x258     #   the rates take from it: x PM_FRICTION,
@@ -144,11 +153,26 @@
 .set PS_BTRACE,   0x224     # its trace_t (44 B, to 0x250)
 .set PS_MBOX,     0x278     # the mover's box: 6 words, mins[3] then maxs[3] (clip_trace:
                             #   its hull's, ct_hull_box; clip_trace_ent: clip_mover's)
-.set PS_PASS,     0x27C     # the entry it skips: index + 1, 0 none
+.set PS_PASS,     0x27C     # the entry it skips: its address, 0 none
 .set PS_NOMON,    0x280     # MOVE_NOMONSTERS: the boxes left out
-.set PS_FIRST,    0x284     # the first entry tried (1: the player's own trace skips its box)
+.set PS_MBOX2,    0x288     # MOVE_MISSILE's box (else PS_MBOX's): the sweep's bounds, the
+                            #   monsters' boxes grown by it
+.set PS_ASP,      0x2A0     # the area nodes still to walk: the stack's top (an address)
+.set PS_ZERO,     0x2A4     # a zero halfword: an empty list (the walk's start)
+.set PS_ASTK,     0x2A8     # the stack: node indices, 8 words (5 at most) to 0x2C8
+.set PS_ROOT0,    0x2C8     # hull 0: the world's walk from this node (clip_mover's root0), 0 the root
+.set PS_SIGHT,    0x2CC     # a line of sight (clip_mover's sight): no backing out, the
+                            #   entries holding its start while it is blocked
+.set PS_FBMIN,    0x2D0     # the whole swept box[3] (the area walk's; PS_BMIN / PS_BMAX
+.set PS_FBMAX,    0x2DC     #   are the entries' test's: a blocked line's start) to 0x2E8
+.set PS_GNODE,    0x2E8     # the residual-solid backing out's walk: from this node (CT_LOOP)
+.set PS_BOXLO,    0x000     # clip_box_node0's box: mins[3], maxs[3] (over PS_START /
+.set PS_BOXHI,    0x00C     #   PS_DELTA: no trace runs then)
 
 # ---- clip_mover_t (engine/clip.h) ---------------------------------------------
 .set MV_BOX,         0     # int32 mins[3], maxs[3]
 .set MV_PASS,       24
 .set MV_NOMON,      28
+.set MV_MISSILE,    32
+.set MV_ROOT0,      36     # the next hull-0 sweep's start node (one sweep), 0 the root
+.set MV_SIGHT,      40     # the next sweep a line of sight's (one sweep)

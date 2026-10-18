@@ -1,15 +1,19 @@
 /*
- * q1psx — `qcook map --sounds`: the map's sound bank (formats/qsound.h).
+ * q1psx — `qcook map --sounds`: the map's sound bank (formats/qsound.h);
+ * the streamed sounds' encoding (`qcook stream`, formats/qstream.h).
  *
- * The sound set: Quake's always-precached list (world.qc worldspawn,
- * weapons.qc W_Precache, the menu's) with the groups the map cannot use left
- * out, the ambient sounds its entities spawn with (misc.qc ambientsound
- * calls, triggers.qc's teleporter hum), the sounds its entities precache
+ * The bank: Quake's always-precached list (world.qc worldspawn, weapons.qc
+ * W_Precache, the menu's: the player's, the weapons') with the groups the
+ * map cannot use left out, the area ambients the BSP's leaf levels can
+ * raise (snd_dma.c ambient_sfx: water1, wind2), and the map's static
+ * sources (misc.qc ambientsound calls) by their sound's hash. The sounds
+ * with a place in the map are streamed instead: the ambient entities'
+ * (misc.qc, triggers.qc's teleporter hum), the ones the entities precache
  * when they spawn (doors.qc, plats.qc, buttons.qc, triggers.qc, items.qc,
- * misc.qc: by class, `sounds` and worldtype) and the area ambients the
- * BSP's leaf levels can raise (snd_dma.c ambient_sfx: water1, wind2). Each WAV is read
- * as Quake's snd_mem.c GetWavinfo does (8 or 16 bits, mono; the cue point
- * and the LIST "mark" length give the loop) and encoded to SPU ADPCM.
+ * misc.qc: by class, `sounds` and worldtype; sound_streamed lists them),
+ * the monsters' (tools/qcook/stream.c). Each WAV is read as Quake's
+ * snd_mem.c GetWavinfo does (8 or 16 bits, mono; the cue point and the
+ * LIST "mark" length give the loop) and encoded to SPU ADPCM.
  */
 
 #include <ctype.h>
@@ -20,6 +24,7 @@
 
 #include "qcook.h"
 #include "../../formats/qsound.h"
+#include "../../formats/qstream.h"
 
 /* ----------------------------------------------------------------- sets -- */
 
@@ -405,7 +410,7 @@ static void adpcm_encode(const wav_t *w, bytes_t *out, double *snr)
 
 typedef struct {
 	char     name[64];
-	int      group;      /* SG_*, or -1 for an entity's ambient */
+	int      group;      /* SG_*                                */
 	wav_t    wav;
 	int      halved;
 	bytes_t  adpcm;
@@ -465,7 +470,7 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 		if (b->leaves[i].ambient[1]) have[SG_SKY] = 1;
 		if (b->leaves[i].ambient[0]) have[SG_WATER] = 1;
 	}
-	int cd_track = 0, worldtype = 0;
+	int cd_track = 0;
 	qs_static statics[QS_MAX_STATICS];
 	int nstatics = 0;
 	ent_list ents;
@@ -473,16 +478,13 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 	for (int i = 0; i < ents.num; i++) {
 		const ent_rec *e = &ents.ents[i];
 		const char *cls = e->classname;
-		if (!strcmp(cls, "worldspawn")) {
-			cd_track  = (int) ent_float(&ents, e, "sounds", 0);
-			worldtype = (int) ent_float(&ents, e, "worldtype", 0);
-		}
+		if (!strcmp(cls, "worldspawn"))
+			cd_track = (int) ent_float(&ents, e, "sounds", 0);
 	}
 	for (int i = 0; i < ents.num; i++) {
 		const ent_rec *e = &ents.ents[i];
 		const char *cls = e->classname;
 		int spawnflags = (int) ent_float(&ents, e, "spawnflags", 0);
-		int snd        = (int) ent_float(&ents, e, "sounds", 0);
 		double origin[3];
 		int have_origin = ent_vector(&ents, e, "origin", origin);
 		if (!strncmp(cls, "item_", 5) || !strncmp(cls, "weapon_", 7)) have[SG_ITEMS] = 1;
@@ -493,39 +495,17 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			const ambient_spec *a = &AMBIENTS[k];
 			if (strcmp(cls, a->classname)) continue;
 			if (!strcmp(a->classname, "trigger_teleport") && (spawnflags & 1)) continue;   /* SILENT */
-			if (!have_origin) {                    /* a brush entity: no origin; the engine
+			if (!have_origin)                      /* a brush entity: no origin; the engine
 			                                           places its hum at the brush centre */
-				sound_add(a->sound, SG_TELE, pak, pak_len, pak0, pak0_len);
 				continue;
-			}
 			if (nstatics >= QS_MAX_STATICS) die("too many static sounds");
 			qs_static *st = &statics[nstatics++];
+			memset(st, 0, sizeof *st);
 			for (int c = 0; c < 3; c++) st->origin[c] = (int32_t) lround(origin[c]);
-			st->sound  = (uint16_t) sound_add(a->sound, -1, pak, pak_len, pak0, pak0_len);
+			st->hash   = qs_hash(a->sound);    /* (streamed) */
 			st->volume = (uint8_t) lround(a->vol * 255);
 			st->atten  = (uint8_t) lround(a->atten * 64);
 		}
-
-		/* the spawn functions' precaches: the QC's defaults for `sounds` */
-		int sn = snd;
-		if (!strcmp(cls, "func_door_secret") && !sn) sn = 3;
-		if (!strcmp(cls, "func_plat") && !sn) sn = 2;
-		if (!strcmp(cls, "trigger_secret") && !sn) sn = 1;
-		for (size_t k = 0; k < sizeof ENT_SOUNDS / sizeof ENT_SOUNDS[0]; k++) {
-			const ent_sound_spec *sp = &ENT_SOUNDS[k];
-			if (strcmp(cls, sp->classname)) continue;
-			if (sp->sounds != ANY && sp->sounds != sn) continue;
-			if (sp->worldtype != ANY && sp->worldtype != worldtype) continue;
-			const char *name = sp->sound;
-			if (!strcmp(cls, "item_health"))       /* items.qc: rotten, mega, or plain */
-				name = (spawnflags & H_ROTTEN) ? "items/r_item1.wav"
-				     : (spawnflags & H_MEGA) ? "items/r_item2.wav" : "items/health1.wav";
-			sound_add(name, SG_ITEMS, pak, pak_len, pak0, pak0_len);
-		}
-		if (!strcmp(cls, "func_door") && (spawnflags & (DOOR_GOLD_KEY | DOOR_SILVER_KEY)) &&
-		    worldtype >= 0 && worldtype <= 2)
-			for (int k = 0; k < 2; k++)
-				sound_add(KEY_DOOR_SOUNDS[worldtype][k], SG_ITEMS, pak, pak_len, pak0, pak0_len);
 	}
 	ents_free(&ents);
 	for (size_t k = 0; k < sizeof ALWAYS / sizeof ALWAYS[0]; k++)
@@ -609,17 +589,15 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", out_path);
 	fclose(fp);
 
-	int per_group[SG_COUNT] = { 0 }, nambient = 0;
-	for (int i = 0; i < nsounds; i++) {
-		if (sounds[i].group >= 0) per_group[sounds[i].group]++;
-		else nambient++;
-	}
+	int per_group[SG_COUNT] = { 0 };
+	for (int i = 0; i < nsounds; i++)
+		per_group[sounds[i].group]++;
 	printf("qcook: sounds — %d sounds, %zu KB of SPU RAM (%d halved), %d static sounds, CD track %d, worst SNR %.1f dB (%s)\n",
 	       nsounds, data / 1024, halved, nstatics, cd_track, worst_snr, worst);
 	printf("qcook: sounds — core %d", per_group[SG_CORE]);
 	for (int g = 1; g < SG_COUNT; g++)
 		if (per_group[g]) printf(", %s %d", group_name[g], per_group[g]);
-	printf(", ambients %d\n", nambient);
+	printf("\n");
 
 	for (int i = 0; i < nsounds; i++) {
 		free(sounds[i].wav.s);
@@ -627,4 +605,76 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 	}
 	free(dir);
 	free(f.p);
+}
+
+/* ------------------------------------------------------------- streamed -- */
+
+static int in_bank_set(const char *name)
+{
+	for (size_t k = 0; k < sizeof ALWAYS / sizeof ALWAYS[0]; k++)
+		if (!strcmp(ALWAYS[k].name, name))
+			return 1;
+	return 0;
+}
+
+static void list_add(const char **list, int *n, int max, const char *name)
+{
+	if (in_bank_set(name))                       /* a map's bank has it */
+		return;
+	for (int i = 0; i < *n; i++)
+		if (!strcmp(list[i], name))
+			return;
+	if (*n >= max)
+		die("too many streamed sounds");
+	list[(*n)++] = name;
+}
+
+int sound_streamed(const char **list, int max)
+{
+	int n = 0;
+	for (size_t k = 0; k < sizeof AMBIENTS / sizeof AMBIENTS[0]; k++)
+		list_add(list, &n, max, AMBIENTS[k].sound);
+	for (size_t k = 0; k < sizeof ENT_SOUNDS / sizeof ENT_SOUNDS[0]; k++)
+		list_add(list, &n, max, ENT_SOUNDS[k].sound);
+	list_add(list, &n, max, "items/r_item1.wav");    /* item_health's rotten and mega */
+	list_add(list, &n, max, "items/r_item2.wav");
+	for (int w = 0; w < 3; w++)
+		for (int k = 0; k < 2; k++)
+			list_add(list, &n, max, KEY_DOOR_SOUNDS[w][k]);
+	return n;
+}
+
+int sound_is_banked(const char *name)
+{
+	return in_bank_set(name);
+}
+
+int sound_in_paks(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len)
+{
+	char path[80];
+	snprintf(path, sizeof path, "sound/%s", name);
+	uint32_t len;
+	return pak_find(pak, pak_len, path, &len) || (pak0 && pak_find(pak0, pak0_len, path, &len));
+}
+
+void sound_encode_stream(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len,
+                         buf_t *out, uint32_t *ticks_out)
+{
+	nsounds = 0;
+	int i = sound_add(name, SG_CORE, pak, pak_len, pak0, pak0_len);
+	bank_sound *sn = &sounds[i];
+	adpcm_encode(&sn->wav, &sn->adpcm, &sn->snr);
+	qst_sound h;
+	memset(&h, 0, sizeof h);
+	h.pitch = (uint16_t) ((sn->wav.rate * 4096 + 22050) / 44100);
+	h.flags = sn->wav.loopstart >= 0 ? QSF_LOOP : 0;
+	h.ticks = (uint32_t) ((sn->wav.n * 60 + sn->wav.rate - 1) / sn->wav.rate) + 1;
+	h.len   = (uint32_t) sn->adpcm.len;
+	buf_put(out, &h, sizeof h);
+	buf_put(out, sn->adpcm.p, sn->adpcm.len);
+	if (ticks_out)
+		*ticks_out = h.ticks;
+	free(sn->wav.s);
+	free(sn->adpcm.p);
+	nsounds = 0;
 }

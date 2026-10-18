@@ -1,11 +1,13 @@
 /*
  * q1psx — `qcook map`: the map's own models (formats/qgame.h qw_model,
- * QIM_*): the items its entities spawn with (items.qc's setmodel), the
- * torches' flames, the fireballs, the explosive boxes. Alias models go
- * through game.c (their skins reduced, placed among the map's textures:
- * tex_build's extras), the BSP item boxes (maps/b_*.bsp) are cut into
- * records over their own textures (extras too, tiling like the world's).
- * Only what the entities use is cooked.
+ * QIM_*): the BSP item boxes its entities spawn with (items.qc's setmodel:
+ * health, ammo; misc.qc's explosive boxes, maps/b_*.bsp), cut into records
+ * over their own textures (tex_build's extras, tiling like the world's).
+ * Only what the entities use is cooked. The alias models (the weapons,
+ * armour, keys, runes, powerups, the flames, the fireballs) are streamed
+ * by their distance (STREAM.DAT, tools/qcook/stream.c): the alias path
+ * here (their skins among the map's textures, through game.c) stays for
+ * a map that would keep one.
  */
 
 #include <math.h>
@@ -160,6 +162,9 @@ void items_prepare(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8
 	for (int i = 0; i < l.num; i++)
 		need_for(&l, &l.ents[i], worldtype);
 	ents_free(&l);
+	for (int q = 0; q < QIM_COUNT; q++)          /* the alias models: streamed */
+		if (!is_bsp(q))
+			need[q] = 0;
 
 	for (int q = 0; q < QIM_COUNT; q++) {
 		if (!need[q])

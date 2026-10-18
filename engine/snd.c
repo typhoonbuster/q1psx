@@ -11,6 +11,7 @@
 #include "qsound.h"
 #include "render.h"
 #include "snd.h"
+#include "stream.h"
 #include "world.h"
 
 int snd_log;
@@ -34,7 +35,7 @@ static int sfx_tenths = 7;       /* Quake's volume cvar, 0.7: the voices'    */
 #define NEVER 0x7fffffff
 
 typedef struct {
-	int      sfx;                /* bank index, -1 free                      */
+	int      sfx;                /* a sound (snd_find's), -1 free            */
 	int32_t  origin[3];          /* 1/R_POS_SUB units                        */
 	int      entnum, entchannel;
 	int      master_vol;         /* 0..255                                   */
@@ -67,9 +68,11 @@ static int        statics_n;     /* static_t's with a voice                   */
 static int        cd_track;
 static int         named[S_COUNT];          /* S_* -> bank index or -1     */
 
-/* the static voices: one per distinct static sound */
+/* the static voices: one per distinct static sound, keyed on while its
+   samples are in (a streamed sound's come and go) */
 static int static_sfx[NUM_STATIC], static_n;
 static int static_lvol[NUM_STATIC], static_rvol[NUM_STATIC];
+static uint8_t static_on[NUM_STATIC];
 
 /* the ambients */
 static int amb_vol[2];                        /* master_vol x256, fading   */
@@ -145,11 +148,38 @@ void snd_cd_fade(int x256)
 	cd_volume_set();
 }
 
-/* key voice v on with the bank's sound s, `skip` ADPCM blocks in */
-static void voice_start(int v, int s, int left, int right, int skip)
+/* sound s's samples (a bank sound, or a streamed one: SND_STREAM + its
+   asset): their SPU address and header, 0 when they are not in */
+typedef struct { uint32_t addr, len, ticks; uint16_t pitch, flags; } sfx_t;
+
+static int sfx_get(int s, sfx_t *o)
 {
+	if (s >= SND_STREAM) {
+		const stream_sound_t *ss = stream_sound(s - SND_STREAM);
+		if (!ss)
+			return 0;
+		o->addr = ss->spu;
+		o->len = ss->len;
+		o->ticks = ss->ticks;
+		o->pitch = ss->pitch;
+		o->flags = ss->flags;
+		return 1;
+	}
+	if (s < 0 || s >= bank_n)
+		return 0;
 	const qs_sound *q = &bank[s];
-	uint32_t addr = QS_SPU_BASE + q->ofs + (uint32_t) skip * 16;
+	o->addr = QS_SPU_BASE + q->ofs;
+	o->len = q->len;
+	o->ticks = q->ticks;
+	o->pitch = q->pitch;
+	o->flags = q->flags;
+	return 1;
+}
+
+/* key voice v on with sound q, `skip` ADPCM blocks in */
+static void voice_start(int v, const sfx_t *q, int left, int right, int skip)
+{
+	uint32_t addr = q->addr + (uint32_t) skip * 16;
 	SpuSetKey(0, 1u << v);
 	voice_set(v, left, right);
 	SPU_CH_FREQ(v)  = q->pitch;
@@ -200,18 +230,15 @@ int snd_load_bank(const char *map)
 	memcpy(statics, f + h->ofs_statics, statics_n * sizeof *statics);
 	cd_track = (int) h->cd_track;
 	for (int i = 0; i < S_COUNT; i++) {
-		uint32_t hh = qs_hash(names[i]);
-		for (int s = 0; s < bank_n; s++)
-			if (bank[s].hash == hh) {
-				named[i] = s;
-				break;
-			}
+		int s = snd_find(names[i]);
+		named[i] = s >= 0 ? s : -1;
 	}
 	SpuSetKey(0, 0xffffff);
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetTransferStartAddr(QS_SPU_BASE);
 	SpuWrite((const uint32_t *) (f + h->ofs_data), (h->len_data + 63) & ~63u);
 	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
+	stream_spu_pool(QS_SPU_BASE + ((h->len_data + 63) & ~63u), 512 * 1024);   /* the rest: the streamed sounds' */
 	printf("snd: %s — %d sounds, %u KB of SPU RAM, %d static sounds, CD track %d\n",
 	       name, bank_n, (unsigned) h->len_data / 1024, statics_n, cd_track);
 	mem_level_reset();
@@ -223,6 +250,18 @@ int snd_cd_track(void)
 	return cd_track;
 }
 
+/* the sound of that name's hash: the bank's, else a streamed one's */
+static int sound_of_hash(uint32_t h)
+{
+	for (int s = 0; s < bank_n; s++)
+		if (bank[s].hash == h)
+			return s;
+	int a = stream_find_hash(h);
+	if (a >= 0 && stream_is_sound(a))
+		return SND_STREAM + a;
+	return SND_NONE;
+}
+
 void snd_stop_all(void)
 {
 	SpuSetKey(0, 0xffffff);
@@ -230,7 +269,22 @@ void snd_stop_all(void)
 		dyn[i].sfx = -1;
 	for (int v = 0; v < 24; v++)
 		voice_set(v, 0, 0);
+	memset(static_on, 0, sizeof static_on);
 	amb_vol[0] = amb_vol[1] = 0;
+}
+
+void snd_forget(int s)
+{
+	for (int i = 0; i < NUM_DYNAMIC; i++)
+		if (dyn[i].sfx == s) {
+			dyn[i].sfx = -1;
+			SpuSetKey(0, 1u << (V_DYNAMIC + i));
+		}
+	for (int v = 0; v < static_n; v++)
+		if (static_sfx[v] == s && static_on[v]) {
+			static_on[v] = 0;
+			SpuSetKey(0, 1u << (V_STATIC + v));
+		}
 }
 
 /* the static sounds: a looping voice per distinct sound, silent until the
@@ -244,14 +298,16 @@ void snd_map_start(void)
 	int n = 0;
 	for (int i = 0; i < statics_n; i++) {
 		qs_static st = statics[i];
-		int s = st.sound, v;
+		int s = sound_of_hash(st.hash), v;
+		if (s < 0)
+			continue;
 		for (v = 0; v < static_n && static_sfx[v] != s; v++)
 			;
 		if (v == static_n) {
 			if (static_n >= NUM_STATIC)
 				continue;                        /* (no voice left: never heard) */
 			static_sfx[static_n++] = s;
-			voice_start(V_STATIC + v, s, 0, 0, 0);
+			static_on[v] = 0;                    /* (keyed once its samples are in) */
 		}
 		static_t *r = &rt[n++];
 		for (int k = 0; k < 3; k++) {
@@ -266,9 +322,11 @@ void snd_map_start(void)
 	statics_n = n;
 	amb_sfx[0] = named[S_AMB_WATER1];
 	amb_sfx[1] = named[S_AMB_WIND2];
-	for (int a = 0; a < 2; a++)
-		if (amb_sfx[a] >= 0)
-			voice_start(V_AMBIENT + a, amb_sfx[a], 0, 0, 0);
+	for (int a = 0; a < 2; a++) {
+		sfx_t q;
+		if (amb_sfx[a] >= 0 && sfx_get(amb_sfx[a], &q))
+			voice_start(V_AMBIENT + a, &q, 0, 0, 0);
+	}
 }
 
 /* ----------------------------------------------------------- spatialize -- */
@@ -364,11 +422,7 @@ int snd_find(const char *name)
 {
 	if (!strcmp(name, "misc/null.wav"))
 		return SND_NULL;
-	uint32_t h = qs_hash(name);
-	for (int s = 0; s < bank_n; s++)
-		if (bank[s].hash == h)
-			return s;
-	return SND_NONE;
+	return sound_of_hash(qs_hash(name));
 }
 
 void snd_add_static(const int32_t origin[3], int s, int vol, int atten)
@@ -376,9 +430,10 @@ void snd_add_static(const int32_t origin[3], int s, int vol, int atten)
 	if (s < 0 || statics_n >= QS_MAX_STATICS)
 		return;
 	qs_static *st = &statics[statics_n++];
+	memset(st, 0, sizeof *st);
 	for (int k = 0; k < 3; k++)
 		st->origin[k] = origin[k] / R_POS_SUB;
-	st->sound  = (uint16_t) s;
+	st->hash   = s >= SND_STREAM ? stream_hash(s - SND_STREAM) : bank[s].hash;
 	st->volume = (uint8_t) vol;
 	st->atten  = (uint8_t) atten;
 }
@@ -402,8 +457,9 @@ void snd_start_idx(int entnum, int entchannel, int s, const int32_t origin[3], i
 			}
 		return;
 	}
-	if (s < 0 || s >= bank_n)
-		return;
+	sfx_t q;
+	if (!sfx_get(s, &q))
+		return;                                  /* (a streamed sound not in: unheard) */
 	int i = pick_channel(entnum, entchannel);
 	if (i < 0)
 		return;
@@ -424,7 +480,7 @@ void snd_start_idx(int entnum, int entchannel, int s, const int32_t origin[3], i
 	}
 	ch->sfx        = s;
 	ch->start_tick = snd_tick;
-	ch->end        = bank[s].flags & QSF_LOOP ? NEVER : snd_tick + (int) bank[s].ticks;
+	ch->end        = q.flags & QSF_LOOP ? NEVER : snd_tick + (int) q.ticks;
 	/* an identical sound started this frame: offset this one a little so
 	   it does not just make the first one louder */
 	int skip = 0;
@@ -432,16 +488,17 @@ void snd_start_idx(int entnum, int entchannel, int s, const int32_t origin[3], i
 		channel_t *c = &dyn[j];
 		if (c == ch || c->sfx != s || c->start_tick != snd_tick)
 			continue;
-		int rate = bank[s].pitch * 44100 / 4096;
+		int rate = q.pitch * 44100 / 4096;
 		skip = (int) (q_rand() % (uint32_t) (rate / 10)) / 28;
-		if ((uint32_t) skip * 16 >= bank[s].len)
-			skip = (int) (bank[s].len / 16) - 1;
+		if ((uint32_t) skip * 16 >= q.len)
+			skip = (int) (q.len / 16) - 1;
 		break;
 	}
-	voice_start(V_DYNAMIC + i, s, ch->leftvol, ch->rightvol, skip);
+	voice_start(V_DYNAMIC + i, &q, ch->leftvol, ch->rightvol, skip);
 	if (snd_log)
 		printf("snd e%d c%d %08x v%d a%d L%d R%d ch%d k%d\n", entnum, entchannel,
-		       (unsigned) bank[s].hash, vol, atten, ch->leftvol, ch->rightvol, i, skip);
+		       (unsigned) (s >= SND_STREAM ? stream_hash(s - SND_STREAM) : bank[s].hash), vol, atten,
+		       ch->leftvol, ch->rightvol, i, skip);
 }
 
 /* ---------------------------------------------------------------- update -- */
@@ -532,6 +589,39 @@ void snd_update(const int32_t origin[3], int yaw, int pitch, int roll, int ticks
 	for (int v = 0; v < static_n; v++) {
 		int l = static_lvol[v] > 255 ? 255 : static_lvol[v];
 		int r = static_rvol[v] > 255 ? 255 : static_rvol[v];
+		if (!static_on[v]) {                     /* its samples in now: keyed on */
+			sfx_t q;
+			if ((!l && !r) || !sfx_get(static_sfx[v], &q))
+				continue;
+			voice_start(V_STATIC + v, &q, l, r, 0);
+			static_on[v] = 1;
+			continue;
+		}
 		voice_set(V_STATIC + v, l, r);
+	}
+}
+
+/* the residency pass's (engine/stream.c): the static sources' streamed
+   sounds, by their distance from the listener (Chebyshev, world units)
+   over their reach as a full one's (ATTN_STATIC's 333 units weigh as
+   ATTN_NORM's 1000) */
+void snd_stream_wants(void)
+{
+	const static_t *st = (const static_t *) statics;
+	for (int i = 0; i < statics_n; i++, st++) {
+		int s = static_sfx[st->voice];
+		if (s < SND_STREAM)
+			continue;
+		uint32_t d = 0;
+		for (int k = 0; k < 3; k++) {
+			int32_t v = st->origin[k] - stream_origin[k];
+			uint32_t x = (uint32_t) (v < 0 ? -v : v);
+			if (x > d) d = x;
+		}
+		if (st->reach != 0xffff)
+			d = d * NOMINAL_CLIP_DIST / st->reach;   /* (both 1/R_POS_SUB units) */
+		else
+			d /= R_POS_SUB;
+		stream_want(s - SND_STREAM, d);
 	}
 }

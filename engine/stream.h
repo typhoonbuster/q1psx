@@ -1,15 +1,17 @@
 /*
  * q1psx — the streamed assets (formats/qstream.h, docs/porting-notes.md
- * §38): what a map loads only when the player comes near what uses it.
+ * §39): what a map loads only when the player comes near what uses it.
  *
- * Three pools, each a cache of the one above it:
+ * Four pools, each a cache of the one above it:
  *   the disc     STREAM.DAT, every asset a sector apart;
  *   RAM          what the level arena leaves once the map is in (bump
  *                allocation, compacted when a block no longer fits);
  *   VRAM         a model's skin images, in what the map's textures and the
- *                game's pictures leave of the texture pages.
- * An asset is resident (usable) once it is in RAM and its images are in
- * VRAM; it leaves both at once.
+ *                game's pictures leave of the texture pages;
+ *   SPU RAM      a sound's samples, past the map's bank (engine/snd.c).
+ * A model is resident (usable) once it is in RAM and its images are in
+ * VRAM; it leaves both at once. A sound passes through RAM: resident once
+ * its samples are in SPU RAM.
  *
  * Who needs what: every residency pass (a few frames apart) the game says
  * which assets its entities use and how much (stream_want: a score, the
@@ -38,13 +40,16 @@
 #define STREAM_REACH  2500u         /* world units: a model wanted from farther
                                        is not loaded (nor kept against a nearer
                                        one)                                   */
+#define STREAM_SOUND_REACH 1500u    /* a sound's (a full sound is heard to 1000) */
 
 /* boot, after cd_init and gdata_load: STREAM.DAT's directory */
 void stream_init(void);
 
-/* an asset's index from its pak name ("progs/soldier.mdl"), -1 if the disc
-   has none */
+/* an asset's index from its pak name ("progs/soldier.mdl") or its qs_hash,
+   -1 if the disc has none; an asset's hash */
 int  stream_find(const char *name);
+int  stream_find_hash(uint32_t hash);
+uint32_t stream_hash(int a);
 
 /* a map is about to load (the level arena reset, the drive taken): a read
    in flight stopped, every asset out */
@@ -75,6 +80,24 @@ void stream_preload(void);
    or NULL when it is not resident */
 const qst_model *stream_model(int a);
 const qw_tex    *stream_model_tex(int a);
+
+/* a resident sound: its samples' place in SPU RAM and its header (the
+   bank's qs_sound's fields), or NULL when it is not resident */
+typedef struct {
+	uint32_t spu;            /* SPU RAM address, bytes                       */
+	uint32_t len;            /* ADPCM bytes                                  */
+	uint16_t pitch, flags;   /* formats/qsound.h qs_sound's                  */
+	uint32_t ticks;
+} stream_sound_t;
+const stream_sound_t *stream_sound(int a);
+int  stream_is_sound(int a);
+
+/* the SPU pool's bounds (bytes), engine/snd.c's once a map's bank is in */
+void stream_spu_pool(uint32_t lo, uint32_t hi);
+
+/* demand for every asset of a's group (a monster's model, head, sounds:
+   the cook's groups) */
+void stream_want_group(int a, uint32_t score);
 
 /* the bench and the overlay: how full the pools are, what was read */
 typedef struct {

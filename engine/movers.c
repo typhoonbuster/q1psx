@@ -98,6 +98,11 @@ static void door_go_down(edict_t *self)
 	sub_calc_move(self, self->pos1, self->speed, door_hit_bottom);
 }
 
+void movers_door_go_down(edict_t *self)
+{
+	door_go_down(self);
+}
+
 static void door_go_up(edict_t *self)
 {
 	if (self->state == STATE_UP)
@@ -241,8 +246,8 @@ static void link_doors(edict_t *self)
 		return;
 	}
 	int32_t cmins[3], cmaxs[3];
-	memcpy(cmins, self->mins, sizeof cmins);
-	memcpy(cmaxs, self->maxs, sizeof cmaxs);
+	__builtin_memcpy(cmins, self->mins, sizeof cmins);
+	__builtin_memcpy(cmaxs, self->maxs, sizeof cmaxs);
 	edict_t *starte = self, *t = self;
 	for (;;) {
 		self->owner = starte;                     /* master door */
@@ -304,13 +309,13 @@ static void func_door(edict_t *self)
 	if (!self->wait)  self->wait = 300;
 	if (!self->lip)   self->lip = 8;
 	if (!self->dmg)   self->dmg = 2;
-	memcpy(self->pos1, self->origin, sizeof self->pos1);
+	__builtin_memcpy(self->pos1, self->origin, sizeof self->pos1);
 	travel_end(self);
 	/* DOOR_START_OPEN: lit closed, spawned open, working the other way */
 	if (self->spawnflags & DOOR_START_OPEN) {
 		ent_setorigin(self, self->pos2);
-		memcpy(self->pos2, self->pos1, sizeof self->pos2);
-		memcpy(self->pos1, self->origin, sizeof self->pos1);
+		__builtin_memcpy(self->pos2, self->pos1, sizeof self->pos2);
+		__builtin_memcpy(self->pos1, self->origin, sizeof self->pos1);
 	}
 	self->state = STATE_BOTTOM;
 	if (self->health) {
@@ -498,7 +503,7 @@ static void func_door_secret(edict_t *self)
 		self->th_pain    = fd_secret_use;
 		self->th_die     = fd_secret_use;
 	}
-	memcpy(self->oldorigin, self->origin, sizeof self->oldorigin);
+	__builtin_memcpy(self->oldorigin, self->origin, sizeof self->oldorigin);
 	if (!self->wait)
 		self->wait = 500;                         /* 5 seconds before closing */
 }
@@ -625,8 +630,8 @@ static void func_plat(edict_t *self)
 	if (!self->speed)
 		self->speed = 150;
 	/* pos1 is the top position, pos2 the bottom */
-	memcpy(self->pos1, self->origin, sizeof self->pos1);
-	memcpy(self->pos2, self->origin, sizeof self->pos2);
+	__builtin_memcpy(self->pos1, self->origin, sizeof self->pos1);
+	__builtin_memcpy(self->pos2, self->origin, sizeof self->pos2);
 	if (self->height)
 		self->pos2[2] = self->origin[2] - self->height * CLIP_SUB;
 	else
@@ -738,8 +743,8 @@ static void func_train(edict_t *self, int teleporttrain)
 		                                                 avelocity turns nothing under SV_PushMove */
 		static const int32_t box[3] = { -16 * CLIP_SUB, -16 * CLIP_SUB, -16 * CLIP_SUB };
 		static const int32_t box2[3] = { 16 * CLIP_SUB, 16 * CLIP_SUB, 16 * CLIP_SUB };
-		self->item_model = world.model_of[QIM_TELEPORT];
 		ent_setsize(self, box, box2);
+		ent_set_qim(self, QIM_TELEPORT);
 	}
 	/* trains start on the second frame: their targets must have spawned */
 	self->nextthink = self->ltime + TICKS(10);
@@ -836,7 +841,7 @@ static void func_button(edict_t *self)
 	if (!self->wait)  self->wait = 100;
 	if (!self->lip)   self->lip = 4;
 	self->state = STATE_BOTTOM;
-	memcpy(self->pos1, self->origin, sizeof self->pos1);
+	__builtin_memcpy(self->pos1, self->origin, sizeof self->pos1);
 	travel_end(self);
 }
 

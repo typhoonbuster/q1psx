@@ -15,6 +15,7 @@
 #include "game.h"
 #include "level.h"
 #include "monsters.h"
+#include "prof.h"
 #include "q_fixed.h"
 #include "render.h"
 #include "snd.h"
@@ -29,9 +30,12 @@ int      ai_trace_inopen, ai_trace_inwater;
 int32_t  ai_trace_endpos[3];
 edict_t *ai_trace_ent;
 int16_t  ai_trace_normal[3];
+int32_t  ai_v_forward[3], ai_v_right[3], ai_v_up[3];
 
 #define SUB      CLIP_SUB
 #define STEPSIZE (18 * SUB)
+/* (the small copies below as the compiler's own: -fno-builtin would make
+   each a call) */
 #define NEVER    0x3fffffff         /* pausetime 99999999 (a time never reached) */
 
 /* -------------------------------------------------------------- numbers -- */
@@ -114,6 +118,9 @@ void ai_makevectors(const uint16_t ang[3], int32_t f[3], int32_t r[3], int32_t u
 	u[0] = ((cr * sp >> 12) * cy >> 12) + (sr * sy >> 12);
 	u[1] = ((cr * sp >> 12) * sy >> 12) - (sr * cy >> 12);
 	u[2] = cr * cp >> 12;
+	__builtin_memcpy(ai_v_forward, f, sizeof ai_v_forward);
+	__builtin_memcpy(ai_v_right, r, sizeof ai_v_right);
+	__builtin_memcpy(ai_v_up, u, sizeof ai_v_up);
 }
 
 int ai_vlen(const int32_t v[3])
@@ -141,36 +148,82 @@ static int hull_of(const edict_t *e)
 
 /* SV_Move for entity e (its box, itself out of the traces: its clip entry,
    or a missile's owner's) */
+#ifdef Q1PSX_BENCH
+uint32_t ai_traces;                       /* the bench's count of the monsters' traces */
+uint32_t ai_tr_n[AI_TR_TAGS], ai_tr_cyc[AI_TR_TAGS];   /* by caller: count, cycles */
+int      ai_tr_tag;
+#define TR_TAG(t) (ai_tr_tag = (t))
+#else
+#define TR_TAG(t) ((void) 0)
+#endif
+
 static q_fixed ent_trace(edict_t *e, const int32_t start[3], const int32_t end[3], int nomonsters,
                          trace_t *tr)
 {
+#ifdef Q1PSX_BENCH
+	ai_traces++;
+#endif
 	for (int k = 0; k < 3; k++) {
 		clip_mover.box[k]     = e->mins[k];
 		clip_mover.box[k + 3] = e->maxs[k];
 	}
 	clip_mover.pass       = e->clip ? e->clip : e->owner ? e->owner->clip : 0;
 	clip_mover.nomonsters = nomonsters;
+	clip_mover.missile    = e->movetype == MOVETYPE_FLYMISSILE;
+	clip_mover.root0      = 0;
+#ifdef Q1PSX_BENCH
+	uint32_t t0 = prof_now();
+	q_fixed f = clip_trace_ent(hull_of(e), start, end, tr);
+	ai_tr_cyc[ai_tr_tag] += prof_cycles(t0, prof_now());
+	ai_tr_n[ai_tr_tag]++;
+	ai_tr_tag = 0;
+	return f;
+#else
 	return clip_trace_ent(hull_of(e), start, end, tr);
+#endif
 }
 
-q_fixed ai_traceline(const int32_t a[3], const int32_t b[3], int nomonsters, edict_t *pass)
+/* traceline, the world walked from `root0` (clip_box_node0's node of a
+   box holding the line, 0 the root); `sight`: only whether it is clear
+   matters (clip.h: visible's) */
+static q_fixed traceline(uint32_t root0, int sight, const int32_t a[3], const int32_t b[3], int nomonsters,
+                         edict_t *pass)
 {
 	trace_t tr;
-	memset(clip_mover.box, 0, sizeof clip_mover.box);
+#ifdef Q1PSX_BENCH
+	ai_traces++;
+#endif
+	__builtin_memset(clip_mover.box, 0, sizeof clip_mover.box);
 	clip_mover.pass       = pass ? pass->clip : 0;
 	clip_mover.nomonsters = nomonsters;
+	clip_mover.missile    = 0;
+	clip_mover.root0      = root0;
+	clip_mover.sight      = sight;
+#ifdef Q1PSX_BENCH
+	uint32_t t0 = prof_now();
 	clip_trace_ent(0, a, b, &tr);
+	ai_tr_cyc[ai_tr_tag] += prof_cycles(t0, prof_now());
+	ai_tr_n[ai_tr_tag]++;
+	ai_tr_tag = 0;
+#else
+	clip_trace_ent(0, a, b, &tr);
+#endif
 	ai_trace_inopen  = tr.inopen;
 	ai_trace_inwater = tr.inwater;
-	memcpy(ai_trace_endpos, tr.endpos, sizeof ai_trace_endpos);
-	memcpy(ai_trace_normal, tr.plane_n, sizeof ai_trace_normal);
+	__builtin_memcpy(ai_trace_endpos, tr.endpos, sizeof ai_trace_endpos);
+	__builtin_memcpy(ai_trace_normal, tr.plane_n, sizeof ai_trace_normal);
 	ai_trace_ent = tr.fraction < Q_FIX_ONE ? (ent_from_trace(&tr) ? ent_from_trace(&tr) : ent_world) : 0;
 	return tr.fraction;
 }
 
+q_fixed ai_traceline(const int32_t a[3], const int32_t b[3], int nomonsters, edict_t *pass)
+{
+	return traceline(0, 0, a, b, nomonsters, pass);
+}
+
 void ai_view_org(const edict_t *e, int32_t out[3])
 {
-	memcpy(out, e->origin, 3 * sizeof *out);
+	__builtin_memcpy(out, e->origin, 3 * sizeof *out);
 	out[2] += e == ent_player ? pl.viewheight : e->view_ofs_z;
 }
 
@@ -189,9 +242,12 @@ static int leaf_index(const qw_leaf *l)
 static uint8_t check_pvs[1024];
 static int32_t check_time = -1000;
 static int     check_ok;
+static int16_t s_h2ohit1, s_dland2;   /* the physics' sounds */
 
 void ai_map_start(void)
 {
+	s_h2ohit1  = (int16_t) snd_find("misc/h2ohit1.wav");
+	s_dland2   = (int16_t) snd_find("demon/dland2.wav");
 	check_time = -1000;
 	check_ok = 0;
 	ai_sight_entity = 0;
@@ -254,7 +310,9 @@ edict_t *ai_checkclient(edict_t *self)
 /* ------------------------------------------------------------ sv_move.c -- */
 
 /* SV_CheckBottom: false if a part of the box's bottom is off an edge that
-   is not a staircase */
+   is not a staircase. Its points and lines down all lie in the box under
+   the bottom: walked from that box's node (clip.h), not each from the
+   root. */
 int ai_check_bottom(edict_t *ent)
 {
 	int32_t mins[3], maxs[3], start[3], stop[3];
@@ -262,15 +320,30 @@ int ai_check_bottom(edict_t *ent)
 		mins[k] = ent->origin[k] + ent->mins[k];
 		maxs[k] = ent->origin[k] + ent->maxs[k];
 	}
+	int32_t blo[3] = { mins[0], mins[1], mins[2] - 2 * STEPSIZE };
+	int32_t bhi[3] = { maxs[0], maxs[1], mins[2] };
+	uint32_t node = clip_box_node0(blo, bhi);
 	/* every point under the corners solid world: done */
 	start[2] = mins[2] - SUB;
+#ifdef Q1PSX_BENCH
+	uint32_t t0 = prof_now();
+#endif
 	for (int x = 0; x <= 1; x++)
 		for (int y = 0; y <= 1; y++) {
 			start[0] = x ? maxs[0] : mins[0];
 			start[1] = y ? maxs[1] : mins[1];
-			if (clip_contents(0, start) != QW_CONTENTS_SOLID)
+			if (clip_contents_node0(node, start) != QW_CONTENTS_SOLID) {
+#ifdef Q1PSX_BENCH
+				ai_tr_cyc[AI_TR_CORNERS] += prof_cycles(t0, prof_now());
+				ai_tr_n[AI_TR_CORNERS]++;
+#endif
 				goto realcheck;
+			}
 		}
+#ifdef Q1PSX_BENCH
+	ai_tr_cyc[AI_TR_CORNERS] += prof_cycles(t0, prof_now());
+	ai_tr_n[AI_TR_CORNERS]++;
+#endif
 	return 1;
 realcheck:
 	/* the midpoint must be within 16 of the bottom */
@@ -278,7 +351,8 @@ realcheck:
 	start[0] = stop[0] = (mins[0] + maxs[0]) / 2;
 	start[1] = stop[1] = (mins[1] + maxs[1]) / 2;
 	stop[2] = start[2] - 2 * STEPSIZE;
-	if (ai_traceline(start, stop, 1, ent) >= Q_FIX_ONE)
+	TR_TAG(AI_TR_BOTTOM);
+	if (traceline(node, 0, start, stop, 1, ent) >= Q_FIX_ONE)
 		return 0;
 	int32_t mid, bottom;
 	mid = bottom = ai_trace_endpos[2];
@@ -287,7 +361,8 @@ realcheck:
 		for (int y = 0; y <= 1; y++) {
 			start[0] = stop[0] = x ? maxs[0] : mins[0];
 			start[1] = stop[1] = y ? maxs[1] : mins[1];
-			q_fixed f = ai_traceline(start, stop, 1, ent);
+			TR_TAG(AI_TR_BOTTOM);
+			q_fixed f = traceline(node, 0, start, stop, 1, ent);
 			if (f < Q_FIX_ONE && ai_trace_endpos[2] > bottom)
 				bottom = ai_trace_endpos[2];
 			if (f >= Q_FIX_ONE || mid - ai_trace_endpos[2] > STEPSIZE)
@@ -308,7 +383,7 @@ static int movestep(edict_t *ent, const int32_t move[3], int relink)
 {
 	int32_t oldorg[3], neworg[3], end[3];
 	trace_t tr;
-	memcpy(oldorg, ent->origin, sizeof oldorg);
+	__builtin_memcpy(oldorg, ent->origin, sizeof oldorg);
 	for (int k = 0; k < 3; k++)
 		neworg[k] = ent->origin[k] + move[k];
 
@@ -324,11 +399,12 @@ static int movestep(edict_t *ent, const int32_t move[3], int relink)
 				if (dz > 40 * SUB) neworg[2] -= 8 * SUB;
 				if (dz < 30 * SUB) neworg[2] += 8 * SUB;
 			}
+			TR_TAG(AI_TR_FLY);
 			ent_trace(ent, ent->origin, neworg, 0, &tr);
 			if (tr.fraction >= Q_FIX_ONE) {
 				if ((ent->flags & FL_SWIM) && clip_contents(0, tr.endpos) == QW_CONTENTS_EMPTY)
 					return 0;            /* swim monster left water */
-				memcpy(ent->origin, tr.endpos, sizeof ent->origin);
+				__builtin_memcpy(ent->origin, tr.endpos, sizeof ent->origin);
 				if (relink)
 					link_touch(ent);
 				return 1;
@@ -341,13 +417,15 @@ static int movestep(edict_t *ent, const int32_t move[3], int relink)
 
 	/* push down from a step height above the wished position */
 	neworg[2] += STEPSIZE;
-	memcpy(end, neworg, sizeof end);
+	__builtin_memcpy(end, neworg, sizeof end);
 	end[2] -= 2 * STEPSIZE;
+	TR_TAG(AI_TR_WALK);
 	ent_trace(ent, neworg, end, 0, &tr);
 	if (tr.allsolid)
 		return 0;
 	if (tr.startsolid) {
 		neworg[2] -= STEPSIZE;
+		TR_TAG(AI_TR_WALK);
 		ent_trace(ent, neworg, end, 0, &tr);
 		if (tr.allsolid || tr.startsolid)
 			return 0;
@@ -365,7 +443,7 @@ static int movestep(edict_t *ent, const int32_t move[3], int relink)
 		return 0;                         /* walked off an edge */
 	}
 	/* check point traces down for dangling corners */
-	memcpy(ent->origin, tr.endpos, sizeof ent->origin);
+	__builtin_memcpy(ent->origin, tr.endpos, sizeof ent->origin);
 	if (!ai_check_bottom(ent)) {
 		if (ent->flags & FL_PARTIALGROUND) {
 			/* the floor mostly pulled out from under it, it is trying to
@@ -374,12 +452,14 @@ static int movestep(edict_t *ent, const int32_t move[3], int relink)
 				link_touch(ent);
 			return 1;
 		}
-		memcpy(ent->origin, oldorg, sizeof ent->origin);
+		__builtin_memcpy(ent->origin, oldorg, sizeof ent->origin);
 		return 0;
 	}
 	if (ent->flags & FL_PARTIALGROUND)
 		ent->flags &= ~FL_PARTIALGROUND;
-	/* (groundentity: not kept) */
+	ent->groundentity = ent_from_trace(&tr);
+	if (!ent->groundentity)
+		ent->groundentity = ent_world;
 	if (relink)
 		link_touch(ent);
 	return 1;
@@ -433,12 +513,12 @@ static int step_direction(edict_t *ent, int yaw, int dist)
 	ai_changeyaw(ent);
 	int32_t move[3], oldorigin[3];
 	yaw_move(yaw, dist, move);
-	memcpy(oldorigin, ent->origin, sizeof oldorigin);
+	__builtin_memcpy(oldorigin, ent->origin, sizeof oldorigin);
 	if (movestep(ent, move, 0)) {
 		/* delta = angles[YAW] - ideal_yaw, as Quake's floats compare it */
 		int32_t delta = (int32_t) ent->ang[1] * 360 - (int32_t) ent->ideal_yaw * 65536;
 		if (delta > 45 * 65536 && delta < 315 * 65536)
-			memcpy(ent->origin, oldorigin, sizeof ent->origin);   /* not turned far enough */
+			__builtin_memcpy(ent->origin, oldorigin, sizeof ent->origin);   /* not turned far enough */
 		link_touch(ent);
 		return 1;
 	}
@@ -546,14 +626,15 @@ int ai_droptofloor(edict_t *ent)
 {
 	int32_t end[3];
 	trace_t tr;
-	memcpy(end, ent->origin, sizeof end);
+	__builtin_memcpy(end, ent->origin, sizeof end);
 	end[2] -= 256 * SUB;
 	ent_trace(ent, ent->origin, end, 0, &tr);
 	if (tr.fraction >= Q_FIX_ONE || tr.allsolid)
 		return 0;
-	memcpy(ent->origin, tr.endpos, sizeof ent->origin);
+	__builtin_memcpy(ent->origin, tr.endpos, sizeof ent->origin);
 	ent_link(ent);
 	ent->flags |= FL_ONGROUND;
+	ent->groundentity = ent_from_trace(&tr) ? ent_from_trace(&tr) : ent_world;
 	return 1;
 }
 
@@ -567,20 +648,24 @@ int ai_range(edict_t *self, edict_t *targ)
 	ai_view_org(targ, b);
 	for (int k = 0; k < 3; k++)
 		d[k] = a[k] - b[k];
-	int r = ai_vlen(d);
-	if (r < 120) return RANGE_MELEE;
-	if (r < 500) return RANGE_NEAR;
-	if (r < 1000) return RANGE_MID;
+	int64_t r = ai_vlen2(d);
+	if (r < AI_UNITS2(120)) return RANGE_MELEE;
+	if (r < AI_UNITS2(500)) return RANGE_NEAR;
+	if (r < AI_UNITS2(1000)) return RANGE_MID;
 	return RANGE_FAR;
 }
 
-/* visible: seen even from behind (other monsters seen through) */
+/* visible: seen even from behind (other monsters seen through). The line
+   only asks whether it is clear: clip.h's line of sight (the trace's
+   other results are not Quake's then; no caller reads them after it,
+   each one traces its own line) */
 int ai_visible(edict_t *self, edict_t *targ)
 {
 	int32_t a[3], b[3];
 	ai_view_org(self, a);
 	ai_view_org(targ, b);
-	q_fixed f = ai_traceline(a, b, 1, self);
+	TR_TAG(AI_TR_VISIBLE);
+	q_fixed f = traceline(0, 1, a, b, 1, self);
 	if (ai_trace_inopen && ai_trace_inwater)
 		return 0;                         /* sight line crossed contents */
 	return f >= Q_FIX_ONE;
@@ -846,6 +931,7 @@ int ai_check_attack(edict_t *self)
 	int32_t spot1[3], spot2[3];
 	ai_view_org(self, spot1);
 	ai_view_org(targ, spot2);
+	TR_TAG(AI_TR_ATTACK);
 	ai_traceline(spot1, spot2, 0, self);
 	if (ai_trace_ent != targ)
 		return 0;                         /* don't have a clear shot */
@@ -925,7 +1011,7 @@ void ai_melee(edict_t *self)
 	int32_t d[3];
 	for (int k = 0; k < 3; k++)
 		d[k] = self->enemy->origin[k] - self->origin[k];
-	if (ai_vlen(d) > 60)
+	if (ai_vlen2(d) > AI_UNITS2(60))
 		return;
 	ent_damage_x256(self->enemy, self, self, melee_damage());
 }
@@ -938,38 +1024,49 @@ void ai_melee_side(edict_t *self)
 	int32_t d[3];
 	for (int k = 0; k < 3; k++)
 		d[k] = self->enemy->origin[k] - self->origin[k];
-	if (ai_vlen(d) > 60)
+	if (ai_vlen2(d) > AI_UNITS2(60))
 		return;
 	if (!ai_can_damage(self->enemy, self))
 		return;
 	ent_damage_x256(self->enemy, self, self, melee_damage());
 }
 
-/* combat.qc CanDamage: a clear line to the target (a pusher: to its box's
-   centre), or to one of four points around it */
-int ai_can_damage(edict_t *targ, edict_t *inflictor)
+/* combat.qc CanDamage: a clear line (MOVE_NOMONSTERS) from the inflictor
+   to the target (a pusher: to its box's centre), or to one of four points
+   around it */
+int ai_can_damage_at(edict_t *targ, const int32_t org[3], edict_t *pass)
 {
 	if (targ->movetype == MOVETYPE_PUSH) {
 		int32_t c[3];
 		for (int k = 0; k < 3; k++)
 			c[k] = (targ->absmin[k] + targ->absmax[k]) / 2;
-		q_fixed f = ai_traceline(inflictor->origin, c, 1, inflictor);
+		q_fixed f = ai_traceline(org, c, 1, pass);
 		return f >= Q_FIX_ONE || ai_trace_ent == targ;
 	}
 	static const int8_t off[5][2] = { { 0, 0 }, { 15, 15 }, { -15, -15 }, { -15, 15 }, { 15, -15 } };
 	for (int i = 0; i < 5; i++) {
 		int32_t p[3] = { targ->origin[0] + off[i][0] * SUB, targ->origin[1] + off[i][1] * SUB, targ->origin[2] };
-		if (ai_traceline(inflictor->origin, p, 1, inflictor) >= Q_FIX_ONE)
+		if (ai_traceline(org, p, 1, pass) >= Q_FIX_ONE)
 			return 1;
 	}
 	return 0;
 }
 
+int ai_can_damage(edict_t *targ, edict_t *inflictor)
+{
+	return ai_can_damage_at(targ, inflictor->origin, inflictor);
+}
+
 /* -------------------------------------------------------------- physics -- */
 
-/* SV_CheckWaterTransition */
+/* SV_CheckWaterTransition (the world's contents at a place do not change:
+   a monster still where it was last checked has nothing to cross) */
 static void check_water_transition(edict_t *ent)
 {
+	if (ent->watertype && ent->origin[0] == ent->water_at[0] && ent->origin[1] == ent->water_at[1] &&
+	    ent->origin[2] == ent->water_at[2])
+		return;
+	__builtin_memcpy(ent->water_at, ent->origin, sizeof ent->water_at);
 	int cont = clip_contents(0, ent->origin);
 	if (!ent->watertype) {                /* just spawned here */
 		ent->watertype  = (int8_t) cont;
@@ -978,12 +1075,12 @@ static void check_water_transition(edict_t *ent)
 	}
 	if (cont <= QW_CONTENTS_WATER) {
 		if (ent->watertype == QW_CONTENTS_EMPTY)   /* just crossed into water */
-			ent_sound(ent, CHAN_AUTO, snd_find("misc/h2ohit1.wav"), 255, ATTN_NORM);
+			ent_sound(ent, CHAN_AUTO, s_h2ohit1, 255, ATTN_NORM);
 		ent->watertype  = (int8_t) cont;
 		ent->waterlevel = 1;
 	} else {
 		if (ent->watertype != QW_CONTENTS_EMPTY)   /* just crossed out of water */
-			ent_sound(ent, CHAN_AUTO, snd_find("misc/h2ohit1.wav"), 255, ATTN_NORM);
+			ent_sound(ent, CHAN_AUTO, s_h2ohit1, 255, ATTN_NORM);
 		ent->watertype  = QW_CONTENTS_EMPTY;
 		ent->waterlevel = (uint8_t) cont;          /* (Quake's: the contents) */
 	}
@@ -1037,8 +1134,8 @@ static int fly_move(edict_t *ent)
 {
 	int32_t primal[3], original[3], planes[5][3], end[3];
 	int numplanes = 0, blocked = 0;
-	memcpy(original, ent->velocity, sizeof original);
-	memcpy(primal, ent->velocity, sizeof primal);
+	__builtin_memcpy(original, ent->velocity, sizeof original);
+	__builtin_memcpy(primal, ent->velocity, sizeof primal);
 	int32_t time_left = Q_FIX_ONE;        /* of the tick */
 	int32_t acc[3] = { 0, 0, 0 };
 	for (int bump = 0; bump < 4; bump++) {
@@ -1051,12 +1148,12 @@ static int fly_move(edict_t *ent)
 		trace_t tr;
 		ent_trace(ent, ent->origin, end, 0, &tr);
 		if (tr.allsolid) {                /* trapped in another solid */
-			memset(ent->velocity, 0, sizeof ent->velocity);
+			__builtin_memset(ent->velocity, 0, sizeof ent->velocity);
 			return 3;
 		}
 		if (tr.fraction > 0) {            /* actually covered some distance */
-			memcpy(ent->origin, tr.endpos, sizeof ent->origin);
-			memcpy(original, ent->velocity, sizeof original);
+			__builtin_memcpy(ent->origin, tr.endpos, sizeof ent->origin);
+			__builtin_memcpy(original, ent->velocity, sizeof original);
 			numplanes = 0;
 		}
 		if (tr.fraction >= Q_FIX_ONE)
@@ -1064,8 +1161,10 @@ static int fly_move(edict_t *ent)
 		edict_t *hit = ent_from_trace(&tr);
 		if (tr.plane_n[2] > 2867) {       /* 0.7: floor */
 			blocked |= 1;
-			if (!hit || hit->solid == SOLID_BSP)
+			if (!hit || hit->solid == SOLID_BSP) {
 				ent->flags |= FL_ONGROUND;
+				ent->groundentity = hit ? hit : ent_world;
+			}
 		}
 		if (!tr.plane_n[2])
 			blocked |= 2;                 /* step */
@@ -1074,7 +1173,7 @@ static int fly_move(edict_t *ent)
 			break;                        /* removed by the impact function */
 		time_left -= (int32_t) ((int64_t) time_left * tr.fraction >> 12);
 		if (numplanes >= 5) {             /* this shouldn't really happen */
-			memset(ent->velocity, 0, sizeof ent->velocity);
+			__builtin_memset(ent->velocity, 0, sizeof ent->velocity);
 			return 3;
 		}
 		for (int k = 0; k < 3; k++)
@@ -1094,10 +1193,10 @@ static int fly_move(edict_t *ent)
 				break;
 		}
 		if (i != numplanes) {             /* go along this plane */
-			memcpy(ent->velocity, nv, sizeof nv);
+			__builtin_memcpy(ent->velocity, nv, sizeof nv);
 		} else {                          /* go along the crease */
 			if (numplanes != 2) {
-				memset(ent->velocity, 0, sizeof ent->velocity);
+				__builtin_memset(ent->velocity, 0, sizeof ent->velocity);
 				return 7;
 			}
 			int32_t dir[3] = {
@@ -1113,7 +1212,7 @@ static int fly_move(edict_t *ent)
 		   tiny occilations in sloping corners */
 		if ((int64_t) ent->velocity[0] * primal[0] + (int64_t) ent->velocity[1] * primal[1] +
 		    (int64_t) ent->velocity[2] * primal[2] <= 0) {
-			memset(ent->velocity, 0, sizeof ent->velocity);
+			__builtin_memset(ent->velocity, 0, sizeof ent->velocity);
 			return blocked;
 		}
 	}
@@ -1157,22 +1256,31 @@ void ai_physics_step(edict_t *ent)
 		fly_move(ent);
 		link_touch(ent);
 		if ((ent->flags & FL_ONGROUND) && hitsound)   /* just hit ground */
-			ent_sound(ent, CHAN_AUTO, snd_find("demon/dland2.wav"), 255, ATTN_NORM);
+			ent_sound(ent, CHAN_AUTO, s_dland2, 255, ATTN_NORM);
 	}
 	run_think(ent);                       /* regular thinking */
 	if (ent->inuse)
 		check_water_transition(ent);
 }
 
+/* SV_TestEntityPosition: the box stuck where it is (in the world, a brush
+   model, a box) */
+int ai_test_position(edict_t *ent)
+{
+	trace_t tr;
+	ent_trace(ent, ent->origin, ent->origin, 0, &tr);
+	return tr.startsolid;
+}
+
 /* SV_PushEntity: moved by `push` (1/8 units), stopped by what it hits
    (only the brush models for a trigger or a non-solid), touched */
-static void push_entity(edict_t *ent, const int32_t push[3], trace_t *tr)
+void ai_push_entity(edict_t *ent, const int32_t push[3], trace_t *tr)
 {
 	int32_t end[3];
 	for (int k = 0; k < 3; k++)
 		end[k] = ent->origin[k] + push[k];
 	ent_trace(ent, ent->origin, end, ent->solid == SOLID_TRIGGER || ent->solid == SOLID_NOT, tr);
-	memcpy(ent->origin, tr->endpos, sizeof ent->origin);
+	__builtin_memcpy(ent->origin, tr->endpos, sizeof ent->origin);
 	link_touch(ent);
 	if (tr->fraction < Q_FIX_ONE && ent->inuse) {
 		edict_t *hit = ent_from_trace(tr);
@@ -1198,15 +1306,18 @@ void ai_physics_toss(edict_t *ent)
 	for (int k = 0; k < 3; k++)
 		move[k] = (int32_t) ((int64_t) ent->velocity[k] * SUB * game_dt / GAME_HZ);
 	trace_t tr;
-	push_entity(ent, move, &tr);
+	ai_push_entity(ent, move, &tr);
+	if (ent->trail && ent->inuse)             /* (the client's: its model's trail) */
+		game_trail(ent->origin, ent->trail - 1, ent->velocity);
 	if (tr.fraction >= Q_FIX_ONE || !ent->inuse)
 		return;
 	clip_velocity(ent->velocity, tr.plane_n, ent->velocity, ent->movetype == MOVETYPE_BOUNCE ? 3 : 2);
 	/* stop if on ground */
 	if (tr.plane_n[2] > 2867 && (ent->velocity[2] < 60 || ent->movetype != MOVETYPE_BOUNCE)) {
 		ent->flags |= FL_ONGROUND;
-		memset(ent->velocity, 0, sizeof ent->velocity);
-		memset(ent->avel, 0, sizeof ent->avel);
+		ent->groundentity = ent_from_trace(&tr) ? ent_from_trace(&tr) : ent_world;
+		__builtin_memset(ent->velocity, 0, sizeof ent->velocity);
+		__builtin_memset(ent->avel, 0, sizeof ent->avel);
 	}
 	check_water_transition(ent);          /* check for in water */
 }

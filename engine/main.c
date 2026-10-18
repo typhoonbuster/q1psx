@@ -775,7 +775,11 @@ static void player_spawn(void)
 	player.yaw    = world.spawn_yaw * ANG_TURN / 360;
 }
 q_fixed clip_trace_c(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
+q_fixed clip_trace_ent_c(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
 int     clip_contents_c(int hull, const int32_t p[3]);
+uint32_t clip_box_node0_c(const int32_t mins[3], const int32_t maxs[3]);
+int     clip_contents_node0_c(uint32_t node, const int32_t p[3]);
+extern clip_mover_t clip_mover_c;
 void    pmove_step_c(pmove_t *pm, const pmove_cmd_t *cmd);
 
 static uint32_t rng_state = 1;
@@ -857,10 +861,10 @@ static void bench_clip_diff(void)
 	}
 	/* the box entries (SOLID_BBOX entities: SV_HullForBox), aimed at: sweeps
 	   from around each box through its centre and past it, every hull */
-	int boxes = 0, box_hits = 0;
+	int boxes = 0, box_hits = 0, ent_hits = 0;
 	for (int b = 0; b < clip_num_bmodels; b++) {
 		const clip_bmodel_t *cb = &clip_bmodels[b];
-		if (cb->bm || cb->absmin[0] > cb->absmax[0])
+		if ((uintptr_t) cb->bm > 1 || cb->absmin[0] > cb->absmax[0])
 			continue;
 		boxes++;
 		for (int i = 0; i < 64; i++) {
@@ -879,10 +883,37 @@ static void bench_clip_diff(void)
 				printf("clipdiff MISMATCH box %d hull %d: asm f %d end %d %d %d ent %d / c f %d end %d %d %d ent %d\n",
 				       b, hull, (int) ta.fraction, (int) ta.endpos[0], (int) ta.endpos[1], (int) ta.endpos[2],
 				       ta.ent, (int) tc.fraction, (int) tc.endpos[0], (int) tc.endpos[1], (int) tc.endpos[2], tc.ent);
+			/* clip_trace_ent: a point missile (MOVE_MISSILE, the box a
+			   monster's or not), or a mover of the hull's size skipping
+			   one entry */
+			const qw_bmodel *was = cb->bm;
+			clip_bmodels[b].bm = (i & 4) ? CLIP_BM_MONSTER : 0;
+			memset(&clip_mover, 0, sizeof clip_mover);
+			if (i & 8) {
+				clip_mover.missile = 1;
+				hull = 0;
+			} else {
+				static const int16_t hb[3] = { 0, 16, 32 };
+				for (int k = 0; k < 3; k++) {
+					clip_mover.box[k]     = -hb[hull] * CLIP_SUB;
+					clip_mover.box[k + 3] = hb[hull] * CLIP_SUB;
+				}
+				clip_mover.pass = i & 16 ? b + 1 : 1;
+			}
+			clip_mover.nomonsters = (i & 7) == 7;
+			memcpy(&clip_mover_c, &clip_mover, sizeof clip_mover);
+			clip_trace_ent(hull, s, e, &ta);
+			clip_trace_ent_c(hull, s, e, &tc);
+			ent_hits += tc.ent == b + 1;
+			clip_bmodels[b].bm = was;
+			if (memcmp(&ta, &tc, sizeof ta) && bad++ < 8)
+				printf("clipdiff MISMATCH ent box %d hull %d missile %d monster %d pass %d: asm f %d ent %d / "
+				       "c f %d ent %d\n", b, hull, (int) clip_mover.missile, (i & 4) != 0, (int) clip_mover.pass,
+				       (int) ta.fraction, ta.ent, (int) tc.fraction, tc.ent);
 		}
 	}
-	printf("clipdiff boxes %d: %d sweeps, %d hit the box, mismatches so far %d\n", boxes, boxes * 64,
-	       box_hits, bad);
+	printf("clipdiff boxes %d: %d sweeps, %d hit the box (%d as entities), mismatches so far %d\n", boxes,
+	       boxes * 64, box_hits, ent_hits, bad);
 	int cbad = 0;
 	for (int i = 0; i < N; i++) {
 		int32_t p[3];
@@ -894,6 +925,122 @@ static void bench_clip_diff(void)
 	printf("clipdiff traces %d (%d hit, %d start in solid) mismatches %d; contents %d mismatches %d; "
 	       "cycles/trace asm %u c %u\n", N, hits, solid, bad, N, cbad,
 	       (unsigned) (cyc_asm / N), (unsigned) (cyc_c / N));
+
+	/* the hull-0 box nodes (clip_box_node0): asm against C, then the walks
+	   from the node against the root's, as SV_CheckBottom has them: the
+	   corners' points under a monster-sized box, the lines down from its
+	   corners and its middle, around random open points */
+	int nbad = 0, wbad = 0, below = 0;
+	uint32_t cyc_root = 0, cyc_node = 0;
+	uint32_t root = (uint32_t) (uintptr_t) world.root & 0x00ffffffu;
+	for (int i = 0; i < N / 4; i++) {
+		int32_t c[3], lo[3], hi[3];
+		rng_point(c, 1);
+		int32_t half = (i & 1) ? 16 * CLIP_SUB : 32 * CLIP_SUB;
+		for (int k = 0; k < 2; k++) {
+			lo[k] = c[k] - half;
+			hi[k] = c[k] + half;
+		}
+		hi[2] = c[2] - 24 * CLIP_SUB + rng_pm(4);
+		lo[2] = hi[2] - 36 * CLIP_SUB;
+		uint32_t t0 = prof_now();
+		uint32_t na = clip_box_node0(lo, hi);
+		uint32_t tw = prof_now();
+		uint32_t nc = clip_box_node0_c(lo, hi);
+		if (na != nc) {
+			if (nbad++ < 4)
+				printf("clipdiff MISMATCH box node %d: asm %08x c %08x\n", i, (unsigned) na, (unsigned) nc);
+			continue;
+		}
+		below += na != root;
+		int32_t p[3];
+		uint32_t t1 = prof_now();
+		for (int q = 0; q < 4; q++) {             /* the corners: from the root */
+			p[0] = q & 1 ? hi[0] : lo[0];
+			p[1] = q & 2 ? hi[1] : lo[1];
+			p[2] = hi[2] - CLIP_SUB;
+			(void) clip_contents(0, p);
+		}
+		uint32_t t2 = prof_now();
+		for (int q = 0; q < 4; q++) {             /* from the node (its walk counted) */
+			p[0] = q & 1 ? hi[0] : lo[0];
+			p[1] = q & 2 ? hi[1] : lo[1];
+			p[2] = hi[2] - CLIP_SUB;
+			(void) clip_contents_node0(na, p);
+		}
+		uint32_t t3 = prof_now();
+		cyc_root += prof_cycles(t1, t2);
+		cyc_node += prof_cycles(t0, tw) + prof_cycles(t2, t3);
+		for (int q = 0; q < 5; q++) {
+			p[0] = q == 4 ? (lo[0] + hi[0]) / 2 : q & 1 ? hi[0] : lo[0];
+			p[1] = q == 4 ? (lo[1] + hi[1]) / 2 : q & 2 ? hi[1] : lo[1];
+			p[2] = hi[2] - CLIP_SUB;
+			int ca = clip_contents_node0(na, p), cc = clip_contents_node0_c(nc, p), cr = clip_contents(0, p);
+			if (ca != cr || cc != cr) {
+				if (wbad++ < 4)
+					printf("clipdiff MISMATCH node contents %d: root %d node asm %d c %d\n", i, cr, ca, cc);
+			}
+			int32_t a[3] = { p[0], p[1], hi[2] }, b[3] = { p[0], p[1], lo[2] };
+			trace_t tr, ta, tc;
+			memset(&clip_mover, 0, sizeof clip_mover);
+			clip_mover.nomonsters = 1;
+			clip_trace_ent(0, a, b, &tr);          /* from the root */
+			clip_mover.root0 = na;
+			memcpy(&clip_mover_c, &clip_mover, sizeof clip_mover);
+			clip_trace_ent(0, a, b, &ta);
+			clip_trace_ent_c(0, a, b, &tc);
+			if (memcmp(&ta, &tr, sizeof ta) || memcmp(&tc, &tr, sizeof tc)) {
+				if (wbad++ < 4)
+					printf("clipdiff MISMATCH node trace %d: root f %d end %d, node asm f %d end %d, c f %d end %d\n",
+					       i, (int) tr.fraction, (int) tr.endpos[2], (int) ta.fraction, (int) ta.endpos[2],
+					       (int) tc.fraction, (int) tc.endpos[2]);
+			}
+		}
+	}
+	/* lines of sight (clip_mover's sight): asm against C, and the verdict
+	   (clear: fraction 1, not crossing contents) against a whole trace's,
+	   between random points (half of them open), near and map-crossing */
+	int sbad = 0, vbad = 0, clear = 0;
+	uint32_t cyc_full = 0, cyc_sight = 0;
+	for (int i = 0; i < N; i++) {
+		int32_t s[3], e[3];
+		rng_point(s, 1);
+		if (i & 1) {
+			rng_point(e, !(i & 2));
+		} else {
+			for (int k = 0; k < 3; k++)
+				e[k] = s[k] + rng_pm(256 * CLIP_SUB);
+		}
+		trace_t tf, ta, tc;
+		memset(&clip_mover, 0, sizeof clip_mover);
+		clip_mover.nomonsters = 1;
+		uint32_t t0 = prof_now();
+		clip_trace_ent(0, s, e, &tf);
+		uint32_t t1 = prof_now();
+		clip_mover.sight = 1;
+		memcpy(&clip_mover_c, &clip_mover, sizeof clip_mover);
+		uint32_t t2 = prof_now();
+		clip_trace_ent(0, s, e, &ta);
+		uint32_t t3 = prof_now();
+		clip_trace_ent_c(0, s, e, &tc);
+		cyc_full  += prof_cycles(t0, t1);
+		cyc_sight += prof_cycles(t2, t3);
+		if (memcmp(&ta, &tc, sizeof ta) && sbad++ < 4)
+			printf("clipdiff MISMATCH sight %d: asm f %d ent %d, c f %d ent %d\n", i, (int) ta.fraction, ta.ent,
+			       (int) tc.fraction, tc.ent);
+		int vf = tf.fraction >= Q_FIX_ONE && !(tf.inopen && tf.inwater);
+		int va = ta.fraction >= Q_FIX_ONE && !(ta.inopen && ta.inwater);
+		clear += vf;
+		if (vf != va && vbad++ < 4)
+			printf("clipdiff MISMATCH sight verdict %d: whole f %d op %d wa %d, sight f %d op %d wa %d\n", i,
+			       (int) tf.fraction, tf.inopen, tf.inwater, (int) ta.fraction, ta.inopen, ta.inwater);
+	}
+	printf("clipdiff lines of sight %d (%d clear): asm/c mismatches %d, verdicts %d; cycles whole %u sight %u\n",
+	       N, clear, sbad, vbad, (unsigned) (cyc_full / N), (unsigned) (cyc_sight / N));
+
+	printf("clipdiff box nodes %d: %d below the root, mismatches %d, walks from them %d; "
+	       "4 corners: root %u cycles, node %u (its walk too)\n", N / 4, below, nbad, wbad,
+	       (unsigned) (cyc_root / (N / 4)), (unsigned) (cyc_node / (N / 4)));
 }
 
 /* pmove.s (on clip.s) against pmove.c (on clip.c): a random walk with
@@ -1144,6 +1291,7 @@ static void ents_dump(const char *name)
 	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 	for (int i = 0; i < 2; i++)
 		run_frame(0, 0);
+	printf("mon dump %s: %d streamed models drawn\n", name, monsters_drawn);
 	printf("D %s\n", name);
 	run_frame(0, BENCH_DUMP);
 }
@@ -1183,7 +1331,7 @@ static int ents_free_spot(const edict_t *e, const int32_t mn[3], const int32_t m
 	return 0;
 }
 static int touch_button(const edict_t *e)    { return e->touch != 0 && !e->health; }
-static int drawn_item(const edict_t *e)      { return e->item_model >= 0 && e->touch != 0; }
+static int drawn_item(const edict_t *e)      { return (e->item_model >= 0 || e->masset >= 0) && e->touch != 0; }
 
 /* the items: the first of each kind seen from beside it, then walked onto
    with a new game's kit (what it gives, what it says); a quad's 30 s */
@@ -1207,7 +1355,7 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 		                                  kinds[i] <= QE_LIGHT_FLAME_SMALL_WHITE ? 0 : drawn_item);
 		if (!e && kinds[i] >= QE_MISC_EXPLOBOX)
 			e = ents_first(kinds[i], 0);
-		if (!e || e->item_model < 0)
+		if (!e || (e->item_model < 0 && e->masset < 0))
 			continue;
 		int32_t c[3], mn[3], mx[3];
 		ent_centre(e, c);
@@ -1215,8 +1363,8 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 			mn[k] = c[k] - 400 * CLIP_SUB;
 			mx[k] = c[k] + 400 * CLIP_SUB;
 		}
-		printf("item %s class %d at %d %d %d model %d\n", world_string(e->classname), e->class,
-		       (int) e->origin[0] / 8, (int) e->origin[1] / 8, (int) e->origin[2] / 8, e->item_model);
+		printf("item %s class %d at %d %d %d model %d streamed %d\n", world_string(e->classname), e->class,
+		       (int) e->origin[0] / 8, (int) e->origin[1] / 8, (int) e->origin[2] / 8, e->item_model, e->masset);
 		if (ents_free_spot(e, mn, mx)) {
 			ents_look_at(c);
 			snprintf(name, sizeof name, "i%s_%d", map, e->class);
@@ -1227,7 +1375,7 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 		ents_place(e->absmin, e->absmax, 0);
 		ents_ticks(3, cmd);
 		printf("item taken %d: health %d armor %d/%d items %08x ammo %d %d %d %d weapon %d\n",
-		       e->item_model < 0, pl.health, pl.armor, pl.armortype, (unsigned) pl.items,
+		       !e->inuse || (e->item_model < 0 && e->masset < 0), pl.health, pl.armor, pl.armortype, (unsigned) pl.items,
 		       pl.ammo[0], pl.ammo[1], pl.ammo[2], pl.ammo[3], pl.weapon);
 	}
 	/* a quad: the tint, the face; its warning at 27 s, gone at 30 */
@@ -1751,12 +1899,20 @@ static void bench_game(void)
    death, its backpack); dumps on the way */
 static void mon_log(const char *what, const edict_t *e)
 {
+	if (game_ents_ticks) {                        /* the entities' cost since the last line */
+		printf("mon cost: ents_tick avg %u max %u cycles, %u traces a tick (%u ticks)\n",
+		       (unsigned) (game_ents_cycles / game_ents_ticks), (unsigned) game_ents_max,
+		       (unsigned) (ai_traces / game_ents_ticks), (unsigned) game_ents_ticks);
+		game_ents_cycles = game_ents_max = game_ents_ticks = 0;
+		ai_traces = 0;
+	}
 	printf("mon %s t %d state %d frame %d pos %d %d %d yaw %d ideal %d health %d enemy %d as %d "
-	       "flags %x | player health %d armor %d | stream %d/%d in, %u reads, %u halved\n", what,
+	       "flags %x | player health %d armor %d at %d %d %d | stream %d/%d in, %u reads, %u halved\n", what,
 	       (int) ent_time, e->mstate, e->frame, (int) e->origin[0] / CLIP_SUB, (int) e->origin[1] / CLIP_SUB,
 	       (int) e->origin[2] / CLIP_SUB, e->ang[1] * 360 / 65536, e->ideal_yaw, e->health,
 	       e->enemy ? (int) (e->enemy - edicts) : -1, e->attack_state, (unsigned) e->flags, pl.health,
-	       pl.armor, stream_stats.resident, stream_stats.wanted, (unsigned) stream_stats.reads,
+	       pl.armor, (int) pl.pm.pos[0] / CLIP_SUB, (int) pl.pm.pos[1] / CLIP_SUB, (int) pl.pm.pos[2] / CLIP_SUB,
+	       stream_stats.resident, stream_stats.wanted, (unsigned) stream_stats.reads,
 	       (unsigned) stream_stats.halved);
 }
 
@@ -1770,15 +1926,17 @@ static void bench_monsters(void)
 	}
 	map_index = m;
 	stream_log = 1;
+	snd_log = 1;
 	game_active = 1;
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
 	cmd.weapon_group = -1;
 	game_spawn();
 	ents_ticks(60, &cmd);                         /* the monsters' delayed starts */
-	for (int k = 0; k < MK_COUNT; k++) {
-		/* a monster of the kind with a free spot in its sight: 300 .. 100
-		   units off, its facing first, then around it */
+	for (int k = 0; k < (Q1PSX_BENCH_MONSTERS == 2 ? 0 : MK_COUNT); k++) {   /* (2: the crowd only) */
+		/* a monster of the kind with a free spot in its sight: 450 .. 100
+		   units off (its ranged attack's reach first), its facing first,
+		   then around it */
 		edict_t *e = 0;
 		int32_t spot[3];
 		trace_t tr;
@@ -1786,15 +1944,25 @@ static void bench_monsters(void)
 			edict_t *c = &edicts[i];
 			if (!c->inuse || !c->mdef || c->mdef->kind != k || c->health <= 0)
 				continue;
-			static const int turns[8] = { 0, 45, -45, 90, -90, 135, -135, 180 };
-			for (int a = 0; a < 8 && !e; a++)
-				for (int d = 300; d >= 100 && !e; d -= 25) {
+			static const int turns[16] = { 0, 45, -45, 90, -90, 135, -135, 180,
+			                               22, -22, 67, -67, 112, -112, 157, -157 };
+			for (int a = 0; a < 16 && !e; a++)          /* (the second eight: farther, for */
+				for (int d = a < 8 ? 450 : 1000; d >= 100 && !e; d -= 25) {   /* Chthon's lava) */
 					int yaw = (c->ang[1] >> 4) + turns[a] * ANG_TURN / 360;
 					spot[0] = c->origin[0] + d * CLIP_SUB * r_cos(yaw) / 4096;
 					spot[1] = c->origin[1] + d * CLIP_SUB * r_sin(yaw) / 4096;
 					spot[2] = c->origin[2];
 					clip_trace(1, spot, spot, &tr);
 					if (tr.startsolid || tr.allsolid)
+						continue;
+					/* standing on a floor (no fall), out of the liquids */
+					int32_t down[3] = { spot[0], spot[1], spot[2] - 64 * CLIP_SUB };
+					clip_trace(1, spot, down, &tr);
+					if (tr.startsolid || tr.fraction >= Q_FIX_ONE)
+						continue;
+					memcpy(spot, tr.endpos, sizeof spot);
+					int32_t feet[3] = { spot[0], spot[1], spot[2] - 23 * CLIP_SUB };
+					if (clip_contents(0, feet) != QW_CONTENTS_EMPTY)
 						continue;
 					int32_t ea[3] = { spot[0], spot[1], spot[2] + 22 * CLIP_SUB }, eb[3];
 					ai_view_org(c, eb);
@@ -1811,6 +1979,10 @@ static void bench_monsters(void)
 		pl.health = 100;
 		pl.dead = 0;
 		ents_look_at(e->origin);
+		if (e->use && e->solid == SOLID_NOT) {    /* the boss: its trigger's use, it rises */
+			ent_activator = ent_player;
+			e->use(e);
+		}
 		char name[32];
 		snprintf(name, sizeof name, "m%s_%d_a", mapname, k);
 		mon_log("start", e);
@@ -1858,8 +2030,60 @@ static void bench_monsters(void)
 		mon_log("dead", e);
 		snprintf(name, sizeof name, "m%s_%d_c", mapname, k);
 		ents_look_at(e->origin);
+		{                                         /* down at the body */
+			int32_t dz = pl.pm.pos[2] + pl.viewheight - e->origin[2] + 16 * CLIP_SUB;
+			int32_t dx = e->origin[0] - pl.pm.pos[0], dy = e->origin[1] - pl.pm.pos[1];
+			pl.pm.pitch = r_atan2(dz, (int32_t) q_isqrt64((uint64_t) ((int64_t) dx * dx + (int64_t) dy * dy)));
+		}
 		ents_dump(name);
+		pl.pm.pitch = 0;
 	}
+	/* the crowd: every monster of the map awake and after the player (who
+	   cannot die), the entities' cost a second */
+	int awake = 0;
+	for (int i = 2; i < num_edicts; i++) {
+		edict_t *c = &edicts[i];
+		if (!c->inuse || !c->mdef || c->health <= 0 || c->takedamage == DAMAGE_NO)
+			continue;
+		c->enemy = ent_player;
+		ai_found_target(c);
+		awake++;
+	}
+	printf("mon crowd: %d monsters awake\n", awake);
+	ents_area_stats();
+	game_ents_cycles = game_ents_max = game_ents_ticks = 0;
+	ai_traces = 0;
+	memset(ai_tr_n, 0, sizeof ai_tr_n);
+	memset(ai_tr_cyc, 0, sizeof ai_tr_cyc);
+	prof_sample_start();
+	for (int t = 0; t < 600; t++) {
+		pl.health = 100;
+		pl.dead = 0;
+		game_tick(&cmd);
+		if (t % 60 == 59) {
+			int alive = 0;
+			for (int i = 2; i < num_edicts; i++)
+				alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+			printf("mon crowd t %d: %d alive, ents_tick avg %u max %u cycles, %u traces a tick\n", t + 1, alive,
+			       (unsigned) (game_ents_cycles / game_ents_ticks), (unsigned) game_ents_max,
+			       (unsigned) (ai_traces / game_ents_ticks));
+			static const char *const tag[AI_TR_TAGS] = { "trigtests", "visible", "attack", "bottom", "walk",
+			                                              "fly", "corners", "touch" };
+			printf("mon crowd costs:");
+			for (int g = 0; g < AI_TR_TAGS; g++) {   /* a tick's: count x average = cycles */
+				printf(" %s %u.%u x %u = %u", tag[g], (unsigned) (ai_tr_n[g] / game_ents_ticks),
+				       (unsigned) (ai_tr_n[g] * 10 / game_ents_ticks % 10),
+				       (unsigned) (ai_tr_n[g] ? ai_tr_cyc[g] / ai_tr_n[g] : 0),
+				       (unsigned) (ai_tr_cyc[g] / game_ents_ticks));
+				ai_tr_n[g] = ai_tr_cyc[g] = 0;
+			}
+			printf(" | %d clip entries, %d touch\n", clip_num_bmodels, ents_num_touch());
+			game_ents_cycles = game_ents_max = game_ents_ticks = 0;
+			ai_traces = 0;
+		}
+	}
+	prof_sample_stop();
+	prof_sample_print("crowd");
 }
 
 static void run_bench(void)

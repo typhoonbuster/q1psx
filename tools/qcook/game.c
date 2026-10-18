@@ -1554,7 +1554,7 @@ void qc_mdl_cook_compact(qc_mdl *q, buf_t *out)
 	h.num_frames  = (uint16_t) m->nframes;
 	h.num_verts   = (uint16_t) m->nverts;
 	h.num_records = (uint16_t) nrec;
-	h.flags       = (uint16_t) (ms->sp->flat ? QSTM_FLAT : 0);
+	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (m->flags & 0xff) << 8);
 	h.ofs_frames  = sizeof h;
 	h.ofs_records = h.ofs_frames + (uint32_t) m->nframes * (uint32_t) m->nverts * 4;
 	h.len_records = (uint32_t) recs.len;

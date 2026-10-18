@@ -1,6 +1,6 @@
 /*
  * q1psx — the streamed assets "QST1": every resource a map loads only when
- * the player comes near what uses it (docs/porting-notes.md §38). Written
+ * the player comes near what uses it (docs/porting-notes.md §39). Written
  * by `qcook stream`, one file on the disc (STREAM.DAT) for every map;
  * engine/stream.c reads its directory once at boot, then each asset on
  * demand, straight from the disc into its RAM pool, while the game runs.
@@ -17,6 +17,12 @@
  * its frames, its records, its skin. The skin goes to the VRAM pool when
  * the asset arrives (the records' UVs are patched with its place there)
  * and its pixels are dropped from RAM.
+ *
+ * A sound asset (QSTK_SOUND: a sound with a place in the map, a monster's,
+ * a door's, an item's, an ambient entity's) goes into the SPU pool (SPU RAM
+ * past the map's bank, formats/qsound.h), at its full rate, through a small
+ * staging buffer a few sectors at a time: its 64-byte header keeps every
+ * piece's samples a multiple of 64 bytes (the SPU's DMA unit).
  *
  * Models: the compact format. A frame is Quake's own: one word per vertex,
  * x in bits 0-7, z in 8-15, y in 16-23 and the light normal's index in
@@ -68,6 +74,13 @@ typedef struct {
 
 /* a model asset's header */
 #define QSTM_FLAT 1          /* no directional light (QGF_FLAT)              */
+#define QSTM_EF(flags) ((flags) >> 8)   /* the MDL's own flags (its EF_*: the client's
+                                           rotation, trails and light) */
+#define QSTM_EF_ROCKET   1   /* the fire trail and a light (lavaball.mdl)         */
+#define QSTM_EF_GIB      4   /* a blood trail (gibs, heads)                       */
+#define QSTM_EF_ROTATE   8   /* turns, 100 degrees a second (backpack.mdl)        */
+#define QSTM_EF_TRACER  16   /* the wizard's green tracer (w_spike.mdl)           */
+#define QSTM_EF_ZOMGIB  32   /* a slight blood trail (zom_gib.mdl)                */
 
 /* A skin image: Quake puts a model's front on the left half of its skin
    and its back on the right half, and a triangle takes its texels from
@@ -120,7 +133,8 @@ typedef struct {
 	uint16_t flags;          /* QSF_* (formats/qsound.h)                     */
 	uint32_t ticks;          /* length in 60 Hz ticks, rounded up            */
 	uint32_t len;            /* ADPCM bytes                                  */
-	uint32_t pad;
-} qst_sound;                 /* 16 bytes */
+	uint32_t pad[13];        /* (to 64 bytes: the samples DMA-aligned)       */
+} qst_sound;                 /* 64 bytes */
+_Static_assert(sizeof(qst_sound) == 64, "qstream.h: qst_sound");
 
 #endif

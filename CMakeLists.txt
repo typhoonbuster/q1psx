@@ -102,7 +102,7 @@ set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' has
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
 set(Q1PSX_BENCH_ENTS 0 CACHE STRING "1: the map entities' scenarios (doors, buttons, plats, teleporters, the exit)")
-set(Q1PSX_BENCH_MONSTERS 0 CACHE STRING "1: the monsters' scenarios (one of each kind wakes, attacks, is killed; the streaming)")
+set(Q1PSX_BENCH_MONSTERS 0 CACHE STRING "1: the monsters' scenarios (one of each kind wakes, attacks, is killed; the streaming), then the crowd; 2: the crowd alone")
 set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map, dumped")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 if(Q1PSX_BENCH)
@@ -134,7 +134,7 @@ if(Q1PSX_BENCH)
 	endif()
 	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
 	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
-		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c;clip_trace_ent=clip_trace_ent_c;clip_mover=clip_mover_c")
+		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c;clip_trace_ent=clip_trace_ent_c;clip_mover=clip_mover_c;clip_box_node0=clip_box_node0_c;clip_contents_node0=clip_contents_node0_c")
 endif()
 
 # --- optional Quake game data on the disc ------------------------------------

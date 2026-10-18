@@ -100,7 +100,12 @@ struct edict_s {
 			uint8_t  lefty, attack_state, deadflag, waterlevel;
 			int8_t   watertype;
 			uint8_t  ammo_shells, ammo_nails, ammo_rockets, ammo_cells;
-			uint8_t  mpad[3];
+			int32_t  waitmin;      /* the wizard's next idle sound (ticks)        */
+			int32_t  water_at[3];  /* where its water level was last taken (the
+			                          same place: the same contents, no check) */
+			uint8_t  inpain;       /* the zombie's (zombie.qc)                    */
+			uint8_t  trail;        /* a thrown model's trail (game_trail's type + 1) */
+			uint8_t  mpad;
 		};
 	};
 	int32_t  move_t0, move_ticks;
@@ -109,8 +114,11 @@ struct edict_s {
 	int32_t  attack_finished;
 	ent_fn   think, think1, use, touch, blocked, th_die, th_pain;
 	edict_t *owner, *enemy, *trigger_field;
+	edict_t *groundentity;   /* what it stands on (a monster, a tossed thing):
+	                            a pusher carries it along                 */
 	int16_t  speed, wait, delay, lip, height, dmg, health, max_health;
-	int16_t  count, style, t_length, t_width, cnt, pad1;
+	int16_t  count, style, t_length, t_width, cnt;
+	int16_t  touch_slot;     /* its place in the touch list (engine/ents.c), -1 */
 	uint16_t target, targetname, killtarget, message, map;   /* strings (world_string) */
 	uint16_t classname;
 	const char *msgtext;     /* a message the QC sets (the map's: `message`)   */
@@ -169,6 +177,8 @@ void     ent_link(edict_t *e);                  /* SV_LinkEdict: setorigin / set
 void     ent_setmodel(edict_t *e, int model);   /* setmodel: the brush model's box */
 void     ent_setsize(edict_t *e, const int32_t mins[3], const int32_t maxs[3]);
 void     ent_setorigin(edict_t *e, const int32_t org[3]);
+const qw_leaf *ent_model_leaf(edict_t *e);      /* an alias model's: its centre's leaf (NULL:
+                                                   outside), found once it is drawn */
 void     ent_wake(edict_t *e);                  /* on the tick's list (a think or a move set) */
 edict_t *ent_find(edict_t *from, uint16_t targetname);   /* find(from, targetname, s) */
 edict_t *ent_find_class(edict_t *from, int cls);         /* find(from, classname, s)  */
@@ -198,9 +208,10 @@ edict_t *ent_from_trace(const trace_t *tr);
    touch, other = the player */
 void     ents_impact(int ent);
 
-/* T_RadiusDamage on the edicts (the player's is the game's): findradius
-   from `org` (1/8 units), damage - half the distance to each box centre,
-   half on the attacker, CanDamage's clear line */
+/* T_RadiusDamage on the edicts (the player's is the game's, after them:
+   findradius's chain runs from the last edict to the player): from `org`
+   (1/8 units), damage - half the distance to each box centre (x256), half
+   on the attacker and on a shambler, CanDamage's clear line */
 void     ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edict_t *ignore);
 
 /* the game's damage on the player (engine/game.c t_damage): inflictor's
@@ -211,10 +222,13 @@ void game_damage_player_x256(int damage, const int32_t inflictor[3]);
 /* the class files' spawn functions, the cooked entity in hand */
 void triggers_spawn(edict_t *e, const qw_ent *q);
 void movers_spawn(edict_t *e, const qw_ent *q);
+void movers_door_go_down(edict_t *self);         /* (boss.qc's lightning_fire) */
 void level_spawn(edict_t *e, const qw_ent *q);
 void items_spawn(edict_t *e, const qw_ent *q);   /* items, flames, fireballs, boxes, traps */
 void items_physics(edict_t *e);                  /* MOVETYPE_TOSS (the fireballs) */
 void items_render(void);                         /* the models into the render list */
+void ent_set_qim(edict_t *e, int qim);           /* setmodel: a map's own model (QIM_*),
+                                                    or its streamed one */
 int  ents_model_frame(int model);                /* the frame of the drawn edict with brush model
                                                     `model` (its textures' alternates), 0 none */
 
@@ -235,5 +249,10 @@ void ents_stream_wants(void);
 /* a model about `org` (1/CLIP_SUB units) of radius `radius_vu` (vertex
    units) may be in the view's frustum (items.c) */
 int  ent_in_view(const int32_t org[3], int radius_vu);
+
+#ifdef Q1PSX_BENCH
+int  ents_num_touch(void);             /* the touch list's length (the bench's) */
+void ents_area_stats(void);            /* the area nodes' lists (the bench's) */
+#endif
 
 #endif

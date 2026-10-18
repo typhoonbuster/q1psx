@@ -1,18 +1,21 @@
 /*
- * q1psx — cooked sound bank "QSB1": the sounds a map can play, as SPU ADPCM,
- * with the map's static (ambient entity) sounds and its CD track. One file
- * per map (MAPS/<MAP>.SND), written by `qcook map --sounds`, loaded whole into
- * SPU RAM by engine/snd.c when the map starts.
+ * q1psx — cooked sound bank "QSB2": the sounds a map keeps in SPU RAM, as
+ * SPU ADPCM, with the map's static (ambient entity) sources and its CD
+ * track. One file per map (MAPS/<MAP>.SND), written by `qcook map
+ * --sounds`, loaded whole into SPU RAM by engine/snd.c when the map starts.
  *
  * What goes in (the cook decides from the BSP): the sounds Quake precaches
- * on every map (world.qc worldspawn, weapons.qc W_Precache), less the ones
- * the map cannot trigger (no water: no drowning; no lava, slime, sky,
- * teleporter, item, boss), plus the ambient sounds of its entities (misc.qc
- * ambient_*, the torches and flames, a teleporter's hum) and the two area
- * ambients (water, wind) when the map has leaves with those levels. The
- * SPU holds 512 KB less its first 4 KB; when a map's set would not fit, the
- * cook halves the sample rate of its longest looping ambients, largest
- * first, and says so.
+ * on every map (world.qc worldspawn, weapons.qc W_Precache: the player's,
+ * the weapons', the menu's), less the ones the map cannot trigger (no
+ * water: no drowning; no lava, slime, sky, teleporter, item, boss), and the
+ * two area ambients (water, wind) when the map has leaves with those
+ * levels. The sounds that have a place in the map (the monsters', the
+ * doors', plats', buttons', items' and traps', the ambient entities') are
+ * not in it: they are streamed into the rest of SPU RAM by their distance
+ * (formats/qstream.h, engine/stream.c); a static source names its sound by
+ * hash. The SPU holds 512 KB less its first 4 KB; when a map's set would
+ * not fit, the cook halves the sample rate of its longest looping sounds,
+ * largest first, and says so.
  *
  * ADPCM: 16-byte blocks of 28 samples (nocash: SPU ADPCM Samples). A looping
  * sound (Quake: the WAV's cue point) has its loop start on a block boundary
@@ -28,7 +31,7 @@
 
 #include <stdint.h>
 
-#define QSOUND_MAGIC "QSB1"
+#define QSOUND_MAGIC "QSB2"
 
 #define QS_SPU_BASE   0x1010               /* SPU RAM below: capture buffers      */
 #define QS_SPU_BYTES  (512 * 1024 - QS_SPU_BASE)
@@ -49,13 +52,14 @@ typedef struct {
 
 typedef struct {
 	int32_t  origin[3];    /* world units                                       */
-	uint16_t sound;        /* index into the sounds                             */
+	uint32_t hash;         /* its sound's qs_hash() (a streamed sound's)         */
 	uint8_t  volume;       /* x255 (ambientsound's 0.5 -> 127)                  */
 	uint8_t  atten;        /* x64 (ATTN_STATIC 3 -> 192)                        */
-} qs_static;               /* 16 bytes */
+	uint16_t pad;
+} qs_static;               /* 20 bytes */
 
 typedef struct {
-	char     magic[4];     /* "QSB1"                                            */
+	char     magic[4];     /* "QSB2"                                            */
 	uint32_t num_sounds, ofs_sounds;     /* qs_sound[]                          */
 	uint32_t num_statics, ofs_statics;   /* qs_static[]                         */
 	uint32_t ofs_data, len_data;         /* the ADPCM block, 16-aligned         */

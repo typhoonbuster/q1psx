@@ -14,6 +14,7 @@
 #include "ents.h"
 #include "game.h"
 #include "level.h"
+#include "monsters.h"
 #include "render.h"
 #include "snd.h"
 #include "world.h"
@@ -157,7 +158,7 @@ static void play_teleport(edict_t *self)
 {
 	int v = (int) ((q_rand() & 0x7fff) * 5 / 0x8000);   /* random () * 5 */
 	int32_t org[3];
-	memcpy(org, self->origin, sizeof org);
+	__builtin_memcpy(org, self->origin, sizeof org);
 	snd_start(ENT_EDICT + (int) (self - edicts), CHAN_VOICE, S_R_TELE1 + v, org, 255, ATTN_NORM);
 	ent_remove(self);
 }
@@ -167,7 +168,7 @@ static void spawn_tfog(const int32_t org[3])
 {
 	edict_t *s = ent_spawn();
 	if (s) {
-		memcpy(s->origin, org, sizeof s->origin);
+		__builtin_memcpy(s->origin, org, sizeof s->origin);
 		s->nextthink = ent_time + TICKS(20);
 		s->think     = play_teleport;
 		ent_wake(s);
@@ -175,16 +176,60 @@ static void spawn_tfog(const int32_t org[3])
 	game_teleport_splash(org);
 }
 
+/* tdeath_touch: what stands where the teleported one arrives dies (the
+   player there kills a monster arriving) */
+static void tdeath_touch(edict_t *self)
+{
+	edict_t *other = ent_other;
+	if (other == self->owner)
+		return;
+	/* frag anyone who teleports in on top of an invincible player (the
+	   player's classname teledeath2: the obituary's) */
+	if (other == ent_player && self->owner != ent_player) {
+		ent_damage(self->owner, self, self, 50000);
+		return;
+	}
+	if (other->health)
+		ent_damage(other, self, self, 50000);
+}
+
+/* spawn_tdeath: a trigger of the arriving one's size (a unit wider) at
+   its destination for 0.2 s, everything made to touch it again */
+static void spawn_tdeath(const int32_t org[3], edict_t *death_owner)
+{
+	edict_t *death = ent_spawn();
+	if (!death)
+		return;
+	death->movetype = MOVETYPE_NONE;
+	death->solid    = SOLID_TRIGGER;
+	int32_t mins[3], maxs[3];
+	for (int k = 0; k < 3; k++) {
+		mins[k] = death_owner->mins[k] - CLIP_SUB;
+		maxs[k] = death_owner->maxs[k] + CLIP_SUB;
+	}
+	ent_setsize(death, mins, maxs);
+	ent_setorigin(death, org);
+	death->touch     = tdeath_touch;
+	death->nextthink = ent_time + TICKS(20);
+	death->think     = sub_remove;
+	death->owner     = death_owner;
+	ent_wake(death);
+	ent_force_retouch = 2;                        /* make sure even still objects get hit */
+}
+
+/* teleport_touch: a living creature (the player, a monster) to the
+   target, a fog at both ends, a telefrag at the arrival */
 static void teleport_touch(edict_t *self)
 {
+	edict_t *other = ent_other;
 	if (self->targetname && self->nextthink < ent_time)
 		return;                                   /* not fired yet */
-	if ((self->spawnflags & PLAYER_ONLY) && ent_other != ent_player)
+	if ((self->spawnflags & PLAYER_ONLY) && other != ent_player)
 		return;
-	if (ent_other->health <= 0 || ent_other->solid != SOLID_SLIDEBOX)
+	if (other->health <= 0 || other->solid != SOLID_SLIDEBOX)
 		return;                                   /* only living creatures */
 	sub_use_targets(self);
-	spawn_tfog(ent_other->origin);                /* a fog where the player was */
+	spawn_tfog(other->origin);                    /* a fog where the player was */
 	edict_t *t = ent_find(0, self->target);
 	if (!t) {
 		printf("ents: teleporter: couldn't find target %s\n", world_string(self->target));
@@ -195,8 +240,30 @@ static void teleport_touch(edict_t *self)
 	for (int k = 0; k < 3; k++)
 		org[k] = t->origin[k] + 32 * f[k] * CLIP_SUB / 4096;
 	spawn_tfog(org);                              /* a fog in front of the destination */
-	/* (spawn_tdeath: nothing else takes a telefrag yet) */
-	game_teleport(t->origin, t->mangle);
+	spawn_tdeath(t->origin, other);
+	if (other == ent_player) {                    /* move the player and lock him down */
+		game_teleport(t->origin, t->mangle);
+		return;
+	}
+	ent_setorigin(other, t->origin);
+	for (int k = 0; k < 3; k++)                   /* other.angles = t.mangle */
+		other->ang[k] = (uint16_t) ((t->mangle[k] % 360 + 360) % 360 * 65536 / 360);
+	other->flags &= ~FL_ONGROUND;
+}
+
+/* trigger_monsterjump_touch: a walking monster thrown over a gap */
+static void trigger_monsterjump_touch(edict_t *self)
+{
+	edict_t *o = ent_other;
+	if ((o->flags & (FL_MONSTER | FL_FLY | FL_SWIM)) != FL_MONSTER)
+		return;
+	/* set XY even if not on ground, so the jump will clear lips */
+	o->velocity[0] = self->movedir[0] * self->speed / 4096;
+	o->velocity[1] = self->movedir[1] * self->speed / 4096;
+	if (!(o->flags & FL_ONGROUND))
+		return;
+	o->flags &= ~FL_ONGROUND;
+	o->velocity[2] = self->height;
 }
 
 static void teleport_use(edict_t *self)
@@ -254,6 +321,8 @@ static void hurt_touch(edict_t *self)
 	}
 }
 
+/* trigger_push_touch: a living creature thrown (the QC's grenades too:
+   the player's are the game's projectiles, which touch no trigger) */
 static void trigger_push_touch(edict_t *self)
 {
 	if (ent_other->health > 0 && ent_other == ent_player) {
@@ -264,6 +333,9 @@ static void trigger_push_touch(edict_t *self)
 			pl.fly_sound = game_tick_count + TICKS(150);
 			snd_start(ENT_PLAYER, CHAN_AUTO, S_WINDFLY, pl.pm.pos, 255, ATTN_NORM);
 		}
+	} else if (ent_other->health > 0) {
+		for (int k = 0; k < 3; k++)
+			ent_other->velocity[k] = self->speed * self->movedir[k] * 10 / 4096;
 	}
 	if (self->spawnflags & PUSH_ONCE)
 		ent_remove(self);
@@ -356,6 +428,7 @@ void triggers_spawn(edict_t *e, const qw_ent *q)
 		break;
 	case QE_TRIGGER_PUSH:
 		init_trigger(e);
+		e->noise = (int16_t) snd_find("ambience/windfly.wav");   /* (its precache: the residency pass's) */
 		e->touch = trigger_push_touch;
 		if (!e->speed)
 			e->speed = 1000;
@@ -364,7 +437,8 @@ void triggers_spawn(edict_t *e, const qw_ent *q)
 		if (!e->speed)  e->speed = 200;
 		if (!e->height) e->height = 200;
 		if (!e->angle)  e->angle = 360;
-		init_trigger(e);                          /* (its touch: walking monsters only) */
+		init_trigger(e);
+		e->touch = trigger_monsterjump_touch;
 		break;
 	case QE_FUNC_WALL:
 		brush_static(e, 1);
