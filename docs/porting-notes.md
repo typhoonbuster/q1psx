@@ -3418,7 +3418,9 @@ the touching doors of a group open together, the field around them
 that opens them), keys ("You need the silver key", "... runekey", "...
 keycard" by worldtype), shootable doors, toggles, secret doors (their
 two moves), plats and their inside trigger, buttons (touched, shot or
-used), trains along their path_corners, misc_teleporttrain. The QC's
+used), trains along their path_corners, misc_teleporttrain (end.bsp's
+ball: its teleport.mdl drawn, the alias model's +-16 box; its avelocity
+turns nothing under NetQuake's SV_PushMove). The QC's
 `frame` (a button's or func_wall's `+a` textures) is kept in the edict:
 the renderer does not animate textures yet (`+0..+9`, `+a`). The travel is the 1.06 QC's: `pos2 = pos1 + movedir
 x (|movedir . size| - lip)`.
@@ -3501,7 +3503,15 @@ s2 around `ct_core` (one more branch per traced model, the box's
 distances written per trace). The player walks into the barrels, the
 shots and the nails hit them, the explosions chain.
 
-### 29.6 Checking
+### 29.6 A trap found on the way
+
+The edict pool must be cleared whole at each spawn: `ent_spawn` takes the
+first slot not in use anywhere in the pool, past the map's entities too,
+and the level arena's old bytes there (the previous map's data) could read
+as live edicts — DuckStation's invalid read in e1m5's play bench, on its
+second load. `ents_check` (bench builds) validates every live edict.
+
+### 29.7 Checking
 
 - `ENTS=1 scripts/bench.sh 2400` (the entity bench, extended): the
   first item of each kind on e1m1 and start, seen from beside it and
