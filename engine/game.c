@@ -1879,10 +1879,18 @@ void game_render(void)
 			int yaw, pitch;
 			vectoangles(d, &yaw, &pitch);
 			vnormalize(d, dir);
-			int32_t len = vlen(d), at = 0, org[3];
-			for (int k = 0; k < 3; k++) org[k] = p->org[k];
+			int32_t len = vlen(d), at = 0, org[3], lo[3], hi[3];
+			for (int k = 0; k < 3; k++) {
+				org[k] = p->org[k];
+				int32_t a = p->org[k] < p->end[k] ? p->org[k] : p->end[k];
+				int32_t b = p->org[k] < p->end[k] ? p->end[k] : p->org[k];
+				lo[k] = (a >> 3) - 2;                 /* (SUB 8: leaf_at's units, a */
+				hi[k] = (b >> 3) + 2;                 /*  unit or two to spare) */
+			}
+			uint32_t top = world_box_topnode(lo, hi);   /* the bolts' descents start there */
 			while (at < len) {
-				const qw_leaf *leaf = leaf_at(org);
+				int32_t w[3] = { org[0] / SUB, org[1] / SUB, org[2] / SUB };
+				const qw_leaf *leaf = world_point_leaf_from(top, w);
 				rl_add_model(leaf, rl_model(&gdata.models[QGM_BOLT], 0, org, yaw, pitch,
 				                            (int) (q_rand() & 4095), 128));
 				for (int k = 0; k < 3; k++)
