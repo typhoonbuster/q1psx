@@ -5736,7 +5736,9 @@ the choices made:
     For each record: its sphere from the top node (axial planes on the
     CPU by sc x 4096, general ones on the GTE with sc as the first row).
   - **The polygon level, as it is.** Each polygon is unpacked into the
-    next piece's slot with its box (min / max per axis, branch-free).
+    next piece's slot, in a loop over its corners (their PS1 order a byte
+    each), with its box (min / max per axis, branch-free, a triangle's
+    taken as a quad's with its corner 2 again as the fourth).
     - Its descent: an axial plane against the box (2 halfwords, 2
       compares); a general plane on the GTE, with the corners as the
       rotation matrix's rows and a quad's fourth as the light matrix's
@@ -5786,36 +5788,37 @@ the choices made:
     registers** (VZ0, R33, L13): they are loaded from sign-extended
     halfwords, as r_world.s does.
 - **The stack's room.** The asm took 7.6 KB at first, 2 KB more than the
-  C cut it replaces. The default build fell to 15.6 KB of stack, under
-  the 16 KB floor. What brought it back:
-  - the corners a quad and a triangle share are unpacked once;
-  - a triangle's box is taken as a quad's (its corner 2 again as the
-    fourth);
-  - the crossing's fields go in two loops;
-  - the load-time code is compiled for size (`BMF_COLD`: `bmf_reserve`,
-    `model_size`, `build_nodes`, `model_d2`, `all_culled`...);
-  - the lone piece's short way uses the general way's radius, header and
-    polygon. Its own copy was 4.5 % faster, but 400 bytes more.
+  C cut it replaces, and the default build fell under the 16 KB floor.
+  Then master brought the rooms' measure into the cook (§46, which took
+  most of `bmf_reserve`'s code away) and the music's XA streams (§48):
+  master alone leaves 17288 B in the default build. What fits on it:
+  - the corners in a loop, the box's axes in a loop (the unrolled ones
+    were 3 % faster and 530 bytes more);
+  - the crossing's fields in two loops;
+  - the load-time code compiled for size (`BMF_COLD`: `bmf_reserve`,
+    `model_nodes`, `build_nodes`, `model_d2`, `all_culled`...);
+  - the lone piece's short way through the general way's radius, header
+    and polygon (its own copy was 4.5 % faster, 400 bytes more again).
 
-  The rooms now: 16688 B (default), 17104 B (release, release-ultra),
-  against 18192 / 18592 before. A variant with the corners and the box in
-  loops (more room, 368 B over the floor in the default build) measured
-  1 % slower.
+  The rooms now: 16824 B (default), 16872 B (release, release-ultra).
 - **What it gives** (PCSX-Redux in fast forward, the same frames):
 
-  | Mover | C (§44) | + A | + the asm | The frame with a cut |
-  |---|---|---|---|---|
-  | E1M6 train *39 | 916 k | 807 k | 469 k (-49 %), dearest 789 k | 1286 k (3.11 vbl) |
-  | E1M3 train *3 | 372 k | 368 k | 211 k (-43 %), dearest 390 k | 788 k (2.01 vbl) |
-  | E3M4 door *71 | 658 k | 534 k | 346 k (-47 %), dearest 359 k | 858 k (2.00 vbl) |
+  | Mover | C (§44) | + A | + the asm | The frame with a cut | Without |
+  |---|---|---|---|---|---|
+  | E1M6 train *39 | 916 k | 807 k | 482 k (-47 %), dearest 803 k | 1292 k (3.11 vbl) | 647 k |
+  | E1M3 train *3 | 372 k | 368 k | 218 k (-41 %), dearest 396 k | 838 k (2.10 vbl) | 498 k |
+  | E3M4 door *71 | 658 k | 534 k | 361 k (-45 %), dearest 370 k | 951 k (2.03 vbl) | 608 k |
 
+  - The C columns are measured before the merge with master (§45-§48);
+    the asm's after it. After the merge, the C with A measures
+    786 k / 352 k / 516 k; the asm before the merge, in its faster form,
+    measured 469 k / 211 k / 346 k.
   - With D, a moved model out of view is not cut at all (above).
-  - At the load:
-    - the rooms' measure (§44): 3844 cuts over the 33 loads, 375 M cycles
-      down to 255 M;
-    - `BMFCHK`'s 33 cuts a way on the 32 maps: 4.42 G cycles down to
-      3.07 G (C's own part included: `cut_where`).
-  - Where an asm cut goes now (E1M6, the sampler):
+  - `BMFCHK`'s 33 cuts a way on the 32 maps: 4.42 G cycles down to
+    3.12 G (C's own part included: `cut_where`). Before the merge, the
+    load's rooms' measure went 375 M down to 255 M (3844 cuts over 33
+    loads): the cook does it now (§46).
+  - Where an asm cut goes (E1M6, the sampler, before the merge):
     - the polygons' descent about 15 %;
     - unpacking with the boxes 13 %;
     - the records' radius and root 14 %;
@@ -5829,20 +5832,25 @@ the choices made:
     - before and after A (the first pass then: `dd76ed86`, `d60664b3`,
       `9ae23bc0`);
     - D on and off, and the C and the asm (both passes: `057752f4`,
-      `9e700ae0`, `184a8cda`);
+      `9e700ae0`, `184a8cda` before the merge; after it the C and the asm
+      still alike, `057752f4`, `59299081`, `88efca4d`, master's streaming
+      changing E1M3's and E3M4's frames);
   - `BMF_C=2`, no mismatch:
-    - `MOVERS=1`: 2765 cuts (the loads of START, E1M6, E1M3, E3M4 and the
-      three movers);
-    - `BMFCHK=1 BENCH_MAPS=1 VIEWS=0`: 48139 cuts over the 32 maps (the
-      rooms' measure, the 33 places a way, the loads' cuts);
-    - under the interpreter (`EMU_ARGS=-interpreter`, START and E1M6):
-      2420 cuts;
-  - the asm against the C on the frames:
+    - before the merge: `MOVERS=1`, 2765 cuts; `BMFCHK=1 BENCH_MAPS=1
+      VIEWS=0`, 48139 cuts over the 32 maps (the rooms' measure, the 33
+      places a way, the loads' cuts); under the interpreter
+      (`EMU_ARGS=-interpreter`, START and E1M6), 2420 cuts;
+    - after it, the final asm: `MOVERS=1`, 2114 cuts; `BMFCHK`, 44295
+      cuts over the 32 maps; under the interpreter, 2215 cuts;
+  - the asm against the C on the frames, after the merge:
     - START's views (`HASHONLY=1`): 12 frames;
     - the entities' scenarios (`ENTS=1`): 23 frames;
     - the same hashes both ways;
-  - `BMFCHK=1 BENCH_MAPS=1 VIEWS=0` with the asm: no cut given up on the
-    32 maps; the `bmf:` lines the same as the C's;
+  - `BMFCHK=1 BENCH_MAPS=1 VIEWS=0` with the asm:
+    - no cut given up on the 32 maps;
+    - the cook's rooms against the asm's cuts at every load (§46): 75
+      still models' rooms their cut to the byte, 1122 movers' holding it,
+      none off;
   - the links (hazcheck, ramcheck) of the default, release,
     release-ultra and bench builds;
   - not checked on the real GPU or DuckStation.
@@ -5853,11 +5861,10 @@ the choices made:
     wholly in one leaf could also be moved rather than cut again: their
     pieces are the polygons moved, except where sc's rounding changes,
     and the cache's offsets shift as soon as one record's cut changes.
-  - **The stack's room**: 304 B over the floor in the default build. The
-    rooms' measure moving into the cook would give back most of
-    `bmf_reserve`'s 2.4 KB; the lone piece's own radius, header and
-    polygon would then fit again (4.5 %).
+  - **The stack's room**: 440 B over the floor in the default build.
+    The unrolled corners and box (3 %) need 530 B more, the lone piece's
+    own radius, header and polygon (4.5 %) 400 B more again.
   - **`tools/hazcheck`** could check branch targets too (the pitfall
     above).
-  - **The worst frames stay over budget**: E1M6's train still takes 469 k
+  - **The worst frames stay over budget**: E1M6's train still takes 482 k
     a cut, about 40 % of the CPU at the 32 Hz tick while it is in view.

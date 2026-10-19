@@ -224,7 +224,7 @@ void triggers_spawn(edict_t *e, const qw_ent *q);
 void movers_spawn(edict_t *e, const qw_ent *q);
 int  movers_path(const edict_t *e, int32_t (*out)[3], const edict_t **seen,
                  int max);                       /* a train's corners, a secret
-                                                    door's moves' ends (BMFCHK
+                                                    door's moves' ends (bench
                                                     builds only) */
 void movers_door_go_down(edict_t *self);         /* (boss.qc's lightning_fire) */
 void level_spawn(edict_t *e, const qw_ent *q);

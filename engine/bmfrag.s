@@ -133,37 +133,6 @@
 .set BS_BATCH,   0x200     # put_pieces' batch: the pieces of one record (14 at most)
 
 # -----------------------------------------------------------------------------
-# CORNER pj, j: the polygon's PS1 corner pj (t9: the quad or triangle) into
-# the slot's corner j, where the model stands (a1-a3); v1 the record's
-# vertex indices, at its light bytes. Clobbers t0-t7.
-.macro CORNER pj, j
-	lbu     $t0, \pj($t9)                # its vertex (x 4)
-	lhu     $t1, R_UV + 2 * \pj($t9)     # its texels
-	srl     $t2, $t0, 1
-	addu    $t2, $v1, $t2
-	lhu     $t3, 0($t2)                  # the vertex's pool index
-	srl     $t0, $t0, 2
-	addu    $t0, $at, $t0
-	lbu     $t7, 0($t0)                  # its light
-	sll     $t3, $t3, 3
-	addu    $t3, $s2, $t3
-	lh      $t4, 0($t3)
-	lh      $t5, 2($t3)
-	lh      $t6, 4($t3)
-	sll     $t1, $t1, 16
-	addu    $t4, $t4, $a1
-	addu    $t5, $t5, $a2
-	addu    $t6, $t6, $a3
-	andi    $t4, $t4, 0xffff
-	sll     $t5, $t5, 16
-	or      $t4, $t4, $t5                # x | y << 16
-	andi    $t6, $t6, 0xffff
-	or      $t6, $t6, $t1                # z | u << 16 | v << 24
-	sw      $t4, PC_V + V_SIZE * \j + 0($s7)
-	sw      $t6, PC_V + V_SIZE * \j + 4($s7)
-	sw      $t7, PC_V + V_SIZE * \j + 8($s7)
-.endm
-
 # PAIR lo, hi, a, b: lo = min(a, b), hi = max(a, b). MINW lo, x: lo =
 # min(lo, x). MAXW hi, x: hi = max(hi, x). Int16 values: the differences do
 # not overflow. Clobber v0, at.
@@ -185,27 +154,6 @@
 	sra     $at, $v0, 31
 	and     $v0, $v0, $at
 	subu    \hi, \x, $v0
-.endm
-
-# BOXAXIS k, n: the slot's corners' least and greatest coordinate k (0 x, 1 y,
-# 2 z) into its box, n corners (3, 4). Clobbers t0-t5, v0, at.
-.macro BOXAXIS k, n
-	lh      $t0, PC_V + 0 * V_SIZE + 2 * \k($s7)
-	lh      $t1, PC_V + 1 * V_SIZE + 2 * \k($s7)
-	lh      $t2, PC_V + 2 * V_SIZE + 2 * \k($s7)
-.if \n == 4
-	lh      $t3, PC_V + 3 * V_SIZE + 2 * \k($s7)
-	PAIR    $t4, $t5, $t0, $t1
-	PAIR    $t0, $t1, $t2, $t3
-	MINW    $t4, $t0
-	MAXW    $t5, $t1
-.else
-	PAIR    $t4, $t5, $t0, $t1
-	MINW    $t4, $t2
-	MAXW    $t5, $t2
-.endif
-	sh      $t4, PC_BOX + 2 * \k($s7)
-	sh      $t5, PC_BOX + 6 + 2 * \k($s7)
 .endm
 
 # SQD r, p, x, y, z: r = the squared distance of corner p (3 halfwords)
@@ -584,23 +532,68 @@ cr_unpack:
 	sll     $t3, $t3, 2
 	addu    $t9, $t9, $t3                # the polygon
 	addiu   $v1, $s3, R_VERTS            # the record's vertex indices
-	CORNER  0, 0                         # the outline's corners: a quad's PS1
-	CORNER  1, 1                         # 0 1 3 2, a triangle's 0 1 2
-	beqz    $t8, 3f
-	nop
-	CORNER  3, 2
-	CORNER  2, 3
-	b       4f
-	nop
-3:	CORNER  2, 2
-	lw      $t0, PC_V + 24($s7)          # (its box as a quad's: corner 2 again
-	lw      $t1, PC_V + 28($s7)          #  as the fourth, never drawn)
+	lui     $v0, 0x0002                  # the PS1 corners in the outline's order,
+	beqz    $t8, 5f                      # a byte each, the first lowest: a
+	ori     $v0, $v0, 0x0100             # (delay) triangle's 0 1 2, a quad's
+	lui     $v0, 0x0203                  # 0 1 3 2 (none left: the end; the loops
+	                                     # here unrolled were 3 % faster and 530
+	                                     # bytes more than the stack's room allows)
+	ori     $v0, $v0, 0x0100
+5:	addiu   $a0, $s7, PC_V               # the corner's slot
+6:	andi    $t0, $v0, 0xff               # a corner where the model stands:
+	srl     $v0, $v0, 8
+	addu    $t1, $t9, $t0
+	lbu     $t2, 0($t1)                  # its vertex (x 4),
+	sll     $t0, $t0, 1
+	addu    $t1, $t9, $t0
+	lhu     $t1, R_UV($t1)               # its texels,
+	srl     $t3, $t2, 1
+	addu    $t3, $v1, $t3
+	lhu     $t3, 0($t3)                  # the vertex's pool index,
+	srl     $t2, $t2, 2
+	addu    $t2, $at, $t2
+	lbu     $t7, 0($t2)                  # its light
+	sll     $t3, $t3, 3
+	addu    $t3, $s2, $t3
+	lh      $t4, 0($t3)
+	lh      $t5, 2($t3)
+	lh      $t6, 4($t3)
+	sll     $t1, $t1, 16
+	addu    $t4, $t4, $a1
+	addu    $t5, $t5, $a2
+	addu    $t6, $t6, $a3
+	andi    $t4, $t4, 0xffff
+	sll     $t5, $t5, 16
+	or      $t4, $t4, $t5                # x | y << 16
+	andi    $t6, $t6, 0xffff
+	or      $t6, $t6, $t1                # z | u << 16 | v << 24
+	sw      $t4, 0($a0)
+	sw      $t6, 4($a0)
+	sw      $t7, 8($a0)
+	bnez    $v0, 6b
+	addiu   $a0, $a0, V_SIZE             # (delay)
+	bnez    $t8, 7f                      # a triangle's box as a quad's: corner 2
+	nop                                  # again as the fourth, never drawn
+	lw      $t0, PC_V + 24($s7)
+	lw      $t1, PC_V + 28($s7)
 	nop
 	sw      $t0, PC_V + 36($s7)
 	sw      $t1, PC_V + 40($s7)
-4:	BOXAXIS 0, 4
-	BOXAXIS 1, 4
-	BOXAXIS 2, 4
+7:	move    $t6, $s7                     # the box, axis by axis
+	li      $t7, 3
+8:	lh      $t0, PC_V + 0($t6)
+	lh      $t1, PC_V + 12($t6)
+	lh      $t2, PC_V + 24($t6)
+	lh      $t3, PC_V + 36($t6)
+	PAIR    $t4, $t5, $t0, $t1
+	PAIR    $t0, $t1, $t2, $t3
+	MINW    $t4, $t0
+	MAXW    $t5, $t1
+	sh      $t4, PC_BOX($t6)
+	addiu   $t7, $t7, -1
+	sh      $t5, PC_BOX + 6($t6)
+	bnez    $t7, 8b
+	addiu   $t6, $t6, 2                  # (delay)
 	sll     $a3, $t8, 16                 # quad << 16 | n (cut 0)
 	addiu   $a3, $a3, 3
 	addu    $a3, $a3, $t8
