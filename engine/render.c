@@ -371,6 +371,7 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 /* ----------------------------------------------------------------- frame -- */
 
 int r_arena_full;
+int r_ui_room;
 
 void r_frame(void)
 {
@@ -390,7 +391,7 @@ void r_frame(void)
 
 	r_state.ot_world     = (uint32_t) &vid_frame.ot[OT_WORLD];
 	r_state.pkt          = (uint32_t) vid_frame.pkt;
-	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 48);  /* see r_world.s */
+	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 48 - r_ui_room);  /* see r_world.s */
 	if (opt_dist) {                                /* mark_pvs_far's marks: again once the
 	                                                  camera has moved R_MARK_MOVE */
 		for (int k = 0; k < 3; k++) {
@@ -424,7 +425,7 @@ void r_frame(void)
 	uint32_t slowb = r_state.slow_bytes <= bytes ? r_state.slow_bytes : bytes;
 	r_warp.tris = (bytes - slowb) / (opt_flat ? 20 : 26) + slowb / 40;
 	vid_frame.pkt = (uint8_t *) r_state.pkt;
-	r_arena_full  = r_state.pkt >= r_state.pkt_end;   /* the walk stopped short: the nearest records lost */
+	r_arena_full  = r_state.pkt >= r_state.pkt_end;   /* the walk stopped short: the farthest records lost */
 
 #if Q1PSX_PROFILE
 	/* the slow path runs inside the face-record timing: take it out */

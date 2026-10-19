@@ -125,9 +125,15 @@ extern r_warp_t r_warp;
 
 void r_set_warp(int mode, int t_px, int budget);
 
-/* the last frame's walk ran out of packet arena (its nearest records,
-   drawn last in the painter's order, were not drawn) */
+/* the last frame's walk ran out of packet arena (its farthest records,
+   emitted last by the front-to-back walk, were not drawn) */
 extern int r_arena_full;
+
+/* packet bytes the walk leaves at the arena's end for what is drawn after
+   the world (Quake's menu over the paused game: R_MENU_ROOM while it is
+   up), set before r_frame */
+#define R_MENU_ROOM (12 * 1024)
+extern int r_ui_room;
 
 /* After each frame: its CPU cycles (input to the end of the overlay) and
    the vblanks it took. Adjusts T for the next frame in the dynamic modes. */

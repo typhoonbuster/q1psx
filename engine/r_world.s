@@ -2294,6 +2294,14 @@ lr_done:
 draw_model:
 	sw      $ra, SP_DMRA($t8)
 dm_body:                                 # (ei_model: its ra and SP_DMRA set)
+	lw      $t2, RE_FLAGS($a0)
+	subu    $t3, $s7, $s6                # the packet room left (bytes; < 0 past)
+	andi    $t2, $t2, 3                  # a brush model, the view model: drawn
+	bnez    $t2, dm_draw                 # whatever the room (the world's look)
+	slti    $t3, $t3, R_MODEL_ROOM
+	bnez    $t3, dm_skip                 # an alias model with less room left
+	nop                                  # than R_MODEL_ROOM: left out, the room
+dm_draw:                                 # kept for the farther world's records
 	jal     close_run
 	nop
 	lw      $t0, RE_ROT+0($a0)
@@ -2401,6 +2409,11 @@ dm_exit_1:
 	sw      $t4, SP_VERTPOOL($t8)
 	sw      $t5, SP_TEXBASE($t8)
 	sw      $t6, SP_FVBASE($t8)
+	lw      $ra, SP_DMRA($t8)
+	nop
+	jr      $ra
+	nop
+dm_skip:                                 # (nothing of the view's state touched)
 	lw      $ra, SP_DMRA($t8)
 	nop
 	jr      $ra

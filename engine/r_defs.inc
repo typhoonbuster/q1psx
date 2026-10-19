@@ -186,6 +186,11 @@
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
 .set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
+.set R_MODEL_ROOM, 24576  # draw_model: an alias model (a monster, an item, a
+                          # flame, a gib) is left out when less packet room
+                          # than this is left: the walk's farther records keep
+                          # it (START's crucified zombies, 12.5 KB each, filled
+                          # the arena and the far rooms went undrawn)
 .ifndef R_YSLOPE          # the frustum's vertical slope x4: 4 (240 rows: y <= 3z/4)
 .set R_YSLOPE,    4       # or 5 (the 192-row viewport over the status bar: y <= 3z/5)
 .endif
