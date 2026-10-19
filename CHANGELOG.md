@@ -1344,4 +1344,20 @@ followed by R0-R4.
     the stream's staging buffer, every streamed sound was read to address
     0 and given up for good. Those two maps still have no room for the
     monsters (their worlds take 742-783 KB).
+- **The brush models' room measured in the cook** (§46):
+  - **No measure at the load.** The cook cuts each brush model as the
+    engine does, wherever its entity can stand: a door, button, plat,
+    train or secret door at every 1/8 unit of its travel. The most the
+    cuts take goes into the map's `qw_bmodel`, which keeps its 40 bytes
+    (the clip roots now 16-bit). Every load is 0.08-0.99 s shorter.
+  - **An exact room**, with no factor or constant. §44's ×2 held by 1 %
+    on E2M5's train *21. The stream gets 10-98 KB more on every map
+    (48 KB on average).
+  - **The starved maps stream their monsters**: E3M4 goes from 2 to 84 KB
+    of pool, E4M7 from 0 to 54 KB, E3M6 from 46 to 94 KB.
+  - **Checked:**
+    - `BMFCHK=1`: no cut given up on the 32 maps;
+    - at each load, a still model's room equals its cut to the byte;
+    - the spawn views are identical to §44's, except where a streamed
+      model is now resident.
 

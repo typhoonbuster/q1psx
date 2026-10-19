@@ -5038,3 +5038,176 @@ Shortened; what was seen:
     the load nothing and could sample every way densely with a tighter
     margin; the cook would need the movers' travel (pos1 / pos2, the
     paths) and the cut on the host.
+
+## §46 — The brush models' room measured in the cook (2026-10-19)
+
+- **The ask**: §44's last item, taken up by a session of its own: move
+  `bmf_reserve`'s measure from the load to the cook. Each model is cut where
+  it stands, and a mover densely along its travel; the needs go into the
+  map's data. The load no longer pays 0.08-0.99 s, and the room can be
+  tighter than §44's ×2. The format and the margin chosen: the needs in qw_bmodel at 40 bytes (hulls 1 and
+  2 in int16), an exact margin with no constant.
+- **The cut on the host** (`tools/qcook/bmf.c`):
+  - What it ports: engine/bmfrag.c's `cut_model`, `cut_poly`, `cross`, and
+    the top node of ent_link's box (`world_box_topnode`), integer for
+    integer.
+  - What it runs on: the cooked world as the engine reads it (the assembled
+    file, its links still indices).
+  - What it keeps: the same plane distances, the same crossings, the same
+    limits (12 corners, 64 pieces, 24 pending back pieces, the flush past
+    32 pieces, records of 42 vertices, groups merged within a node side).
+  - What it leaves out: the texels and the light, since no size depends on
+    them.
+  - What a cut gives: the records' bytes, the pool's vertices, the groups.
+- **The travel** (engine/movers.c on the host), for the classes that draw
+  their model (doors, secret doors, buttons, plats, trains, walls,
+  illusionaries, the gates):
+  - **a door's and a button's** pos1 and pos2 (`set_movedir`, `travel_end`,
+    on the engine's sine table rebuilt the same way); a door spawned open
+    (DOOR_START_OPEN) at pos2, its ends swapped;
+  - **a plat's** top (its origin) and bottom (`height`, or its size less 8
+    units); it spawns at the bottom unless it is named;
+  - **a train's** corners (a corner's origin less the model's mins), up to
+    the first one it comes back to. They are found as `ent_find` would find
+    them at each skill: a corner hanging on the skill would change the path
+    (none does);
+  - **a secret door's** place and `secret_dests`' two ends;
+  - **where each spawns**: a train stands at its map origin for its first
+    10 ticks.
+- **The places**:
+  - **Axis-aligned ways.** SUB_CalcMove puts a mover at a + delta × t / ticks
+    (truncated; the way back from b rounds the other way), whatever the
+    speed or the tick rate (§35). So on a way the longest axis takes every
+    value between the ends, 1/8 unit apart, and the cook cuts each one.
+  - **Slanted ways** (a train's). Another axis may sit one unit off the
+    line at that value (truncated forward, rounded up backward); both
+    places are cut.
+  - **Coverage.** That is every position the engine can give a mover on
+    its ways. A door reversed mid-way stays on its line: every door, plat,
+    button and secret door of the id maps is axis-aligned.
+- **What it costs and finds** (the 96 cooked worlds, one core):
+  - 3.6 M cuts in 9.1 s, 0.02-0.34 s a world; the slanted ways' second
+    places are 2 % of the cuts and change no maximum;
+  - no cut given up;
+  - the exact maximum against §44's sample (its ends and halfway places),
+    the worst of each kind over the three geometry levels:
+
+  | Exact / §44's sample | doors | plats | buttons | secret doors | trains |
+  |---|---|---|---|---|---|
+  | records | 1.73 | 1.67 | 1.33 | 1.47 | 1.98 |
+  | vertices | 1.71 | 1.66 | 1.33 | 1.46 | 1.96 |
+  | groups | 1.75 | 1.80 | 1.33 | 1.57 | 1.95 |
+
+  §44's ×2 held by 1 % on E2M5's train *21.
+- **The format** (formats/qworld.h, magic QWVE): qw_bmodel keeps its 40
+  bytes.
+  - `hull1` and `hull2` are int16. BSP29's clipnode children are 16-bit, so
+    any index fits; the cook checks it. engine/clip.s loads them with `lh`
+    (`BM_HULL2` 30), at the same cost.
+  - `num_records` is gone: the engine never read it.
+  - Three new fields, each the most over every place: `room_recs` (bytes /
+    4: a record's size is a multiple of 4), `room_verts`, `room_groups`.
+    They are 0 for a model no drawn entity uses.
+  - No byte more in RAM. The .wld is loaded whole, so a table of its own
+    would have cost 0.2-0.8 KB a map.
+  - The cook writes them on the assembled file, just before writing it.
+    `qcook check` checks them: all three or none, and at least a record
+    header per group.
+  - `qcook bmf <file.wld> [-v]` measures a cooked world again against
+    them; `-v` adds each model's cuts and §44's sample.
+- **The margin: none.** The room is the exact maximum, without factor or
+  constant: the cook's cut is the engine's, and the places are all the
+  ones a mover can take. The fallback stays (§41): a cut that does not fit
+  is given up, and the model is drawn whole until it moves.
+- **The engine** (`bmf_reserve`):
+  - it reads the rooms: no scratch, no cut, no path at the load;
+  - only the models the spawned edicts draw get a room; §44 also gave one
+    to START's absent episode gates;
+  - the caches and their rooms are allocated as one block and the pool as
+    another, because the arena rounds each allocation to 16 bytes (§44
+    made four allocations a model);
+  - the measure's code and `movers_path` remain only in the BMFCHK builds,
+    where bmf_check needs the paths.
+- **What it gives** (PCSX-Redux in fast forward, every map at its high
+  levels; §44's columns from its table):
+
+  | Map | §44 room | Room | Freed | §44 pool | Pool | §44 preload | Preload | §44's measure |
+  |---|---|---|---|---|---|---|---|---|
+  | START | 49 KB | 27 | 22 | 332 | 354 | 85 | 85 | 0.11 s |
+  | E1M1 | 81 KB | 44 | 37 | 279 | 316 | 126 | 126 | 0.22 s |
+  | E1M2 | 83 KB | 44 | 39 | 227 | 266 | 179 | 210 | 0.29 s |
+  | E1M3 | 129 KB | 71 | 58 | 157 | 215 | 120 | 198 | 0.67 s |
+  | E1M4 | 93 KB | 50 | 43 | 114 | 157 | 79 | 126 | 0.31 s |
+  | E1M5 | 94 KB | 48 | 46 | 254 | 299 | 235 | 235 | 0.32 s |
+  | E1M6 | 198 KB | 106 | 92 | 261 | 354 | 227 | 271 | 0.65 s |
+  | E1M7 | 40 KB | 21 | 19 | 772 | 791 | 276 | 276 | 0.09 s |
+  | E1M8 | 53 KB | 28 | 25 | 559 | 584 | 157 | 157 | 0.15 s |
+  | E2M1 | 101 KB | 54 | 47 | 176 | 223 | 130 | 130 | 0.36 s |
+  | E2M2 | 92 KB | 54 | 38 | 173 | 211 | 162 | 162 | 0.32 s |
+  | E2M3 | 109 KB | 58 | 51 | 155 | 206 | 115 | 160 | 0.36 s |
+  | E2M4 | 83 KB | 42 | 41 | 107 | 148 | 93 | 135 | 0.28 s |
+  | E2M5 | 106 KB | 60 | 46 | 187 | 233 | 147 | 147 | 0.36 s |
+  | E2M6 | 171 KB | 88 | 83 | 96 | 179 | 76 | 153 | 0.68 s |
+  | E2M7 | 80 KB | 42 | 38 | 103 | 142 | 77 | 124 | 0.30 s |
+  | E3M1 | 101 KB | 55 | 46 | 221 | 267 | 124 | 124 | 0.35 s |
+  | E3M2 | 179 KB | 93 | 86 | 366 | 452 | 272 | 272 | 0.42 s |
+  | E3M3 | 111 KB | 56 | 55 | 349 | 403 | 215 | 215 | 0.39 s |
+  | E3M4 | 210 KB | 112 | 98 | 2 | 84 | 0 | 44 | 0.99 s |
+  | E3M5 | 61 KB | 32 | 29 | 92 | 121 | 73 | 112 | 0.35 s |
+  | E3M6 | 104 KB | 57 | 47 | 46 | 94 | 41 | 71 | 0.35 s |
+  | E3M7 | 65 KB | 34 | 31 | 320 | 352 | 215 | 215 | 0.20 s |
+  | E4M1 | 75 KB | 43 | 32 | 209 | 241 | 125 | 125 | 0.31 s |
+  | E4M2 | 131 KB | 67 | 64 | 203 | 267 | 186 | 186 | 0.31 s |
+  | E4M3 | 107 KB | 61 | 46 | 221 | 267 | 178 | 252 | 0.29 s |
+  | E4M4 | 50 KB | 25 | 25 | 138 | 163 | 114 | 114 | 0.19 s |
+  | E4M5 | 135 KB | 71 | 64 | 117 | 181 | 102 | 133 | 0.34 s |
+  | E4M6 | 117 KB | 61 | 56 | 282 | 338 | 64 | 64 | 0.32 s |
+  | E4M7 | 133 KB | 70 | 63 | 0 | 54 | 0 | 28 | 0.39 s |
+  | E4M8 | 140 KB | 73 | 67 | 183 | 249 | 147 | 224 | 0.40 s |
+  | END | 22 KB | 12 | 10 | 708 | 718 | 92 | 92 | 0.08 s |
+
+  - 10-98 KB freed a map, 48 KB on average; the pool grows by as much
+    everywhere but on the two fullest maps:
+    - **E3M4:** its stream staging buffer (16 KB) now fits, so its pool
+      grows by the other 82 KB;
+    - **E4M7:** the stream manager always keeps the arena's last 8 KB
+      (`STREAM_KEEP`); E4M7's arena was already full before, so of the
+      63 KB freed, 54 make its pool.
+  - Every load is 0.08-0.99 s shorter (§44's measure, gone).
+  - **The starved maps** now stream their monsters: E3M4 2 → 84 KB of
+    pool (44 KB preloaded), E4M7 0 → 54 KB (28 KB), E3M6 46 → 94 KB.
+- **Checking:**
+  - **BMFCHK.** `BMFCHK=1 BENCH_MAPS=1 VIEWS=0 scripts/bench.sh` makes
+    43,098 cuts at 33 places a way, and none is given up on the 32 maps.
+    The fullest rooms reach 100 % on every map, for records, vertices and
+    groups: a mover's maximum falls on one of the 33 places.
+  - **The rooms at each load.** Every bench load checks the cooked rooms
+    against the cuts where the models stand:
+    - a still model's room must equal its cut, to the byte, which shows the
+      cook's cut is the engine's;
+    - a mover's room must hold its cut.
+    Over the 32 maps, 72 still models match exactly, 1,117 movers fit,
+    and none fails (`bmf room` lines otherwise).
+  - **The spawn views against §44's commit** (its code and cooked worlds,
+    the same bench): 126 of the 128 frame hashes are identical, so the
+    brush models' pieces are the same. The two others differ only in a
+    streamed model:
+    - E2M7.v0 shows no brush model, and one more monster now resident
+      (+244 polygons, a pool of 142 KB instead of 103);
+    - E1M4.v0 has the same packets except one model's 41, which carry its
+      skin at another place in VRAM (tpage and UVs).
+  - **The physics.** `VIEWS=0 scripts/bench.sh` gives clipdiff (traces
+    against the brush models through `lh`, boxes, lines of sight) and
+    pmdiff, 0 mismatches.
+  - **The cooked files.** All but the worlds are identical to §44's cook.
+    A world differs only in its magic and its qw_bmodel table (the clip
+    roots and the depths are the same). `qcook check` and `qcook bmf` pass
+    on the 96 worlds.
+  - **The links.** The stack has 19952 B (default) and 20368 B (release),
+    against §44's 18192 / 18592: the measure's code left the game.
+- **Left:**
+  - **E3M4 and E4M7** stream with the smallest pools (84 and 54 KB). §44's
+    other levers still apply (the 2D weapons' 102 KB loaded only when
+    chosen, a lower geometry level for those worlds).
+  - **The cut while a model moves** (§41, §44): its cost in play is still
+    unmeasured.
