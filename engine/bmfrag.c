@@ -18,20 +18,6 @@ typedef struct {
 	uint16_t pad2;
 } __attribute__((aligned(4))) bmf_v;     /* 12 bytes: copied by words */
 
-/* corners copied three words each (the SDK's memcpy goes byte by byte;
-   GCC would make this loop a memcpy call again) */
-__attribute__((optimize("no-tree-loop-distribute-patterns")))
-static void copy_v(bmf_v *d, const bmf_v *s, int n)
-{
-	uint32_t *dw = (uint32_t *) d;
-	const uint32_t *sw = (const uint32_t *) s;
-	for (; n > 0; n--, dw += 3, sw += 3) {
-		dw[0] = sw[0];
-		dw[1] = sw[1];
-		dw[2] = sw[2];
-	}
-}
-
 #define BMF_CORNERS 12       /* a piece's corners (a quad cut by 8 planes)        */
 #define BMF_PIECES  64       /* one record's pieces                                */
 #define BMF_STACK   24       /* the cut's pending back pieces                      */
@@ -79,7 +65,7 @@ struct bmf_cache {
 	uint32_t   pool_first, pool_cap, pool_len;   /* its vertices in bmf_pool      */
 };
 
-static qw_vert  *bmf_pool;
+qw_vert         *bmf_pool;       /* (the asm cut's too) */
 static uint32_t  bmf_pool_cap, bmf_pool_used;
 #ifdef Q1PSX_BENCH
 uint32_t bmf_stats[7];
@@ -105,14 +91,64 @@ static inline int32_t plane_d(const qw_plane *pl, const int16_t p[3])
 
 /* ------------------------------------------------------------- the cut -- */
 
-static bmf_piece pieces[BMF_PIECES];
-static int       num_pieces, cut_overflow;
-
-static struct {
+/* The cut is engine/bmfrag.s, hand-written; the C below (BMF_C=1 builds it
+   alone, BMF_C=2 checks the asm by it, cut by cut) is its specification.
+   Both work in these: the record's pieces so far, the back pieces pending
+   (the asm's layout too), whether the last cut gave up too cut up, the
+   pieces the last cut made. */
+typedef struct {
 	uint32_t at;
 	uint8_t  n;
 	bmf_v    v[BMF_CORNERS];
-} pending[BMF_STACK];
+} bmf_pend;
+
+bmf_piece bmf_pieces[BMF_PIECES];
+bmf_pend  bmf_pending[BMF_STACK];
+int       bmf_cut_overflow;
+uint32_t  bmf_cut_pieces;
+
+int bmf_cut(bmf_cache *c, int model, const int32_t org[3], uint32_t top);
+
+/* engine/bmfrag.s's offsets */
+_Static_assert(sizeof(bmf_v) == 12 && sizeof(bmf_piece) == 152 && sizeof(bmf_pend) == 152, "bmfrag.s V_SIZE, PC_SIZE");
+_Static_assert(__builtin_offsetof(bmf_piece, n) == 4 && __builtin_offsetof(bmf_piece, cut) == 5 &&
+               __builtin_offsetof(bmf_piece, quad) == 6 && __builtin_offsetof(bmf_piece, pad) == 7 &&
+               __builtin_offsetof(bmf_piece, v) == 8, "bmfrag.s PC_*");
+_Static_assert(__builtin_offsetof(bmf_pend, n) == 4 && __builtin_offsetof(bmf_pend, v) == 8, "bmfrag.s PD_*");
+_Static_assert(sizeof(bmf_group) == 12 && __builtin_offsetof(bmf_group, ofs) == 4 &&
+               __builtin_offsetof(bmf_group, len) == 8, "bmfrag.s BG_*");
+_Static_assert(sizeof(bmf_node) == 14 && __builtin_offsetof(bmf_node, first) == 6 &&
+               __builtin_offsetof(bmf_node, count) == 10, "bmfrag.s BN_*");
+_Static_assert(__builtin_offsetof(bmf_cache, nodes) == 20 && __builtin_offsetof(bmf_cache, recs) == 24 &&
+               __builtin_offsetof(bmf_cache, recs_len) == 28 && __builtin_offsetof(bmf_cache, recs_cap) == 32 &&
+               __builtin_offsetof(bmf_cache, groups) == 36 && __builtin_offsetof(bmf_cache, num_groups) == 40 &&
+               __builtin_offsetof(bmf_cache, groups_cap) == 44 && __builtin_offsetof(bmf_cache, pool_first) == 48 &&
+               __builtin_offsetof(bmf_cache, pool_cap) == 52 && __builtin_offsetof(bmf_cache, pool_len) == 56,
+               "bmfrag.s CA_*");
+_Static_assert(__builtin_offsetof(world_t, verts) == 100 && __builtin_offsetof(world_t, bmodels) == 120 &&
+               __builtin_offsetof(qw_bmodel, root) == 24 && sizeof(qw_bmodel) == 40 &&
+               __builtin_offsetof(qw_leaf, contents) == 26, "bmfrag.s W_*, QB_*, LF_*");
+
+#ifndef Q1PSX_BMF_C
+#define Q1PSX_BMF_C 0            /* 1: the C cut alone, 2: the asm checked by it (BMF_C=1|2 scripts/bench.sh) */
+#endif
+
+#if Q1PSX_BMF_C
+/* corners copied three words each (the SDK's memcpy goes byte by byte;
+   GCC would make this loop a memcpy call again) */
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+static void copy_v(bmf_v *d, const bmf_v *s, int n)
+{
+	uint32_t *dw = (uint32_t *) d;
+	const uint32_t *sw = (const uint32_t *) s;
+	for (; n > 0; n--, dw += 3, sw += 3) {
+		dw[0] = sw[0];
+		dw[1] = sw[1];
+		dw[2] = sw[2];
+	}
+}
+
+static int num_pieces;
 
 /* the point where edge a-b crosses the plane (da > 0 >= db or the reverse),
    from the lower endpoint whichever way the edge runs: two faces sharing
@@ -149,7 +185,7 @@ static void cross(bmf_v *o, const bmf_v *a, const bmf_v *b, int32_t da, int32_t 
 
 /* R_RecursiveClipBPoly: the polygon down the world's BSP from `top`, cut at
    every plane it straddles (d > 0: the front, as the walk), its pieces in
-   non-solid leaves kept in pieces[] */
+   non-solid leaves kept in bmf_pieces[] */
 static void cut_poly(uint32_t top, const bmf_v *in, int n, int quad)
 {
 	bmf_v cur[BMF_CORNERS], side[2][BMF_CORNERS];
@@ -178,7 +214,7 @@ static void cut_poly(uint32_t top, const bmf_v *in, int n, int quad)
 			int nf = 0, nb = 0;
 			for (int i = 0; i < n; i++) {
 				int h = i ? i - 1 : n - 1, j = i + 1 < n ? i + 1 : 0;
-				if (nf > BMF_CORNERS - 2 || nb > BMF_CORNERS - 2) { cut_overflow = 1; return; }
+				if (nf > BMF_CORNERS - 2 || nb > BMF_CORNERS - 2) { bmf_cut_overflow = 1; return; }
 				if (d[i] > 0 || (!d[i] && (d[h] > 0 || d[j] > 0))) side[0][nf++] = cur[i];
 				if (d[i] < 0 || (!d[i] && (d[h] < 0 || d[j] < 0))) side[1][nb++] = cur[i];
 				if ((d[i] > 0 && d[j] < 0) || (d[i] < 0 && d[j] > 0)) {
@@ -186,10 +222,10 @@ static void cut_poly(uint32_t top, const bmf_v *in, int n, int quad)
 					side[1][nb++] = side[0][nf++];
 				}
 			}
-			if (sp >= BMF_STACK) { cut_overflow = 1; return; }
-			pending[sp].at = nd->child[1];             /* the back piece, later */
-			pending[sp].n  = (uint8_t) nb;
-			copy_v(pending[sp].v, side[1], nb);
+			if (sp >= BMF_STACK) { bmf_cut_overflow = 1; return; }
+			bmf_pending[sp].at = nd->child[1];             /* the back piece, later */
+			bmf_pending[sp].n  = (uint8_t) nb;
+			copy_v(bmf_pending[sp].v, side[1], nb);
 			sp++;
 			copy_v(cur, side[0], nf);
 			n = nf;
@@ -198,8 +234,8 @@ static void cut_poly(uint32_t top, const bmf_v *in, int n, int quad)
 		}
 		const qw_leaf *leaf = (const qw_leaf *) ((at & ~1u) | 0x80000000u);
 		if (leaf->contents != QW_CONTENTS_SOLID) {
-			if (num_pieces >= BMF_PIECES) { cut_overflow = 1; return; }
-			bmf_piece *pc = &pieces[num_pieces++];
+			if (num_pieces >= BMF_PIECES) { bmf_cut_overflow = 1; return; }
+			bmf_piece *pc = &bmf_pieces[num_pieces++];
 			pc->leaf = leaf;
 			pc->n    = (uint8_t) n;
 			pc->cut  = (uint8_t) cutting;
@@ -209,16 +245,16 @@ static void cut_poly(uint32_t top, const bmf_v *in, int n, int quad)
 		if (!sp)
 			return;
 		sp--;
-		at = pending[sp].at;
-		n  = pending[sp].n;
-		copy_v(cur, pending[sp].v, n);
+		at = bmf_pending[sp].at;
+		n  = bmf_pending[sp].n;
+		copy_v(cur, bmf_pending[sp].v, n);
 		cutting = 1;
 	}
 }
 
 /* ------------------------------------------------------------ records -- */
 
-/* a record of `count` pieces of one leaf (pieces[first..], source record
+/* a record of `count` pieces of one leaf (bmf_pieces[first..], source record
    src: its texture and flags), appended to the model's buffer; 0 when
    there is no room */
 static int put_record(bmf_cache *c, const qw_record *src, const bmf_piece *const *pc, int count)
@@ -367,28 +403,26 @@ static int put_group(bmf_cache *c, const qw_leaf *leaf, uint32_t ofs, uint32_t l
    block */
 static int put_pieces(bmf_cache *c, const qw_record *r)
 {
-#ifdef Q1PSX_BENCH
-	bmf_stats[1] += (uint32_t) num_pieces;
-#endif
+	bmf_cut_pieces += (uint32_t) num_pieces;
 	uint8_t done[BMF_PIECES];
 	memset(done, 0, (size_t) num_pieces);
 	for (int i = 0; i < num_pieces; i++) {
 		if (done[i])
 			continue;
-		const qw_leaf *leaf = pieces[i].leaf;
+		const qw_leaf *leaf = bmf_pieces[i].leaf;
 		const bmf_piece *batch[BMF_PIECES];
 		int nb = 0, nvb = 0;
 		uint32_t start = c->recs_len;
 		for (int j = i; j < num_pieces; j++) {
-			if (done[j] || pieces[j].leaf != leaf)
+			if (done[j] || bmf_pieces[j].leaf != leaf)
 				continue;
-			if (nvb + pieces[j].n > QW_MAX_VERTS) {
+			if (nvb + bmf_pieces[j].n > QW_MAX_VERTS) {
 				if (!put_record(c, r, batch, nb))
 					return 0;
 				nb = nvb = 0;
 			}
-			batch[nb++] = &pieces[j];
-			nvb += pieces[j].n;
+			batch[nb++] = &bmf_pieces[j];
+			nvb += bmf_pieces[j].n;
 			done[j] = 1;
 		}
 		if (nb && !put_record(c, r, batch, nb))
@@ -412,7 +446,7 @@ static int cut_record(bmf_cache *c, const uint8_t *rp, const int16_t off[3], uin
 	const qw_quad *q = (const qw_quad *) (rp + r->polys);
 	const qw_tri *t = (const qw_tri *) (q + r->num_quads);
 	num_pieces = 0;
-	cut_overflow = 0;
+	bmf_cut_overflow = 0;
 	/* the record's sphere down the world's BSP first: a node it lies
 	   wholly on one side of sends every polygon there (each corner's d has
 	   the centre's sign: |d(p) - d(c)| <= |n| |p - c| < 4097 sr) */
@@ -452,37 +486,19 @@ static int cut_record(bmf_cache *c, const uint8_t *rp, const int16_t off[3], uin
 			v[j].pad2 = 0;
 		}
 		cut_poly(top, v, n, quad);
-		if (cut_overflow)
+		if (bmf_cut_overflow)
 			return 0;
 	}
 	return put_pieces(c, r);
 }
 
-/* the model's compact BSP (nodes in DFS order), once */
-static int build_nodes(bmf_cache *c, uint32_t at, int *count, int cap)
-{
-	if (at & 1)
-		return -1;
-	if (*count >= cap)
-		return -2;
-	int k = (*count)++;
-	const qw_node *nd = node_at(at);
-	c->nodes[k].plane3 = nd->plane3;
-	for (int s = 0; s < 2; s++) {
-		int ch = build_nodes(c, nd->child[s], count, cap);
-		if (ch == -2)
-			return -2;
-		c->nodes[k].child[s] = (int16_t) ch;
-	}
-	return k;
-}
-
 /* brush model `model` cut at origin `org` (1/8 units), from world node
    `top` down */
-static int cut_model(bmf_cache *c, int model, const int32_t org[3], uint32_t top)
+static int cut_model_c(bmf_cache *c, int model, const int32_t org[3], uint32_t top)
 {
 	const qw_bmodel *bm = &world.bmodels[model];
 	int16_t off[3];
+	bmf_cut_pieces = 0;
 	for (int k = 0; k < 3; k++)                   /* 1/8 units -> vertex units */
 		off[k] = (int16_t) (org[k] * QW_VSCALE / CLIP_SUB);
 	c->recs_len = c->num_groups = c->pool_len = 0;
@@ -520,16 +536,122 @@ static int cut_model(bmf_cache *c, int model, const int32_t org[3], uint32_t top
 			stack[sp++] = nd->child[0];
 		}
 	}
-#ifdef Q1PSX_BENCH
-	bmf_stats[2]++;
-#endif
 	return 1;
+}
+#endif /* Q1PSX_BMF_C */
+
+#define BMF_COLD __attribute__((optimize("Os")))   /* load-time code: small before fast */
+
+/* the model's compact BSP (nodes in DFS order), once */
+BMF_COLD static int build_nodes(bmf_cache *c, uint32_t at, int *count, int cap)
+{
+	if (at & 1)
+		return -1;
+	if (*count >= cap)
+		return -2;
+	int k = (*count)++;
+	const qw_node *nd = node_at(at);
+	c->nodes[k].plane3 = nd->plane3;
+	for (int s = 0; s < 2; s++) {
+		int ch = build_nodes(c, nd->child[s], count, cap);
+		if (ch == -2)
+			return -2;
+		c->nodes[k].child[s] = (int16_t) ch;
+	}
+	return k;
+}
+
+#if Q1PSX_BMF_C == 2
+/* both cuts of a model, the C's first: the same result, counts and bytes
+   (its records, its vertices, its groups, its nodes' groups), or a "bmfasm
+   MISMATCH" line with the first record bytes that differ */
+static uint32_t cut_hash(const bmf_cache *c, int ok)
+{
+	uint32_t h = 2166136261u;
+#define H(x) (h = (h ^ (uint32_t) (x)) * 16777619u)
+	H(ok); H(bmf_cut_overflow); H(bmf_cut_pieces); H(c->recs_len); H(c->pool_len); H(c->num_groups);
+	for (uint32_t i = 0; i < c->recs_len; i++)
+		H(c->recs[i]);
+	const uint8_t *pv = (const uint8_t *) &bmf_pool[c->pool_first];
+	for (uint32_t i = 0; i < c->pool_len * sizeof *bmf_pool; i++)
+		H(pv[i]);
+	for (uint32_t g = 0; g < c->num_groups; g++) {
+		H((uintptr_t) c->groups[g].leaf); H(c->groups[g].ofs); H(c->groups[g].len);
+	}
+	for (int k = 0; k < c->num_nodes; k++) {
+		H(c->nodes[k].first[0]); H(c->nodes[k].first[1]); H(c->nodes[k].count[0]); H(c->nodes[k].count[1]);
+	}
+#undef H
+	return h;
+}
+
+static void cut_poison(bmf_cache *c)          /* (a side the cut leaves unset shows) */
+{
+	for (int k = 0; k < c->num_nodes; k++)
+		c->nodes[k].first[0] = c->nodes[k].first[1] = c->nodes[k].count[0] = c->nodes[k].count[1] = 0xbeef;
+}
+
+uint32_t bmf_asm_checks, bmf_asm_mismatches;
+
+static int cut_check(bmf_cache *c, int model, const int32_t org[3], uint32_t top)
+{
+	static uint8_t keep[1024];
+	cut_poison(c);
+	int okc = cut_model_c(c, model, org, top);
+	uint32_t hc = cut_hash(c, okc), lc = c->recs_len, nc = c->num_groups, pc = c->pool_len;
+	int ovc = bmf_cut_overflow;
+	memcpy(keep, c->recs, lc < sizeof keep ? lc : sizeof keep);
+	cut_poison(c);
+	int oka = bmf_cut(c, model, org, top);
+	bmf_asm_checks++;
+	if (cut_hash(c, oka) != hc) {
+		bmf_asm_mismatches++;
+		uint32_t at = 0, n = lc < c->recs_len ? lc : c->recs_len;
+		if (n > sizeof keep)
+			n = sizeof keep;
+		while (at < n && keep[at] == c->recs[at])
+			at++;
+		printf("bmfasm MISMATCH *%d at %d %d %d top %08x: C %d (%d) %u B %u groups %u verts, asm %d (%d) %u B "
+		       "%u groups %u verts; records differ from byte %u\n", model, (int) org[0], (int) org[1], (int) org[2],
+		       (unsigned) top, okc, ovc, (unsigned) lc, (unsigned) nc, (unsigned) pc, oka, bmf_cut_overflow,
+		       (unsigned) c->recs_len, (unsigned) c->num_groups, (unsigned) c->pool_len, (unsigned) at);
+		if (at < n) {
+			uint32_t from = at & ~15u;
+			printf("bmfasm C  ");
+			for (uint32_t i = from; i < from + 32 && i < lc && i < sizeof keep; i++)
+				printf(" %02x", keep[i]);
+			printf("\nbmfasm asm");
+			for (uint32_t i = from; i < from + 32 && i < c->recs_len; i++)
+				printf(" %02x", c->recs[i]);
+			printf("\n");
+		}
+	}
+	return oka;
+}
+#endif
+
+/* the cut: the asm's (or the C's, BMF_C=1; both, BMF_C=2) */
+static int cut_model(bmf_cache *c, int model, const int32_t org[3], uint32_t top)
+{
+#if Q1PSX_BMF_C == 1
+	int ok = cut_model_c(c, model, org, top);
+#elif Q1PSX_BMF_C == 2
+	int ok = cut_check(c, model, org, top);
+#else
+	int ok = bmf_cut(c, model, org, top);
+#endif
+#ifdef Q1PSX_BENCH
+	bmf_stats[1] += bmf_cut_pieces;
+	if (ok)
+		bmf_stats[2]++;
+#endif
+	return ok;
 }
 
 /* ---------------------------------------------------------------- load -- */
 
 /* a model's records' bytes and polygon corners, for its room */
-static void model_size(uint32_t at, uint32_t *bytes, uint32_t *corners, int *nodes)
+BMF_COLD static void model_size(uint32_t at, uint32_t *bytes, uint32_t *corners, int *nodes)
 {
 	if (at & 1)
 		return;
@@ -561,43 +683,36 @@ uint32_t bmf_model_bytes(int model)
 #endif
 
 /* the largest sphere a record of a model's pieces can have (vertex
-   units): a piece record's corners are in its source record's box, so its
-   own box is, and its sphere (put_record: about its box's centre,
-   truncated, to its farthest corner, + 1) is at most that box's half
-   diagonal + 0.87 + 1 */
-static uint32_t model_rmax(uint32_t at)
+   units: bmf_reserve's rmax, this root + 3): a piece record's corners are
+   in its source record's box, so its own box is, and its sphere
+   (put_record: about its box's centre, truncated, to its farthest corner,
+   + 1) is at most that box's half diagonal + 0.87 + 1; here the largest
+   half diagonal, squared */
+BMF_COLD static uint32_t model_d2(uint32_t at)
 {
 	uint32_t most = 0;
 	while (!(at & 1)) {
 		const qw_node *nd = node_at(at);
 		for (int s = 0; s < 2; s++) {
 			const uint8_t *p = (const uint8_t *) nd->faces[s], *end = (const uint8_t *) qw_face_end(nd, s);
-			while (p < end) {
-				const qw_record *r = (const qw_record *) p;
-				if (!r->size)
-					break;
+			for (const qw_record *r; p < end && (r = (const qw_record *) p)->size; p += r->size) {
 				const uint16_t *idx = (const uint16_t *) (p + sizeof *r);
-				int32_t lo[3] = { 32767, 32767, 32767 }, hi[3] = { -32768, -32768, -32768 };
-				for (int i = 0; i < r->num_verts; i++) {
-					const qw_vert *v = &world.verts[idx[i]];
-					const int32_t q[3] = { v->x, v->y, v->z };
-					for (int k = 0; k < 3; k++) {
-						if (q[k] < lo[k]) lo[k] = q[k];
-						if (q[k] > hi[k]) hi[k] = q[k];
-					}
-				}
 				uint32_t d2 = 0;
 				for (int k = 0; k < 3; k++) {
-					uint32_t hk = (uint32_t) (hi[k] - lo[k] + 1) / 2;
+					int lo = 32767, hi = -32768;
+					for (int i = 0; i < r->num_verts; i++) {
+						int q = (&world.verts[idx[i]].x)[k];
+						if (q < lo) lo = q;
+						if (q > hi) hi = q;
+					}
+					uint32_t hk = (uint32_t) (hi - lo + 1) / 2;
 					d2 += hk * hk;
 				}
-				uint32_t rad = q_isqrt32(d2) + 3;
-				if (rad > most)
-					most = rad;
-				p += r->size;
+				if (d2 > most)
+					most = d2;
 			}
 		}
-		uint32_t back = model_rmax(nd->child[1]);
+		uint32_t back = model_d2(nd->child[1]);
 		if (back > most)
 			most = back;
 		at = nd->child[0];
@@ -649,7 +764,7 @@ typedef struct {
 	uint32_t recs, verts, groups;
 } bmf_need;
 
-static int is_mover(const edict_t *e)            /* a travel from pos1 to pos2 */
+BMF_COLD static int is_mover(const edict_t *e)   /* a travel from pos1 to pos2 */
 {
 	return e->class == QE_FUNC_DOOR || e->class == QE_FUNC_BUTTON || e->class == QE_FUNC_PLAT;
 }
@@ -659,7 +774,7 @@ static int is_mover(const edict_t *e)            /* a travel from pos1 to pos2 *
    corners, a secret door's place and its two moves' ends (movers_path),
    where it stands for a model that never moves; their count, 0 for a
    train without a path or with a longer one */
-static int model_path(const edict_t *e, int32_t (*path)[3], const edict_t **seen)
+BMF_COLD static int model_path(const edict_t *e, int32_t (*path)[3], const edict_t **seen)
 {
 	if (is_mover(e)) {
 		memcpy(path[0], e->pos1, sizeof path[0]);
@@ -676,7 +791,7 @@ static int model_path(const edict_t *e, int32_t (*path)[3], const edict_t **seen
 
 /* edict e's model cut as if it stood at `org` (1/8 units), its top node
    as ent_link makes it */
-static int cut_where(bmf_cache *c, const edict_t *e, const int32_t org[3])
+BMF_COLD static int cut_where(bmf_cache *c, const edict_t *e, const int32_t org[3])
 {
 	int32_t lo[3], hi[3];
 	for (int k = 0; k < 3; k++) {
@@ -702,7 +817,7 @@ static int cut_where(bmf_cache *c, const edict_t *e, const int32_t org[3])
    whose path or cuts the scratch cannot take gets the old room; one
    spawned only later (a death after START's trigger_setskill: no brush
    model there hangs on the skill) none: drawn whole. */
-void bmf_reserve(void)
+BMF_COLD void bmf_reserve(void)
 {
 #ifdef Q1PSX_BENCH
 	uint32_t used = mem_level_used();
@@ -845,7 +960,7 @@ void bmf_reserve(void)
 		if (build_nodes(c, bm->root, &count, nodes) < 0)
 			continue;
 		c->num_nodes  = (uint16_t) count;
-		uint32_t rmax = model_rmax(bm->root);
+		uint32_t rmax = q_isqrt32(model_d2(bm->root)) + 3;
 		c->rmax       = (uint16_t) (rmax > 0xffff ? 0xffff : rmax);
 		c->pool_first = bmf_pool_used;
 		c->pool_cap   = need[m].verts;
@@ -901,7 +1016,7 @@ static void bmf_check(void)
 				if (!cut_where(c, e, org)) {
 					fail++;
 					printf("bmfchk *%d, class %d, way %d at %d/32: given up (%s)\n", e->model, e->class, w,
-					       step, cut_overflow ? "too cut up" : "no room");
+					       step, bmf_cut_overflow ? "too cut up" : "no room");
 					continue;
 				}
 				uint32_t f[3] = { c->recs_len * 100 / c->recs_cap, c->pool_len * 100 / c->pool_cap,
@@ -921,7 +1036,7 @@ static void bmf_check(void)
 /* after each spawn (the load's, a death's): the drawn models cut where
    they stand (here, not at a first sight: a room's doors coming into view
    in one frame) */
-void bmf_load(void)
+BMF_COLD void bmf_load(void)
 {
 	if (!bmf_models)
 		return;
@@ -936,6 +1051,10 @@ void bmf_load(void)
 #ifdef Q1PSX_BENCH
 	printf("bmf: %u pieces in %u cuts (%u given up), %u cycles\n", (unsigned) bmf_stats[1],
 	       (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4]);
+#if Q1PSX_BMF_C == 2
+	printf("bmfasm %s: %u cuts checked, %u mismatches\n", world.map_name, (unsigned) bmf_asm_checks,
+	       (unsigned) bmf_asm_mismatches);
+#endif
 #endif
 }
 
@@ -988,7 +1107,7 @@ static int32_t clamp16(int32_t v)
    leaf it would be drawn in can be wholly in view either (it holds the
    piece). Then the frame draws nothing of it: it is not cut again until
    it is in view (bmf_seen finds it by its box meanwhile). */
-static int all_culled(const edict_t *e, int32_t rmax)
+__attribute__((noinline)) BMF_COLD static int all_culled(const edict_t *e, int32_t rmax)
 {
 	const int16_t *rot = r_state.rot, *ar = r_state.absrot;
 	int32_t c[3], h[3], lo[3], hi[3];

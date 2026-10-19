@@ -58,6 +58,9 @@ int bmf_draw(edict_t *e, uint16_t vis);
 extern uint32_t bmf_stats[7];
 /* a brush model's records' bytes (the movers' scenario: the biggest) */
 uint32_t bmf_model_bytes(int model);
+#if Q1PSX_BMF_C == 2
+extern uint32_t bmf_asm_checks, bmf_asm_mismatches;   /* the asm's cuts checked by the C */
+#endif
 #endif
 
 #endif

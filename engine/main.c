@@ -1800,6 +1800,10 @@ static void bench_movers(void)
 		}
 		printf("bmfcut %s turning: 256 frames, %u cuts, %u put off out of view\n", names[ti],
 		       (unsigned) cuts2, (unsigned) (bmf_stats[6] - off0));
+#if Q1PSX_BMF_C == 2
+		printf("bmfasm %s: %u cuts checked, %u mismatches\n", names[ti], (unsigned) bmf_asm_checks,
+		       (unsigned) bmf_asm_mismatches);
+#endif
 		printf("bmfhash %s: %08x\n", names[ti], (unsigned) fold);
 	}
 	game_active = 0;

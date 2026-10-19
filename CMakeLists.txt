@@ -93,6 +93,11 @@ endif()
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.
 set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference, 2 the asm checked by the C")
+# The brush models' cut by the world's BSP: the asm (engine/bmfrag.s) or its
+# C specification (engine/bmfrag.c cut_model_c); 2 runs both on every cut
+# and compares them ("bmfasm" lines).
+set(Q1PSX_BMF_C 0 CACHE STRING "Brush models' cut: 0 the asm, 1 the C reference, 2 the asm checked by the C")
+target_compile_definitions(q1psx PRIVATE Q1PSX_BMF_C=${Q1PSX_BMF_C})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${Q1PSX_DLIGHT_C}>)
 target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_C=${Q1PSX_DLIGHT_C})
 

@@ -48,7 +48,12 @@
 #         then carries the tracks: docs/porting-notes.md §26).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
-#         by record by the C ("dlchk" lines).
+#         by record by the C ("dlchk" lines). BMF_C=1 builds the brush
+#         models' cut in C (engine/bmfrag.c) instead of the asm
+#         (engine/bmfrag.s), BMF_C=2 the asm checked cut by cut by the C
+#         ("bmfasm" lines: the cuts checked, any mismatch); that build
+#         carries both cuts, its stack floor lowered to 10 KB (STACK_MIN=
+#         <bytes> sets the floor: SAMPLE=1's histogram needs 2048 there).
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -81,6 +86,7 @@ BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
 HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
+BMF_C=${BMF_C:-0}
 PLAY=${PLAY:-0}
 MUSIC=${MUSIC:-0}
 MAP=${MAP:-}
@@ -97,7 +103,8 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" \
-      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" \
+      -DQ1PSX_STACK_MIN="${STACK_MIN:-$([ "$BMF_C" = 2 ] && echo 10240 || echo 16384)}" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" "$ROOT" >/dev/null
@@ -111,6 +118,7 @@ LOG="$ROOT/build-bench/bench.log" \
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
+[ "$BMF_C" = 2 ] && { grep '^bmfasm' "$ROOT/build-bench/bench.log" | head -n 40 || true; }
 [ "$BMFCHK" = 1 ] && { grep '^bmfchk' "$ROOT/build-bench/bench.log" || true; }
 [ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$ROOT/build-bench/bench.log" || true; }
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
