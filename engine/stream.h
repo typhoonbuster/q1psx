@@ -16,8 +16,9 @@
  *
  * Who needs what: every residency pass (a few frames apart) the game says
  * which assets its entities use and how much (stream_want: a score, the
- * smaller the more needed, a distance from the player in world units, 0
- * for the pinned ones that must always be there: the keys, the weapons).
+ * smaller the more needed: a tier, then a distance from the player in
+ * world units; what the player's PVS holds first; 0 for the pinned ones
+ * that must always be there: the keys, the weapons).
  * The manager then loads, nearest first, what is wanted within its kind's
  * reach and not resident, one CD read at a time while the game runs,
  * making room by dropping what is wanted least (never a pinned asset, nor
@@ -39,7 +40,15 @@
 #include "qxa.h"
 
 #define STREAM_PIN    0u            /* stream_want's score: always resident */
-#define STREAM_DEAD   0x8000u       /* + the distance: a dead monster's remains (its
+/* A score is a tier + a distance: within a tier the nearest first, every
+   tier after the one above it; the reaches are the distance's
+   (porting-notes §50.5, the choice made: the PVS first, the heads under
+   the models). */
+#define STREAM_DIST   0xffffu       /* a score's distance (world units)        */
+#define STREAM_HIDDEN 0x10000u      /* + : a tier down: what the player's PVS
+                                       does not hold; a head, a gib: under its
+                                       kind's model                          */
+#define STREAM_DEAD   0x40000u      /* + the distance: a dead monster's remains (its
                                        body, its head, its gibs): under every
                                        living want, past every reach (kept while
                                        nothing wanted more needs the room, never
@@ -136,8 +145,8 @@ uint8_t *stream_stage(void);
 void stream_spu_pool(uint32_t lo, uint32_t hi);
 
 /* demand for every asset of a's group (a monster's model, head, sounds:
-   the cook's groups) */
-void stream_want_group(int a, uint32_t score);
+   the cook's groups), but `spare` (-1: none) at spare_score */
+void stream_want_group(int a, uint32_t score, int spare, uint32_t spare_score);
 
 /* the bench and the overlay: how full the pools are, what was read */
 typedef struct {
@@ -165,10 +174,7 @@ uint32_t stream_score(int a);                   /* asset a's want, the last pass
    stream_sim_in(a): asset a would be in */
 void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uint32_t *wanted_bytes,
                      uint32_t *in, uint32_t *in_bytes);
-extern int stream_rank_mode;                    /* the bench's wants: 0 as the game, 1 the PVS
-                                                   first, 2 a short radius, 3 the PVS first
-                                                   and the heads, the gibs under the models */
-void stream_want_group_but(int a, uint32_t score, int but);
+
 int  stream_sim_in(int a);
 uint32_t stream_size(int a);                    /* asset a's bytes on the disc */
 #endif

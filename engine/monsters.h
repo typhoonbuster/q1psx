@@ -211,8 +211,9 @@ void monster_death_use(edict_t *self);
 #define CORPSE_FADE  TICKS(100)
 
 /* the residency pass (engine/stream.c, through ents_stream_wants): what the
-   monsters' kinds need, by their living members' distance from the player;
-   the dead's remains under them (STREAM_DEAD) */
+   monsters' kinds need, by their living members' distance from the player,
+   those the player's PVS holds first, the heads and gibs a tier under the
+   models; the dead's remains under them all (STREAM_DEAD) */
 void monsters_stream_wants(void);
 
 /* per frame, after the brush models: the streamed models into the render

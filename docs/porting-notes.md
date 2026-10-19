@@ -5827,8 +5827,9 @@ lines):
   - on the others, at 7-15 spots of 32 (E2M2, E2M3, E2M4, E2M6, E2M7,
     E3M4, E3M5, E3M6) a kind in the PVS is not in. The kinds behind
     walls, nearer by distance, took its room.
-- **Other rankings, simulated** (`RESIDENCY=2..4`): the count of spots
-  where a kind in the PVS is not in, of 1020.
+- **Other rankings, simulated** (`RESIDENCY=2..4`, bench modes kept in
+  37489f1 only): the count of spots where a kind in the PVS is not in, of
+  1020.
 
   | Ranking | Spots |
   |---|---|
@@ -5840,4 +5841,60 @@ lines):
   The short radius drops the kinds the player sees across a big room
   and keeps the ones behind the walls nearby. The PVS is the map's own
   "near": what can be seen from where the player stands.
-- **A choice** is due before any change to the policy (§50.5).
+
+### 50.5 The PVS first, the heads under the models (the choice made)
+
+- **The choice**: of the four rankings above, the last one.
+- **The scores in tiers** (engine/stream.h): a score is a tier plus a
+  distance in world units (`STREAM_DIST`, the low 16 bits).
+  - Within a tier the nearest comes first; every tier comes after the one
+    above it.
+  - The reaches apply to the distance alone: the same physical zone as
+    before. Everything at `STREAM_DEAD` or under is never read for.
+  - The tiers, from the most wanted:
+    - 0: what the player's PVS holds: a kind with a member there, a
+      streamed item there;
+    - `STREAM_HIDDEN`: a kind with no member in the PVS, an item out of
+      it; and a visible kind's head and the gibs;
+    - 2 × `STREAM_HIDDEN`: a hidden kind's head;
+    - `STREAM_DEAD`: the dead's remains (§50.3).
+  - The pinned items (the keys, the rune, the weapons) stay at 0, always
+    in: the earlier rule.
+- **The PVS** is the last frame's stamp (`leaf->visframe ==
+  r_state.visframe`): the camera's leaf, the player's eye. It is read in
+  `monsters_stream_wants` through the edict's cached leaf
+  (`ent_model_leaf`): one comparison per monster and per pass (every 8
+  frames). At a map's start no frame has stamped the new leaves yet: every
+  want falls in one tier, ranked by distance as before.
+- **A head** is only drawn when its monster is gibbed: wanted a tier
+  under its kind's model (`stream_want_group`'s `spare`). The gibs are
+  wanted a tier under the nearest member.
+- **Measured** (`BENCH_MAPS=1 RESIDENCY=1`): 41 spots of 1020 where a kind
+  in the PVS is not in, against 90 before.
+  - Per map: E3M4 8, E2M7 6, E3M6 6, E3M5 4, E2M6 3, E1M7 2, E2M3 1,
+    E2M4 1, E4M4 1; none elsewhere.
+  - These maps' pools (154-306 KB) cannot hold their visible kinds with
+    the pinned items at those spots.
+- **The spawn views** (`BENCH_MAPS=1 HASHONLY=1 scripts/dlcheck.sh`
+  against §50.1's): 9 of 128 lists differ, their pictures identical
+  (E1M5's and E3M6's compared). The preload took the same assets in
+  another order: the skins lie elsewhere in VRAM.
+- **Room**: the release's stack room is 17128 bytes (17464 before this
+  ranking).
+
+### 50.6 Left
+
+- **The remaining 41 spots**: a lower model level for the monsters on
+  the tightest maps, or more RAM for the pool. Both are left open.
+- **The carousel's latency** is unchanged: a kind that comes into the
+  PVS waits for its turn (up to 14.6 s, §48.9). Until then its monsters
+  are paused (§50.2): invisible and harmless.
+- **The order's rare way in C** (§50.1): about 550 cycles per monster and
+  brush model sharing a leaf. The GTE could take the plane tests (three
+  dot products per MVMVA), in hand-written asm.
+- **The fade** darkens a body to black. The GPU's blend modes cannot fade
+  to the background. A 50 % blend step, or a body sinking into the floor,
+  are other looks, left open.
+- **Not run**: DuckStation; a hands-on play (E1M1's nailgun room, the
+  doors and lifts with monsters by them, the bodies in a lit room, the
+  big maps E3M4 and E4M7).

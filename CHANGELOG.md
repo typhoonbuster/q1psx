@@ -1439,5 +1439,12 @@ followed by R0-R4.
     is not loaded at 7-15 spots of 32;
   - simulated rankings: a short radius does worse (96 spots of 1020
     against 90 today); the PVS first does better (59), with the heads
-    and gibs under the models better still (41). The choice is the
-    one made in §50.5.
+    and gibs under the models better still (41).
+- **The PVS first, the heads under the models** (the one chosen of the
+  four). §50.5:
+  - what the player can see from where he stands is loaded first, by
+    distance; the rest after it, in the same zone, and evicted first;
+  - a monster's head (only drawn when it is gibbed) and the gibs are
+    loaded after the models;
+  - measured: a visible kind missing at 41 spots of 1020 (90 before),
+    only on the maps with the tightest pools.

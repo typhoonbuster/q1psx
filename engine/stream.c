@@ -1042,7 +1042,7 @@ static int next_wanted(int carousel)
 			continue;
 		uint32_t reach = as->d.kind == QSTK_SOUND ? (carousel ? XA_SOUND_REACH : STREAM_SOUND_REACH)
 		                                          : (carousel ? XA_REACH : STREAM_REACH);
-		if (as->last > reach)
+		if ((as->last & STREAM_DIST) > reach || as->last >= STREAM_DEAD)
 			continue;
 		if (as->stuck == ST_ROOM) {
 			uint32_t ram, vram, spu;
@@ -1303,7 +1303,7 @@ static void pass(void)
 		if (as->backoff)
 			as->backoff--;
 		resident += as->state == A_RES;
-		wanted   += as->last <= STREAM_REACH;
+		wanted   += (as->last & STREAM_DIST) <= STREAM_REACH && as->last < STREAM_DEAD;
 	}
 	stream_stats.resident = (uint16_t) resident;
 	stream_stats.wanted   = (uint16_t) wanted;
@@ -1563,16 +1563,6 @@ int stream_sim_in(int a)
 	return a >= 0 && a < num_assets && a < 512 && sim_in[a];
 }
 
-int stream_rank_mode;
-
-void stream_want_group_but(int a, uint32_t score, int but)
-{
-	if (a < 0 || a >= num_assets)
-		return;
-	for (int i = assets[a].group_first; i >= 0; i = assets[i].group_next)
-		if (i != but)
-			stream_want(i, score);
-}
 
 void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uint32_t *wanted_bytes,
                      uint32_t *in, uint32_t *in_bytes)
@@ -1584,7 +1574,8 @@ void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uin
 	uint32_t ram = stream_stats.ram_size, spu = spu_hi > spu_lo ? spu_hi - spu_lo : 0;
 	for (int a = 0; a < num_assets && a < 512; a++) {
 		const asset_t *as = &assets[a];
-		if (as->last <= (as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : reach)) {
+		if ((as->last & STREAM_DIST) <= (as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : reach) &&
+		    as->last < STREAM_DEAD) {
 			(*wanted)++;
 			*wanted_bytes += as->d.size;
 		}
@@ -1593,8 +1584,8 @@ void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uin
 		int best = -1;
 		for (int a = 0; a < num_assets && a < 512; a++) {
 			const asset_t *as = &assets[a];
-			if (sim_in[a] || as->stuck == ST_BROKEN ||
-			    as->last > (as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : reach))
+			if (sim_in[a] || as->stuck == ST_BROKEN || as->last >= STREAM_DEAD ||
+			    (as->last & STREAM_DIST) > (as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : reach))
 				continue;
 			if (best < 0 || as->last < assets[best].last ||
 			    (as->last == assets[best].last && as->d.size > assets[best].d.size))
@@ -1718,12 +1709,12 @@ void stream_spu_pool(uint32_t lo, uint32_t hi)
 	spu_hi = hi & ~63u;
 }
 
-void stream_want_group(int a, uint32_t score)
+void stream_want_group(int a, uint32_t score, int spare, uint32_t spare_score)
 {
 	if (a < 0 || a >= num_assets)
 		return;
 	for (int i = assets[a].group_first; i >= 0; i = assets[i].group_next)
-		stream_want(i, score);
+		stream_want(i, i == spare ? spare_score : score);
 }
 
 const qw_tex *stream_model_tex(int a)

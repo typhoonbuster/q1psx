@@ -1232,11 +1232,7 @@ static void bench_residency(const char *map)
 		cam.yaw = cam.pitch = cam.roll = 0;
 		run_frame(0, 0);                          /* (the PVS from the player's leaf) */
 		uint32_t w, wb, r, rb;
-		stream_rank_mode = Q1PSX_BENCH_RESIDENCY - 1;   /* (RESIDENCY=2: the PVS first, 3: 1200 u,
-		                                                   4: the PVS first, the heads under) */
-		stream_simulate(pl.pm.pos, Q1PSX_BENCH_RESIDENCY == 2 || Q1PSX_BENCH_RESIDENCY == 4 ? 2 * STREAM_REACH
-		                           : Q1PSX_BENCH_RESIDENCY == 3 ? 1200 : STREAM_REACH, &w, &wb, &r, &rb);
-		stream_rank_mode = 0;
+		stream_simulate(pl.pm.pos, STREAM_REACH, &w, &wb, &r, &rb);
 		uint16_t vis = (uint16_t) r_state.visframe;
 		int near1 = 0, near2 = 0, pvs = 0, pvs_in = 0;
 		uint32_t knear = 0, kpvs = 0, kin = 0, kpvs_in = 0, models_kb = 0;
