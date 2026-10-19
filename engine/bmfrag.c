@@ -411,6 +411,24 @@ static int cut_record(bmf_cache *c, const uint8_t *rp, const int16_t off[3], uin
 	const qw_tri *t = (const qw_tri *) (q + r->num_quads);
 	num_pieces = 0;
 	cut_overflow = 0;
+	/* the record's sphere down the world's BSP first: a node it lies
+	   wholly on one side of sends every polygon there (each corner's d has
+	   the centre's sign: |d(p) - d(c)| <= |n| |p - c| < 4097 sr) */
+	const int16_t sc[3] = { (int16_t) (r->sc[0] + off[0]), (int16_t) (r->sc[1] + off[1]),
+	                        (int16_t) (r->sc[2] + off[2]) };
+	int32_t bound = r->sr * 4097;
+	while (!(top & 1)) {
+		const qw_node *nd = node_at(top);
+		int32_t d = plane_d(plane_of(nd->plane3), sc);
+		if (d > bound)
+			top = nd->child[0];
+		else if (d < -bound)
+			top = nd->child[1];
+		else
+			break;
+	}
+	if ((top & 1) && ((const qw_leaf *) ((top & ~1u) | 0x80000000u))->contents == QW_CONTENTS_SOLID)
+		return 1;                                /* (all of it in a solid leaf: no piece) */
 	for (int i = 0; i < r->num_quads + r->num_tris; i++) {
 		if (num_pieces > BMF_PIECES / 2 && !put_pieces(c, r))
 			return 0;

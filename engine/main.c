@@ -1727,6 +1727,7 @@ static void bench_movers(void)
 		uint32_t f_cut = 0, f_cut_max = 0, n_ents_cut = 0, f_still = 0, n_still = 0, vbl_cut = 0;
 		uint32_t fold = 2166136261u;
 		bmf_stats[5] = 0;
+		prof_sample_start();
 		for (int f = 0; f < MV_FRAMES; f++) {
 			int32_t was[3];
 			memcpy(was, e->origin, sizeof was);
@@ -1764,7 +1765,9 @@ static void bench_movers(void)
 				ents_debug = 0;
 			}
 		}
+		prof_sample_stop();
 		bench_print(&acc);
+		prof_sample_print(names[ti]);
 		printf("bmfcut %s: %d frames, moved in %u, cut in %u: %u cuts (%u given up), %u pieces a cut; "
 		       "the cuts %u cycles a frame with one, %u the most, %u the dearest cut; the frame %u / %u "
 		       "with a cut (ents %u, %u.%02u vbl), %u without (%u frames)\n", names[ti], MV_FRAMES,
