@@ -383,10 +383,15 @@ static int load_level(int map)
 		monsters_map_start();
 		ents_spawn(1);
 		bmf_load();                             /* (the drawn ones cut where they stand) */
+		snd_map_start();                        /* (before any residency pass: it turns the
+		                                           bank's static sources into the entries
+		                                           snd_stream_wants reads, with this map's
+		                                           voices; until then they are the file's,
+		                                           20 bytes each: a garbage reach of 0 on
+		                                           E2M7 divided by zero) */
 		stream_preload();                       /* what the spawn's surroundings want */
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
-		snd_map_start();
 		music_play(snd_cd_track());
 	}
 	return world_ok;
