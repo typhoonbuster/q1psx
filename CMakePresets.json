@@ -40,6 +40,15 @@
 			}
 		},
 		{
+			"name":          "release-spu",
+			"inherits":      "release",
+			"displayName":   "Release build with the music streamed by the SPU (the XA streams' alternative)",
+			"binaryDir":     "${sourceDir}/build-release-spu",
+			"cacheVariables": {
+				"Q1PSX_MUSIC_MODE":       "spu"
+			}
+		},
+		{
 			"name":          "bench",
 			"inherits":      "default",
 			"displayName":   "Headless benchmark build (scripts/bench.sh)",

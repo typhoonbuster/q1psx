@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked game data "QGM7": the models, sprites and HUD pictures the
+ * q1psx — cooked game data "QGM8": the models, sprites and HUD pictures the
  * engine needs on every map. Written by `qcook game`, one file per model
  * level (GAME_<n>.DAT on the disc, formats/qlevels.h: the models'
  * triangles differ, the pictures and skins do not), loaded at boot by
@@ -47,7 +47,7 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM7"
+#define QGAME_MAGIC "QGM8"   /* (QGM7 until §47: a frame's whole texels, a chain each) */
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
@@ -159,10 +159,14 @@ typedef struct {
 
 /* The 2D weapons: per weapon (QGM_V_AXE .. QGM_V_LIGHT), its frames (the
    model's, in its order) and its CLUT's packet; per frame, where it goes
-   on the screen at the gun's rest pose and its texels' packets (half
-   resolution, a transparent margin, rows of w bytes, w even). A packet's
-   tag links to the next one's offset in the pixel block, the chain's last
-   to 0xffffff. */
+   on the screen at the gun's rest pose and its texels' chain (half
+   resolution, a transparent margin, rows of w bytes, w even): GP0(02h)
+   filling its rows of the slot with 0 (the transparent index; the slot
+   starts on 32 texels, the GPU's fill unit) then GP0(A0h) copying its
+   opaque spans, or GP0(A0h) copying the whole frame, whichever is
+   smaller; GP0(01h) last. Frames of the same texels share a chain (the
+   same ofs). A packet's tag links to the next one's offset in the pixel
+   block, the chain's last to 0xffffff. */
 #define QG_WEAPONS     8
 #define QG_WS_L0       86        /* the light the frames are shaded at: the
                                     engine's colour is light x 128 / QG_WS_L0 */
@@ -221,7 +225,7 @@ typedef struct {
 } qg_aux;                        /* 12 bytes */
 
 typedef struct {
-	char     magic[4];           /* "QGM7"                                       */
+	char     magic[4];           /* "QGM8"                                       */
 	uint32_t num_rects, ofs_rects;   /* qtex_rect[]: the CLUT row, then the pages' used rows */
 	uint32_t num_models, ofs_models; /* qg_model[QGM_COUNT]                      */
 	uint32_t num_pics, ofs_pics;     /* qg_pic[QGP_COUNT]                        */

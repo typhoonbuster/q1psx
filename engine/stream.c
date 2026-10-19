@@ -17,13 +17,18 @@
 #include "mdl.h"
 #include "mem.h"
 #include "music.h"
+#include "prof.h"
 #include "qsound.h"
 #include "qtex.h"
+#include "qxa.h"
 #include "snd.h"
 #include "stream.h"
 #include "world.h"
 
 stream_stats_t stream_stats;
+#ifdef Q1PSX_BENCH
+uint32_t stream_xa_cycles, stream_xa_frames;     /* the bench's: the carousel's frame cost */
+#endif
 int            stream_log;
 int32_t        stream_origin[3];
 
@@ -54,7 +59,9 @@ typedef struct {
 	uint32_t  stuck_spu;
 	int16_t   group_next;      /* the next asset of its group (the cook's), -1  */
 	int16_t   group_first;     /* its group's first                             */
+	uint8_t   xa;              /* its entry in the music's carousel, XA_NONE     */
 } asset_t;
+#define XA_NONE 0xff
 
 /* asset_t stuck: no pool had room for it, even with all that is wanted
    less dropped (tried again once what is wanted as much holds less: not
@@ -95,6 +102,22 @@ static res_t    res[MAX_RES];
 
 static uint8_t *pool, *pool_end, *pool_top;   /* the RAM pool (bump, compacted) */
 
+/* The pool's end lent outside the assets: a block read from the disc (the
+   2D gun's packets, engine/game.c game_ws_sync). Asked for, it is given at
+   a map's start before the stream's own buffers (the 2D gun as sure of its
+   room as when it lived in the game arena), during the game from the
+   pool's end once no read is in flight (the assets wanted least dropped,
+   the pool compacted), then read in the stream's turn (the music paused
+   as for an asset's). Its bytes stay past pool_end: compaction never moves
+   them (its packets' links are absolute). */
+enum { L_NONE, L_WANT, L_SHORT, L_ROOM, L_READING, L_IN };
+static int32_t  lend_lba;
+static uint32_t lend_bytes;      /* asked for: whole sectors                     */
+static uint8_t *lend_at;         /* given: at pool_end, lend_bytes long          */
+static uint8_t  lend_state;      /* L_*; L_SHORT: the pool could not spare it
+                                    (asked again at the next map's start)       */
+static uint32_t lend_reads;      /* the block's reads: a new one to link again   */
+
 static vrect_t  regions[MAX_REGIONS];
 static int      num_regions;
 
@@ -116,6 +139,42 @@ static struct {
 enum { SR_WAIT, SR_READ, SR_UPLOAD };   /* (SR_WAIT: for the music's fade) */
 static int      waiting = -1;  /* the asset whose read waits for the music's fade */
 static uint32_t frame_no;
+
+/* The music's carousel (Q1PSX_MUSIC_XA, formats/qxa.h): engine/music.c
+   plays a track's XA stream, whose data sectors carry its maps' assets one
+   after the other, again and again. An asset wanted is given its room as
+   for a read, then captured: the CD interrupt (stream_xa_sector) copies
+   each of its sectors as it passes, in order from its first, into a ring
+   of sectors (the staging buffer); each frame drains the ring into the
+   asset's place (a model: its level made from the shared asset,
+   qst_assemble; a sound: its samples to SPU RAM) and installs it once the
+   last is in. A sector missed (the ring full) starts the asset over at
+   its next turn. No seek: the music never stops for it. */
+#define MAX_CAPTURES  8
+#define RING          STAGE_SECTORS              /* (a power of two) */
+#define XA_REACH       4000u     /* a model wanted from farther: a turn's time */
+#define XA_SOUND_REACH 3000u     /*   ahead (12 s at most) at a run's 320 u/s  */
+typedef struct {
+	int16_t  asset;              /* -1: a free slot                            */
+	uint16_t sectors;            /* the carousel's asset's                     */
+	volatile uint16_t next;      /* the interrupt's: the next piece it takes;
+	                                sectors: all taken                         */
+	uint16_t done;               /* the frame's: pieces applied, in order from 0 */
+	uint8_t  entry;              /* its carousel entry                         */
+	uint8_t  gen;                /* (a sector of the slot's earlier asset, still
+	                                in the ring: not applied)                  */
+	qst_layout lay;              /* a model's: where its level's bytes are (from
+	                                its shared header, its first piece)        */
+	uint32_t armed;              /* the vblank it was wanted at (the log's wait) */
+} capture_t;
+static capture_t caps[MAX_CAPTURES];
+static const qxa_header *xa;                    /* the playing stream's, 0: none */
+static const qxa_entry  *xa_ent;
+static const uint8_t    *xa_lut;
+static uint8_t           cap_of[QXA_MAX_ASSETS];   /* an entry's capture slot, 0xff none */
+static volatile uint8_t  ring_head, ring_tail;  /* the interrupt's, the frame's */
+static uint8_t           xa_rearm;              /* a pass ran, a capture ended: arm more */
+static struct { uint8_t cap, gen; uint16_t piece; } ring_tag[RING];
 
 #define ALIGN16(n) (((n) + 15u) & ~15u)
 #define ALIGN64(n) (((n) + 63u) & ~63u)
@@ -176,6 +235,7 @@ static int load_directory(int level)
 		memset(&assets[i], 0, sizeof assets[i]);
 		assets[i].d = d[i];
 		assets[i].score = assets[i].last = ~0u;
+		assets[i].xa = XA_NONE;               /* (a carousel's: stream_carousel) */
 	}
 	num_assets = (int) n;
 	for (int i = 0; i < num_assets; i++) {      /* the groups' lists, in the file's order */
@@ -722,7 +782,7 @@ static int spu_victim(uint32_t n, uint32_t score)
    without the staging buffer either: a level arena too full for it, as
    E3M4's and E4M7's were, read the sounds to address 0, each found "not a
    sound") */
-static int sound_start(int a)
+static int sound_room(int a)
 {
 	asset_t *as = &assets[a];
 	int slot = free_slot();
@@ -743,6 +803,14 @@ static int sound_start(int a)
 	r->snd.spu  = at;
 	as->res     = (uint8_t) slot;
 	as->state   = A_READING;
+	return 1;
+}
+
+static int sound_start(int a)
+{
+	if (!sound_room(a))
+		return 0;
+	uint32_t at = res[assets[a].res].snd.spu, n = res[assets[a].res].spu_size;
 	sread.a      = a;
 	sread.spu    = at;
 	sread.left   = n;
@@ -801,11 +869,9 @@ static int sound_upload_piece(void)
 
 /* the sound's read is over: in, or back on the disc (a read error: tried
    again after a while; not a sound: never) */
-static void sound_done(int ok, int broken)
+static void sound_in(int a, int ok, int broken)
 {
-	asset_t *as = &assets[sread.a];
-	int a = sread.a;
-	sread.a = -1;
+	asset_t *as = &assets[a];
 	if (ok) {
 		as->state = A_RES;
 		stream_stats.reads++;
@@ -823,7 +889,13 @@ static void sound_done(int ok, int broken)
 	} else {
 		as->backoff = BACKOFF;
 	}
-	(void) a;
+}
+
+static void sound_done(int ok, int broken)
+{
+	int a = sread.a;
+	sread.a = -1;
+	sound_in(a, ok, broken);
 }
 
 /* the sound read's progress: 1 once it is over */
@@ -851,6 +923,8 @@ static int sound_step(void)
 		sound_done(1, 0);
 		return 1;
 	}
+	if (!music_read_ok(STAGE_SECTORS))       /* (the SPU music's refill first) */
+		return 0;
 	if (!sound_read_piece()) {
 		sound_done(0, 0);
 		return 1;
@@ -883,10 +957,9 @@ static void sound_read_sync(void)
 
 /* the read of asset a is done: install it, or put it back on the disc
    (a read error: tried again after a while; no room: once there may be) */
-static void read_done(int a, int ok)
+static void model_in(int a, int ok)
 {
 	asset_t *as = &assets[a];
-	reading = -1;
 	int in = !ok ? 0 : as->d.kind == QSTK_MODEL ? install_model(a) : -1;
 	if (in > 0) {
 		as->state = A_RES;
@@ -905,6 +978,12 @@ static void read_done(int a, int ok)
 		as->stuck = ST_BROKEN;
 	else
 		set_stuck(a);
+}
+
+static void read_done(int a, int ok)
+{
+	reading = -1;
+	model_in(a, ok);
 }
 
 /* RAM for asset a's read (its sectors whole), room made by dropping what
@@ -951,14 +1030,19 @@ static void start_read(int a)
 
 /* the wanted asset to read next: the most wanted on the disc within its
    reach (the biggest of equals first: its room found before the small
-   ones break it up), -1 if none */
-static int next_wanted(void)
+   ones break it up), -1 if none; carousel: one the music's carousel
+   carries (captured as it passes: wanted a turn's run ahead), else one it
+   does not (read from STREAM_<n>.DAT) */
+static int next_wanted(int carousel)
 {
 	int best = -1;
 	for (int a = 0; a < num_assets; a++) {
 		asset_t *as = &assets[a];
-		if (as->state != A_DISC || as->backoff || as->stuck == ST_BROKEN ||
-		    as->last > (as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : STREAM_REACH))
+		if (as->state != A_DISC || as->backoff || as->stuck == ST_BROKEN || (as->xa != XA_NONE) != carousel)
+			continue;
+		uint32_t reach = as->d.kind == QSTK_SOUND ? (carousel ? XA_SOUND_REACH : STREAM_SOUND_REACH)
+		                                          : (carousel ? XA_REACH : STREAM_REACH);
+		if (as->last > reach)
 			continue;
 		if (as->stuck == ST_ROOM) {
 			uint32_t ram, vram, spu;
@@ -972,6 +1056,224 @@ static int next_wanted(void)
 			best = a;
 	}
 	return best;
+}
+
+/* ------------------------------------------------------------ carousel -- */
+
+/* the captures stopped: their assets back on the disc (their room given
+   back), the ring emptied */
+static void xa_cancel(void)
+{
+	for (int k = 0; k < MAX_CAPTURES; k++) {
+		capture_t *cp = &caps[k];
+		if (cp->asset < 0)
+			continue;
+		cap_of[cp->entry] = 0xff;
+		asset_t *as = &assets[cp->asset];
+		if (as->state == A_READING) {
+			slot_free(&res[as->res]);
+			as->state = A_DISC;
+		}
+		cp->asset = -1;
+	}
+	ring_head = ring_tail = 0;
+}
+
+int stream_reading(void)
+{
+	return reading >= 0 || lend_state == L_READING || (sread.a >= 0 && (sread.step == SR_READ ||
+	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK))));
+}
+
+uint8_t *stream_stage(void)
+{
+	return stage;
+}
+
+void stream_carousel(const qxa_header *h)
+{
+	xa = 0;                                   /* (the interrupt takes nothing now) */
+	xa_cancel();
+	memset(cap_of, 0xff, sizeof cap_of);
+	for (int a = 0; a < num_assets; a++)
+		assets[a].xa = XA_NONE;
+	if (!h || !h->period || h->num_assets > QXA_MAX_ASSETS)
+		return;
+	xa_ent = (const qxa_entry *) ((const uint8_t *) h + h->ofs_entries);
+	xa_lut = (const uint8_t *) h + h->ofs_lut;
+	for (int e = 0; e < h->num_assets; e++)
+		if (xa_ent[e].asset < num_assets)
+			assets[xa_ent[e].asset].xa = (uint8_t) e;
+	xa = h;
+}
+
+/* The CD interrupt (engine/music.c), a data sector of the stream in the
+   drive's buffer: i its place in the stream. Taken into the ring when it
+   is the next piece of an asset being captured. */
+void stream_xa_sector(uint32_t i)
+{
+	const qxa_header *h = xa;
+	if (!h || !stage)
+		return;
+	uint32_t c = (i - i / QXA_INTERLEAVE - 1) % h->period;
+	uint8_t e = xa_lut[c], k = cap_of[e];
+	if (k >= MAX_CAPTURES)
+		return;
+	capture_t *cp = &caps[k];
+	uint16_t piece = (uint16_t) (c - xa_ent[e].first), next = cp->next;
+	if (piece != next) {
+		if (piece) {                          /* (its first not seen yet; or one missed: */
+			if (next && next < cp->sectors)   /*  from the first again, at its next turn) */
+				cp->next = 0;
+			return;
+		}
+		if (next >= cp->sectors)              /* (all taken) */
+			return;
+	}
+	uint8_t hd = ring_head, nh = (uint8_t) ((hd + 1) & (RING - 1));
+	if (nh == ring_tail) {                    /* the frames are late: dropped, */
+		cp->next = 0;                         /* the asset again at its next turn */
+		stream_stats.xa_dropped++;
+		return;
+	}
+	/* the data by DMA in the background (a word every 16 cycles: the CPU
+	   runs between; done long before the next sector, 13 ms on) */
+	CdGetSector2(stage + (uint32_t) hd * QST_SECTOR, QST_SECTOR / 4);
+	ring_tag[hd].cap   = k;
+	ring_tag[hd].gen   = cp->gen;
+	ring_tag[hd].piece = piece;
+	ring_head = nh;
+	cp->next = (uint16_t) (piece + 1);
+}
+
+/* a captured piece into its asset's place: 0 when the asset is not what
+   this engine reads */
+static int xa_apply(capture_t *cp, uint16_t piece, const uint8_t *src)
+{
+	asset_t *as = &assets[cp->asset];
+	res_t   *r  = &res[as->res];
+	if (as->d.kind == QSTK_MODEL) {
+		if (!piece) {
+			const qst_shared *sh = (const qst_shared *) src;   /* (word-aligned: the ring's) */
+			if (!sh->level[stream_level].len_records ||
+			    qst_level_model(sh, stream_level, (qst_model *) r->ram) != as->d.size)
+				return 0;
+			qst_layout_of(sh, stream_level, &cp->lay);
+		}
+		qst_assemble(&cp->lay, (uint32_t) piece * QST_SECTOR, src, QST_SECTOR, r->ram);
+		return 1;
+	}
+	/* a sound: its header, its samples to their place in the SPU pool
+	   (64-byte units: the header's and the sector's) */
+	uint32_t at = r->snd.spu, bytes = QST_SECTOR;
+	if (!piece) {
+		const qst_sound *hs = (const qst_sound *) src;
+		if (sizeof *hs + hs->len > as->d.size || !hs->len || (hs->len & 15))
+			return 0;
+		r->snd.len   = hs->len;
+		r->snd.pitch = hs->pitch;
+		r->snd.flags = hs->flags;
+		r->snd.ticks = hs->ticks;
+		src   += sizeof *hs;
+		bytes -= sizeof *hs;
+	} else {
+		at += (uint32_t) piece * QST_SECTOR - sizeof(qst_sound);
+	}
+	uint32_t left = r->snd.spu + r->spu_size - at;
+	if (bytes > left)
+		bytes = left;
+	if (bytes) {
+		SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
+		SpuSetTransferStartAddr(at);
+		SpuWrite((const uint32_t *) src, bytes);
+		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (the ring's sector is the interrupt's again) */
+	}
+	return 1;
+}
+
+/* the ring's pieces into their assets; an asset whose last piece is in:
+   installed */
+static void xa_drain(void)
+{
+	while (ring_tail != ring_head) {
+		uint8_t t = ring_tail;
+		if (((t + 1) & (RING - 1)) == ring_head && CdDataSync(1))
+			break;                            /* (the newest's DMA still running) */
+		capture_t *cp = &caps[ring_tag[t].cap];
+		uint16_t piece = ring_tag[t].piece;
+		if (cp->asset >= 0 && cp->gen == ring_tag[t].gen) {
+			if (!piece)
+				cp->done = 0;
+			if (piece == cp->done) {
+				int a = cp->asset, ok = xa_apply(cp, piece, stage + (uint32_t) t * QST_SECTOR);
+				cp->done++;
+				if (!ok || cp->done == cp->sectors) {
+					cap_of[cp->entry] = 0xff;     /* (the interrupt's first) */
+					cp->asset = -1;
+					xa_rearm = 1;
+					SLOG("stream: captured %08x, %u sectors, in %d vblanks\n", (unsigned) assets[a].d.hash,
+					     (unsigned) cp->sectors, VSync(-1) - (int) cp->armed);
+					if (!ok) {                    /* (never again: STREAM_<n>.DAT and
+					                                 the carousel disagree) */
+						printf("stream: asset %08x from the carousel is not one this engine reads\n",
+						       (unsigned) assets[a].d.hash);
+						slot_free(&res[assets[a].res]);
+						assets[a].state = A_DISC;
+						assets[a].stuck = ST_BROKEN;
+						stream_stats.failures++;
+					} else if (assets[a].d.kind == QSTK_MODEL) {
+						stream_stats.xa_captures++;
+						model_in(a, 1);
+					} else {
+						stream_stats.xa_captures++;
+						sound_in(a, 1, 0);
+					}
+				}
+			}
+		}
+		ring_tail = (uint8_t) ((t + 1) & (RING - 1));
+	}
+}
+
+/* the ring given up (the staging buffer wanted by a read, the stream
+   left): the captures go on from their first piece, at their next turn */
+static void xa_flush(void)
+{
+	ring_tail = ring_head;
+	for (int k = 0; k < MAX_CAPTURES; k++)
+		if (caps[k].asset >= 0)
+			caps[k].next = caps[k].done = 0;
+}
+
+/* the most wanted assets the carousel carries, captures for them (their
+   room given now, as for a read) */
+static void xa_arm(void)
+{
+	for (int k = 0; k < MAX_CAPTURES; k++) {
+		capture_t *cp = &caps[k];
+		if (cp->asset >= 0)
+			continue;
+		int a = next_wanted(1);
+		if (a < 0)
+			return;
+		asset_t *as = &assets[a];
+		if (as->d.kind == QSTK_SOUND ? !sound_room(a) : reserve(a) < 0) {
+			set_stuck(a);                         /* (the next pass tries the others: a
+			                                         frame's every slot each time cost
+			                                         120 k cycles in E1M3's crowd) */
+			return;
+		}
+		cp->asset   = (int16_t) a;
+		cp->entry   = as->xa;
+		cp->sectors = xa_ent[as->xa].sectors;
+		cp->done    = 0;
+		cp->next    = 0;
+		cp->armed   = (uint32_t) VSync(-1);
+		cp->gen++;
+		cap_of[as->xa] = (uint8_t) k;             /* (last: the interrupt's from here) */
+		SLOG("stream: capturing %08x, %u sectors (score %u)\n", (unsigned) as->d.hash,
+		     (unsigned) cp->sectors, (unsigned) as->last);
+	}
 }
 
 /* -------------------------------------------------------------- passes -- */
@@ -988,6 +1290,7 @@ static int32_t pass_origin[3];             /* stream_origin at the last pass */
 
 static void pass(void)
 {
+	xa_rearm = 1;
 	memcpy(pass_origin, stream_origin, sizeof pass_origin);
 	for (int a = 0; a < num_assets; a++)
 		assets[a].score = ~0u;
@@ -1014,11 +1317,15 @@ static void pass(void)
 
 void stream_abort(void)
 {
-	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ)) {
+	xa_cancel();
+	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ) || lend_state == L_READING) {
 		CdReadBreak();
 		CdReadSync(0, 0);                     /* (the drive idle before the next command) */
 		reading = -1;
 	}
+	lend_at = 0;                              /* (asked for again at the map's start) */
+	if (lend_state != L_NONE)
+		lend_state = L_WANT;
 	if (sread.a >= 0) {
 		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (no DMA left reading the stage) */
 		sread.a = -1;
@@ -1041,17 +1348,30 @@ void stream_map_start(uint32_t keep)
 		assets[a].stuck   = ST_NONE;
 	}
 	memset(&stream_stats, 0, sizeof stream_stats);
-	mdl_reset(mem_level_alloc(MDL_CACHE), MDL_CACHE);
-	stage = mem_level_alloc(STAGE_SECTORS * QST_SECTOR);
-	uint32_t left = MEM_LEVEL_BYTES - mem_level_used();
-	left = left > keep + 64 ? (left - keep - 64) & ~15u : 0;
-	pool = left ? mem_level_alloc(left) : 0;
+	/* a lent block first, then the expanded frames' cache, the staging
+	   buffer, the pool; the lent block after the pool, at its end */
+	uint32_t room = MEM_LEVEL_BYTES - mem_level_used(), lend = 0;
+	if (lend_state == L_WANT) {
+		lend = room >= lend_bytes + keep + 64 ? lend_bytes : 0;
+		lend_state = lend ? L_ROOM : L_SHORT;
+	}
+	uint8_t *cache = room - lend >= MDL_CACHE ? mem_level_alloc(MDL_CACHE) : 0;
+	if (cache)
+		room -= MDL_CACHE;
+	mdl_reset(cache, MDL_CACHE);
+	stage = room - lend >= STAGE_SECTORS * QST_SECTOR ? mem_level_alloc(STAGE_SECTORS * QST_SECTOR) : 0;
+	if (stage)
+		room -= STAGE_SECTORS * QST_SECTOR;
+	uint32_t left = room - lend > keep + 64 ? (room - lend - keep - 64) & ~15u : 0;
+	pool = left + lend ? mem_level_alloc(left + lend) : 0;
 	pool_top = pool;
 	pool_end = pool ? pool + left : 0;
+	lend_at  = lend && pool ? pool_end : 0;
 	stream_stats.ram_size = left;
 	regions_build();
-	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions\n", (unsigned) left / 1024,
-	       (unsigned) stream_stats.vram_texels / 1024, num_regions);
+	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions; %u KB lent\n",
+	       (unsigned) left / 1024, (unsigned) stream_stats.vram_texels / 1024, num_regions,
+	       (unsigned) (lend_at ? lend : 0) / 1024);
 }
 
 /* the uploads the GPU took: the images' pixels go, the blocks may move */
@@ -1068,6 +1388,95 @@ static void trims(void)
 	}
 }
 
+/* the room taken from the pool's end: 1, or 0 when the pool cannot spare
+   it for the pinned assets (nothing dropped then) */
+static int lend_room(void)
+{
+	uint32_t n = lend_bytes, pinned = 0;
+	for (int i = 0; i < MAX_RES; i++)
+		if (res[i].asset >= 0 && assets[res[i].asset].last == STREAM_PIN)
+			pinned += res[i].ram_size + res[i].tmp_size;
+	if ((uint32_t) (pool_end - pool) < n + pinned)
+		return 0;
+	DrawSync(0);                              /* the images uploaded: their pixels go, */
+	for (int i = 0; i < MAX_RES; i++)         /* no block pinned */
+		if (res[i].asset >= 0 && res[i].trim)
+			res[i].trim = 1;
+	trims();
+	while (ram_used() > (uint32_t) (pool_end - pool) - n) {
+		int v = least_wanted(STREAM_PIN, NEED_RAM);
+		if (v < 0)
+			return 0;
+		evict(v);
+	}
+	ram_compact();
+	pool_end -= n;
+	lend_at = pool_end;
+	return 1;
+}
+
+/* the lent block's turn, the drive free (no read in flight, none
+   waiting): 1 while it holds the drive (no asset's read starts) */
+static int lend_turn(void)
+{
+	if (lend_state == L_READING) {
+		int left = CdReadSync(1, 0);          /* (also runs CdReadRetry's retries) */
+		if (left > 0)
+			return 1;
+		lend_state = left == 0 ? L_IN : L_ROOM;   /* (an error: read again) */
+		lend_reads += left == 0;
+		return left != 0;
+	}
+	if (lend_state == L_WANT) {
+		if (!lend_room()) {
+			lend_state = L_SHORT;
+			printf("stream: no room for the %u KB asked for\n", (unsigned) lend_bytes / 1024);
+			return 0;
+		}
+		lend_state = L_ROOM;
+	}
+	if (lend_state != L_ROOM)
+		return 0;
+	if (!music_suspend())                     /* (fading: the read waits) */
+		return 1;
+	if (!music_read_ok((int) (lend_bytes / QST_SECTOR)))
+		return 1;                             /* (the SPU music's ring too low: its refill first) */
+	CdlLOC loc;
+	CdIntToPos(lend_lba, &loc);
+	CdControl(CdlSetloc, &loc, 0);
+	if (CdReadRetry((int) (lend_bytes / QST_SECTOR), (uint32_t *) lend_at, CdlModeSpeed, 3))
+		lend_state = L_READING;
+	return 1;
+}
+
+void stream_lend(int32_t lba, int sectors)
+{
+	stream_unlend();
+	lend_lba   = lba;
+	lend_bytes = sectors > 0 ? (uint32_t) sectors * QST_SECTOR : 0;
+	lend_state = lend_bytes ? L_WANT : L_NONE;
+}
+
+uint8_t *stream_lent(uint32_t *reads)
+{
+	*reads = lend_reads;
+	return lend_state == L_IN ? lend_at : 0;
+}
+
+void stream_unlend(void)
+{
+	if (lend_state == L_READING) {
+		CdReadBreak();
+		CdReadSync(0, 0);
+	}
+	DrawSync(0);                              /* (the GPU done with the block's packets) */
+	if (lend_at && lend_at == pool_end)       /* (it always is: back to the pool) */
+		pool_end += lend_bytes;
+	lend_at    = 0;
+	lend_bytes = 0;
+	lend_state = L_NONE;
+}
+
 void stream_frame(void)
 {
 	if (!num_assets || !pool)
@@ -1082,6 +1491,20 @@ void stream_frame(void)
 	}
 	if (frame_no % PASS_FRAMES == 0 || jump)
 		pass();
+	if (xa) {                                 /* the music's carousel: taken as it passes */
+#ifdef Q1PSX_BENCH
+		uint32_t t0 = prof_now();
+#endif
+		xa_drain();
+		if (xa_rearm) {                       /* (after a pass, a capture's end) */
+			xa_rearm = 0;
+			xa_arm();
+		}
+#ifdef Q1PSX_BENCH
+		stream_xa_cycles += prof_cycles(t0, prof_now());
+		stream_xa_frames++;
+#endif
+	}
 	if (reading >= 0) {                       /* a model's read */
 		int left = CdReadSync(1, 0);          /* (also runs CdReadRetry's retries) */
 		if (left > 0)
@@ -1091,7 +1514,9 @@ void stream_frame(void)
 	if (sread.a >= 0 && sread.step != SR_WAIT && !sound_step())   /* a sound's, piece by piece */
 		return;
 	if (waiting < 0) {
-		int a = next_wanted();
+		if (lend_turn())                      /* (the lent block's read first) */
+			return;
+		int a = next_wanted(0);                   /* (with a carousel: one it lacks) */
 		if (a < 0) {
 			if (music_suspended())
 				music_resume();
@@ -1107,6 +1532,11 @@ void stream_frame(void)
 	}
 	if (!music_suspend())                     /* (fading: the read waits) */
 		return;
+	if (!music_read_ok(assets[waiting].d.kind == QSTK_SOUND ? STAGE_SECTORS
+	                   : (int) ((assets[waiting].d.size + QST_SECTOR - 1) / QST_SECTOR)))
+		return;                               /* (the SPU music's ring too low: its refill first) */
+	if (xa)
+		xa_flush();                           /* (the stream left: the reads' buffer) */
 	int a = waiting;
 	waiting = -1;
 	if (assets[a].d.kind != QSTK_SOUND)
@@ -1117,6 +1547,11 @@ void stream_frame(void)
 
 void stream_preload(void)
 {
+	if (lend_state == L_ROOM &&               /* the lent block (the map's start gave it room) */
+	    read_sectors(lend_lba, (int) (lend_bytes / QST_SECTOR), lend_at)) {
+		lend_state = L_IN;
+		lend_reads++;
+	}
 	if (!num_assets || !pool)
 		return;
 	if (world.has_spawn)                      /* (the player is put there after the load) */
@@ -1126,7 +1561,7 @@ void stream_preload(void)
 		memcpy(stream_origin, pl.pm.pos, sizeof stream_origin);
 	pass();
 	for (;;) {
-		int a = next_wanted();
+		int a = next_wanted(0);
 		if (a < 0)
 			break;
 		if (assets[a].d.kind == QSTK_SOUND) {

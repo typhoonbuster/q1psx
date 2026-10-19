@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWVD" (architecture.md §6), one per map and geometry
+ * q1psx — cooked world "QWVE" (architecture.md §6), one per map and geometry
  * level (formats/qlevels.h). Written by `qcook`, loaded by engine/world.c,
  * walked by the asm renderer (engine/r_*.s).
  *
@@ -36,6 +36,11 @@
  *     it, with the model's own matrix, so the node sides sort its faces).
  *     qw_bmodel gives the root, bounds and clip hull roots; the entities
  *     (qw_ent, cooked from the entity lump) name their model by index.
+ *   - A drawn brush model is cut by the world's BSP (engine/bmfrag.c); the
+ *     cook cuts it the same way wherever its entity can stand (a mover at
+ *     every 1/8 unit of its travel) and writes the most its pieces take in
+ *     its qw_bmodel: their room in RAM, with no cut at the load
+ *     (tools/qcook/bmf.c, docs/porting-notes.md §46).
  *
  * Pointers
  *   On disk, node/leaf link fields hold indices / byte offsets; the loader
@@ -52,7 +57,7 @@
 
 #include "qtex.h"          /* qw_tex, qw_anim: the texture set's tables */
 
-#define QWORLD_MAGIC "QWVD"
+#define QWORLD_MAGIC "QWVE"   /* (QWVD until §46: the clip roots were 32-bit) */
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
@@ -121,15 +126,22 @@ typedef struct {
 /* A brush model: Quake's submodel. Bounds in the physics' units, spread by
    a unit like Mod_LoadSubmodels; the root is its hull-0 BSP (its nodes in
    the node array; disk: index, bit31 = leaf; RAM: pointer, bit0 = leaf);
-   the clip hull roots index the clipnode table like the world's. */
+   the clip hull roots index the clipnode table like the world's (BSP29's
+   clipnode children are 16-bit: any index fits). The room its pieces take
+   when the world's BSP cuts it (engine/bmfrag.c), the most of every place
+   its entity can stand at (tools/qcook/bmf.c): its records' bytes, their
+   vertices in the pieces' pool, their groups; 0 for a model no drawn
+   entity uses. */
 typedef struct {
 	int32_t  mins[3];      /* +0  1/QW_CLIP_SUB world units                    */
 	int32_t  maxs[3];      /* +12                                              */
 	uint32_t root;         /* +24 hull 0: node index (disk) / pointer (RAM)    */
-	int32_t  hull1;        /* +28 clipnode roots: player-sized, large          */
-	int32_t  hull2;        /* +32                                              */
-	uint16_t depth;        /* +36 its subtree's depth                          */
-	uint16_t num_records;  /* +38 face records in its nodes                    */
+	int16_t  hull1;        /* +28 clipnode roots: player-sized, large          */
+	int16_t  hull2;        /* +30                                              */
+	uint16_t room_recs;    /* +32 the pieces' records, bytes / 4               */
+	uint16_t room_verts;   /* +34 their vertices                               */
+	uint16_t room_groups;  /* +36 their groups (a leaf's records on a node side) */
+	uint16_t depth;        /* +38 its subtree's depth                          */
 } qw_bmodel;               /* 40 bytes */
 
 /* The entity classes the cook knows (tools/qcook/ents.c names them); an
@@ -196,6 +208,8 @@ typedef struct {
 } qw_ent;                  /* 56 bytes */
 
 _Static_assert(sizeof(qw_bmodel) == 40 && sizeof(qw_ent) == 56, "qworld.h: the cooked tables' sizes");
+_Static_assert(__builtin_offsetof(qw_bmodel, root) == 24 && __builtin_offsetof(qw_bmodel, hull1) == 28 &&
+               __builtin_offsetof(qw_bmodel, hull2) == 30, "engine/p_defs.inc BM_*");
 
 /* Nodes and leaves share their bbox layout (the renderer's frustum test
    takes either): c at +0, h at +8, each followed by a 16-bit field, so VZ is

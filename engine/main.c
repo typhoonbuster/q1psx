@@ -41,6 +41,7 @@
 #include "rlist.h"
 #include "settings.h"
 #include "stream.h"
+#include "ui.h"
 #include "vid.h"
 #include "world.h"
 
@@ -364,14 +365,17 @@ static int load_level(int map)
 	load_map = map;
 	stream_abort();                             /* (the arena is reset, the drive taken) */
 	music_stop();                               /* one drive: the reads need it */
+	ui_conback_forget();                        /* (the map's textures over it) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	gdata_set_models(settings.level[QL_MODELS]);
 	stream_set_level(settings.level[QL_MODELS]);   /* (its monsters, items at that level) */
 	int geo = settings.level[QL_GEOMETRY];
+	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
 	for (int g = geo; g >= 0 && !world_ok; g--)
 		if (settings_level_mask[QL_GEOMETRY] & 1 << g)
 			world_ok = world_load(map, settings.level[QL_TEXTURES], g, settings.level[QL_MODELS],
 			                      settings.tex4, LOAD_PROGRESS);
+	mem_level_cap(MEM_LEVEL_BYTES);
 	for (int a = 0; a < QL_AXES; a++)
 		loaded[a] = settings.level[a];
 	if (world_ok) {
@@ -383,9 +387,9 @@ static int load_level(int map)
 		ents_load();                            /* the map's entities */
 		monsters_map_start();
 		ents_spawn(1);
-		bmf_reserve();                          /* (their pieces' room, measured where they
-		                                           stand and along a mover's travel: before
+		bmf_reserve();                          /* (their pieces' room, the cook's: before
 		                                           the stream's) */
+		game_ws_sync();                         /* (the 2D gun's packets asked for: first) */
 		stream_map_start(STREAM_KEEP);          /* the arena's rest: the streamed assets */
 		bmf_load();                             /* (the drawn ones cut where they stand) */
 		snd_map_start();                        /* (before any residency pass: it turns the
@@ -395,6 +399,7 @@ static int load_level(int map)
 		                                           20 bytes each: a garbage reach of 0 on
 		                                           E2M7 divided by zero) */
 		stream_preload();                       /* what the spawn's surroundings want */
+		game_ws_sync();                         /* (the 2D gun's packets, read: linked) */
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		music_play(snd_cd_track());
@@ -404,9 +409,12 @@ static int load_level(int map)
 }
 
 /* the settings ask for other levels than the map was loaded at (or another
-   texture depth): its reload is due */
+   texture depth): its reload is due (none with no map: the next load takes
+   the settings as they are) */
 static int load_due(void)
 {
+	if (!world_ok)
+		return 0;
 	return settings.tex4 != world.tex4 || loaded[QL_TEXTURES] != settings.level[QL_TEXTURES] ||
 	       loaded[QL_GEOMETRY] != settings.level[QL_GEOMETRY] || loaded[QL_MODELS] != settings.level[QL_MODELS];
 }
@@ -442,11 +450,7 @@ static void frame_work(void)
 }
 
 static int overlay_on = !Q1PSX_RELEASE;   /* START toggles (the debug build) */
-static int release_in_game;                /* the release build: a game begun (New Game, or
-                                              the menu left on the first map) */
-#if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
-static void release_start_map(void);
-#endif
+static int release_in_game;                /* the release build: a game begun (New Game) */
 
 static void draw_overlay(void)
 {
@@ -503,6 +507,8 @@ static void run_frame(int interactive, int dump)
 {
 	prof_frame_reset();
 	uint32_t t0 = prof_now();
+	if (world_ok && !menu_active())
+		game_ws_sync();                     /* (the 2D gun chosen or left: its packets) */
 	if (world_ok && game_active)
 		stream_frame();                     /* (between frames: the pools may move) */
 	if (interactive) {
@@ -513,11 +519,6 @@ static void run_frame(int interactive, int dump)
 		if (menu_active()) {                  /* the world paused under the menu */
 			menu_key(&pad);
 			nticks = 0;
-			if (!menu_active() && !release_in_game) {   /* left on the first map: playing it, */
-				if (load_due())
-					release_start_map();      /* at the levels just chosen */
-				release_in_game = 1;
-			}
 		} else if (pad.pressed & PAD_START) {
 			menu_open();                      /* togglemenu */
 			nticks = 0;
@@ -533,7 +534,8 @@ static void run_frame(int interactive, int dump)
 			overlay_on = !overlay_on;
 #endif
 		PLAY_STEP("player");
-		player_update(ticks, nticks);
+		if (world_ok)                         /* (none before the release's New Game) */
+			player_update(ticks, nticks);
 	}
 	if (interactive) {                      /* a trigger_changelevel's map, between frames */
 		char next[16];
@@ -560,9 +562,17 @@ static void run_frame(int interactive, int dump)
 	frame_work();
 	if (game_active) {
 		uint32_t t1 = prof_now();
-		game_view_tint();                   /* the contents' colour over the view */
-		PLAY_STEP("hud");
-		hud_draw();
+		if (world_ok) {
+			game_view_tint();               /* the contents' colour over the view */
+			PLAY_STEP("hud");
+			hud_draw();
+		}
+#if Q1PSX_RELEASE
+		else if (!menu_active())
+			ui_conback();                   /* no world: the forced console's background
+			                                   (SCR_DrawConsole; Sbar_Draw draws nothing
+			                                   under a full-screen console) */
+#endif
 		if (menu_shown)
 			menu_draw();                    /* M_Draw: over everything */
 		uint32_t t2 = prof_now();
@@ -2160,6 +2170,16 @@ static void mon_log(const char *what, const edict_t *e)
 		game_ents_cycles = game_ents_max = game_ents_ticks = 0;
 		ai_traces = 0;
 	}
+#if Q1PSX_MUSIC_XA
+	{
+		extern uint32_t music_irq_cycles, music_irq_n, stream_xa_cycles, stream_xa_frames;
+		if (music_irq_n && stream_xa_frames)
+			printf("xa cost: %u sectors' interrupts, avg %u cycles; carousel %u frames, avg %u cycles\n",
+			       (unsigned) music_irq_n, (unsigned) (music_irq_cycles / music_irq_n),
+			       (unsigned) stream_xa_frames, (unsigned) (stream_xa_cycles / stream_xa_frames));
+		music_irq_cycles = music_irq_n = stream_xa_cycles = stream_xa_frames = 0;
+	}
+#endif
 	printf("mon %s t %d state %d frame %d pos %d %d %d yaw %d ideal %d health %d enemy %d as %d "
 	       "flags %x | player health %d armor %d at %d %d %d | stream %d/%d in, %u reads, %u halved\n", what,
 	       (int) ent_time, e->mstate, e->frame, (int) e->origin[0] / CLIP_SUB, (int) e->origin[1] / CLIP_SUB,
@@ -2175,7 +2195,9 @@ static void mon_log(const char *what, const edict_t *e)
 static void bench_stream_frames(void)
 {
 	stream_frame();
+	music_tick();                                 /* (the music's stream goes on too) */
 	stream_frame();
+	music_tick();
 }
 
 /* the scenario's monster and the player both solid, their boxes
@@ -2523,6 +2545,21 @@ static void release_new_game(void)
 }
 
 static int release_started(void) { return release_in_game; }
+
+static int release_no_world(void) { return !world_ok; }
+
+/* The release's boot: Quake starts its demo loop under the menu (quake.rc
+   "startdemos demo1 demo2 demo3"); the port has no demos and loads no map
+   until New Game, so its screen is Quake's with neither (con_forcedup): the
+   console's background, the menu over it (M_Draw), and the music of the
+   first demo, CD track 2, which demo1.dem forces (the menu's bank,
+   MAPS/MENU.SND: its clicks and that track; tools/qcook/menu.c) */
+static void release_title(void)
+{
+	snd_load_bank("MENU");
+	ui_conback_load();
+	music_play(snd_cd_track());
+}
 #endif
 
 /* The stack's high-water mark: scripts/ramcheck.sh checks its room at the
@@ -2576,6 +2613,7 @@ int main(void)
 	stream_init(settings.level[QL_MODELS]);
 	dl_init();
 	game_init();
+	printf("mem: game arena %u of %u B\n", (unsigned) mem_game_used(), (unsigned) MEM_GAME_BYTES);
 #ifdef Q1PSX_BENCH
 	if (!Q1PSX_BENCH_MAPS && Q1PSX_BENCH_MAP[0] && world_find_map(Q1PSX_BENCH_MAP) >= 0)
 		map_index = world_find_map(Q1PSX_BENCH_MAP);  /* MAP=: the physics diffs there too */
@@ -2583,13 +2621,10 @@ int main(void)
 		player_spawn();
 	run_bench();
 #elif Q1PSX_RELEASE
-	/* Quake starts its demo loop under the menu; with no demos to play,
-	   the first map waits under it, a new game's kit in hand */
-	static const menu_hooks_t hooks = { release_new_game, release_started, load_due };
+	static const menu_hooks_t hooks = { release_new_game, release_started, load_due, release_no_world };
 	menu_init(&hooks);
 	game_active = 1;
-	release_start_map();
-	release_in_game = 0;
+	release_title();                           /* (no map before New Game) */
 	menu_open();
 	for (;;)
 		run_frame(1, 0);

@@ -131,6 +131,142 @@ typedef struct {
 
 _Static_assert(sizeof(qst_asset) == 16 && sizeof(qst_model) == 96, "qstream.h: sizes");
 
+/* The three model levels in one asset (the music's carousel, formats/qxa.h:
+   one asset passes for every level). The model levels' triangles are
+   nested: a lower level's half-edge collapses go on from where the higher
+   level's stopped (tools/qcook/decim.c, the cheapest first), so a lower
+   level keeps a subset of a higher one's vertices. The cook numbers the
+   high level's vertices by the lowest level keeping them (low's first,
+   then medium's, then high's own), so that a level's vertices are the
+   first num_verts of each frame; every level's asset in STREAM_<n>.DAT is
+   cooked from that numbering (its records index it). A shared asset is
+   qst_shared, the high level's frames, the levels' records (a level with
+   the same triangles as another shares its block), the images; the
+   engine makes the level's asset from it (qst_level_model, qst_assemble),
+   byte for byte the STREAM_<n>.DAT one (the cook checks it). */
+#define QSX_MAGIC "QSX1"         /* the cook's pool of shared assets (not on the
+                                    disc: tools/qcook/carousel.c reads it) */
+typedef struct {
+	uint16_t num_frames;
+	uint16_t num_verts;          /* the high level's: a frame's words             */
+	uint16_t flags;              /* QSTM_*                                        */
+	uint8_t  shift, num_images;
+	int32_t  scale[3];
+	int32_t  origin[3];
+	qst_image images[2];         /* their ofs: from the images' block            */
+	qst_image small[2];
+	uint32_t ofs_frames;         /* uint32_t[num_frames][num_verts]               */
+	uint32_t ofs_images, len_images;   /* the images' block                      */
+	struct {
+		uint16_t num_verts;      /* the level's: each frame's first               */
+		uint16_t num_records;
+		uint32_t ofs_records, len_records;
+		uint16_t radius;
+		uint16_t pad;
+	} level[3];                  /* formats/qlevels.h: low, medium, high          */
+} qst_shared;                    /* 140 bytes */
+_Static_assert(sizeof(qst_shared) == 140, "qstream.h: qst_shared");
+
+/* the level's asset header (qst_model) from the shared one; its size */
+static inline uint32_t qst_level_model(const qst_shared *s, int level, qst_model *m)
+{
+	uint8_t *z = (uint8_t *) m;
+	for (unsigned i = 0; i < sizeof *m; i++)
+		z[i] = 0;
+	m->num_frames  = s->num_frames;
+	m->num_verts   = s->level[level].num_verts;
+	m->num_records = s->level[level].num_records;
+	m->flags       = s->flags;
+	m->ofs_frames  = sizeof *m;
+	m->ofs_records = m->ofs_frames + (uint32_t) s->num_frames * s->level[level].num_verts * 4;
+	m->len_records = s->level[level].len_records;
+	m->shift       = s->shift;
+	m->num_images  = s->num_images;
+	m->radius      = s->level[level].radius;
+	uint32_t img = m->ofs_records + m->len_records;
+	for (int k = 0; k < 3; k++) {
+		m->scale[k]  = s->scale[k];
+		m->origin[k] = s->origin[k];
+	}
+	for (int k = 0; k < 2; k++) {
+		m->images[k] = s->images[k];
+		m->small[k]  = s->small[k];
+		if (k < s->num_images) {
+			m->images[k].ofs += img;
+			m->small[k].ofs  += img;
+		}
+	}
+	return img + s->len_images;
+}
+
+/* (words when the three are 4-aligned: every region of an asset is, its
+   frames, records and images; the engine's memcpy goes by bytes) */
+static inline void qst_copy(uint8_t *d, const uint8_t *s, uint32_t n)
+{
+	if (!(((uintptr_t) d | (uintptr_t) s | n) & 3)) {
+		uint32_t *dw = (uint32_t *) d;
+		const uint32_t *sw = (const uint32_t *) s;
+		for (n >>= 2; n; n--)
+			*dw++ = *sw++;
+		return;
+	}
+	while (n--)
+		*d++ = *s++;
+}
+
+/* where a level's asset takes the shared asset's bytes (qst_layout_of) */
+typedef struct {
+	uint32_t ofs_frames, frames;   /* the shared asset's frames                 */
+	uint32_t frame_bytes;          /* a shared frame's (the high level's)       */
+	uint32_t level_bytes;          /* the level's part of it (its first words)  */
+	uint32_t ofs_records, len_records;   /* the level's records                 */
+	uint32_t ofs_images, len_images;
+} qst_layout;                      /* 32 bytes */
+
+static inline void qst_layout_of(const qst_shared *s, int level, qst_layout *l)
+{
+	l->ofs_frames  = s->ofs_frames;
+	l->frames      = s->num_frames;
+	l->frame_bytes = (uint32_t) s->num_verts * 4;
+	l->level_bytes = (uint32_t) s->level[level].num_verts * 4;
+	l->ofs_records = s->level[level].ofs_records;
+	l->len_records = s->level[level].len_records;
+	l->ofs_images  = s->ofs_images;
+	l->len_images  = s->len_images;
+}
+
+/* the shared asset's bytes [ofs, ofs + n) (src) into the level's asset
+   (dst, its whole block; its header is qst_level_model's): the frames'
+   first words, the level's records, the images; the rest (the shared
+   header, the frames' other words, the other levels' records) skipped.
+   Any range: a sector of the asset at a time. */
+static inline void qst_assemble(const qst_layout *l, uint32_t ofs, const uint8_t *src, uint32_t n, uint8_t *dst)
+{
+	uint32_t end = ofs + n, fh = l->frame_bytes, nl = l->level_bytes;
+	uint32_t f0 = l->ofs_frames, f1 = f0 + l->frames * fh;
+	uint32_t rec = (uint32_t) sizeof(qst_model) + l->frames * nl;
+	if (end > f0 && ofs < f1 && nl) {                        /* the frames */
+		uint32_t a = ofs > f0 ? ofs : f0, b = end < f1 ? end : f1;
+		for (uint32_t f = (a - f0) / fh; f < l->frames && f0 + f * fh < b; f++) {
+			uint32_t lo = f0 + f * fh, hi = lo + nl;
+			if (lo < a) lo = a;
+			if (hi > b) hi = b;
+			if (lo < hi)
+				qst_copy(dst + sizeof(qst_model) + f * nl + (lo - f0 - f * fh), src + (lo - ofs), hi - lo);
+		}
+	}
+	uint32_t r0 = l->ofs_records, r1 = r0 + l->len_records;
+	if (end > r0 && ofs < r1) {                              /* the level's records */
+		uint32_t lo = ofs > r0 ? ofs : r0, hi = end < r1 ? end : r1;
+		qst_copy(dst + rec + (lo - r0), src + (lo - ofs), hi - lo);
+	}
+	uint32_t i0 = l->ofs_images, i1 = i0 + l->len_images;
+	if (end > i0 && ofs < i1) {                              /* the images */
+		uint32_t lo = ofs > i0 ? ofs : i0, hi = end < i1 ? end : i1;
+		qst_copy(dst + rec + l->len_records + (lo - i0), src + (lo - ofs), hi - lo);
+	}
+}
+
 /* a sound asset: qst_sound, then its ADPCM data (len bytes, 16-aligned) */
 typedef struct {
 	uint16_t pitch;          /* SPU pitch: rate x 4096 / 44100               */

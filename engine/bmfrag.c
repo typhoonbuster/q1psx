@@ -20,11 +20,8 @@ typedef struct {
 
 #define BMF_CORNERS 12       /* a piece's corners (a quad cut by 8 planes)        */
 #define BMF_PIECES  64       /* one record's pieces                                */
-#define BMF_STACK   24       /* the cut's pending back pieces                      */
-#define BMF_GROW    3        /* room for a model's pieces: its records' bytes and
-                                corners times this, and BMF_SLACK more            */
-#define BMF_SLACK   512
-#define BMF_PATH    64       /* a train's corners, at most, for its room           */
+#define BMF_STACK   24       /* the cut's pending back pieces (tools/qcook/bmf.c's
+                                cut has the same three limits)                    */
 
 typedef struct {
 	const qw_leaf *leaf;
@@ -65,8 +62,7 @@ struct bmf_cache {
 	uint32_t   pool_first, pool_cap, pool_len;   /* its vertices in bmf_pool      */
 };
 
-qw_vert         *bmf_pool;       /* (the asm cut's too) */
-static uint32_t  bmf_pool_cap, bmf_pool_used;
+qw_vert *bmf_pool;               /* (the asm cut's too) */
 #ifdef Q1PSX_BENCH
 uint32_t bmf_stats[7];
 #endif
@@ -650,35 +646,42 @@ static int cut_model(bmf_cache *c, int model, const int32_t org[3], uint32_t top
 
 /* ---------------------------------------------------------------- load -- */
 
-/* a model's records' bytes and polygon corners, for its room */
-BMF_COLD static void model_size(uint32_t at, uint32_t *bytes, uint32_t *corners, int *nodes)
+/* a model's nodes, for its compact BSP */
+BMF_COLD static int model_nodes(uint32_t at)
 {
 	if (at & 1)
-		return;
+		return 0;
 	const qw_node *nd = node_at(at);
-	(*nodes)++;
-	for (int s = 0; s < 2; s++) {
-		const uint8_t *p = (const uint8_t *) nd->faces[s], *end = (const uint8_t *) qw_face_end(nd, s);
-		while (p < end) {
-			const qw_record *r = (const qw_record *) p;
-			if (!r->size)
-				break;
-			*bytes   += r->size;
-			*corners += (uint32_t) r->num_quads * 4 + (uint32_t) r->num_tris * 3;
-			p += r->size;
-		}
-	}
-	model_size(nd->child[0], bytes, corners, nodes);
-	model_size(nd->child[1], bytes, corners, nodes);
+	return 1 + model_nodes(nd->child[0]) + model_nodes(nd->child[1]);
+}
+
+/* a model's cache and its room in one block: the cache, its groups, its
+   records (words: the renderer's loads), its nodes */
+static uint32_t cache_bytes(const qw_bmodel *bm, int nodes)
+{
+	return (uint32_t) sizeof(bmf_cache) + bm->room_groups * (uint32_t) sizeof(bmf_group) + bm->room_recs * 4u +
+	       (((uint32_t) nodes * (uint32_t) sizeof(bmf_node) + 3) & ~3u);
 }
 
 #ifdef Q1PSX_BENCH
+static uint32_t records_bytes(uint32_t at)
+{
+	uint32_t bytes = 0;
+	for (; !(at & 1); at = node_at(at)->child[0]) {
+		const qw_node *nd = node_at(at);
+		for (int s = 0; s < 2; s++) {
+			const uint8_t *p = (const uint8_t *) nd->faces[s], *end = (const uint8_t *) qw_face_end(nd, s);
+			for (const qw_record *r; p < end && (r = (const qw_record *) p)->size; p += r->size)
+				bytes += r->size;
+		}
+		bytes += records_bytes(nd->child[1]);
+	}
+	return bytes;
+}
+
 uint32_t bmf_model_bytes(int model)
 {
-	uint32_t bytes = 0, corners = 0;
-	int nodes = 0;
-	model_size(world.bmodels[model].root, &bytes, &corners, &nodes);
-	return bytes;
+	return records_bytes(world.bmodels[model].root);
 }
 #endif
 
@@ -727,7 +730,6 @@ void bmf_level(void)
 {
 	bmf_models = 0;
 	bmf_pool = 0;
-	bmf_pool_cap = bmf_pool_used = 0;
 	r_state.fragpool = 0;
 #ifdef Q1PSX_BENCH
 	memset(bmf_stats, 0, sizeof bmf_stats);
@@ -759,64 +761,17 @@ static void cut_at(bmf_cache *c, const edict_t *e)
 #endif
 }
 
-/* the room a model's pieces get: its records' bytes, vertices, groups */
-typedef struct {
-	uint32_t recs, verts, groups;
-} bmf_need;
-
-BMF_COLD static int is_mover(const edict_t *e)   /* a travel from pos1 to pos2 */
-{
-	return e->class == QE_FUNC_DOOR || e->class == QE_FUNC_BUTTON || e->class == QE_FUNC_PLAT;
-}
-
-/* the places edict e's model goes through, in path (BMF_PATH + 1 of them,
-   seen BMF_PATH): a door's, a button's, a plat's two ends, a train's
-   corners, a secret door's place and its two moves' ends (movers_path),
-   where it stands for a model that never moves; their count, 0 for a
-   train without a path or with a longer one */
-BMF_COLD static int model_path(const edict_t *e, int32_t (*path)[3], const edict_t **seen)
-{
-	if (is_mover(e)) {
-		memcpy(path[0], e->pos1, sizeof path[0]);
-		memcpy(path[1], e->pos2, sizeof path[1]);
-		return 2;
-	}
-	if (e->class == QE_FUNC_TRAIN || e->class == QE_FUNC_DOOR_SECRET) {
-		int np = movers_path(e, path, seen, BMF_PATH);
-		return np < 0 ? 0 : np;
-	}
-	memcpy(path[0], e->origin, sizeof path[0]);
-	return 1;
-}
-
-/* edict e's model cut as if it stood at `org` (1/8 units), its top node
-   as ent_link makes it */
-BMF_COLD static int cut_where(bmf_cache *c, const edict_t *e, const int32_t org[3])
-{
-	int32_t lo[3], hi[3];
-	for (int k = 0; k < 3; k++) {
-		lo[k] = ((org[k] + e->mins[k] - CLIP_SUB) >> 3) - 2;
-		hi[k] = ((org[k] + e->maxs[k] + CLIP_SUB) >> 3) + 3;
-	}
-	return cut_model(c, e->model, org, world_box_topnode(lo, hi));
-}
-
-/* Room for the pieces of every brush model the spawned entities stand
-   with (a trigger's has no faces), sized on what their cuts take
-   (docs/porting-notes.md §44: the old room, three times each model's
-   record bytes and corners, was 4 to 5 times what the cuts took and left
-   the stream's RAM pool 0-6 KB on the biggest maps). Each model is cut
-   in a scratch cache at the arena's top: one that never moves gets what
-   its cut takes where it stands (bmf_load's cut, the same); one that
-   moves twice the most its cuts take at the places it goes through and
-   halfway along each way between them (model_path; and where it spawned
-   when that is off its path): cut at 33 places a way, no mover of the 32
-   maps took more than 1.9 times that (BMFCHK=1 scripts/bench.sh). After
-   the spawn, which puts the models where they stand and gives a mover
-   its travel; before the stream manager takes the arena's rest. A model
-   whose path or cuts the scratch cannot take gets the old room; one
-   spawned only later (a death after START's trigger_setskill: no brush
-   model there hangs on the skill) none: drawn whole. */
+/* Room for the pieces of every brush model the spawned edicts draw: what
+   the cook measured (tools/qcook/bmf.c, docs/porting-notes.md §46) in the
+   model's qw_bmodel, the most its cuts take wherever its entity can stand,
+   a mover's at every 1/8 unit of its travel. (§44 measured it here: 0.1-
+   1.0 s of the load, and a mover got twice what a few places of its
+   travel took, its exact most up to 1.98 times that.) After the spawn,
+   which says which models this skill draws (an absent gate: none); before
+   the stream manager takes the arena's rest. The caches in one block and
+   the pool in another (the arena rounds each allocation to 16 bytes). A
+   model spawned only later (a death after START's trigger_setskill: no
+   brush model there hangs on the skill) gets none: drawn whole. */
 BMF_COLD void bmf_reserve(void)
 {
 #ifdef Q1PSX_BENCH
@@ -828,143 +783,49 @@ BMF_COLD void bmf_reserve(void)
 		return;
 	memset(bmf_models, 0, nb * sizeof *bmf_models);
 
-	/* the scratch: the old room of the largest model */
-	uint32_t max_bytes = 0, max_corners = 0;
-	int max_nodes = 0;
+	/* the drawn models marked (one cache a model, whatever its edicts),
+	   the block and the pool they take */
+	uint32_t bytes = 0, verts = 0;
 	for (int i = 2; i < num_edicts; i++) {
 		const edict_t *e = &edicts[i];
-		if (!e->inuse || e->model <= 0 || e->model >= (int) nb)
+		if (!drawn_model(e) || bmf_models[e->model])
 			continue;
-		uint32_t bytes = 0, corners = 0;
-		int nodes = 0;
-		model_size(world.bmodels[e->model].root, &bytes, &corners, &nodes);
-		if (bytes > max_bytes)     max_bytes = bytes;
-		if (corners > max_corners) max_corners = corners;
-		if (nodes > max_nodes)     max_nodes = nodes;
+		const qw_bmodel *bm = &world.bmodels[e->model];
+		if (bm->root & 1 || verts + bm->room_verts > 65535)   /* (no node; the records' 16-bit indices) */
+			continue;
+		bmf_models[e->model] = (bmf_cache *) 1;          /* (marked: its cache below) */
+		bytes += cache_bytes(bm, model_nodes(bm->root));
+		verts += bm->room_verts;
 	}
-	if (!max_corners)
+	uint8_t *block = bytes ? mem_level_alloc(bytes) : 0;
+	bmf_pool = verts ? mem_level_alloc(verts * sizeof *bmf_pool) : 0;
+	if (!block || (verts && !bmf_pool)) {
+		memset(bmf_models, 0, nb * sizeof *bmf_models);   /* (the arena full: all drawn whole) */
+		bmf_pool = 0;
 		return;
-#ifdef Q1PSX_BENCH
-	uint32_t t0 = prof_now(), num_cuts = 0;
-#endif
-	/* the needs first above the mark: the pool is then reserved over them
-	   and only written by the cuts (bmf_load), after their last read */
-	uint32_t mark = mem_level_mark();
-	bmf_need *need = mem_level_alloc(nb * sizeof *need);
-	if (!need)
-		return;
-	memset(need, 0, nb * sizeof *need);
-	bmf_cache sc;
-	memset(&sc, 0, sizeof sc);
-	sc.recs_cap   = (max_bytes * BMF_GROW + BMF_SLACK + 3) & ~3u;
-	sc.groups_cap = (uint32_t) max_nodes * 2 * 4 + 16;
-	sc.pool_cap   = max_corners * BMF_GROW + 64;
-	sc.nodes      = mem_level_alloc((uint32_t) max_nodes * sizeof *sc.nodes);
-	sc.recs       = mem_level_alloc(sc.recs_cap);
-	sc.groups     = mem_level_alloc(sc.groups_cap * sizeof *sc.groups);
-	bmf_pool      = mem_level_alloc(sc.pool_cap * sizeof *bmf_pool);
-	int32_t (*path)[3]   = mem_level_alloc((BMF_PATH + 1) * sizeof *path);
-	const edict_t **seen = mem_level_alloc(BMF_PATH * sizeof *seen);
-	int scratch = sc.nodes && sc.recs && sc.groups && bmf_pool && path && seen;
-	for (int i = 2; i < num_edicts; i++) {
-		const edict_t *e = &edicts[i];
-		int m = e->model;
-		if (!e->inuse || m <= 0 || m >= (int) nb || need[m].recs)
-			continue;
-		uint32_t bytes = 0, corners = 0;
-		int nodes = 0;
-		model_size(world.bmodels[m].root, &bytes, &corners, &nodes);
-		if (!nodes || !corners)
-			continue;
-		bmf_need old = { bytes * BMF_GROW + BMF_SLACK, corners * BMF_GROW + 64, (uint32_t) nodes * 2 * 4 + 16 };
-		int np = scratch ? model_path(e, path, seen) : 0, count = 0;
-		if (!np || build_nodes(&sc, world.bmodels[m].root, &count, max_nodes) < 0) {
-#ifdef Q1PSX_BENCH
-			printf("bmf room: *%d, class %d: the old room\n", m, e->class);
-#endif
-			need[m] = old;
-			continue;
-		}
-		sc.num_nodes = (uint16_t) count;
-		bmf_need most = { 0, 0, 0 };
-		int fits = 0;
-		int off = memcmp(e->origin, path[0], sizeof path[0]) && memcmp(e->origin, path[np - 1], sizeof path[0]);
-		for (int p = off ? -1 : 0; p < np; p++)          /* (-1: where it spawned) */
-			for (int half = 0; half < (p >= 0 && p + 1 < np ? 2 : 1); half++) {
-				int32_t org[3];
-				for (int k = 0; k < 3; k++)
-					org[k] = p < 0 ? e->origin[k] : path[p][k] + (half ? (path[p + 1][k] - path[p][k]) / 2 : 0);
-#ifdef Q1PSX_BENCH
-				num_cuts++;
-#endif
-				if (!cut_where(&sc, e, org))
-					continue;                     /* (too cut up there: drawn whole) */
-				fits++;
-				if (sc.recs_len > most.recs)     most.recs   = sc.recs_len;
-				if (sc.pool_len > most.verts)    most.verts  = sc.pool_len;
-				if (sc.num_groups > most.groups) most.groups = sc.num_groups;
-			}
-		if (!fits) {
-#ifdef Q1PSX_BENCH
-			printf("bmf room: *%d, class %d: no cut fits, the old room\n", m, e->class);
-#endif
-			need[m] = old;
-			continue;
-		}
-		uint32_t grow = np > 1 ? 2 : 1;
-		need[m].recs   = most.recs * grow + 64;
-		need[m].verts  = most.verts * grow + 4;
-		need[m].groups = most.groups * grow + 2;
 	}
-	mem_level_release(mark);
-	bmf_pool = 0;
-#ifdef Q1PSX_BENCH
-	printf("bmf room: %u cuts, %u cycles\n", (unsigned) num_cuts, (unsigned) prof_cycles(t0, prof_now()));
-#endif
-
-	/* the pool (over the needs: at least their bytes), then each model's
-	   cache */
-	uint32_t total = 0;
-	for (uint32_t m = 1; m < nb; m++)
-		total += need[m].verts;
-	if (total > 65535)
-		total = 65535;                            /* (the records' 16-bit indices) */
-	if (total)
-		bmf_pool = mem_level_alloc(total * sizeof *bmf_pool > nb * sizeof *need ? total * sizeof *bmf_pool
-		                                                                         : nb * sizeof *need);
-	if (!bmf_pool)
-		return;
-	bmf_pool_cap = total;
 	r_state.fragpool = (uint32_t) bmf_pool;
+	uint32_t first = 0;
 	for (uint32_t m = 1; m < nb; m++) {
-		if (!need[m].recs)
+		if (!bmf_models[m])
 			continue;
 		const qw_bmodel *bm = &world.bmodels[m];
-		uint32_t bytes = 0, corners = 0;
-		int nodes = 0;
-		model_size(bm->root, &bytes, &corners, &nodes);
-		if (bmf_pool_used + need[m].verts > bmf_pool_cap)
-			continue;
-		bmf_cache *c = mem_level_alloc(sizeof *c);
-		if (!c)
-			break;
+		int nodes = model_nodes(bm->root), count = 0;
+		bmf_cache *c = (bmf_cache *) block;
 		memset(c, 0, sizeof *c);
-		c->nodes      = mem_level_alloc((uint32_t) nodes * sizeof *c->nodes);
-		c->recs_cap   = (need[m].recs + 3) & ~3u;
-		c->recs       = mem_level_alloc(c->recs_cap);
-		c->groups_cap = need[m].groups;
-		c->groups     = mem_level_alloc(c->groups_cap * sizeof *c->groups);
-		if (!c->nodes || !c->recs || !c->groups)
-			break;
-		int count = 0;
-		if (build_nodes(c, bm->root, &count, nodes) < 0)
-			continue;
+		c->groups_cap = bm->room_groups;
+		c->groups     = (bmf_group *) (c + 1);
+		c->recs_cap   = bm->room_recs * 4u;
+		c->recs       = (uint8_t *) (c->groups + c->groups_cap);
+		c->nodes      = (bmf_node *) (c->recs + c->recs_cap);
+		block        += cache_bytes(bm, nodes);
+		build_nodes(c, bm->root, &count, nodes);
 		c->num_nodes  = (uint16_t) count;
 		uint32_t rmax = q_isqrt32(model_d2(bm->root)) + 3;
 		c->rmax       = (uint16_t) (rmax > 0xffff ? 0xffff : rmax);
-		c->pool_first = bmf_pool_used;
-		c->pool_cap   = need[m].verts;
-		bmf_pool_used += need[m].verts;
+		c->pool_first = first;
+		c->pool_cap   = bm->room_verts;
+		first        += bm->room_verts;
 		bmf_models[m] = c;
 #ifdef Q1PSX_BENCH
 		bmf_stats[0]++;
@@ -990,7 +851,44 @@ BMF_COLD void bmf_reserve(void)
 #define Q1PSX_BENCH_BMFCHK 0     /* 1: the movers cut along their ways in their rooms (BMFCHK=1 scripts/bench.sh) */
 #endif
 
+#ifdef Q1PSX_BENCH
+static int is_mover(const edict_t *e)            /* a travel: a door's, a train's... */
+{
+	return e->class == QE_FUNC_DOOR || e->class == QE_FUNC_BUTTON || e->class == QE_FUNC_PLAT ||
+	       e->class == QE_FUNC_TRAIN || e->class == QE_FUNC_DOOR_SECRET;
+}
+#endif
+
 #if Q1PSX_BENCH_BMFCHK
+#define BMF_PATH 64              /* a train's corners, at most */
+
+/* the places edict e's model goes through, in path (BMF_PATH + 1 of them,
+   seen BMF_PATH): a door's, a button's, a plat's two ends, a train's
+   corners, a secret door's place and its two moves' ends (movers_path);
+   their count, 0 for a train without a path or with a longer one */
+static int model_path(const edict_t *e, int32_t (*path)[3], const edict_t **seen)
+{
+	if (e->class == QE_FUNC_DOOR || e->class == QE_FUNC_BUTTON || e->class == QE_FUNC_PLAT) {
+		memcpy(path[0], e->pos1, sizeof path[0]);
+		memcpy(path[1], e->pos2, sizeof path[1]);
+		return 2;
+	}
+	int np = movers_path(e, path, seen, BMF_PATH);
+	return np < 0 ? 0 : np;
+}
+
+/* edict e's model cut as if it stood at `org` (1/8 units), its top node
+   as ent_link makes it */
+static int cut_where(bmf_cache *c, const edict_t *e, const int32_t org[3])
+{
+	int32_t lo[3], hi[3];
+	for (int k = 0; k < 3; k++) {
+		lo[k] = ((org[k] + e->mins[k] - CLIP_SUB) >> 3) - 2;
+		hi[k] = ((org[k] + e->maxs[k] + CLIP_SUB) >> 3) + 3;
+	}
+	return cut_model(c, e->model, org, world_box_topnode(lo, hi));
+}
+
 /* every mover cut in its own room at 33 places a way, as bmf_draw cuts it
    while it moves: those that do not fit there (drawn whole) and the
    fullest the rooms got ("bmfchk" lines; bmf_load then cuts the models
@@ -1003,7 +901,7 @@ static void bmf_check(void)
 	memcpy(keep, bmf_stats, sizeof keep);
 	for (int i = 2; i < num_edicts; i++) {
 		const edict_t *e = &edicts[i];
-		if (!e->inuse || e->model <= 0 || e->model >= (int) world.num_bmodels || !bmf_models[e->model])
+		if (!drawn_model(e) || !bmf_models[e->model] || !is_mover(e))
 			continue;
 		bmf_cache *c = bmf_models[e->model];
 		int np = model_path(e, path, seen);
@@ -1019,8 +917,9 @@ static void bmf_check(void)
 					       step, bmf_cut_overflow ? "too cut up" : "no room");
 					continue;
 				}
-				uint32_t f[3] = { c->recs_len * 100 / c->recs_cap, c->pool_len * 100 / c->pool_cap,
-				                  c->num_groups * 100 / c->groups_cap };
+				uint32_t f[3] = { c->recs_cap ? c->recs_len * 100 / c->recs_cap : 0,
+				                  c->pool_cap ? c->pool_len * 100 / c->pool_cap : 0,
+				                  c->groups_cap ? c->num_groups * 100 / c->groups_cap : 0 };
 				for (int k = 0; k < 3; k++)
 					if (f[k] > full[k])
 						full[k] = f[k];
@@ -1043,14 +942,34 @@ BMF_COLD void bmf_load(void)
 #if Q1PSX_BENCH_BMFCHK
 	bmf_check();
 #endif
+#ifdef Q1PSX_BENCH
+	uint32_t exact = 0, within = 0, off = 0;
+#endif
 	for (int i = 2; i < num_edicts; i++) {
 		const edict_t *e = &edicts[i];
-		if (drawn_model(e) && bmf_models[e->model])
-			cut_at(bmf_models[e->model], e);
+		if (!drawn_model(e) || !bmf_models[e->model])
+			continue;
+		bmf_cache *c = bmf_models[e->model];
+		cut_at(c, e);
+#ifdef Q1PSX_BENCH
+		/* the cooked room against this cut: a still model's is this very
+		   cut (the cook's cut the engine's, to the byte), a mover's
+		   holds it */
+		if (c->valid && (is_mover(e) || (c->recs_len == c->recs_cap && c->pool_len == c->pool_cap &&
+		                                 c->num_groups == c->groups_cap))) {
+			if (is_mover(e)) within++; else exact++;
+			continue;
+		}
+		off++;
+		printf("bmf room *%d, class %d: cut %s: %u B, %u verts, %u groups; room %u B, %u verts, %u groups\n",
+		       e->model, e->class, c->valid ? "here" : "given up", (unsigned) c->recs_len, (unsigned) c->pool_len,
+		       (unsigned) c->num_groups, (unsigned) c->recs_cap, (unsigned) c->pool_cap, (unsigned) c->groups_cap);
+#endif
 	}
 #ifdef Q1PSX_BENCH
-	printf("bmf: %u pieces in %u cuts (%u given up), %u cycles\n", (unsigned) bmf_stats[1],
-	       (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4]);
+	printf("bmf: %u pieces in %u cuts (%u given up), %u cycles; the cooked rooms: %u still models' "
+	       "their cut exactly, %u movers' holding it, %u not\n", (unsigned) bmf_stats[1], (unsigned) bmf_stats[2],
+	       (unsigned) bmf_stats[3], (unsigned) bmf_stats[4], (unsigned) exact, (unsigned) within, (unsigned) off);
 #if Q1PSX_BMF_C == 2
 	printf("bmfasm %s: %u cuts checked, %u mismatches\n", world.map_name, (unsigned) bmf_asm_checks,
 	       (unsigned) bmf_asm_mismatches);

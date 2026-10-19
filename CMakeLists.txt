@@ -218,6 +218,11 @@ foreach(_src ${_games})                                 # game_2.dat -> GAME_2.D
 	string(TOUPPER "${_base}" _name)
 	string(APPEND GAME_ENTRY "<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t")
 endforeach()
+# the console's background under the release's menu before a map is loaded
+# (formats/qmenu.h); the menu's sound bank is MAPS/MENU.SND (the .snd glob)
+if(EXISTS ${PROJECT_SOURCE_DIR}/cooked/id1/conback.dat)
+	string(APPEND GAME_ENTRY "<file name=\"CONBACK.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/conback.dat\" />\n\t\t")
+endif()
 # the streamed assets per model level (formats/qstream.h: read while the
 # game runs, engine/stream.c): stream_2.dat -> STREAM_2.DAT
 set(STREAM_ENTRY "")
@@ -271,21 +276,39 @@ else()
 	               "geometry ${Q1PSX_GEOMETRY_LEVELS}")
 endif()
 
-# The music: cooked/music/trackNN.wav (scripts/cook.sh, from the rerelease's
-# tracks) become CD-DA tracks after the data track; the bench's disc has
-# none (Q1PSX_MUSIC OFF).
-option(Q1PSX_MUSIC "Put the cooked music on the disc as CD-DA tracks" ON)
-set(AUDIO_TRACKS "")
+# The music (docs/porting-notes.md §46): Quake's CD tracks 2..11 as XA
+# streams carrying the carousels of their maps' streamed assets (xa, the
+# default: cooked/xa/xa_NN.str, mkpsxiso "mixed" files, formats/qxa.h) or
+# as ADPCM the SPU streams (spu: cooked/spu/spu_NN.dat, formats/qspu.h), in
+# \MUSIC next to the streamed assets; the bench's disc has none (Q1PSX_MUSIC
+# OFF unless Q1PSX_BENCH_MUSIC).
+option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
+set(Q1PSX_MUSIC_MODE "xa" CACHE STRING "The music: xa (XA streams with the streamed assets' carousels) or spu (streamed by the SPU)")
+set_property(CACHE Q1PSX_MUSIC_MODE PROPERTY STRINGS xa spu)
+if(Q1PSX_MUSIC_MODE STREQUAL "spu")
+	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_SPU=1)
+	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
+	set(_music_type data)
+elseif(Q1PSX_MUSIC_MODE STREQUAL "xa")
+	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_XA=1)
+	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/xa/xa_*.str)
+	set(_music_type mixed)
+else()
+	message(FATAL_ERROR "Q1PSX_MUSIC_MODE: xa or spu, not ${Q1PSX_MUSIC_MODE}")
+endif()
+set(MUSIC_ENTRIES "")
 set(_music "")
-set(Q1PSX_BENCH_MUSIC 0 CACHE STRING "1: the bench disc carries the music too (the loads after CD-DA playback)")
+set(Q1PSX_BENCH_MUSIC 0 CACHE STRING "1: the bench disc carries the music too (its streams, the carousels)")
 if(Q1PSX_MUSIC AND (NOT Q1PSX_BENCH OR Q1PSX_BENCH_MUSIC))
-	file(GLOB _music CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/music/track*.wav)
+	file(GLOB _music CONFIGURE_DEPENDS ${_music_glob})
 	list(SORT _music)
-	foreach(_src ${_music})
-		string(APPEND AUDIO_TRACKS "<track type=\"audio\" source=\"${_src}\" />\n\t")
+	foreach(_src ${_music})                             # xa_04.str -> MUSIC/XA_04.STR
+		get_filename_component(_base "${_src}" NAME)
+		string(TOUPPER "${_base}" _name)
+		string(APPEND MUSIC_ENTRIES "<file name=\"${_name}\" type=\"${_music_type}\" source=\"${_src}\" />\n\t\t\t")
 	endforeach()
 	list(LENGTH _music _ntracks)
-	message(STATUS "q1psx: ${_ntracks} CD-DA music tracks")
+	message(STATUS "q1psx: ${_ntracks} music tracks (${Q1PSX_MUSIC_MODE})")
 endif()
 
 # --- CD image ---------------------------------------------------------------
@@ -293,5 +316,5 @@ psn00bsdk_add_cd_image(
 	iso        # target
 	q1psx      # -> q1psx.bin + q1psx.cue
 	${PROJECT_SOURCE_DIR}/iso/iso.xml
-	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${_games}   # (a manual cook too)
+	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${_games} ${_streams}   # (a manual cook too)
 )

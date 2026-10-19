@@ -5033,14 +5033,619 @@ Shortened; what was seen:
   - **The cut while a model moves** (§41): a mover is cut again each time
     it has moved and is drawn, 0.1-1 M cycles for a big train or door
     (E1M6's *39 about 1 M, E1M3's trains about 0.35 M), against 564 k
-    cycles a frame at 60 fps. Not measured in play yet (§45: measured,
+    cycles a frame at 60 fps. Not measured in play yet (§49: measured,
     then cut down).
   - **The measure in the cook**: the same cuts made offline would cost
     the load nothing and could sample every way densely with a tighter
     margin; the cook would need the movers' travel (pos1 / pos2, the
     paths) and the cut on the host.
 
-## §45 — The movers' re-cut in play: measured, then cut down (2026-10-19)
+## §45 — The 2D gun's packets only while it is drawn (2026-10-19)
+
+- **The ask**, after §44 left E3M4 and E4M7 with no stream pool: the 2D guns (102 KB) loaded only when chosen, that room back to the monsters'
+  streaming (E3M4, E4M7).
+- **Before**: the 2D gun's packets (§38: every frame's texels and each
+  weapon's CLUT as GPU packets, 107220 bytes) were copied to the game arena
+  at boot, whichever gun was chosen: 224 KB of game arena, 105 KB of them
+  for a gun most never draw.
+- **Now** the boot keeps the 2D gun's tables (its weapons and frames,
+  1 KB) and where its packets are on the disc (`gdata.ws_lba`,
+  `ws_sectors`, `ws_skew`: 53 sectors of GAME_<n>.DAT, the first one
+  1068 bytes in). The packets come to RAM only while the 2D gun is the gun
+  drawn:
+  - the stream lends them its RAM pool's end (`stream_lend`, `stream_lent`,
+    `stream_unlend`, engine/stream.c): at a map's start before its own
+    buffers (the expanded frames' cache, the sounds' staging buffer, the
+    pool), so the 2D gun finds its room wherever it found it in the game
+    arena; during the game (the option changed in the menu) from the
+    pool's end, once no read is in flight: the assets wanted least
+    dropped (never a pinned one; nothing dropped when the pool cannot
+    spare it), the pool compacted, then the 53 sectors read in the
+    stream's turn, the music paused as for an asset's read;
+  - the block sits past `pool_end`: compaction never moves it (the
+    packets' links are absolute) and it goes back to the pool when another
+    gun is chosen (after `DrawSync`: the GPU may still be reading a chain
+    the last frame hung);
+  - `game_ws_sync` (engine/game.c), at a map's start and each frame
+    outside the menu, asks for the block or gives it back; once read, its
+    chains' links are made absolute (`gdata_ws_link`); a new read (the
+    same place after a map's load) is told by the stream's count of reads;
+  - until the block is read the 3D gun is drawn (`ws_draw` returns 0): the
+    2D gun shows a few frames after the menu closes.
+- **The arenas**:
+  - game arena 224 → 116 KB (111.5 KB used at boot, `mem: game arena` in
+    the boot log);
+  - level arena 1136 → 1242 KB (the 108 KB, less 2 KB for the stack: the
+    lending code is 1.4 KB);
+  - `MEM_LEVEL_WORLD` (1136 KB) caps the arena while the world loads
+    (`mem_level_cap`): a map's geometry falls back exactly as before, and
+    the room goes to what follows the world (the brush models' pieces, the
+    stream's pool, the 2D gun), not to a larger world.
+- **The pools** (every map at its high levels, PCSX-Redux in fast
+  forward; `BENCH_MAPS=1 VIEWS=0`, `VIEWMODEL=2` for the 2D gun):
+
+  | Map | 2D gun (as before) | 3D gun or none |
+  |---|---|---|
+  | START | 332 KB (+ 106 KB lent) | 438 KB |
+  | E1M1 | 279 | 385 |
+  | E1M2 | 227 | 333 |
+  | E1M3 | 157 | 263 |
+  | E1M4 | 114 | 220 |
+  | E1M5 | 254 | 360 |
+  | E1M6 | 261 | 367 |
+  | E1M7 | 772 | 878 |
+  | E1M8 | 559 | 665 |
+  | E2M1 | 176 | 282 |
+  | E2M2 | 173 | 279 |
+  | E2M3 | 155 | 261 |
+  | E2M4 | 107 | 213 |
+  | E2M5 | 187 | 293 |
+  | E2M6 | 96 | 202 |
+  | E2M7 | 103 | 209 |
+  | E3M1 | 221 | 327 |
+  | E3M2 | 366 | 472 |
+  | E3M3 | 349 | 455 |
+  | E3M4 | 2 | 92 |
+  | E3M5 | 92 | 198 |
+  | E3M6 | 46 | 152 |
+  | E3M7 | 320 | 426 |
+  | E4M1 | 209 | 315 |
+  | E4M2 | 203 | 309 |
+  | E4M3 | 221 | 327 |
+  | E4M4 | 138 | 244 |
+  | E4M5 | 117 | 223 |
+  | E4M6 | 282 | 388 |
+  | E4M7 | 0 | 97 |
+  | E4M8 | 183 | 289 |
+  | END | 708 | 814 |
+
+  - With the 3D gun (the default) or none, every map's pool is 106 KB
+    larger; E3M4 92 KB (2 before), E4M7 97 KB (0), E3M6 152 KB (46).
+  - With the 2D gun, the pools are §44's to the kilobyte.
+  - `MONSTERS=1 MAP=E3M4` and `MAP=E4M7` (3D gun): streamed monsters
+    drawn in their dumps (1-2 at a time), none before; 163 and 104 reads,
+    no "not a sound". E3M4's 92 KB hold 28-38 of the 83 assets its
+    scenario wants: some kinds are still missing at their dumps.
+- **Checking:**
+  - the 2D gun drawn the same: `BENCH_GAME=1 VIEWMODEL=2 HASHONLY=1`, the
+    25 frame hashes identical to 000b210's (its packets in the game
+    arena);
+  - the release on PCSX-Redux's real GPU (Lua: the pad driven, the screen
+    saved): Graphics → Draw weapon 2D (the hint "uses 106 KB of RAM"),
+    the menu closed: the 3D gun, then the 2D gun 200 vblanks later; 3D
+    again: the 3D gun;
+  - the links: stack room 18272 B (default), 18672 B (release);
+  - `BENCH_GAME=1` links with a 4 KB stack floor (bench.sh's `STACK_MIN`,
+    4096 by default with it): its scenarios' code leaves the stack 6.8 KB,
+    4.8 KB of it never reached.
+- **Left:** in 2D the block is read again at each map's start (53
+  sectors: about 0.4 s of the load at the drive's 2x).
+
+## §46 — The brush models' room measured in the cook (2026-10-19)
+
+- **The ask**: §44's last item, taken up by a session of its own: move
+  `bmf_reserve`'s measure from the load to the cook. Each model is cut where
+  it stands, and a mover densely along its travel; the needs go into the
+  map's data. The load no longer pays 0.08-0.99 s, and the room can be
+  tighter than §44's ×2. The format and the margin chosen: the needs in qw_bmodel at 40 bytes (hulls 1 and
+  2 in int16), an exact margin with no constant.
+- **The cut on the host** (`tools/qcook/bmf.c`):
+  - What it ports: engine/bmfrag.c's `cut_model`, `cut_poly`, `cross`, and
+    the top node of ent_link's box (`world_box_topnode`), integer for
+    integer.
+  - What it runs on: the cooked world as the engine reads it (the assembled
+    file, its links still indices).
+  - What it keeps: the same plane distances, the same crossings, the same
+    limits (12 corners, 64 pieces, 24 pending back pieces, the flush past
+    32 pieces, records of 42 vertices, groups merged within a node side).
+  - What it leaves out: the texels and the light, since no size depends on
+    them.
+  - What a cut gives: the records' bytes, the pool's vertices, the groups.
+- **The travel** (engine/movers.c on the host), for the classes that draw
+  their model (doors, secret doors, buttons, plats, trains, walls,
+  illusionaries, the gates):
+  - **a door's and a button's** pos1 and pos2 (`set_movedir`, `travel_end`,
+    on the engine's sine table rebuilt the same way); a door spawned open
+    (DOOR_START_OPEN) at pos2, its ends swapped;
+  - **a plat's** top (its origin) and bottom (`height`, or its size less 8
+    units); it spawns at the bottom unless it is named;
+  - **a train's** corners (a corner's origin less the model's mins), up to
+    the first one it comes back to. They are found as `ent_find` would find
+    them at each skill: a corner hanging on the skill would change the path
+    (none does);
+  - **a secret door's** place and `secret_dests`' two ends;
+  - **where each spawns**: a train stands at its map origin for its first
+    10 ticks.
+- **The places**:
+  - **Axis-aligned ways.** SUB_CalcMove puts a mover at a + delta × t / ticks
+    (truncated; the way back from b rounds the other way), whatever the
+    speed or the tick rate (§35). So on a way the longest axis takes every
+    value between the ends, 1/8 unit apart, and the cook cuts each one.
+  - **Slanted ways** (a train's). Another axis may sit one unit off the
+    line at that value (truncated forward, rounded up backward); both
+    places are cut.
+  - **Coverage.** That is every position the engine can give a mover on
+    its ways. A door reversed mid-way stays on its line: every door, plat,
+    button and secret door of the id maps is axis-aligned.
+- **What it costs and finds** (the 96 cooked worlds, one core):
+  - 3.6 M cuts in 9.1 s, 0.02-0.34 s a world; the slanted ways' second
+    places are 2 % of the cuts and change no maximum;
+  - no cut given up;
+  - the exact maximum against §44's sample (its ends and halfway places),
+    the worst of each kind over the three geometry levels:
+
+  | Exact / §44's sample | doors | plats | buttons | secret doors | trains |
+  |---|---|---|---|---|---|
+  | records | 1.73 | 1.67 | 1.33 | 1.47 | 1.98 |
+  | vertices | 1.71 | 1.66 | 1.33 | 1.46 | 1.96 |
+  | groups | 1.75 | 1.80 | 1.33 | 1.57 | 1.95 |
+
+  §44's ×2 held by 1 % on E2M5's train *21.
+- **The format** (formats/qworld.h, magic QWVE): qw_bmodel keeps its 40
+  bytes.
+  - `hull1` and `hull2` are int16. BSP29's clipnode children are 16-bit, so
+    any index fits; the cook checks it. engine/clip.s loads them with `lh`
+    (`BM_HULL2` 30), at the same cost.
+  - `num_records` is gone: the engine never read it.
+  - Three new fields, each the most over every place: `room_recs` (bytes /
+    4: a record's size is a multiple of 4), `room_verts`, `room_groups`.
+    They are 0 for a model no drawn entity uses.
+  - No byte more in RAM. The .wld is loaded whole, so a table of its own
+    would have cost 0.2-0.8 KB a map.
+  - The cook writes them on the assembled file, just before writing it.
+    `qcook check` checks them: all three or none, and at least a record
+    header per group.
+  - `qcook bmf <file.wld> [-v]` measures a cooked world again against
+    them; `-v` adds each model's cuts and §44's sample.
+- **The margin: none.** The room is the exact maximum, without factor or
+  constant: the cook's cut is the engine's, and the places are all the
+  ones a mover can take. The fallback stays (§41): a cut that does not fit
+  is given up, and the model is drawn whole until it moves.
+- **The engine** (`bmf_reserve`):
+  - it reads the rooms: no scratch, no cut, no path at the load;
+  - only the models the spawned edicts draw get a room; §44 also gave one
+    to START's absent episode gates;
+  - the caches and their rooms are allocated as one block and the pool as
+    another, because the arena rounds each allocation to 16 bytes (§44
+    made four allocations a model);
+  - the measure's code and `movers_path` remain only in the BMFCHK builds,
+    where bmf_check needs the paths.
+- **What it gives** (PCSX-Redux in fast forward, every map at its high
+  levels; §44's columns from its table):
+
+  | Map | §44 room | Room | Freed | §44 pool | Pool | §44 preload | Preload | §44's measure |
+  |---|---|---|---|---|---|---|---|---|
+  | START | 49 KB | 27 | 22 | 332 | 354 | 85 | 85 | 0.11 s |
+  | E1M1 | 81 KB | 44 | 37 | 279 | 316 | 126 | 126 | 0.22 s |
+  | E1M2 | 83 KB | 44 | 39 | 227 | 266 | 179 | 210 | 0.29 s |
+  | E1M3 | 129 KB | 71 | 58 | 157 | 215 | 120 | 198 | 0.67 s |
+  | E1M4 | 93 KB | 50 | 43 | 114 | 157 | 79 | 126 | 0.31 s |
+  | E1M5 | 94 KB | 48 | 46 | 254 | 299 | 235 | 235 | 0.32 s |
+  | E1M6 | 198 KB | 106 | 92 | 261 | 354 | 227 | 271 | 0.65 s |
+  | E1M7 | 40 KB | 21 | 19 | 772 | 791 | 276 | 276 | 0.09 s |
+  | E1M8 | 53 KB | 28 | 25 | 559 | 584 | 157 | 157 | 0.15 s |
+  | E2M1 | 101 KB | 54 | 47 | 176 | 223 | 130 | 130 | 0.36 s |
+  | E2M2 | 92 KB | 54 | 38 | 173 | 211 | 162 | 162 | 0.32 s |
+  | E2M3 | 109 KB | 58 | 51 | 155 | 206 | 115 | 160 | 0.36 s |
+  | E2M4 | 83 KB | 42 | 41 | 107 | 148 | 93 | 135 | 0.28 s |
+  | E2M5 | 106 KB | 60 | 46 | 187 | 233 | 147 | 147 | 0.36 s |
+  | E2M6 | 171 KB | 88 | 83 | 96 | 179 | 76 | 153 | 0.68 s |
+  | E2M7 | 80 KB | 42 | 38 | 103 | 142 | 77 | 124 | 0.30 s |
+  | E3M1 | 101 KB | 55 | 46 | 221 | 267 | 124 | 124 | 0.35 s |
+  | E3M2 | 179 KB | 93 | 86 | 366 | 452 | 272 | 272 | 0.42 s |
+  | E3M3 | 111 KB | 56 | 55 | 349 | 403 | 215 | 215 | 0.39 s |
+  | E3M4 | 210 KB | 112 | 98 | 2 | 84 | 0 | 44 | 0.99 s |
+  | E3M5 | 61 KB | 32 | 29 | 92 | 121 | 73 | 112 | 0.35 s |
+  | E3M6 | 104 KB | 57 | 47 | 46 | 94 | 41 | 71 | 0.35 s |
+  | E3M7 | 65 KB | 34 | 31 | 320 | 352 | 215 | 215 | 0.20 s |
+  | E4M1 | 75 KB | 43 | 32 | 209 | 241 | 125 | 125 | 0.31 s |
+  | E4M2 | 131 KB | 67 | 64 | 203 | 267 | 186 | 186 | 0.31 s |
+  | E4M3 | 107 KB | 61 | 46 | 221 | 267 | 178 | 252 | 0.29 s |
+  | E4M4 | 50 KB | 25 | 25 | 138 | 163 | 114 | 114 | 0.19 s |
+  | E4M5 | 135 KB | 71 | 64 | 117 | 181 | 102 | 133 | 0.34 s |
+  | E4M6 | 117 KB | 61 | 56 | 282 | 338 | 64 | 64 | 0.32 s |
+  | E4M7 | 133 KB | 70 | 63 | 0 | 54 | 0 | 28 | 0.39 s |
+  | E4M8 | 140 KB | 73 | 67 | 183 | 249 | 147 | 224 | 0.40 s |
+  | END | 22 KB | 12 | 10 | 708 | 718 | 92 | 92 | 0.08 s |
+
+  - Measured before the merge with §45. Merged, every pool is 106 KB
+    larger again with the 3D gun: 160-897 KB over the 32 maps.
+  - 10-98 KB freed a map, 48 KB on average; the pool grows by as much
+    everywhere but on the two fullest maps:
+    - **E3M4:** its stream staging buffer (16 KB) now fits, so its pool
+      grows by the other 82 KB;
+    - **E4M7:** the stream manager always keeps the arena's last 8 KB
+      (`STREAM_KEEP`); E4M7's arena was already full before, so of the
+      63 KB freed, 54 make its pool.
+  - Every load is 0.08-0.99 s shorter (§44's measure, gone).
+  - **The starved maps** now stream their monsters: E3M4 2 → 84 KB of
+    pool (44 KB preloaded), E4M7 0 → 54 KB (28 KB), E3M6 46 → 94 KB.
+    With §45: E3M4 190 KB (166 KB preloaded), E4M7 160 KB (145 KB), E3M6
+    200 KB (149 KB).
+- **Checking:**
+  - **BMFCHK.** `BMFCHK=1 BENCH_MAPS=1 VIEWS=0 scripts/bench.sh` makes
+    43,098 cuts at 33 places a way, and none is given up on the 32 maps.
+    The fullest rooms reach 100 % on every map, for records, vertices and
+    groups: a mover's maximum falls on one of the 33 places.
+  - **The rooms at each load.** Every bench load checks the cooked rooms
+    against the cuts where the models stand:
+    - a still model's room must equal its cut, to the byte, which shows the
+      cook's cut is the engine's;
+    - a mover's room must hold its cut.
+    Over the 32 maps, 72 still models match exactly, 1,117 movers fit,
+    and none fails (`bmf room` lines otherwise).
+  - **The spawn views against §44's commit** (its code and cooked worlds,
+    the same bench): 126 of the 128 frame hashes are identical, so the
+    brush models' pieces are the same. The two others differ only in a
+    streamed model:
+    - E2M7.v0 shows no brush model, and one more monster now resident
+      (+244 polygons, a pool of 142 KB instead of 103);
+    - E1M4.v0 has the same packets except one model's 41, which carry its
+      skin at another place in VRAM (tpage and UVs).
+  - **The physics.** `VIEWS=0 scripts/bench.sh` gives clipdiff (traces
+    against the brush models through `lh`, boxes, lines of sight) and
+    pmdiff, 0 mismatches.
+  - **The cooked files.** All but the worlds are identical to §44's cook.
+    A world differs only in its magic and its qw_bmodel table (the clip
+    roots and the depths are the same). `qcook check` and `qcook bmf` pass
+    on the 96 worlds.
+  - **The links.** The stack has 19952 B (default) and 20368 B (release),
+    against §44's 18192 / 18592: the measure's code left the game.
+  - **After the merge with §45**, the same campaign: `BMFCHK=1` 43,098 cuts
+    with none given up and the fullest rooms at 100 %; at the loads 72
+    still models exactly their cut, 1,117 movers within theirs, none off;
+    the same rooms, every pool 106 KB larger; the stack 20032 B
+    (default), 20432 B (release).
+- **Left:**
+  - **E4M7 and E3M4** keep the smallest pools: 160 and 190 KB with the 3D
+    gun, 54 and 84 KB when the 2D gun borrows its 106 KB (§45). A lower
+    geometry level for those worlds is the lever left.
+  - **The cut while a model moves** (§41, §44): its cost in play is still
+    unmeasured.
+
+## §47 — The 2D gun's frames: their opaque spans only (2026-10-19)
+
+- **The ask**: less RAM for the 2D guns, every gun but the axe being symmetric when not firing:
+  half of each frame kept, the other half rebuilt by symmetry. Measured
+  first, then done losslessly instead.
+- **Where the 2D gun's bytes are.**
+  - VRAM: one slot of 68 × 66 texels (4.4 KB) and its CLUT (§38). A frame
+    is copied into the slot when it is shown, so halving the frames would
+    save at most 2 KB of VRAM.
+  - RAM: 107 KB of packets (60 frames, 103 KB of them), lent by the stream
+    only while the 2D gun is drawn (§45).
+- **The symmetry, measured** (every frame, its mirror about the screen's
+  centre):
+  - the silhouettes mirror at 94-99 % of their texels (the axe 17 %);
+  - but only 17-52 % of the texels equal their mirror's (the rocket
+    launcher's 17 %, the super nailgun's 52 %), the colours 1.5-3.5 levels
+    of 93 apart on average: the light comes from one side (Quake's shading
+    table) and the skins carry asymmetric details;
+  - a frame rebuilt from its half would show symmetric lighting: a change
+    from Quake's look. Left out;
+  - the nailguns' frames are no mirrors of one another either:
+    - the nailgun's firing frames are near-copies as they are (frames
+      1 / 7, 2 / 4 / 6 / 8, 3 / 5: 99-100 % of the texels equal);
+    - the super nailgun's frames 1 / 7, 2 / 6 and 3 / 5 are closer
+      mirrored (56-64 %) than as they are (45-49 %), far from equal.
+- **The opaque spans instead.**
+  - **Before:** each frame copied whole (GP0(A0h), its w × h texels). The
+    frames are 41 % transparent (60,072 opaque texels of 101,312).
+  - **Now:** a frame's chain fills its rows of the slot with 0 (GP0(02h):
+    the transparent index), then copies its opaque spans: a rectangle per
+    run of rows over the run's spans, a halfword on each side.
+  - **The runs** (tools/qcook/game.c `ws_chain`) are chosen for the fewest
+    words. A copy costs its three words and a tag per 255 words, against
+    the transparent texels a wider span carries. A packet a row would cost
+    as much as the whole frame (102 KB): its 16 bytes are the price of 32
+    transparent texels.
+  - **The fill unit.** The GPU fills whole units of 16 halfwords (x down,
+    the width up), so the slot starts on 32 texels. A frame whose fill
+    would pass the slot's end (the axe's frame 7, 68 texels wide) is
+    copied whole, as is any frame where that is smaller; the slot keeps
+    its 68 texels.
+  - **Shared frames.** Frames of the same texels share a chain (the rocket
+    launcher's 5 and 6).
+  - **The engine:**
+    - `gdata_ws_link` makes a shared chain's links absolute once;
+    - `ws_draw` keys the slot's content by the chain, not the frame, so
+      the slot is not copied again, and a chain is still never hung in
+      two frames in a row.
+  - **The format.** `QGM8` (QGM7 had no fill and no shared chain).
+- **What it gives:**
+  - the packets go from 107,220 B (53 sectors) to 78,540 B (39 sectors):
+    55 chains (54 filled then spanned, 1 whole), 475 packets;
+  - while the 2D gun is drawn, the stream lends 78 KB instead of 106 (START:
+    `stream: pools 382 KB ...; 78 KB lent`, 354 KB before), and a map's
+    start reads 14 sectors less (about 0.1 s);
+  - the 3D gun, or none, is as before (the packets are not in RAM).
+- **Checking:**
+  - **The cook's chains** against the old file's, simulated on the host
+    (with stale texels in the slot before each): every one of the 56 2D
+    frames leaves the same texels in its part of the slot.
+  - **The pictures.** `BENCH_GAME=1 VIEWMODEL=2 scripts/bench.sh`: the 25
+    views' pktview pictures are identical to the previous commit's, byte
+    for byte. pktview now applies GP0(02h) fills. The frame hashes change
+    by design: the display list carries the copies.
+  - **DuckStation**: the game bench with the 2D gun ran to `bench done`,
+    with no GP0 error. Its first start that afternoon never booted, as
+    since §42 (the cause was not found); every later one booted. A run
+    stopped by `timeout`'s SIGTERM hangs in DuckStation's "graceful
+    shutdown": stop it with `timeout -s KILL`.
+- **Left:** the nailgun's near-identical firing frames could become
+  small patches over a shared base (about 15 KB more), at the price of
+  chains linked to one another at run time.
+
+## §48 — The music: XA streams carrying their maps' assets, the SPU alternative, the release's title (2026-10-19)
+
+- **The asks**: the music in XA instead of CD-DA, to end the cuts and the
+  stutter when the stream reads during play; then, on the options: the data interleaved so the sound never cuts; Quake's theme under the
+  release's menu; START no longer loaded before New Game.
+
+### 48.1 What cut the music (measured)
+
+The CD-DA path (§40.2), PCSX-Redux in fast forward, E1M1's monsters'
+scenario with the music on the bench disc:
+
+| Stage | Cost |
+|---|---|
+| `music_suspend`'s fade | 8 frames, 133 ms |
+| `CdControlB(CdlGetlocP)` | 30 k cycles, 0.9 ms |
+| `CdControlB(CdlPause)`: it waits for the pause's second response | **2.40 M cycles, 71 ms: about four frames frozen** (psx-spx: 64 ms at single speed, CD-DA's) |
+| the reads (3 to 9 small assets, 31 KB: 0.1 s of transfer) | **1.4 to 1.9 s of silence** (86-114 vblanks): each sound piece its own read and seek, the seeks to the data and back to the CD-DA track |
+| `music_resume` | 89 k cycles (three commands), then 133 ms of fade |
+
+What the stream asks for (the bench's sets, every asset a map's entities
+use): 0.6 to 1.1 MB a map at the models' high level, 0.7 to 1.4 MB per CD
+track (the union of the maps that play it: track 4 plays on six maps,
+track 8 on five).
+
+### 48.2 The choices
+
+An XA stream plays its music while the head reads the data sectors beside
+it, so data laid out next to the music arrives with no seek. Data wanted
+on demand must come round again: a carousel, the assets repeated over the
+whole track. A stream lasts as long as its music (59 minutes for the ten
+tracks): at double speed that is 530 000 sectors, the disc has 333 000, so
+the streams are read at single speed (75 sectors a second, the CD-DA's
+room). The options shown (XA with a carousel; the same with direct reads
+for urgent assets; the music from an SPU ring; XA without the data) and
+the choices made:
+
+- **XA with a carousel per track, the default.**
+- **The SPU ring, a build-time alternative** (both do not fit one disc):
+  22 kHz, 2 s, in SPU RAM.
+- **The models' three levels in one asset** (shared vertices; asked again
+  with the risks spelled out: rendering and RAM identical, the carousel
+  10-15 % longer, the format and the expansion's input new).
+
+### 48.3 The XA streams (formats/qxa.h, tools/qcook/carousel.c)
+
+- **A stream per track** (`MUSIC/XA_<nn>.STR`, mkpsxiso "mixed" files of
+  2336-byte sectors: the subheader twice, then the data; mkpsxiso writes
+  the sync, the header and the EDC/ECC, checked on a test image): one
+  sector of four is the music, XA ADPCM at 37.8 kHz, stereo, 4-bit (2016
+  samples a channel a sector, 18.75 sectors a second); the three others
+  are Mode 2 Form 1 data sectors, the turn's sectors one after the other
+  (56.25 sectors, 112.5 KB a second). The first sector holds the header:
+  the turn's assets (STREAM_<n>.DAT's indices, their sectors) and a byte a
+  turn sector naming its asset. Every sector's file number is the track:
+  the drive's filter plays the track's own music only.
+- **The encoder**: per 28-sample unit of a channel, the filter (the
+  CD-ROM's four) and the shift with the least squared error, the residual
+  rounded and encoded against the decoder's own history (psx-spx's
+  decoder, its +32), the shifts tried around the one the unit's residual
+  needs (a full search gives the same error). 1.5 s a track.
+- **The tracks**:
+
+  | Track | Maps | Music | XA's SNR | Turn: assets, KB | A turn |
+  |---|---|---|---|---|---|
+  | 2 | (the menu, the episodes' ends) | 308.6 s | 38.4 dB | none | |
+  | 3 | (the intermission) | 146.0 s | 54.5 dB | none | |
+  | 4 | START, E1M6, E2M6, E3M6, E4M6, END | 500.3 s | 37.1 dB | 127, 1546 | 13.7 s |
+  | 5 | E1M4, E2M4, E3M7, E4M4 | 365.4 s | 48.3 dB | 125, 1510 | 13.4 s |
+  | 6 | E1M1, E2M1, E3M1, E4M1 | 444.6 s | 51.0 dB | 71, 844 | 7.5 s |
+  | 7 | E1M7, E2M7, E4M7 | 518.2 s | 57.1 dB | 120, 1644 | 14.6 s |
+  | 8 | E1M2, E2M2, E3M2, E3M4, E4M2 | 335.9 s | 54.6 dB | 133, 1614 | 14.3 s |
+  | 9 | E1M3, E2M3, E3M3, E4M3 | 388.9 s | 57.3 dB | 127, 1528 | 13.6 s |
+  | 10 | E1M8, E4M8 | 212.6 s | 58.7 dB | 102, 1088 | 9.7 s |
+  | 11 | E1M5, E2M5, E3M5, E4M5 | 317.4 s | 57.4 dB | 124, 1564 | 13.9 s |
+
+  265 366 sectors in all, what the CD-DA took; the release's image is
+  735 MB (738 with the CD-DA), one data track.
+- **A map's assets in the cook**: its monsters' kinds (each kind's
+  group, the gibs and the backpack with any monster, zom_gib with the
+  ogres', demons' and shamblers' melee: SpawnMeatSpray), its items'
+  models (`items_streamed`), its entities' and ambients' sounds
+  (`sound_map_streamed`: the QC's defaults for `sounds`, item_health's by
+  its flags, every func_door's key sounds: doors.qc gives them to every
+  door), leaving out the entities single player never spawns (flagged not
+  easy, not medium and not hard). Against the sets the engine asked for on
+  the 32 maps (the bench, every asset's distance after the spawn): none
+  missing; the cook's hold 1 to 17 more (an entity of one skill, START's
+  backpack and lava ball).
+
+### 48.4 The models' three levels in one asset (formats/qstream.h qst_shared)
+
+- **Nested levels.** decim.c's half-edge collapses go cheapest first in
+  the same order at every level and stop sooner for a higher one: a lower
+  level keeps a subset of a higher level's vertices (the cook checks it).
+  The vertices are numbered by the lowest level that keeps them (low's in
+  low's order, then medium's others, then high's): a level's vertices are
+  the first `num_verts` of each frame. Every level's asset in
+  STREAM_<n>.DAT is cooked from that numbering.
+- **The shared asset**: qst_shared, the high level's frames, the levels'
+  records (a level with another's triangles shares its block), the images
+  (the same at every level: checked). `qst_level_model` makes the level's
+  header and `qst_assemble` copies its bytes from any range of the shared
+  asset (a sector at a time, as captured): the frames' first words, the
+  level's records, the images. The cook assembles every level from the
+  shared asset sector by sector and compares it with the level's asset:
+  byte for byte, on every model. `qcook stream` writes the three levels
+  and the pool (cooked/xa/pool.dat, the carousels' source) in one run.
+- **The cost**: the pool 2349 KB against 2215 KB for high alone (+6 %).
+  Low's assets are unchanged; 27 medium and 32 high models only have their
+  vertices renumbered (the same sizes, the same records but their vertex
+  indices): the monsters' scenarios hash the same frames on E1M3 and E1M5
+  at high and at medium.
+
+### 48.5 The engine: assets taken as they pass (engine/music.c, stream.c)
+
+- **The music** (`music_play`): the stream's header read (at a map's
+  load, a track change), the drive set to single speed, CdlModeRT (the
+  drive plays the music's sectors), CdlModeSF (the track's file number),
+  CdlModeSize (each data sector with its header), then CdlReadS. The CD
+  interrupt reads a data sector's 12 header bytes, works out its place in
+  the stream from its address, and hands it to `stream_xa_sector`. Past
+  the music's last sector the drive goes back to the stream's start (the
+  track loops, Quake's CDAudio_Play(track, true)). No pause during play:
+  the 71 ms freeze is gone with the cuts.
+- **The captures** (stream.c): an asset the carousel carries is wanted
+  from farther than a read's (4000 units for a model, 3000 for a sound: a
+  turn's run ahead), given its room as for a read (RAM and VRAM, or its
+  SPU place), then captured: the interrupt takes each of its sectors in
+  order from its first into a ring of eight (the staging buffer), by DMA
+  in the background (CdGetSector2: a word every 16 cycles, the CPU running
+  between; done long before the next sector); a sector missed (the ring
+  full) starts the asset over at its next turn. Each frame drains the
+  ring: a model's level assembled into its block (qst_assemble), a sound's
+  samples to SPU RAM; the last piece in, the asset installed as a read's.
+  Eight captures at most at once, armed after a residency pass or a
+  capture's end.
+- **What the carousel lacks** is read as before (the music suspended): an
+  asset of no turn (none on the 32 maps), the 2D gun's packets lent by the
+  stream (§45) when they come during play.
+- **Measured** (PCSX-Redux, fast forward, the music on the bench disc):
+  E1M1's monsters' scenario took 16-17 assets from track 6's carousel and
+  read none during play; E1M3's (track 9, a turn of 13.6 s) took 46: from
+  their arming, 7 s at the median, 0.3 to 13.6 s. The interrupt costs 333
+  cycles a data sector (56 a second), the carousel 77 cycles a quiet frame
+  and 13-16 k cycles a frame on average in E1M3's crowd (arming every free
+  slot each frame cost 117 k: each stuck asset's room measured again);
+  installing a model costs what a read's does.
+- **RAM**: the stream's header 2 KB in the game arena; BSS and code about
+  5 KB, given back to the stack by the arenas (the level arena 1240 KB,
+  the game arena 115 KB: its boot tables 114 KB).
+
+### 48.6 The SPU music, the build's alternative (formats/qspu.h)
+
+- `Q1PSX_MUSIC_MODE=spu` (the `release-spu` preset): each track SPU ADPCM
+  at 22.05 kHz stereo (`MUSIC/SPU_<nn>.DAT`), in chunks of 0.325 s a
+  channel; the last two voices play a ring of six chunks a channel at the
+  top of SPU RAM (2 s, 48 KB, taken from the streamed sounds' pool; the
+  static sounds keep twelve voices). The ring's first and last blocks get
+  their loop flags at the upload; after the track's last chunk its first:
+  the track loops seamlessly.
+- **The drive shared**: the music refills two chunks at a time when no
+  read is in flight; a read (an asset's, a sound's piece, the lent block)
+  starts when the ring holds the music for it, its seeks (250 ms each, the
+  music lying next to the streamed assets) and the refill after
+  (`music_read_ok`). Where the voices are comes from root counter 2,
+  sysclock / 8, whose clock the SPU shares (44.1 kHz is sysclock / 768: a
+  22.05 kHz sample is 192 ticks): no drift, no SPU interrupt.
+- **The encoder** as the XA's (the SPU's five filters): 34.3 to 57 dB a
+  track (track 2: 34.3, 4: 38.5, 5: 43.1, 8: 49.5, the others 52-57), 5 dB
+  over the sounds' encoder (which truncates). 84.6 MB for the ten tracks;
+  the release-spu image is 213 MB.
+- **Measured**: the release's menu and START; E1M1's monsters' scenario
+  read 19 assets during play with the ring never dry; START's preload 20
+  assets (23 in the XA build: 48 KB less of SPU pool).
+
+### 48.7 The release's title: no map before New Game
+
+- **What Quake does**: quake.rc ends with `startdemos demo1 demo2 demo3`:
+  the demo loop runs under the menu. demo1.dem's first line is its forced
+  CD track, 2, which svc_cdtrack plays in place of E1M3's 9
+  (CL_PlayDemo_f, cls.forcetrack): Quake's theme plays under the menu
+  until demo2 (E1M4, track 5), then demo3 (E1M6, track 4). Quake did play
+  the theme under its menu, as the first demo's music.
+- **With no demo and no world** (con_forcedup), the console is down, and
+  M_Draw draws the console's background in place of the faded game. The
+  port has no demos and now loads no map before New Game: the release
+  boots to `gfx/conback.lmp` stretched over the screen (Quake's rows ×
+  240 / 200) with the menu over it, and track 2 looping. Quake also draws
+  its version number in the picture's corner and the console's text
+  (there is no console): neither is drawn. ESC closes the menu (the
+  background alone, SCR_DrawConsole's), START opens it again; no game runs
+  before New Game.
+- **The menu's own bank**, `MAPS/MENU.SND`: its three clicks and CD track
+  2 (`qcook menu`, which also cooks `CONBACK.DAT`: the picture and an
+  opaque copy of the palette, loaded where the map's texture pages go).
+- **New Game loads START once**: the boot logs one `START.SND` and one
+  `START_G2.WLD` (START was loaded under the menu at boot, then again by
+  New Game). The settings changed before New Game apply at that load.
+- **The disc's order**: the maps, then the streamed assets and the music
+  (the XA streams' 600 MB had pushed the maps away from the game data: the
+  boot 2.7 s longer on PCSX-Redux; 950 vblanks to the menu now, 970 with
+  the SPU music).
+
+### 48.8 Checking
+
+- The cook: the levels' nesting and the assembled assets checked on every
+  model; the carousels' sets against the engine's (32 maps, none missing);
+  a test image's mixed sectors (the subheaders, the data, the Form 1 EDC).
+- The monsters' scenarios without music (`MONSTERS=1 MAP=E1M3|E1M5
+  MODELS=2|1 HASHONLY=1`): the same `H` lines as before the shared
+  numbering and the capture code.
+- `MONSTERS=1 MUSIC=1 MAP=E1M1|E1M3`: the `stream: capturing` / `captured
+  ... in N vblanks` / `stream: in` lines, no `stream: reading` during play,
+  no `not one this engine reads`, the `xa cost` lines; `MUSIC_MODE=spu`:
+  `stream: in` lines, no `ran dry`.
+- The releases (XA and SPU) on PCSX-Redux with its UI and a Lua script
+  (`PCSX.GPU.takeScreenShot()` at chosen vblanks, the pad driven by
+  `setOverride`): the menu over the console's background, ESC (the
+  background alone), START (the menu again), Single Player, New Game
+  (START drawn); the boot logs (`music: track 2 ...`, then track 4 with
+  its carousel; one START load); the first frame's vblank.
+- Every link's `ramcheck`: the release 17.3 KB of stack, release-spu 17.7.
+
+### 48.9 Left
+
+- **The ears**: the XA (37.8 kHz, 4-bit) and the SPU music (22 kHz)
+  against the CD's 16 bits; the music's level against the effects (the
+  SPU music set as loud as the CD input was). The loop points (the
+  decoders' history jumps back to the track's start).
+- **DuckStation and the machine**: not run (DuckStation did not start on
+  this host, §42). The XA with data at single speed, the speed switches
+  around the loads, a worn drive (XA sectors carry no error correction: a
+  drive that skips them skips the music, not the data).
+- **The carousel's waits**: an asset comes on its next turn, up to 14.6 s
+  (track 7): a monster can stay undrawn, a sound unheard, that long after
+  it is wanted. The reach (4000 / 3000) is a first guess; shorter turns
+  would come from fewer or smaller assets (the entities' sounds are half
+  of a turn).
+- **The lent block** (§45) read during play leaves the XA stream: a cut
+  (when the 2D gun is chosen during a game).
+- **The intermission's and the finale's tracks** (3, 2) are streams of
+  their own: a seek and no carousel while they play.
+- **The bench's `BENCH_GAME=1` build fails the stack check**, as it did
+  before this work (6.8 KB of stack at 000b210, 5.2 KB now): the game
+  scenario's code; its own threshold (`Q1PSX_STACK_MIN`) or less code in
+  that build.
+- **The stack's margin** is about 1 KB over the 16 KB threshold in both
+  releases.
+
+## §49 — The movers' re-cut in play: measured, then cut down (2026-10-19)
 
 - **The ask**: measure, then reduce, what `bmf_draw`'s re-cut of a moving
   brush model costs in play (§41, §44's "Left": 0.1-1 M cycles a cut at

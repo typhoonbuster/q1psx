@@ -22,6 +22,9 @@ typedef struct {
 	int  (*reload_due)(void);   /* the settings ask for other files than the
 	                               level on screen was loaded from (levels,
 	                               texture depth): they wait for a load */
+	int  (*no_world)(void);     /* no map is loaded (Quake's forced console:
+	                               the menu over its background, not over
+	                               the faded game) */
 } menu_hooks_t;
 
 void menu_init(const menu_hooks_t *hooks);

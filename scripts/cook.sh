@@ -22,17 +22,21 @@
 # 3 ultra; formats/qlevels.h):
 #   cooked/id1/<map>_t<N>.tex   QTX6 texture set (textures 0..3)  -> disc <MAP>_T<N>.TEX
 #   cooked/id1/<map>_t<N>.tx4   QTX7, the same in 4bpp            -> disc <MAP>_T<N>.TX4
-#   cooked/id1/<map>_g<N>.wld   QWVD world (geometry 0, 2, 3)     -> disc <MAP>_G<N>.WLD
+#   cooked/id1/<map>_g<N>.wld   QWVE world (geometry 0, 2, 3)     -> disc <MAP>_G<N>.WLD
 #   cooked/id1/<map>_m<N>.mdl   QMM1 its own models (models 0..2) -> disc <MAP>_M<N>.MDL
 # per map (with the high geometry job), the sound bank (formats/qsound.h):
 #   cooked/id1/<map>.snd        QSB2 sounds                       -> disc <MAP>.SND
 # once per model level, the game data (weapon models, projectiles, the
 # HUD; formats/qgame.h):
 #   cooked/id1/game_<N>.dat     QGM7                              -> disc GAME_<N>.DAT
+# the release menu's (formats/qsound.h, formats/qmenu.h):
+#   cooked/id1/menu.snd         QSB2, the clicks and CD track 2   -> disc MAPS/MENU.SND
+#   cooked/id1/conback.dat      QCB1, the console's background    -> disc CONBACK.DAT
 # and once per model level, the streamed assets (the monsters, the items'
 # models, the positional sounds; formats/qstream.h; the models reduced at
-# that level: tools/qcook/game.c stream_reduce):
+# that level: tools/qcook/game.c stream_reduce), with their shared pool:
 #   cooked/id1/stream_<N>.dat   QST1                              -> disc STREAM_<N>.DAT
+#   cooked/xa/pool.dat          QSX1 (the carousels' source: not on the disc)
 # and the music, as 44.1 kHz stereo WAV for mkpsxiso's audio tracks:
 #   cooked/music/trackNN.wav                              -> CD-DA track NN
 # Jobs run in parallel; each one's log is shown only if it fails.
@@ -65,22 +69,22 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
-      cooked/id1/game*.dat cooked/id1/stream*.dat
+      cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game > "$LOGS/game.log" 2>&1 \
 	|| { echo "cook FAILED: game data"; cat "$LOGS/game.log"; exit 1; }
+# the release menu's: its sound bank (the clicks, the theme's CD track) and
+# the console's background, shown before any map is loaded
+tools/qcook/qcook menu --pak "$QUAKE_PAK0" --sounds cooked/id1/menu.snd --conback cooked/id1/conback.dat \
+	> "$LOGS/menu.log" 2>&1 || { echo "cook FAILED: menu"; cat "$LOGS/menu.log"; exit 1; }
 # the streamed assets per model level (formats/qstream.h): the monsters, the
-# items' models, the positional sounds
-pids=""
-for n in 0 1 2; do                               # the model levels: low, medium, high
-	tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --level $n \
-	                         --out cooked/id1/stream_$n.dat > "$LOGS/stream_$n.log" 2>&1 &
-	pids="$pids $!"
-done
-for p in $pids; do
-	wait "$p" || { echo "cook FAILED: streamed assets"; cat "$LOGS"/stream_*.log; exit 1; }
-done
+# items' models, the positional sounds; and their pool for the music's
+# carousels (cooked/xa/pool.dat: the three model levels in one asset)
+mkdir -p cooked/xa
+tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --out cooked/id1/stream \
+                         --pool cooked/xa/pool.dat > "$LOGS/stream.log" 2>&1 \
+	|| { echo "cook FAILED: streamed assets"; cat "$LOGS/stream.log"; exit 1; }
 
 cook_one() {   # map axis level (t / g / m, 0..3)
 	local pak=$QUAKE_PAK0
@@ -108,22 +112,41 @@ done | xargs -P "$(nproc)" -n 3 bash -c 'cook_one "$0" "$1" "$2"'
 
 echo "cooked $(echo $MAPS | wc -w) maps: 4 texture, 3 geometry, 3 model levels -> $ROOT/cooked/"
 
-# the music: Quake's CD tracks 2..11 (worldspawn "sounds"), converted once
+# the music: Quake's CD tracks 2..11 (worldspawn "sounds"), from the
+# rerelease's tracks, resampled once by ffmpeg: 37.8 kHz for the XA streams
+# (cooked/xa/trackNN.wav), each track's stream then cooked with the
+# carousel of its maps' streamed assets (formats/qxa.h: cooked/xa/xa_NN.str,
+# the tracks side by side; the maps cooked here only); 22.05 kHz for the
+# SPU-streamed music (cooked/spu/trackNN.wav -> spu_NN.dat). The build's
+# Q1PSX_MUSIC_MODE picks which go on the disc.
 QUAKE_MUSIC=${QUAKE_MUSIC:-"$(dirname "$QUAKE_PAK0")/../rerelease/id1/music"}
+rm -f cooked/xa/xa_*.str cooked/spu/spu_*.dat
 if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/dev/null; then
-	mkdir -p cooked/music
-	n=0
+	mkdir -p cooked/xa cooked/spu
+	tracks=""
 	for src in "$QUAKE_MUSIC"/track*.ogg "$QUAKE_MUSIC"/track*.mp3 "$QUAKE_MUSIC"/track*.wav; do
 		[ -f "$src" ] || continue
-		out="cooked/music/$(basename "${src%.*}").wav"
-		if [ ! -f "$out" ] || [ "$src" -nt "$out" ]; then
-			ffmpeg -loglevel error -y -i "$src" -ar 44100 -ac 2 -sample_fmt s16 \
-			       -fflags +bitexact -flags:a +bitexact "$out" || { echo "cook FAILED: music $src"; exit 1; }
-		fi
-		n=$((n + 1))
+		nn=$(basename "${src%.*}" | sed 's/^track//')
+		for fmt in xa:37800 spu:22050; do
+			out="cooked/${fmt%%:*}/track$nn.wav"
+			if [ ! -f "$out" ] || [ "$src" -nt "$out" ]; then
+				ffmpeg -loglevel error -y -i "$src" -ar "${fmt#*:}" -ac 2 -sample_fmt s16 \
+				       -fflags +bitexact -flags:a +bitexact "$out" || { echo "cook FAILED: music $src"; exit 1; }
+			fi
+		done
+		tracks="$tracks $nn"
 	done
-	echo "music: $n CD-DA tracks in $ROOT/cooked/music/"
+	MAPS_LIST=$(echo $MAPS)                      # (one line, single spaces)
+	export MAPS_LIST
+	for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
+		'tools/qcook/qcook carousel --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --pool cooked/xa/pool.dat \
+		    --maps "$MAPS_LIST" --music cooked/xa --track {} --out cooked/xa/xa_{}.str > "$LOGS/xa_{}.log" 2>&1 \
+		 || { echo "cook FAILED: the XA stream of track {}"; cat "$LOGS/xa_{}.log"; exit 1; }'
+	for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
+		'tools/qcook/qcook spumusic --music cooked/spu --track {} --out cooked/spu/spu_{}.dat > "$LOGS/spu_{}.log" 2>&1 \
+		 || { echo "cook FAILED: the SPU music of track {}"; cat "$LOGS/spu_{}.log"; exit 1; }'
+	cat "$LOGS"/xa_*.log "$LOGS"/spu_*.log | grep '^qcook: ' | sed 's|^qcook: .*/|music: |' || true
+	echo "music: $(echo $tracks | wc -w) tracks in $ROOT/cooked/xa/ and $ROOT/cooked/spu/"
 else
-	rm -rf cooked/music
 	echo "music: none (set QUAKE_MUSIC / COOK_MUSIC=1, needs ffmpeg)"
 fi

@@ -454,6 +454,72 @@ static size_t sound_bytes(const bank_sound *s)
 	return (size_t) ((pre + s->wav.n + 27) / 28) * 16;
 }
 
+/* the bank's sounds (sounds[0 .. nsounds)) encoded and written, with its
+   static sources and its CD track */
+static void bank_write(const qs_static *statics, int nstatics, int cd_track, int halved, const char *out_path)
+{
+	/* encode */
+	double worst_snr = 99;
+	const char *worst = "";
+	for (int i = 0; i < nsounds; i++) {
+		adpcm_encode(&sounds[i].wav, &sounds[i].adpcm, &sounds[i].snr);
+		if (sounds[i].snr < worst_snr) { worst_snr = sounds[i].snr; worst = sounds[i].name; }
+	}
+
+	/* the file */
+	bytes_t f = { 0 };
+	qs_header h;
+	memset(&h, 0, sizeof h);
+	bput(&f, &h, sizeof h);
+	qs_sound *dir = xcalloc((size_t) nsounds, sizeof *dir);
+	size_t data = 0;
+	for (int i = 0; i < nsounds; i++) {
+		bank_sound *s = &sounds[i];
+		dir[i].hash  = qs_hash(s->name);
+		dir[i].ofs   = (uint32_t) data;
+		dir[i].len   = (uint32_t) s->adpcm.len;
+		dir[i].pitch = (uint16_t) ((s->wav.rate * 4096 + 22050) / 44100);
+		dir[i].flags = s->wav.loopstart >= 0 ? QSF_LOOP : 0;
+		dir[i].ticks = (uint32_t) ((s->wav.n * 60 + s->wav.rate - 1) / s->wav.rate) + 1;
+		data += s->adpcm.len;
+	}
+	h.num_sounds = (uint32_t) nsounds; h.ofs_sounds = (uint32_t) f.len;
+	bput(&f, dir, (size_t) nsounds * sizeof *dir);
+	h.num_statics = (uint32_t) nstatics; h.ofs_statics = (uint32_t) f.len;
+	if (nstatics)
+		bput(&f, statics, (size_t) nstatics * sizeof *statics);
+	h.ofs_names = (uint32_t) f.len;
+	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].name, strlen(sounds[i].name) + 1);
+	h.len_names = (uint32_t) f.len - h.ofs_names;
+	while (f.len & 15) bput(&f, "", 1);
+	h.ofs_data = (uint32_t) f.len;
+	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].adpcm.p, sounds[i].adpcm.len);
+	h.len_data = (uint32_t) data;
+	h.cd_track = (uint32_t) cd_track;
+	memcpy(h.magic, QSOUND_MAGIC, 4);
+	memcpy(f.p, &h, sizeof h);
+	FILE *fp = fopen(out_path, "wb");
+	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", out_path);
+	fclose(fp);
+
+	int per_group[SG_COUNT] = { 0 };
+	for (int i = 0; i < nsounds; i++)
+		per_group[sounds[i].group]++;
+	printf("qcook: sounds — %d sounds, %zu KB of SPU RAM (%d halved), %d static sounds, CD track %d, worst SNR %.1f dB (%s)\n",
+	       nsounds, data / 1024, halved, nstatics, cd_track, worst_snr, worst);
+	printf("qcook: sounds — core %d", per_group[SG_CORE]);
+	for (int g = 1; g < SG_COUNT; g++)
+		if (per_group[g]) printf(", %s %d", group_name[g], per_group[g]);
+	printf("\n");
+
+	for (int i = 0; i < nsounds; i++) {
+		free(sounds[i].wav.s);
+		free(sounds[i].adpcm.p);
+	}
+	free(dir);
+	free(f.p);
+}
+
 void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
                  long pak0_len, const char *out_path)
 {
@@ -546,65 +612,24 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 		halved++;
 	}
 
-	/* encode */
-	double worst_snr = 99;
-	const char *worst = "";
-	for (int i = 0; i < nsounds; i++) {
-		adpcm_encode(&sounds[i].wav, &sounds[i].adpcm, &sounds[i].snr);
-		if (sounds[i].snr < worst_snr) { worst_snr = sounds[i].snr; worst = sounds[i].name; }
-	}
+	bank_write(statics, nstatics, cd_track, halved, out_path);
+}
 
-	/* the file */
-	bytes_t f = { 0 };
-	qs_header h;
-	memset(&h, 0, sizeof h);
-	bput(&f, &h, sizeof h);
-	qs_sound *dir = xcalloc((size_t) nsounds, sizeof *dir);
-	size_t data = 0;
-	for (int i = 0; i < nsounds; i++) {
-		bank_sound *s = &sounds[i];
-		dir[i].hash  = qs_hash(s->name);
-		dir[i].ofs   = (uint32_t) data;
-		dir[i].len   = (uint32_t) s->adpcm.len;
-		dir[i].pitch = (uint16_t) ((s->wav.rate * 4096 + 22050) / 44100);
-		dir[i].flags = s->wav.loopstart >= 0 ? QSF_LOOP : 0;
-		dir[i].ticks = (uint32_t) ((s->wav.n * 60 + s->wav.rate - 1) / s->wav.rate) + 1;
-		data += s->adpcm.len;
-	}
-	h.num_sounds = (uint32_t) nsounds; h.ofs_sounds = (uint32_t) f.len;
-	bput(&f, dir, (size_t) nsounds * sizeof *dir);
-	h.num_statics = (uint32_t) nstatics; h.ofs_statics = (uint32_t) f.len;
-	bput(&f, statics, (size_t) nstatics * sizeof *statics);
-	h.ofs_names = (uint32_t) f.len;
-	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].name, strlen(sounds[i].name) + 1);
-	h.len_names = (uint32_t) f.len - h.ofs_names;
-	while (f.len & 15) bput(&f, "", 1);
-	h.ofs_data = (uint32_t) f.len;
-	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].adpcm.p, sounds[i].adpcm.len);
-	h.len_data = (uint32_t) data;
-	h.cd_track = (uint32_t) cd_track;
-	memcpy(h.magic, QSOUND_MAGIC, 4);
-	memcpy(f.p, &h, sizeof h);
-	FILE *fp = fopen(out_path, "wb");
-	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", out_path);
-	fclose(fp);
-
-	int per_group[SG_COUNT] = { 0 };
-	for (int i = 0; i < nsounds; i++)
-		per_group[sounds[i].group]++;
-	printf("qcook: sounds — %d sounds, %zu KB of SPU RAM (%d halved), %d static sounds, CD track %d, worst SNR %.1f dB (%s)\n",
-	       nsounds, data / 1024, halved, nstatics, cd_track, worst_snr, worst);
-	printf("qcook: sounds — core %d", per_group[SG_CORE]);
-	for (int g = 1; g < SG_COUNT; g++)
-		if (per_group[g]) printf(", %s %d", group_name[g], per_group[g]);
-	printf("\n");
-
-	for (int i = 0; i < nsounds; i++) {
-		free(sounds[i].wav.s);
-		free(sounds[i].adpcm.p);
-	}
-	free(dir);
-	free(f.p);
+/* The release's menu bank (`qcook menu`): what the menu plays before any
+   map is loaded, the clicks (M_Main_Key and the others' S_LocalSound), with
+   CD track 2. Quake starts its demo loop under the menu (quake.rc:
+   startdemos demo1 demo2 demo3); demo1.dem was recorded with a forced
+   track, 2, on its first line (CL_PlayDemo_f's cls.forcetrack, which
+   svc_cdtrack plays in place of E1M3's 9), so the theme plays under the
+   menu until demo2 (E1M4: track 5). The port has no demos: the theme
+   loops. */
+void sound_build_menu(const uint8_t *pak0, long pak0_len, const char *out_path)
+{
+	static const char *const clicks[] = { "misc/menu1.wav", "misc/menu2.wav", "misc/menu3.wav" };
+	nsounds = 0;
+	for (size_t k = 0; k < sizeof clicks / sizeof clicks[0]; k++)
+		sound_add(clicks[k], SG_CORE, pak0, pak0_len, NULL, 0);
+	bank_write(NULL, 0, 2, 0, out_path);
 }
 
 /* ------------------------------------------------------------- streamed -- */
@@ -641,6 +666,50 @@ int sound_streamed(const char **list, int max)
 	for (int w = 0; w < 3; w++)
 		for (int k = 0; k < 2; k++)
 			list_add(list, &n, max, KEY_DOOR_SOUNDS[w][k]);
+	return n;
+}
+
+/* The streamed sounds a map's entities use (the music's carousels,
+   tools/qcook/carousel.c): their spawn functions' precaches as the map's
+   bank took them before the stream (the QC's defaults for `sounds`,
+   item_health's by its flags, a key door's), the ambient sources'; what
+   every bank has left out */
+int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max)
+{
+	int n = 0;
+	for (int i = 0; i < ents->num; i++) {
+		const ent_rec *e = &ents->ents[i];
+		const char *cls = e->classname;
+		int spawnflags = (int) ent_float(ents, e, "spawnflags", 0);
+		int sn = (int) ent_float(ents, e, "sounds", 0);
+		for (size_t k = 0; k < sizeof AMBIENTS / sizeof AMBIENTS[0]; k++) {
+			if (strcmp(cls, AMBIENTS[k].classname))
+				continue;
+			if (!strcmp(cls, "trigger_teleport") && (spawnflags & 1))   /* SILENT */
+				continue;
+			list_add(list, &n, max, AMBIENTS[k].sound);
+		}
+		if (!strcmp(cls, "func_door_secret") && !sn) sn = 3;
+		if (!strcmp(cls, "func_plat") && !sn) sn = 2;
+		if (!strcmp(cls, "trigger_secret") && !sn) sn = 1;
+		for (size_t k = 0; k < sizeof ENT_SOUNDS / sizeof ENT_SOUNDS[0]; k++) {
+			const ent_sound_spec *sp = &ENT_SOUNDS[k];
+			if (strcmp(cls, sp->classname))
+				continue;
+			if (sp->sounds != ANY && sp->sounds != sn)
+				continue;
+			if (sp->worldtype != ANY && sp->worldtype != worldtype)
+				continue;
+			const char *name = sp->sound;
+			if (!strcmp(cls, "item_health"))          /* items.qc: rotten, mega, or plain */
+				name = (spawnflags & H_ROTTEN) ? "items/r_item1.wav"
+				     : (spawnflags & H_MEGA) ? "items/r_item2.wav" : "items/health1.wav";
+			list_add(list, &n, max, name);
+		}
+		if (!strcmp(cls, "func_door") && worldtype >= 0 && worldtype <= 2)   /* (doors.qc gives */
+			for (int k = 0; k < 2; k++)                                     /* every door them) */
+				list_add(list, &n, max, KEY_DOOR_SOUNDS[worldtype][k]);
+	}
 	return n;
 }
 

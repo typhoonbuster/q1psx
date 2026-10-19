@@ -20,14 +20,20 @@
 #         brush model again even when none of it is in view (an A / B: the
 #         same frames). BMFCHK=1 (with
 #         BENCH_MAPS=1 VIEWS=0) cuts every door, button, plat, train and
-#         secret door at 33 places along each of its ways in its room
-#         ("bmfchk" lines: the cuts that do not fit, the fullest rooms;
-#         docs/porting-notes.md §44).
+#         secret door at 33 places along each of its ways in the room the
+#         cook measured ("bmfchk" lines: the cuts that do not fit, the
+#         fullest rooms; "bmf room" lines: a room that is not the cut
+#         where its model stands, every bench checks it at the load;
+#         docs/porting-notes.md §44, §46).
 #         MOVERS=1 moves the big movers in view (E1M6's train *39, E1M3's
 #         biggest train, E3M4's biggest door; MAP= one of them, a frame
 #         dumped): "bench mv.*" and "bmfcut" lines, the frame's, the ents'
 #         and the re-cut's cycles; "bmfhash": every 16th frame's hash folded
 #         (the identical-display-list check).
+#         STACK_MIN=<bytes>: the link's least stack room (default 16384;
+#         4096 with BENCH_GAME=1, whose scenarios' code leaves the stack
+#         about 6.8 KB: its "stack: N bytes never reached" line shows the
+#         room left; 10240 with BMF_C=2).
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
@@ -44,16 +50,17 @@
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds
-#         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B); MUSIC=1 puts the music on the bench disc (the .cue
-#         then carries the tracks: docs/porting-notes.md §26).
+#         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B); MUSIC=1 puts the music on the bench disc (its
+#         streams: the XA ones with their carousels, or MUSIC_MODE=spu the
+#         SPU's; docs/porting-notes.md §46).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
 #         by record by the C ("dlchk" lines). BMF_C=1 builds the brush
 #         models' cut in C (engine/bmfrag.c) instead of the asm
 #         (engine/bmfrag.s), BMF_C=2 the asm checked cut by cut by the C
 #         ("bmfasm" lines: the cuts checked, any mismatch); that build
-#         carries both cuts, its stack floor lowered to 10 KB (STACK_MIN=
-#         <bytes> sets the floor: SAMPLE=1's histogram needs 2048 there).
+#         carries both cuts, its stack floor lowered to 10 KB (STACK_MIN;
+#         SAMPLE=1's histogram needs 2048 there).
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -81,6 +88,7 @@ VIEWMODEL=${VIEWMODEL:-1}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
 BMFCHK=${BMFCHK:-0}
+STACK_MIN=${STACK_MIN:-$([ "$BENCH_GAME" = 1 ] && echo 4096 || { [ "${BMF_C:-0}" = 2 ] && echo 10240 || echo 16384; })}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
@@ -89,6 +97,7 @@ DLIGHT_C=${DLIGHT_C:-0}
 BMF_C=${BMF_C:-0}
 PLAY=${PLAY:-0}
 MUSIC=${MUSIC:-0}
+MUSIC_MODE=${MUSIC_MODE:-xa}
 MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
@@ -102,9 +111,9 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
-      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" \
-      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" \
-      -DQ1PSX_STACK_MIN="${STACK_MIN:-$([ "$BMF_C" = 2 ] && echo 10240 || echo 16384)}" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_STACK_MIN="$STACK_MIN" \
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_MUSIC_MODE="$MUSIC_MODE" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" "$ROOT" >/dev/null
@@ -119,7 +128,7 @@ grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' 
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 [ "$BMF_C" = 2 ] && { grep '^bmfasm' "$ROOT/build-bench/bench.log" | head -n 40 || true; }
-[ "$BMFCHK" = 1 ] && { grep '^bmfchk' "$ROOT/build-bench/bench.log" || true; }
+[ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$ROOT/build-bench/bench.log" || true; }
 [ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$ROOT/build-bench/bench.log" || true; }
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
 [ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)

@@ -3,13 +3,14 @@
  *
  *   qcook.c   command line, pak access, BSP lump parsing, the levels
  *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX6 output
- *   world.c   face splitting, face records, nodes/leaves/PVS, QWVD output
+ *   world.c   face splitting, face records, nodes/leaves/PVS, QWVE output
  *   game.c    models, sprites, HUD pictures -> QGM6 (formats/qgame.h)
  *   items.c   the map's own models -> QMM1 (formats/qgame.h)
  *   decim.c   an alias model's triangles reduced (the model levels)
  *   ents.c    the entity lump: parsed for the world's entity table, the
  *             sound bank and the player start
  *   sound.c   the map's sound bank -> QSND (formats/qsound.h)
+ *   bmf.c     the brush models' room for their cut pieces (engine/bmfrag.c)
  *
  * See docs/architecture.md §6-§7, formats/qworld.h / qtex.h / qlevels.h.
  */
@@ -146,14 +147,30 @@ qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int ski
 void    qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px);
 int     qc_mdl_flags(const qc_mdl *q);
 void    qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out);
-/* the compact format of the streamed models (formats/qstream.h): the
-   whole asset (qst_model, frames, records, skin) appended to `out` */
-void    qc_mdl_cook_compact(qc_mdl *q, int model_level, int body, buf_t *out);
+/* the compact format of the streamed models (formats/qstream.h): each
+   model level's whole asset (qst_model, frames, records, skin: out[level],
+   STREAM_<level>.DAT's) and their shared asset (qst_shared) */
+void    qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared);
 
 /* ---------------------------------------------------------------- stream -- */
 
 /* `qcook stream`: the streamed assets -> one QST1 file (stream.c) */
 int cmd_stream(int argc, char **argv);
+
+/* `qcook menu`: the release menu's bank and the console's background
+   (menu.c, formats/qmenu.h) */
+int cmd_menu(int argc, char **argv);
+
+/* `qcook carousel`: the music's XA streams with the streamed assets of
+   their tracks' maps (carousel.c, formats/qxa.h); what a map's entities
+   take from the stream, by name (its monsters', stream.c; its items'
+   models, items.c; its entities' and ambients' sounds, sound.c) */
+int cmd_carousel(int argc, char **argv);
+/* `qcook spumusic`: a CD track as the SPU music (formats/qspu.h) */
+int cmd_spumusic(int argc, char **argv);
+int stream_monster_needs(const ent_list *l, const char **list, int max);
+int items_streamed(const ent_list *l, int worldtype, const char **list, int max);
+int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max);
 
 /* ---------------------------------------------------------------- sound -- */
 
@@ -166,6 +183,8 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
    a bank sound (always in a map's bank); one streamed sound's asset
    (qst_sound, then its ADPCM) */
 int  sound_streamed(const char **list, int max);
+/* the release menu's bank: its clicks, CD track 2 (`qcook menu`, menu.c) */
+void sound_build_menu(const uint8_t *pak0, long pak0_len, const char *out_path);
 int  sound_is_banked(const char *name);
 int  sound_in_paks(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len);
 void sound_encode_stream(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len,
@@ -287,5 +306,14 @@ void world_build(const bsp_t *b, const tex_set *canon, int geo_level, const char
 
 /* `qcook check`: reload a QWV2 file and verify every invariant. */
 int  world_check(const char *path);
+
+/* ------------------------------------------------------------------ bmf -- */
+
+/* bmf.c: the room each drawn brush model's pieces take when the world's BSP
+   cuts it (engine/bmfrag.c), wherever its entity can stand, written into
+   the cooked world's qw_bmodel table (f: the whole file, len bytes) */
+void bmf_rooms(uint8_t *f, size_t len);
+/* `qcook bmf <file.wld> [-v]`: measured again, against the file's */
+int  cmd_bmf(int argc, char **argv);
 
 #endif

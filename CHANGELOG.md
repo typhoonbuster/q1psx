@@ -1344,4 +1344,67 @@ followed by R0-R4.
     the stream's staging buffer, every streamed sound was read to address
     0 and given up for good. Those two maps still have no room for the
     monsters (their worlds take 742-783 KB).
+- **The 2D gun's packets only while it is drawn** (2026-10-19: that room back to the monsters' streaming). §45:
+  - **106 KB more for the monsters on every map** with the 3D gun (the
+    default) or none: the 2D gun's packets no longer sit in the game arena
+    (224 → 116 KB); the level arena grows to 1242 KB, the world keeping
+    its old 1136 KB. E3M4's pool 2 → 92 KB, E4M7's 0 → 97 KB: their
+    monsters are drawn.
+  - **The 2D gun as before:** chosen, it borrows the end of the stream's
+    pool (first at a map's start, so it fits wherever it did); chosen
+    during a game, it shows a few frames after the menu closes; left, its
+    room goes back to the stream. Its frames are drawn the same (the
+    game bench's hashes).
+- **The brush models' room measured in the cook** (§46):
+  - **No measure at the load.** The cook cuts each brush model as the
+    engine does, wherever its entity can stand: a door, button, plat,
+    train or secret door at every 1/8 unit of its travel. The most the
+    cuts take goes into the map's `qw_bmodel`, which keeps its 40 bytes
+    (the clip roots now 16-bit). Every load is 0.08-0.99 s shorter.
+  - **An exact room**, with no factor or constant. §44's ×2 held by 1 %
+    on E2M5's train *21. The stream gets 10-98 KB more on every map
+    (48 KB on average).
+  - **The starved maps stream their monsters**: E3M4 goes from 2 to 84 KB
+    of pool, E4M7 from 0 to 54 KB, E3M6 from 46 to 94 KB; with §45's
+    106 KB, E3M4 has 190 KB, E4M7 160 KB and E3M6 200 KB.
+  - **Checked:**
+    - `BMFCHK=1`: no cut given up on the 32 maps;
+    - at each load, a still model's room equals its cut to the byte;
+    - the spawn views are identical to §44's, except where a streamed
+      model is now resident.
+- **The 2D gun's frames, their opaque spans only** (2026-10-19: less RAM for the 2D guns). §47:
+  - **28 KB less RAM while the 2D gun is drawn** (106 → 78 KB lent by the
+    stream; START's pool 354 → 382 KB): each frame fills its rows of the
+    VRAM slot with transparency, then copies only its opaque spans; two
+    identical frames share their packets. Not a pixel changes (the
+    pictures compared byte for byte).
+  - **The halves rebuilt by symmetry, left out**: the guns' outlines are
+    symmetric, their light and skins are not (17-52 % of the texels equal
+    their mirror's): the gun would look lit from both sides.
 
+- **The music: XA streams carrying their maps' assets** (2026-10-19: XA streaming in place of the CD-DA, to end the music's cuts and the stutter during play, the data interleaved). §48:
+  - **What cut it**: every streamed read paused the CD-DA (a blocking
+    `CdlPause`: about four frames frozen) for 1.4-1.9 s of silence (the
+    seeks to the data and back).
+  - **Each CD track an XA stream**, read at single speed: one sector of
+    four is the music (37.8 kHz stereo, played by the drive), the three
+    others carry, over and over, the streamed assets of the maps that play
+    the track (a carousel: a turn of 7.5-14.6 s). The engine takes the
+    assets it wants as they pass: no seek, no cut, no freeze. The track
+    loops from its stream's start. The disc keeps its size (735 MB, one
+    data track).
+  - **One asset for the three model levels**: a model's vertices numbered
+    by the lowest level keeping them, each level assembled from the shared
+    asset (the frames the same: the scenarios hash the same pictures).
+  - **The SPU music, a build alternative** (`release-spu`): 22 kHz stereo
+    from a 2 s ring at the top of SPU RAM, the drive refilling it between
+    the assets' reads, wherever they lie (a 213 MB disc).
+  - **Measured**: E1M3's monsters' scenario took 46 assets from its
+    carousel (7 s at the median from their arming), read none; the
+    carousel costs 77 cycles a quiet frame, 13-16 k in E1M3's crowd.
+- **The release's title** (Quake's theme under the menu, START no longer loaded before New Game). §48.7:
+  - **Quake's theme under the menu**: track 2, the one Quake's first demo
+    forces (demo1.dem's first line), looping (no demos here).
+  - **No map before New Game**: the menu over the console's background
+    (`gfx/conback.lmp`, what Quake shows with no world and no demo); START
+    loaded once, at New Game. The menu's clicks from their own small bank.
