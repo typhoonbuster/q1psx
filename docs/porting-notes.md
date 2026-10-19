@@ -4883,3 +4883,158 @@ Shortened; what was seen:
   more. Fixing it is a choice of where the RAM comes from: the cut's
   reserve sized to its use, the 2D weapons' 102 KB loaded only when that
   option is on, or the monsters' frames.
+
+## §44 — The brush models' room sized on their cuts (2026-10-19)
+
+- **The ask**: the brush models' cut room measured and sized on its real use, its RAM back to
+  the monsters' streaming (§43's last item).
+- **The old room** (§41's `bmf_reserve`, before the spawn): for every
+  model the cooked entities name, three times its records' bytes and its
+  corners (`BMF_GROW`) and 8 groups a node. What the cuts took, E1M3:
+
+  | | reserved | cut where they spawn | most along the movers' ways |
+  |---|---|---|---|
+  | records | 110760 B | 25120 B | 28380 B |
+  | vertices | 11250 | 2214 | 2513 |
+  | groups | 4624 | 455 | 507 |
+
+  Four to five times the use for the records and the vertices, nine for
+  the groups. Over the 32 maps the old room asked 39 KB (END) to 372 KB
+  (E1M6), and on the biggest maps the stream's RAM pool was left with
+  0-6 KB: their monsters were never drawn.
+- **Sized on the cuts.** `bmf_reserve` now runs after the spawn (which
+  puts every model where it stands and gives each mover its travel) and
+  still before the stream manager takes the arena's rest:
+  - each spawned edict's model is cut in a scratch cache at the arena's
+    top (the old room of the largest model; released after);
+  - a model that never moves gets what its cut takes where it stands, plus
+    64 bytes: `bmf_load`'s cut at the load is the same cut (the same
+    origin, the same top node: `cut_where` builds ent_link's box);
+  - a mover gets twice the most its cuts take at the places it goes
+    through and halfway along each way between them, and where it spawned
+    when that is off its path (`model_path`):
+    - a door's, a button's, a plat's pos1 and pos2;
+    - a train's corners in its path's order, each corner's origin less the
+      model's mins (func_train_find's and train_next's place), up to the
+      first corner it comes back to (`movers_path`, engine/movers.c; 64
+      corners at most, a longer path keeps the old room). A first version
+      looked for the way back to the first corner only: paths looping to
+      a later one went round until the cap;
+    - a secret door's place and its two moves' ends (`secret_dests`, out
+      of fd_secret_use);
+  - a model whose path or cuts the scratch cannot take keeps the old room
+    (none on the 32 maps);
+  - the needs (12 bytes a model) lie where the pool is reserved next,
+    which only the cuts write (`bmf_load`), after the needs' last read:
+    no arena byte is left behind (0.9-2 KB a map);
+  - `cut_model` takes the origin and the top node instead of an edict, so
+    the measure's cuts need no 384-byte edict copy.
+- **Why twice the halfway places.** `BMFCHK=1` (bench.sh) cuts every
+  mover in its own room at 33 places a way, as `bmf_draw` cuts it while it
+  moves. Over the 32 maps, the 33 places' most against the sampled most,
+  the worst of each kind:
+
+  | Sampled at | doors | plats | buttons | secret doors | trains |
+  |---|---|---|---|---|---|
+  | the ends, the corners | 2.60 | 1.80 | 1.33 | 2.20 | 2.19 |
+  | and halfway | 1.73 | 1.80 | 1.33 | 1.57 | 1.90 |
+  | and the quarters | 1.73 | 1.80 | 1.00 | 1.57 | 1.78 |
+
+  - At the corners alone, E1M6's train *39 needed more groups between two
+    corners than twice its corners' most: 14 of its cuts were given up
+    (drawn whole there).
+  - The quarters cost 1.7 times the halfway places' time at the load
+    (E3M4 1.85 s against 0.98, E1M3 1.20 against 0.68) for little more
+    margin, and give a larger room (their most is larger).
+  - Twice the halfway places: no cut given up at 33 places a way on the
+    32 maps; the fullest room 92 % (E2M5), 51-84 % on the others. A place
+    between those 33 can still take more: that cut is then given up, and
+    the model drawn whole until it moves again (§41's fallback).
+- **What it gives** (PCSX-Redux in fast forward, every map at its high
+  levels; the stream's preload as it was at the spawn):
+
+  | Map | Old room | Now | Freed | Stream pool | Preload | Cuts | Measure |
+  |---|---|---|---|---|---|---|---|
+  | START | 134 KB | 49 KB | 85 KB | 332 KB | 85 KB | 22 | 0.11 s |
+  | E1M1 | 138 | 81 | 57 | 279 | 126 | 101 | 0.22 |
+  | E1M2 | 154 | 83 | 71 | 227 | 179 | 118 | 0.29 |
+  | E1M3 | 284 | 129 | 155 | 157 | 120 | 201 | 0.67 |
+  | E1M4 | 179 | 93 | 86 | 114 | 79 | 127 | 0.31 |
+  | E1M5 | 175 | 94 | 81 | 254 | 235 | 121 | 0.32 |
+  | E1M6 | 372 | 198 | 174 | 261 | 227 | 183 | 0.65 |
+  | E1M7 | 88 | 40 | 48 | 772 | 276 | 29 | 0.09 |
+  | E1M8 | 110 | 53 | 57 | 559 | 157 | 55 | 0.15 |
+  | E2M1 | 203 | 101 | 102 | 176 | 130 | 154 | 0.36 |
+  | E2M2 | 154 | 92 | 62 | 173 | 162 | 88 | 0.32 |
+  | E2M3 | 211 | 109 | 102 | 155 | 115 | 132 | 0.36 |
+  | E2M4 | 190 | 83 | 107 | 107 | 93 | 172 | 0.28 |
+  | E2M5 | 207 | 106 | 101 | 187 | 147 | 142 | 0.36 |
+  | E2M6 | 274 | 171 | 103 | 96 | 76 | 172 | 0.68 |
+  | E2M7 | 163 | 80 | 83 | 103 | 77 | 107 | 0.30 |
+  | E3M1 | 192 | 101 | 91 | 221 | 124 | 122 | 0.35 |
+  | E3M2 | 351 | 179 | 172 | 366 | 272 | 166 | 0.42 |
+  | E3M3 | 164 | 111 | 53 | 349 | 215 | 117 | 0.39 |
+  | E3M4 | 360 | 210 | 150 | 2 | 0 | 245 | 0.99 |
+  | E3M5 | 115 | 61 | 54 | 92 | 73 | 49 | 0.35 |
+  | E3M6 | 182 | 104 | 78 | 46 | 41 | 97 | 0.35 |
+  | E3M7 | 152 | 65 | 87 | 320 | 215 | 113 | 0.20 |
+  | E4M1 | 158 | 75 | 83 | 209 | 125 | 79 | 0.31 |
+  | E4M2 | 205 | 131 | 74 | 203 | 186 | 119 | 0.31 |
+  | E4M3 | 226 | 107 | 119 | 221 | 178 | 135 | 0.29 |
+  | E4M4 | 94 | 50 | 44 | 138 | 114 | 71 | 0.19 |
+  | E4M5 | 289 | 135 | 154 | 117 | 102 | 146 | 0.34 |
+  | E4M6 | 202 | 117 | 85 | 282 | 64 | 134 | 0.32 |
+  | E4M7 | 214 | 133 | 81 | 0 | 0 | 160 | 0.39 |
+  | E4M8 | 230 | 140 | 90 | 183 | 147 | 132 | 0.40 |
+  | END | 39 | 22 | 17 | 708 | 92 | 13 | 0.08 |
+
+  - 17-174 KB freed a map, 91 KB on average.
+  - The pools of §43's starved maps: E1M3 157 KB, E2M4 107, E2M6 96,
+    E2M7 103, E4M5 117 (all 0-24 KB before). On E1M3 the monsters'
+    scenario (`MONSTERS=1 MAP=E1M3`) draws 2 to 6 streamed models in 10
+    of its 12 dumps (94 reads during play).
+  - The measure costs 0.08-0.99 s at the load, 0.35 s on average (13-245
+    cuts; E3M4's trains and big doors the dearest). A load takes 9-14 s on
+    the same emulator.
+- **A sound read into address 0.** With the arena that full, E3M4 and
+  E4M7 had no 16 KB left for the stream's staging buffer (nor the 24 KB of
+  the expanded frames' cache), yet E4M7 kept a 6 KB pool: every streamed
+  sound was read to address 0 and found "not a sound this engine reads"
+  (82 such lines over the two loads), never to be tried again.
+  `sound_start` starts none without the buffer. With the room above,
+  E4M7 now gets the buffer (its sounds stream, its pool is 0), E3M4 a
+  2 KB pool and no buffer.
+- **The skill.** The room covers the models of the spawned entities: a
+  model spawned only later gets none and is drawn whole. Only a death
+  after a skill change could do that, and only START changes the skill
+  (trigger_setskill): no brush model there hangs on it. The models left
+  unspawned at skill 1 are deathmatch-only walls (spawnflags 1792) and a
+  few hanging on the skill (E1M2, E1M7, E2M3, E3M1, E4M1, E4M2, E4M7),
+  spawned at their map's load when the skill asks for them.
+- **Checking:**
+  - `BMFCHK=1 BENCH_MAPS=1 VIEWS=0 scripts/bench.sh`: 33 cuts a way for
+    every mover of the 32 maps (132-2970 a map), none given up; no "not a
+    sound" line;
+  - the change of `cut_model`'s arguments: the `bmf:`, `bmfchk`,
+    `stream: pools` and `stream: preloaded` lines identical on the 32
+    maps;
+  - the release on PCSX-Redux's real GPU (§43's Lua script): the menu
+    whole, START's far rooms through the arches, the HUD;
+  - the needs moved under the pool: the cuts and the checks' lines
+    identical again, every pool 1-2 KB larger;
+  - the links: stack room 18192 B (default), 18592 B (release), against
+    20.4 / 20.8 KB: the measure's code is 1.8 KB, `movers_path` 0.5 KB.
+- **Left:**
+  - **E3M4 and E4M7** still have no stream pool (2 and 0 KB), E3M6
+    46 KB: their worlds take 742-783 KB of the 1136, the brush models'
+    room 104-210 KB.
+    The next levers: the 2D weapons' 102 KB (game arena) loaded only when
+    that option is on; these maps' worlds at a lower geometry level.
+  - **The cut while a model moves** (§41): a mover is cut again each time
+    it has moved and is drawn, 0.1-1 M cycles for a big train or door
+    (E1M6's *39 about 1 M, E1M3's trains about 0.35 M), against 564 k
+    cycles a frame at 60 fps. Not measured in play yet.
+  - **The measure in the cook**: the same cuts made offline would cost
+    the load nothing and could sample every way densely with a tighter
+    margin; the cook would need the movers' travel (pos1 / pos2, the
+    paths) and the cut on the host.

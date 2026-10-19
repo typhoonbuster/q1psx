@@ -1326,4 +1326,22 @@ followed by R0-R4.
     of the stream's RAM instead of 155.
   - **The stack** is measured at every load (`stack:` in the log), and
     the link's threshold is configurable (`Q1PSX_STACK_MIN`).
+- **The brush models' room sized on their cuts** (2026-10-19: the RAM back to the monsters' streaming). §44:
+  - **Measured at the load.** After the spawn, each brush model is cut
+    where it stands, and a door, button, plat, train or secret door also
+    at the places it goes through and halfway along each way. A model
+    that never moves gets what its cut takes, a mover twice its most.
+    The old room asked three times every model's bytes and corners: four
+    to five times what the cuts take.
+  - **17-174 KB back to the stream on every map** (91 KB on average): the
+    monsters are drawn again on E1M3 (6 → 157 KB of pool), E2M4, E2M6,
+    E2M7 and E4M5. The measure costs 0.1-1.0 s of the load.
+  - **Checked along the travels:** `BMFCHK=1` cuts every mover at 33
+    places a way in its room: none given up on the 32 maps.
+  - **A train's whole path:** its corners up to the first one it comes
+    back to, wherever its loop closes.
+  - **No sound read without its buffer:** on E3M4 and E4M7, too full for
+    the stream's staging buffer, every streamed sound was read to address
+    0 and given up for good. Those two maps still have no room for the
+    monsters (their worlds take 742-783 KB).
 
