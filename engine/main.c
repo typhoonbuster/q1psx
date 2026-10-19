@@ -430,16 +430,24 @@ static void frame_work(void)
 	r_set_view(cam.pos, cam.yaw, cam.pitch, cam.roll);
 	anim_frame(game_tick_count);            /* the animated textures' frames */
 	uint32_t t0 = prof_now();
-	rl_begin();                             /* the render list: the game's
-	                                           projectiles, effects and view
-	                                           model, the map's brush models;
-	                                           their matrices come from this
-	                                           frame's view */
+	rl_begin();                             /* the render list: the map's brush
+	                                           models' pieces first (the others
+	                                           take their places among them),
+	                                           the game's projectiles, effects
+	                                           and view model, the items and
+	                                           monsters, the particles; their
+	                                           matrices come from this frame's
+	                                           view */
+#if !defined(Q1PSX_BENCH_NOENTS) || !Q1PSX_BENCH_NOENTS
+	ents_render_bmodels();
+#endif
 	if (game_active)
 		game_render();
 #if !defined(Q1PSX_BENCH_NOENTS) || !Q1PSX_BENCH_NOENTS
 	ents_render();
 #endif
+	if (game_active)
+		game_render_particles();
 	prof_add(PROF_ENTS, t0, prof_now());    /* (the dlights' share counted apart) */
 	r_ui_room = menu_shown && menu_active() ? R_MENU_ROOM : 0;   /* (the menu's packets, after
 	                                           the world's: a full arena left it none) */
@@ -1190,6 +1198,53 @@ static void bench_pmove_diff(void)
 #ifndef Q1PSX_BENCH_NOENTS
 #define Q1PSX_BENCH_NOENTS 0  /* 1: the map's entities are not drawn (NOENTS=1: an A / B) */
 #endif
+#ifndef Q1PSX_BENCH_TICKS
+#define Q1PSX_BENCH_TICKS 0   /* with a VIEW: the game run that many ticks from there (TICKS=n) */
+#endif
+
+static void bench_stream_frames(void);
+
+/* a VIEW's ticks (TICKS=n): the player standing there, the game running
+   (his touches, the movers, the monsters, the stream), the view dumped
+   every 8 ticks as <map>.v<view>t<tick> */
+static void bench_view_ticks(const char *view)
+{
+	static char name[24];
+	static int spawned = -1;
+	if (spawned != load_map) {
+		game_spawn();
+		spawned = load_map;
+	}
+	struct { int32_t pos[3]; int yaw, pitch; } at;
+	memcpy(at.pos, cam.pos, sizeof at.pos);
+	at.yaw = cam.yaw;
+	at.pitch = cam.pitch;
+	memcpy(pl.pm.pos, cam.pos, sizeof pl.pm.pos);
+	pl.pm.pos[2] -= 22 * CLIP_SUB;
+	memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	game_active = 1;
+	for (int t = 0; t <= Q1PSX_BENCH_TICKS; t++) {
+		if (t % 8 == 0) {
+			memcpy(cam.pos, at.pos, sizeof cam.pos);
+			cam.yaw = at.yaw;
+			cam.pitch = at.pitch;
+			cam.roll = 0;
+			for (int i = 0; i < 2; i++)
+				run_frame(0, 0);
+			snprintf(name, sizeof name, "%st%d", view, t);
+			printf("D %s\n", name);
+			ents_debug = 1;
+			run_frame(0, BENCH_DUMP);
+			ents_debug = 0;
+		}
+		game_tick(&cmd);
+		bench_stream_frames();
+	}
+	game_active = 0;
+}
 
 static void bench_maps(void)
 {
@@ -1237,6 +1292,12 @@ static void bench_maps(void)
 			cam.yaw    = vw->yaw * ANG_TURN / 360;
 			cam.pitch  = vw->pitch * ANG_TURN / 360;
 			cam.roll   = 0;
+			if (v >= nviews) {                  /* a VIEW: the player there, what he would
+			                                       have streamed in around him */
+				memcpy(pl.pm.pos, cam.pos, sizeof pl.pm.pos);
+				pl.pm.pos[2] -= 22 * CLIP_SUB;
+				stream_preload_at(pl.pm.pos);
+			}
 			snprintf(names[v & 3], sizeof names[0], "%s.v%u", world_map_name(m), v);
 			bench_acc_t acc;
 			bench_reset(&acc, names[v & 3]);
@@ -1258,6 +1319,8 @@ static void bench_maps(void)
 			printf("ents view %s: %d models drawn of %d, %d in the PVS, %d leaves in front, items %d, lists %d\n",
 			       names[v & 3], ents_stat[0], ents_stat[3], ents_stat[1], ents_stat[2], rl_num_items(),
 			       rl_num_lists());
+			if (Q1PSX_BENCH_TICKS && v >= nviews)
+				bench_view_ticks(names[v & 3]);
 		}
 	}
 }
@@ -1934,13 +1997,15 @@ static void mon_log(const char *what, const edict_t *e)
 	}
 #endif
 	printf("mon %s t %d state %d frame %d pos %d %d %d yaw %d ideal %d health %d enemy %d as %d "
-	       "flags %x | player health %d armor %d at %d %d %d | stream %d/%d in, %u reads, %u halved\n", what,
+	       "flags %x | player health %d armor %d at %d %d %d | stream %d/%d in, %u reads, %u halved | "
+	       "model %s, want %u\n", what,
 	       (int) ent_time, e->mstate, e->frame, (int) e->origin[0] / CLIP_SUB, (int) e->origin[1] / CLIP_SUB,
 	       (int) e->origin[2] / CLIP_SUB, e->ang[1] * 360 / 65536, e->ideal_yaw, e->health,
 	       e->enemy ? (int) (e->enemy - edicts) : -1, e->attack_state, (unsigned) e->flags, pl.health,
 	       pl.armor, (int) pl.pm.pos[0] / CLIP_SUB, (int) pl.pm.pos[1] / CLIP_SUB, (int) pl.pm.pos[2] / CLIP_SUB,
 	       stream_stats.resident, stream_stats.wanted, (unsigned) stream_stats.reads,
-	       (unsigned) stream_stats.halved);
+	       (unsigned) stream_stats.halved, e->inuse && stream_model(e->masset) ? "in" : "OUT (paused)",
+	       (unsigned) stream_score(e->masset));
 }
 
 /* the stream manager's frames between two ticks (the game draws about
@@ -2104,6 +2169,23 @@ static void bench_monsters(void)
 			pl.pm.pitch = r_atan2(dz, (int32_t) q_isqrt64((uint64_t) ((int64_t) dx * dx + (int64_t) dy * dy)));
 		}
 		ents_dump(name);
+		/* its body darkened in its last second (a picture halfway), then
+		   gone (monsters.h CORPSE_TICKS); a zombie the shotgun never kills */
+		int32_t end = e->health <= 0 ? e->pain_finished : ent_time;
+		while (e->inuse && ent_time < end - CORPSE_FADE / 2) {
+			game_tick(&cmd);
+			bench_stream_frames();
+		}
+		snprintf(name, sizeof name, "m%s_%d_d", mapname, k);
+		if (e->inuse)
+			ents_dump(name);
+		while (e->inuse && ent_time < end + 2) {
+			game_tick(&cmd);
+			bench_stream_frames();
+		}
+		if (e->health <= 0)
+			printf("mon body: %s at t %d (dead at %d)\n", e->inuse ? "STILL THERE" : "gone", (int) ent_time,
+			       (int) (end - CORPSE_TICKS));
 		pl.pm.pitch = 0;
 	}
 	/* the crowd: every monster of the map awake and after the player (who

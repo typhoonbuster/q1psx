@@ -446,10 +446,11 @@ static int pinned(const edict_t *e)
 	       (e->class >= QE_WEAPON_SUPERSHOTGUN && e->class <= QE_WEAPON_LIGHTNING);
 }
 
-/* the kinds' assets at their nearest monster's distance (Chebyshev, world
-   units), the gibs with the nearest of all; a streamed model of another
-   edict's (a head, a gib, a pack, an item) at its own, the keys' and the
-   weapons' always */
+/* the kinds' assets at their nearest living monster's distance (Chebyshev,
+   world units), the gibs with the nearest of all; a streamed model of
+   another edict's (a pack, an item) at its own, the keys' and the weapons'
+   always; a dead monster's body or head, a gib, under every living want
+   (STREAM_DEAD) */
 void monsters_stream_wants(void)
 {
 	uint32_t near[MK_COUNT];
@@ -464,11 +465,13 @@ void monsters_stream_wants(void)
 		int k = e->mdef ? e->mdef->kind : -1;
 		if (k < 0 && e->class >= QE_MONSTER_ARMY && e->class <= QE_MONSTER_OLDONE)
 			k = kind_of(e->class);
-		if (k >= 0) {
+		if (k >= 0 && (!e->mdef || e->health > 0)) {
 			if (d < near[k])
 				near[k] = d;
 		} else if (e->masset >= 0) {
-			stream_want(e->masset, pinned(e) ? STREAM_PIN : d);
+			stream_want(e->masset, pinned(e) ? STREAM_PIN
+			                       : k >= 0 || e->masset == gib_asset[0] || e->masset == gib_asset[1] ||
+			                         e->masset == gib_asset[2] ? STREAM_DEAD + d : d);
 		}
 	}
 	uint32_t gibs = ~0u;
@@ -515,9 +518,14 @@ void monsters_render(void)
 			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
 		int light = (m->flags & QSTM_FLAT) && flame ? 128
 		          : leaf->light + dl_add_at(e->origin, game_tick_count) * 3 / 2;
+		if (e->mdef && e->health <= 0) {          /* a body's last second: darkened */
+			int32_t left = e->pain_finished - game_tick_count;
+			if (left < CORPSE_FADE)
+				light = left > 0 ? light * left / CORPSE_FADE : 0;
+		}
 		int yaw = QSTM_EF(m->flags) & QSTM_EF_ROTATE ? (game_tick_count % 216) * ANG_TURN / 216   /* 100 a second */
 		                                             : e->ang[1] >> 4;
 		rl_add_model(leaf, rl_model_stream(e->masset, frame, e->origin, yaw, e->ang[0] >> 4, e->ang[2] >> 4,
-		                                   light));
+		                                   light), e->origin, e->mins);
 	}
 }

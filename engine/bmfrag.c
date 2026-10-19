@@ -54,15 +54,18 @@ typedef struct {
 } bmf_group;
 
 /* the model's own BSP, compact: per node its plane, its children (-1: a
-   leaf of the model, nothing there) and, per side, its pieces' groups */
+   leaf of the model, nothing there), per side its pieces' groups, and the
+   end of its subtree (the nodes in DFS order: k's subtree is [k, end)) */
 typedef struct {
 	uint16_t plane3;
 	int16_t  child[2];
 	uint16_t first[2], count[2];
+	uint16_t end;
 } bmf_node;
 
 struct bmf_cache {
 	int32_t    org[3];       /* the origin the pieces were cut at (1/8 units)    */
+	int32_t    cam[3];       /* the eye in its space when last drawn (bmf_draw)  */
 	uint8_t    valid;        /* 1 cut, 0 too cut up there (drawn whole until it
 	                            moves, not cut each frame)                     */
 	uint16_t   num_nodes;
@@ -450,6 +453,7 @@ static int build_nodes(bmf_cache *c, uint32_t at, int *count, int cap)
 			return -2;
 		c->nodes[k].child[s] = (int16_t) ch;
 	}
+	c->nodes[k].end = (uint16_t) *count;
 	return k;
 }
 
@@ -589,7 +593,8 @@ void bmf_reserve(void)
 		if (!drawn_model(e) || bmf_models[e->model])
 			continue;
 		const qw_bmodel *bm = &world.bmodels[e->model];
-		if (bm->root & 1 || verts + bm->room_verts > 65535)   /* (no node; the records' 16-bit indices) */
+		if (bm->root & 1 || verts + bm->room_verts > 65535 ||   /* (no node; the records' 16-bit */
+		    e->model > 255)                                    /*  indices; rlist.c's byte) */
 			continue;
 		bmf_models[e->model] = (bmf_cache *) 1;          /* (marked: its cache below) */
 		bytes += cache_bytes(bm, model_nodes(bm->root));
@@ -772,7 +777,16 @@ void bmf_load(void)
 /* ---------------------------------------------------------------- draw -- */
 
 static uint16_t draw_vis;
-static int32_t  draw_cam[3];
+static uint32_t draw_tag;        /* its pieces' tag: RI_PIECES | the model << 8 */
+
+/* the plane's side of a point (the model's vertex units, as its cam): 1
+   behind (d <= 0), 0 in front, the walk's */
+static inline int cam_side(const qw_plane *pl, const int32_t v[3])
+{
+	int32_t dist = pl->dist >> 1;
+	int32_t d = pl->type < 3 ? v[pl->type] * 4096 - dist : pl->n[0] * v[0] + pl->n[1] * v[1] + pl->n[2] * v[2] - dist;
+	return d <= 0;
+}
 
 /* the model's nodes back to front from the eye: at each, the subtree
    beyond its plane, its pieces on the eye's side, the subtree before it */
@@ -780,19 +794,120 @@ static void draw_node(const bmf_cache *c, int k)
 {
 	while (k >= 0) {
 		const bmf_node *bn = &c->nodes[k];
-		const qw_plane *pl = plane_of(bn->plane3);
-		int32_t dist = pl->dist >> 1;
-		int32_t d = pl->type < 3 ? draw_cam[pl->type] * 4096 - dist
-		          : pl->n[0] * draw_cam[0] + pl->n[1] * draw_cam[1] + pl->n[2] * draw_cam[2] - dist;
-		int side = d <= 0;                        /* the eye's: the front side's faces when d > 0 */
+		int side = cam_side(plane_of(bn->plane3), c->cam);   /* the eye's: the front side's
+		                                                          faces when d > 0 */
 		draw_node(c, bn->child[side ^ 1]);
 		for (int g = bn->first[side]; g < bn->first[side] + bn->count[side]; g++) {
 			const bmf_group *gr = &c->groups[g];
 			if (gr->leaf->visframe == draw_vis)
-				rl_add_pieces(gr->leaf, c->recs + gr->ofs, gr->len);
+				rl_add_pieces(gr->leaf, c->recs + gr->ofs, gr->len, draw_tag);
 		}
 		k = bn->child[side];
 	}
+}
+
+/* The order the walk gives a point among the model's pieces: at the
+   deepest node on the point's way down that also holds the pieces' node
+   (in its subtree, or that node itself), a point beyond it from the eye
+   comes before the subtree the walk takes after it (those pieces over the
+   point), a point on the eye's side after (those pieces under it). The
+   way down is taken as far as the pieces asked about need, each node's
+   sides once. */
+#define BMF_SMALL __attribute__((optimize("Os")))   /* the rare ways: their room first */
+static struct {
+	int      model;              /* + 1 (0: none)                           */
+	int32_t  p[3];               /* the point asked about (1/8 units)       */
+	int32_t  v[3];               /* it in the model's space                 */
+	int      steps;
+	uint16_t step[QW_MAX_BM_DEPTH + 1];   /* the nodes of its way down      */
+	uint8_t  side[QW_MAX_BM_DEPTH + 1];   /* WAY_*                          */
+} way;
+enum { WAY_PSIDE = 1, WAY_EYE = 2, WAY_ESIDE = 4 };   /* the point's side; the eye's, once known */
+
+static __attribute__((noinline)) BMF_SMALL int node_side(const bmf_cache *c, int k, const int32_t v[3])
+{
+	return cam_side(plane_of(c->nodes[k].plane3), v);
+}
+
+static void way_step(const bmf_cache *c, int k)
+{
+	way.step[way.steps] = (uint16_t) k;
+	way.side[way.steps++] = (uint8_t) node_side(c, k, way.v);   /* (WAY_PSIDE) */
+}
+
+BMF_SMALL int bmf_pieces_node(int model, const uint8_t *recs)
+{
+	const bmf_cache *c = bmf_models[model];
+	/* their group (the groups' records follow each other, offsets rising),
+	   its node: the last whose groups start at or before it (DFS order) */
+	uint32_t ofs = (uint32_t) (recs - c->recs);
+	int lo = 0, hi = (int) c->num_groups - 1, g = 0;
+	while (lo <= hi) {
+		int mid = (lo + hi) >> 1;
+		if (c->groups[mid].ofs <= ofs) {
+			g  = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	int k = 0;
+	lo = 0;
+	hi = c->num_nodes - 1;
+	while (lo <= hi) {
+		int mid = (lo + hi) >> 1;
+		if (c->nodes[mid].first[0] <= g) {
+			k  = mid;
+			lo = mid + 1;
+		} else {
+			hi = mid - 1;
+		}
+	}
+	return k;
+}
+
+BMF_SMALL int bmf_may_hide(int model, const int32_t p[3])
+{
+	const bmf_cache *c = bmf_models[model];
+	const qw_bmodel *bm = &world.bmodels[model];
+	for (int k = 0; k < 3; k++) {                 /* the segment's box against the model's */
+		int32_t e = r_state.cam[k] * (CLIP_SUB / QW_VSCALE);   /* (vertex units -> 1/8) */
+		int32_t lo = e < p[k] ? e : p[k], hi = e < p[k] ? p[k] : e;
+		if (hi < bm->mins[k] + c->org[k] || lo > bm->maxs[k] + c->org[k])
+			return 0;
+	}
+	return 1;
+}
+
+BMF_SMALL int bmf_node_over(int model, int k, const int32_t p[3])
+{
+	const bmf_cache *c = bmf_models[model];
+	if (model + 1 != way.model || p[0] != way.p[0] || p[1] != way.p[1] || p[2] != way.p[2]) {
+		way.model = model + 1;
+		for (int i = 0; i < 3; i++) {             /* 1/8 units -> the model's vertex units */
+			way.p[i] = p[i];
+			way.v[i] = (p[i] - c->org[i]) >> 1;
+		}
+		way.steps = 0;
+		way_step(c, 0);                           /* (a model with pieces has a node) */
+	}
+	int j = 0;
+	for (;; j++) {                                /* (the root holds every node) */
+		int n = way.step[j], ch = c->nodes[n].child[way.side[j] & WAY_PSIDE];
+		if (n == k || ch < 0 || k < ch || k >= c->nodes[ch].end)
+			break;                                /* (the deepest that holds it) */
+		if (j + 1 == way.steps) {
+			if (way.steps > QW_MAX_BM_DEPTH)      /* (the cook's bound: never) */
+				break;
+			way_step(c, ch);
+		}
+	}
+	int st = way.side[j];
+	if (!(st & WAY_EYE)) {
+		st |= WAY_EYE | (node_side(c, way.step[j], c->cam) ? WAY_ESIDE : 0);
+		way.side[j] = (uint8_t) st;
+	}
+	return !(st & WAY_PSIDE) != !(st & WAY_ESIDE);   /* (the point beyond it from the eye) */
 }
 
 #ifndef Q1PSX_BENCH_BMF
@@ -820,7 +935,7 @@ int bmf_draw(edict_t *e, uint16_t vis)
 		return 0;
 	draw_vis = vis;
 	for (int k = 0; k < 3; k++)                   /* the eye in the model's space */
-		draw_cam[k] = r_state.cam[k] - e->origin[k] * QW_VSCALE / CLIP_SUB;
+		c->cam[k] = r_state.cam[k] - e->origin[k] * QW_VSCALE / CLIP_SUB;
 #ifdef Q1PSX_BENCH
 	extern int ents_debug;
 	if (ents_debug)
@@ -828,6 +943,8 @@ int bmf_draw(edict_t *e, uint16_t vis)
 		       (int) e->origin[0], (int) e->origin[1], (int) e->origin[2], c->num_nodes,
 		       (unsigned) c->num_groups, (unsigned) c->recs_len, (unsigned) c->pool_len);
 #endif
+	draw_tag  = RI_PIECES | (uint32_t) e->model << 8;
+	way.model = 0;                                /* (the eye, the models: this frame's) */
 	draw_node(c, c->num_nodes ? 0 : -1);
 	return 1;
 }

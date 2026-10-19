@@ -39,6 +39,11 @@
 #include "qxa.h"
 
 #define STREAM_PIN    0u            /* stream_want's score: always resident */
+#define STREAM_DEAD   0x8000u       /* + the distance: a dead monster's remains (its
+                                       body, its head, its gibs): under every
+                                       living want, past every reach (kept while
+                                       nothing wanted more needs the room, never
+                                       read for) */
 #define STREAM_REACH  2500u         /* world units: a model wanted from farther
                                        is not loaded (nor kept against a nearer
                                        one)                                   */
@@ -151,6 +156,8 @@ extern int stream_log;               /* print the loads and evictions      */
 
 #ifdef Q1PSX_BENCH
 void stream_dump(void);              /* before a frame's dump: the images' places */
+void stream_preload_at(const int32_t org[3]);   /* stream_preload's reads from there */
+uint32_t stream_score(int a);                   /* asset a's want, the last pass's */
 #endif
 
 #endif

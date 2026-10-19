@@ -202,8 +202,17 @@ void monster_think_at(edict_t *self, int s, int ticks);
 void monster_use(edict_t *self);
 void monster_death_use(edict_t *self);
 
+/* A dead monster's body (or its head) is removed CORPSE_TICKS after its
+   death (combat.qc Killed: pain_finished, unused once dead, holds the
+   time), its last CORPSE_FADE darkened to black (2026-10-19:
+   the dead not kept before the living); a monster whose model is not in
+   (engine/stream.c) is paused (ents_tick). */
+#define CORPSE_TICKS TICKS(600)
+#define CORPSE_FADE  TICKS(100)
+
 /* the residency pass (engine/stream.c, through ents_stream_wants): what the
-   monsters' kinds need, by their distance from the player */
+   monsters' kinds need, by their living members' distance from the player;
+   the dead's remains under them (STREAM_DEAD) */
 void monsters_stream_wants(void);
 
 /* per frame, after the brush models: the streamed models into the render

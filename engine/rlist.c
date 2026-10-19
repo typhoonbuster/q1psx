@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "bmfrag.h"
 #include "gdata.h"
 #include "mdl.h"
 #include "render.h"
@@ -13,6 +14,13 @@ uint16_t r_lists[256];
 static r_ent_t r_ents[RL_MAX_ENTS];
 static int     n_items, n_ents, n_lists;
 static qw_leaf *touched[RL_MAX_LISTS];
+#define RL_SMALL __attribute__((optimize("Os")))   /* the rare ways: their room first */
+
+/* a list's head when the brush models were in (rl_pieces_done), index + 1,
+   | LP_CHAINED once its pieces are chained; [0] (no list) 0: r_lists' upper
+   half (the walk's ids are 7 bits) */
+#define rl_list_pieces (r_lists + 128)
+#define LP_CHAINED 0x8000
 
 void rl_begin(void)
 {
@@ -219,11 +227,73 @@ static int leaf_list(qw_leaf *leaf)
 		id = n_lists;
 		leaf->vis |= (uint32_t) (id | 0x80) << 24;
 		r_lists[id] = 0;
+		rl_list_pieces[id] = 0;
 	}
 	return id;
 }
 
-void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len)
+/* item n into list id after item `after` (index + 1; 0: at the head, drawn
+   last of the leaf) */
+static inline void list_insert(int id, unsigned after, int n)
+{
+	r_item_t *it = &r_items[n];
+	if (!after) {
+		it->next = r_lists[id];
+		r_lists[id] = (uint16_t) (n + 1);
+	} else {
+		it->next = r_items[after - 1].next;
+		r_items[after - 1].next = (uint16_t) (n + 1);
+	}
+}
+
+/* The last of list id's pieces items (in the list's order: their models'
+   walks, back to front) to be drawn over point p (1/R_POS_SUB units):
+   index + 1, 0 if none. A model's items over p come first (its walk's
+   front): the first one under p ends that model's. At the first ask the
+   leaf's pieces items are chained (z; x -1: their node not looked for):
+   the list holds nothing else of this frame's yet (but brush models drawn
+   whole). */
+static RL_SMALL unsigned pieces_over(int id, const int32_t p[3])
+{
+	unsigned head = rl_list_pieces[id];
+	if (!(head & LP_CHAINED)) {
+		r_item_t *last = 0;
+		for (unsigned i = head; i; i = r_items[i - 1].next) {
+			r_item_t *it = &r_items[i - 1];
+			if (it->type != RI_PIECES)
+				continue;
+			it->x = -1;
+			if (last)
+				last->z = (int16_t) i;
+			last = it;
+		}
+		if (last)
+			last->z = 0;
+		else
+			head = 0;                           /* (brush models drawn whole only) */
+		rl_list_pieces[id] = (uint16_t) (head | LP_CHAINED);
+	}
+	unsigned over = 0;
+	int model = -1, ask = 0;
+	for (unsigned i = head & ~LP_CHAINED; i; i = (uint16_t) r_items[i - 1].z) {
+		r_item_t *it = &r_items[i - 1];
+		if (it->colour != model) {
+			model = it->colour;
+			ask = bmf_may_hide(model, p);
+		}
+		if (!ask)
+			continue;
+		if (it->x < 0)
+			it->x = (int16_t) bmf_pieces_node(model, (const uint8_t *) it->ent);
+		if (bmf_node_over(model, it->x, p))
+			over = i;
+		else
+			ask = 0;                                /* (the model's next ones: under p too) */
+	}
+	return over;
+}
+
+void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len, uint32_t tag)
 {
 	if (!leaf || !len || n_items >= RL_MAX_ITEMS)
 		return;
@@ -231,29 +301,75 @@ void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len)
 	if (!id)
 		return;
 	r_item_t *it = &r_items[n_items];
-	it->next   = r_lists[id];
-	it->type   = RI_PIECES;
-	it->colour = 0;
-	it->pad    = (uint16_t) len;
-	it->ent    = (uint32_t) recs;
+	typedef uint16_t __attribute__((may_alias)) half_t;
+	it->next = r_lists[id];                     /* (the frame's first: pieces only so far) */
+	*(half_t *) &it->type = (uint16_t) tag;     /* (RI_PIECES, its model in colour: one store) */
+	it->pad  = (uint16_t) len;
+	it->ent  = (uint32_t) recs;
 	r_lists[id] = (uint16_t) (n_items + 1);
 	n_items++;
 }
 
-void rl_add_model(const qw_leaf *leaf, r_ent_t *e)
+void rl_pieces_done(void)
+{
+	for (int id = 1; id <= n_lists; id++)
+		rl_list_pieces[id] = r_lists[id];
+}
+
+/* item n (a model at depth x, or a particle) into list id after the pieces
+   in front of point p, then after the models nearer than it (a particle:
+   none); the rare way, the list holding brush models' pieces */
+static __attribute__((noinline)) RL_SMALL void place_by_pieces(int id, int n, const int32_t p[3])
+{
+	unsigned after = pieces_over(id, p);
+	if (r_items[n].type == 1) {
+		int16_t z = r_items[n].x;
+		for (unsigned nx = after ? r_items[after - 1].next : r_lists[id];
+		     nx && r_items[nx - 1].type == 1 && r_items[nx - 1].x < z; nx = r_items[nx - 1].next)
+			after = nx;
+	}
+	list_insert(id, after, n);
+}
+
+void rl_add_model(const qw_leaf *leaf, r_ent_t *e, const int32_t org[3], const int32_t *box)
 {
 	if (!leaf || !e || n_items >= RL_MAX_ITEMS)
 		return;
 	int id = leaf_list((qw_leaf *) leaf);
 	if (!id)
 		return;
-	r_item_t *it = &r_items[n_items];
-	it->next   = r_lists[id];
+	int n = n_items++;
+	r_item_t *it = &r_items[n];
 	it->type   = 1;
 	it->colour = 0;
 	it->ent    = (uint32_t) e;
-	r_lists[id] = (uint16_t) (n_items + 1);
-	n_items++;
+	if (!org) {                                 /* a brush model drawn whole */
+		it->x = INT16_MAX;
+		list_insert(id, 0, n);
+		return;
+	}
+	int32_t z = e->tr[2] >> 3;                  /* its depth: its matrix's, 2 world units
+	                                               (any map's in an int16) */
+	it->x = (int16_t) z;
+	if (rl_list_pieces[id]) {
+		int32_t c[3];
+		if (box) {                              /* (its place among them: from its centre) */
+			for (int k = 0; k < 3; k++)
+				c[k] = org[k] + (box[k] + box[k + 3]) / 2;
+			org = c;
+		}
+		place_by_pieces(id, n, org);
+		return;
+	}
+	/* after the nearer models (the list's head: the nearest, drawn last) */
+	unsigned after = 0, nx = r_lists[id];
+	for (; nx && r_items[nx - 1].type == 1 && r_items[nx - 1].x < z; nx = r_items[nx - 1].next)
+		after = nx;
+	it->next = (uint16_t) nx;
+	if (after)
+		r_items[after - 1].next = (uint16_t) (n + 1);
+	else
+		r_lists[id] = (uint16_t) (n + 1);
 }
 
 void rl_add_particle(const qw_leaf *leaf, const int32_t pos[3], int colour)
@@ -264,15 +380,18 @@ void rl_add_particle(const qw_leaf *leaf, const int32_t pos[3], int colour)
 	if (!id)
 		return;
 	r_item_t *it = &r_items[n_items];
-	it->next   = r_lists[id];
 	it->type   = 0;
 	it->colour = (uint8_t) colour;
 	it->x = (int16_t) (pos[0] * QW_VSCALE / R_POS_SUB);
 	it->y = (int16_t) (pos[1] * QW_VSCALE / R_POS_SUB);
 	it->z = (int16_t) (pos[2] * QW_VSCALE / R_POS_SUB);
 	it->ent = 0;
-	r_lists[id] = (uint16_t) (n_items + 1);
-	n_items++;
+	int n = n_items++;
+	if (rl_list_pieces[id])
+		place_by_pieces(id, n, pos);
+	else
+		list_insert(id, 0, n);                  /* (over the models: the frame adds the
+		                                           particles last) */
 }
 
 void rl_end(void)

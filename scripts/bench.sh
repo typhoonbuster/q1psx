@@ -43,7 +43,10 @@
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds
-#         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B); MUSIC=1 puts the music on the bench disc (its
+#         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B;
+#         TICKS=n with a VIEW: the player put there, the game run n ticks
+#         from there, the view dumped every 8 ticks: a mover, a monster
+#         as the player standing there sees them); MUSIC=1 puts the music on the bench disc (its
 #         streams: the XA ones with their carousels, or MUSIC_MODE=spu the
 #         SPU's; docs/porting-notes.md §46).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
@@ -87,6 +90,7 @@ MUSIC_MODE=${MUSIC_MODE:-xa}
 MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
+TICKS=${TICKS:-0}
 ENTS=${ENTS:-0}
 MONSTERS=${MONSTERS:-0}
 SAMPLE=${SAMPLE:-0}
@@ -98,7 +102,7 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_STACK_MIN="$STACK_MIN" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_MUSIC_MODE="$MUSIC_MODE" \
-      -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
+      -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
 	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }

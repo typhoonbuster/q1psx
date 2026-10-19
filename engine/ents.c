@@ -614,8 +614,10 @@ static void killed(edict_t *targ, edict_t *attacker)
 		ent_killed_monsters++;
 	targ->takedamage = DAMAGE_NO;
 	targ->touch = sub_null;
-	if (targ->mdef)
+	if (targ->mdef) {
+		targ->pain_finished = ent_time + CORPSE_TICKS;   /* its body's end (monsters.h) */
 		monster_death_use(targ);
+	}
 	if (targ->th_die)
 		targ->th_die(targ);
 }
@@ -1166,7 +1168,12 @@ void ents_tick(void)
 				if (e->movetype == MOVETYPE_PUSH) {
 					physics_pusher(e);
 				} else if (e->mdef || e->masset >= 0) {   /* a monster, what it throws */
-					if (e->movetype == MOVETYPE_STEP)
+					if (e->mdef && e->health <= 0 && ent_time - e->pain_finished >= 0)
+						ent_remove(e);                /* a body's end (monsters.h) */
+					else if (e->mdef && e->masset >= 0 && !stream_model(e->masset))
+						;                             /* its model not in: paused, nothing it
+						                                 does unseen (2026-10-19) */
+					else if (e->movetype == MOVETYPE_STEP)
 						ai_physics_step(e);
 					else if (e->movetype >= MOVETYPE_FLY && e->movetype != MOVETYPE_PUSH &&
 					         e->movetype != MOVETYPE_NOCLIP)
@@ -1183,7 +1190,8 @@ void ents_tick(void)
 			   it throws keeps falling while off the ground) */
 			if (!e->inuse || (e->nextthink <= 0 && !e->move_ticks &&
 			                  !((e->mdef || e->masset >= 0) && e->movetype >= MOVETYPE_STEP &&
-			                    e->movetype != MOVETYPE_PUSH && !(e->flags & FL_ONGROUND))))
+			                    e->movetype != MOVETYPE_PUSH && !(e->flags & FL_ONGROUND)) &&
+			                  !(e->mdef && e->health <= 0)))   /* (a body: till its end) */
 				active[w] &= ~(1u << b);
 		}
 	}
@@ -1483,7 +1491,7 @@ static const qw_leaf *camera_side_leaf(const edict_t *e, uint16_t vis)
 	return l;
 }
 
-void ents_render(void)
+void ents_render_bmodels(void)
 {
 	if (!edicts)
 		return;
@@ -1546,8 +1554,15 @@ void ents_render(void)
 			       e->model, (int) (best - world.leaves), best->visframe, vis, best->c[0], best->c[1],
 			       best->c[2], (unsigned) best->vis, e->vismask, e->num_leaves);
 #endif
-		rl_add_model(best, rl_bmodel(&world.bmodels[e->model], e->origin));
+		rl_add_model(best, rl_bmodel(&world.bmodels[e->model], e->origin), 0, 0);
 	}
+	rl_pieces_done();
+}
+
+void ents_render(void)
+{
+	if (!edicts)
+		return;
 	items_render();
 	monsters_render();
 }

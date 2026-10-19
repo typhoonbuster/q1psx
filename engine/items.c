@@ -685,6 +685,7 @@ void items_render(void)
 			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
 		int light = (m->flags & QGF_FLAT) && flame ? 128
 		          : leaf->light + dl_add_at(e->origin, game_tick_count) * 3 / 2;
-		rl_add_model(leaf, rl_model(m, frame, e->origin, (m->flags & QGF_ROTATE) ? yaw : 0, 0, 0, light));
+		rl_add_model(leaf, rl_model(m, frame, e->origin, (m->flags & QGF_ROTATE) ? yaw : 0, 0, 0, light), e->origin,
+		             e->mins);
 	}
 }

@@ -2366,28 +2366,35 @@ void game_render(void)
 		int light = p->leaf->light + dl_add_at(p->org, game_tick_count) * 3 / 2;
 		switch (p->type) {
 		case PJ_SPIKE:
-			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_SPIKE], 0, p->org, p->yaw, p->pitch, 0, light));
+			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_SPIKE], 0, p->org, p->yaw, p->pitch, 0, light),
+			             p->org, 0);
 			break;
 		case PJ_SSPIKE:
-			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_SPIKE], 0, p->org, p->yaw, p->pitch, 0, light));
+			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_SPIKE], 0, p->org, p->yaw, p->pitch, 0, light),
+			             p->org, 0);
 			break;
 		case PJ_GRENADE:
-			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_GRENADE], 0, p->org, p->yaw, p->pitch, p->roll, light));
+			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_GRENADE], 0, p->org, p->yaw, p->pitch, p->roll, light),
+			             p->org, 0);
 			break;
 		case PJ_ROCKET:
-			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_MISSILE], 0, p->org, p->yaw, p->pitch, 0, light));
+			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_MISSILE], 0, p->org, p->yaw, p->pitch, 0, light),
+			             p->org, 0);
 			break;
 		case PJ_ZOMGIB:
 		case PJ_WIZSPIKE:
 		case PJ_LAVABALL:                             /* the monsters' (streamed: once in) */
 			if (stream_model(p->masset))
-				rl_add_model(p->leaf, rl_model_stream(p->masset, 0, p->org, p->yaw, p->pitch, p->roll, light));
+				rl_add_model(p->leaf, rl_model_stream(p->masset, 0, p->org, p->yaw, p->pitch, p->roll, light),
+				             p->org, 0);
 			break;
 		case PJ_EXPLOSION:
-			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_EXPLOD], p->frame, p->org, 0, 0, 0, 128));
+			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_EXPLOD], p->frame, p->org, 0, 0, 0, 128),
+			             p->org, 0);
 			break;
 		case PJ_BUBBLE:
-			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_BUBBLE], p->frame, p->org, 0, 0, 0, light));
+			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_S_BUBBLE], p->frame, p->org, 0, 0, 0, light),
+			             p->org, 0);
 			break;
 		case PJ_BUBBLER:
 			break;
@@ -2421,7 +2428,7 @@ void game_render(void)
 				const qw_leaf *leaf = world_point_leaf_from(top, w);
 				int roll = (int) (q_rand() & 4095);
 				rl_add_model(leaf, p->owner ? rl_model_stream(p->masset, 0, org, yaw, pitch, roll, 128)
-				                            : rl_model(bolt, 0, org, yaw, pitch, roll, 128));
+				                            : rl_model(bolt, 0, org, yaw, pitch, roll, 128), org, 0);
 				for (int k = 0; k < 3; k++)
 					org[k] += step * SUB * dir[k] / 4096;
 				at += step * SUB;
@@ -2432,6 +2439,14 @@ void game_render(void)
 			break;
 		}
 	}
+}
+
+/* the particles, after the models (in a leaf: over its alias models, among
+   its brush models' pieces where they stand, engine/rlist.h) */
+void game_render_particles(void)
+{
+	if (!gdata.ok)
+		return;
 	if (r_part_z) {                                 /* the draw distance: not in the fog's */
 		for (int i = part_active; i; i = particles[i - 1].next) {   /* far half */
 			const particle_t *p = &particles[i - 1];

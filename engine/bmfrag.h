@@ -50,6 +50,17 @@ int bmf_seen(const bmf_cache *c, uint16_t vis, int whole);
    moved. 0: none (too cut up where it stands: the caller draws it whole). */
 int bmf_draw(edict_t *e, uint16_t vis);
 
+/* Within a leaf, Quake's z-buffer between an alias model and a door: the
+   node of brush model `model`'s BSP whose pieces an rl_add_pieces item
+   holds (`recs`: its records; a model bmf_draw drew this frame), and are
+   that node's pieces in front of point p (1/8 units), drawn over it (1),
+   or behind it, drawn before (0)? */
+int bmf_pieces_node(int model, const uint8_t *recs);
+int bmf_node_over(int model, int node, const int32_t p[3]);
+/* 0: the model cannot hide point p (the segment from the eye to p misses
+   its box, grown by 32 units): its pieces all under p */
+int bmf_may_hide(int model, const int32_t p[3]);
+
 #ifdef Q1PSX_BENCH
 /* this level: models with pieces, pieces made, cuts, cuts given up, the
    cuts' cycles, the dearest cut's */

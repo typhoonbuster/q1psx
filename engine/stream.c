@@ -1545,6 +1545,22 @@ void stream_frame(void)
 		sound_done(0, 0);
 }
 
+#ifdef Q1PSX_BENCH
+uint32_t stream_score(int a)
+{
+	return a >= 0 && a < num_assets ? assets[a].last : ~0u;
+}
+
+static const int32_t *preload_at;          /* stream_preload_at's origin */
+
+void stream_preload_at(const int32_t org[3])
+{
+	preload_at = org;
+	stream_preload();
+	preload_at = 0;
+}
+#endif
+
 void stream_preload(void)
 {
 	if (lend_state == L_ROOM &&               /* the lent block (the map's start gave it room) */
@@ -1554,6 +1570,11 @@ void stream_preload(void)
 	}
 	if (!num_assets || !pool)
 		return;
+#ifdef Q1PSX_BENCH
+	if (preload_at)
+		memcpy(stream_origin, preload_at, sizeof stream_origin);
+	else
+#endif
 	if (world.has_spawn)                      /* (the player is put there after the load) */
 		for (int k = 0; k < 3; k++)
 			stream_origin[k] = world.spawn[k] * CLIP_SUB;

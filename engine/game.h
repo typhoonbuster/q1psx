@@ -139,6 +139,7 @@ void game_view_angles(int *yaw, int *pitch, int *roll);
 /* between rl_begin() and r_frame(): the render list (projectiles, effects,
    particles) and the view model; after the frame: the world's lights back */
 void game_render(void);
+void game_render_particles(void);
 void game_render_done(void);
 
 /* the current weapon's ammo count, and its ammo type (-1: none) */

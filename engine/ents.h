@@ -132,6 +132,9 @@ struct edict_s {
 	int32_t  item_model;     /* an item's model (formats/qgame.h QGM_*), -1 none */
 };
 
+_Static_assert(__builtin_offsetof(edict_t, maxs) == __builtin_offsetof(edict_t, mins) + 12,
+               "the box's 6 words (rlist.h rl_add_model)");
+
 extern edict_t *edicts;      /* the pool, in spawn order: [0] the world, [1] the player */
 extern int      num_edicts;  /* the slots in use (the highest + 1)          */
 #define ent_world  (&edicts[0])
@@ -166,7 +169,10 @@ void ents_spawn(int first);
 void ents_tick(void);
 
 /* per frame, after the camera is set and before r_frame: the brush models
-   into the render list */
+   into the render list (first of all: the alias models and the particles
+   take their places among the pieces, engine/rlist.h), then the items'
+   and the monsters' models */
+void ents_render_bmodels(void);
 void ents_render(void);
 
 /* ---- the QC's builtins and subs.qc, for the class files ----------------- */

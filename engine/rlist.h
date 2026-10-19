@@ -11,6 +11,14 @@
  * list when it visits the leaf, between the faces behind it and the faces in
  * front of it. The view model is drawn first of all, so it is on top.
  *
+ * Within a leaf the list's head is drawn last (the walk emits front to back,
+ * each packet prepended). With no depth buffer, the order there stands for
+ * Quake's z-buffer: a brush model's pieces (engine/bmfrag.c) keep their
+ * model's BSP order; an alias model or a particle goes where its point
+ * stands in that order (the pieces in front of it drawn over it, those
+ * behind it under it); the alias models among themselves by their depth,
+ * the nearest last. A frame adds the brush models' pieces first.
+ *
  * Positions are vertex units (world x 4); an item's leaf is the caller's
  * (a particle keeps the leaf it was spawned in).
  */
@@ -32,8 +40,12 @@ typedef struct {
 	uint16_t next;       /* +0  next item of the leaf's list, index + 1; 0 ends  */
 	uint8_t  type;       /* +2  0 particle, 1 model, RI_PIECES a brush model's
 	                            pieces (negative as a signed byte: r_world.s)  */
-	uint8_t  colour;     /* +3  particle: palette index                          */
-	int16_t  x, y, z;    /* +4  particle: vertex units                           */
+	uint8_t  colour;     /* +3  particle: palette index; pieces: their brush model */
+	int16_t  x, y, z;    /* +4  particle: vertex units; model: x its depth (2
+	                            world units); pieces, once an alias model or a
+	                            particle came to their leaf (rlist.c): x their
+	                            node in their model's BSP, z the leaf's next
+	                            pieces item (index + 1)                        */
 	uint16_t pad;        /* +10 pieces: their records' bytes                     */
 	uint32_t ent;        /* +12 model: the r_ent_t; pieces: their first record   */
 } r_item_t;              /* 16 bytes */
@@ -65,7 +77,8 @@ _Static_assert(sizeof(r_item_t) == 16, "r_defs.inc RI_*");
 _Static_assert(sizeof(r_ent_t) == 80 && __builtin_offsetof(r_ent_t, cam) == 60, "r_defs.inc RE_*");
 
 extern r_item_t r_items[RL_MAX_ITEMS];
-extern uint16_t r_lists[256];           /* list id -> first item + 1 */
+extern uint16_t r_lists[256];           /* list id -> first item + 1; the upper
+                                           half rlist.c's (its pieces' heads) */
 
 /* per frame: before anything is added */
 void rl_begin(void);
@@ -90,12 +103,19 @@ void rl_view_model(r_ent_t *e);
 r_ent_t *rl_bmodel(const qw_bmodel *bm, const int32_t org[3]);
 
 /* chain an entity / a particle into a leaf's list (nothing if the leaf is
-   NULL or the item pool is full) */
-void rl_add_model(const qw_leaf *leaf, r_ent_t *e);
+   NULL or the item pool is full): an alias model at `org` (1/R_POS_SUB
+   units; `box`, when given: its mins then maxs, 6 words, an edict's: the
+   box's centre then) among the leaf's other models by its depth (its
+   matrix's) and among its brush models' pieces by that point; a brush
+   model drawn whole with `org` NULL */
+void rl_add_model(const qw_leaf *leaf, r_ent_t *e, const int32_t org[3], const int32_t *box);
 void rl_add_particle(const qw_leaf *leaf, const int32_t pos[3], int colour);   /* 1/R_POS_SUB units */
 /* a brush model's pieces in that leaf (bmfrag.c): `len` bytes of records,
-   their vertices in r_state.fragpool, drawn in the world's space */
-void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len);
+   their vertices in r_state.fragpool, drawn in the world's space; `tag`
+   RI_PIECES | their brush model << 8 (a brush model under 256) */
+void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len, uint32_t tag);
+/* the brush models are in (all of them: before any other item) */
+void rl_pieces_done(void);
 
 /* after the frame is rendered: clears the leaves' list ids */
 void rl_end(void);
