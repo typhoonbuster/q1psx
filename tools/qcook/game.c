@@ -1432,11 +1432,17 @@ static int tri_s(const mdl_t *m, int t, int k)
 }
 
 /* an image of the reduced skin: columns x0 .. x1 - 1, with a border of the
-   edge texels, its width made even (one more edge column) */
+   edge texels, its width made even (one more edge column), and its count
+   of VRAM halfwords too (two more): LoadImage's DMA sends n / 2 words for
+   n halfwords, rounded up to its 16-word unit, so an odd n whose half is a
+   multiple of 16 went one word short and the GPU took the next command's
+   first word for the last pixels (gib1, dog, h_demon: 10 of the 212
+   images) */
 static void cut_image(const image *im, int x0, int x1, buf_t *pix, uint16_t *w, uint16_t *h)
 {
 	int b = im->border, iw = x1 - x0, bw = iw + 2 * b, bh = im->h + 2 * b;
 	if (bw & 1) bw++;
+	if ((bw / 2) & bh & 1) bw += 2;
 	for (int y = 0; y < bh; y++)
 		for (int x = 0; x < bw; x++) {
 			int sx = x - b, sy = y - b;
