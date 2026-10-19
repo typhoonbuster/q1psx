@@ -711,9 +711,9 @@ ct_bm_take:
 	sltiu   $t0, $t6, 2                  # none: a SOLID_BBOX entity's box
 	bnez    $t0, ct_box
 	li      $t1, 2
-	lw      $s3, BM_HULL1($t6)
+	lh      $s3, BM_HULL1($t6)
 	beqz    $a0, 8f
-	lw      $t0, BM_HULL2($t6)
+	lh      $t0, BM_HULL2($t6)
 	beq     $a0, $t1, 9f
 	nop
 	b       ct_bm_trace

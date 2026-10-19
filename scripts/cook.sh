@@ -22,7 +22,7 @@
 # 3 ultra; formats/qlevels.h):
 #   cooked/id1/<map>_t<N>.tex   QTX6 texture set (textures 0..3)  -> disc <MAP>_T<N>.TEX
 #   cooked/id1/<map>_t<N>.tx4   QTX7, the same in 4bpp            -> disc <MAP>_T<N>.TX4
-#   cooked/id1/<map>_g<N>.wld   QWVD world (geometry 0, 2, 3)     -> disc <MAP>_G<N>.WLD
+#   cooked/id1/<map>_g<N>.wld   QWVE world (geometry 0, 2, 3)     -> disc <MAP>_G<N>.WLD
 #   cooked/id1/<map>_m<N>.mdl   QMM1 its own models (models 0..2) -> disc <MAP>_M<N>.MDL
 # per map (with the high geometry job), the sound bank (formats/qsound.h):
 #   cooked/id1/<map>.snd        QSB2 sounds                       -> disc <MAP>.SND

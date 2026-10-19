@@ -103,11 +103,11 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 |---|---|---|
 | BIOS / kernel | 64 KB | `0x80000000-0x8000FFFF`, untouchable |
 | Code + rodata + data/bss | ~300 KB | release 2026-10-19: 275 KB of code, 23 KB of rodata; the renderer asm is small, the game's C (monsters, streaming) is not |
-| Stack | 16 KB | from 0x801FFFF0 down to the BSS's end; the build fails under 16 KB (`scripts/ramcheck.sh`, porting-notes §42; 18.2 KB in the release of §44). The SDK's heap shares this gap: nothing in the engine mallocs (cd.c reads the disc's directories itself) |
+| Stack | 16 KB | from 0x801FFFF0 down to the BSS's end; the build fails under 16 KB (`scripts/ramcheck.sh`, porting-notes §42; 20.0 KB in the release of §46). The SDK's heap shares this gap: nothing in the engine mallocs (cd.c reads the disc's directories itself) |
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes); an alias model is left out when under 24 KB of room is left (`R_MODEL_ROOM`), and the menu keeps 12 KB while it is up (`R_MENU_ROOM`, porting-notes §43) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
-| Level arena | 1136 KB | world render data + clip hulls + PVS (the biggest map 696 KB) + the brush models' pieces (§41: 22-210 KB, sized on their cuts after the spawn, §44) + the streamed assets' RAM pool (the rest: 0-772 KB, E3M4 and E4M7 still none); 1152 KB until 2026-10-19 (§42, §43) |
-| Game arena | 224 KB | the game data every map needs (`GAME_<n>.DAT`, n the model level: weapon and projectile models, 63 KB at high, the block sized for the largest level so another level's models replace them in place before a map's load; the 2D weapons' packets, 102 KB), filled at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
+| Level arena | 1242 KB | world render data + clip hulls + PVS (the biggest map 696 KB; the world may take 1136 KB while it loads, `MEM_LEVEL_WORLD`) + the brush models' pieces (§41: 12-112 KB, the room the cook measured, §44, §46) + the streamed assets' RAM pool (the rest: 160-897 KB) and, with the 2D gun, its packets (78 KB at the pool's end, §45, §47); 1152 KB until 2026-10-19, then 1136 (§42, §43) |
+| Game arena | 116 KB | the game data every map needs (`GAME_<n>.DAT`, n the model level: weapon and projectile models, 63 KB at high, the block sized for the largest level so another level's models replace them in place before a map's load; the 2D weapons' tables, their packets lent by the stream only while that gun is drawn, §45), filled at boot (111.5 KB: `mem: game arena` in the boot log), plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB); 224 KB until §45 |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
 The level arena is a bump allocator that is reset on map load. There is no
@@ -209,7 +209,9 @@ section is 4-byte aligned and laid out in the order the walker reads it.
 - **Brush models** (QWVA, 2026-10-17): Quake's submodels keep their own BSP
   trees in the node array, their faces cooked on those nodes like the
   world's (per side, `face_id` 0: no visibility slot). A `qw_bmodel` table
-  gives each one its root, bounds and clip hull roots; the game draws a
+  gives each one its root, bounds and clip hull roots, and the room its
+  pieces take when the world's BSP cuts it (measured by the cook,
+  `docs/porting-notes.md` §46); the game draws a
   model by having the renderer walk its subtree from the model-space camera
   (the same node-side sorting and backface selection as the world), and
   lists the solid ones for the traces. **Entities** are cooked from the

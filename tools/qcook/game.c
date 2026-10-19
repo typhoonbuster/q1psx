@@ -104,8 +104,9 @@ typedef struct {
 	int         w, h;
 	uint8_t    *px;
 	int         border;
-	int         even;          /* its u must be even (a halfword of 8bpp texels:
-	                              the engine copies into it) */
+	int         align;         /* its u a multiple of this (0, 1: any; the 2D
+	                              gun's slot: 32 texels, the 16 halfwords of
+	                              the GPU's fill) */
 	int         page, u, v;    /* u, v: the image's own origin (past the border) */
 } image;
 
@@ -185,7 +186,7 @@ static void place_images(void)
 		for (int p = 0; p < GP_PAGES; p++)
 			for (int i = 0; i < nfree[p]; i++) {
 				const rect *f = &freer[p][i];
-				int ex = im->even ? ((f->x + b) & 1) : 0;   /* (to an even u) */
+				int ex = im->align > 1 ? (im->align - (f->x + b) % im->align) % im->align : 0;
 				if (bw + ex > f->w || bh > f->h) continue;
 				int ds = f->w - bw - ex, dl = f->h - bh;
 				if (ds > dl) { int t = ds; ds = dl; dl = t; }
@@ -195,8 +196,8 @@ static void place_images(void)
 			die("%s (%dx%d): the game's %d VRAM pages are full (%ld K texels placed of %ld K)",
 			    im->what, bw, bh, GP_PAGES, area / 1024, total / 1024);
 		rect at = { freer[bp][bi].x, freer[bp][bi].y, bw, bh };
-		if (im->even)
-			at.x += (at.x + b) & 1;
+		if (im->align > 1)
+			at.x += (im->align - (at.x + b) % im->align) % im->align;
 		im->page = bp; im->u = at.x + b; im->v = at.y + b;
 		area += (long) bw * bh;
 		/* split the free rectangles it overlaps */
@@ -2407,9 +2408,133 @@ static void ws_prepare(void)
 				       w->frames[f].x, w->frames[f].y, w->frames[f].w, w->frames[f].h);
 	}
 	if (mw > 255 || mh > 255) die("2D weapons: a frame of %dx%d texels", mw, mh);
+	/* the slot starts on 32 texels: a frame's rows may be filled with 0
+	   before its spans come (GP0(02h) takes x down to 16 halfwords) */
 	ws_slot = add_image("2D weapon slot", mw, mh, 0);
-	ws_slot->even = 1;
+	ws_slot->align = 32;
 	printf("qcook: 2D weapons, %ld K texels in 8 weapons' frames, a slot of %dx%d\n", texels / 1024, mw, mh);
+}
+
+/* the frame of the eight weapons' k-th */
+static const ws_frame *ws_of(int k)
+{
+	for (int w = 0; w < QG_WEAPONS; k -= wsw[w].nframes, w++)
+		if (k < wsw[w].nframes)
+			return &wsw[w].frames[k];
+	return NULL;
+}
+
+/* GP0(A0h) of rows i .. j-1, texels l .. r of the frame (r - l + 1 even)
+   to the slot at VRAM (sx, sy): its words across packets of 255 */
+static void ws_copy(gbuf *pix, const ws_frame *f, int sx, int sy, int i, int j, int l, int r)
+{
+	size_t rw = (size_t) (r - l + 1), bytes = rw * (size_t) (j - i), words = (bytes + 3) / 4;
+	uint8_t *data = xcalloc(words, 4);
+	for (int y = i; y < j; y++)
+		memcpy(data + (size_t) (y - i) * rw, f->px + (size_t) y * f->w + l, rw);
+	size_t done = 0;
+	for (int first = 1; done < words; first = 0) {
+		size_t room = first ? 252 : 255, cnt = words - done < room ? words - done : room;
+		size_t len = cnt + (first ? 3 : 0);
+		uint32_t tag = (uint32_t) len << 24 | (uint32_t) (pix->len + 4 * (1 + len));   /* (the next's) */
+		gput(pix, &tag, 4);
+		if (first) {
+			uint32_t a0[3] = { 0xA0000000u, (uint32_t) (sy + i) << 16 | (uint32_t) (sx + l / 2),
+			                   (uint32_t) (j - i) << 16 | (uint32_t) (rw / 2) };
+			gput(pix, a0, sizeof a0);
+		}
+		gput(pix, data + 4 * done, 4 * cnt);
+		done += cnt;
+	}
+	free(data);
+}
+
+static long ws_copy_words(long halfwords)        /* its packets' words */
+{
+	long words = (halfwords + 1) / 2;
+	return 3 + words + 1 + (words > 252 ? (words - 252 + 254) / 255 : 0);
+}
+
+/* A frame's chain into the slot at VRAM (sx, sy), slot_w texels wide, the
+   fewer words of:
+   - GP0(A0h): the whole frame copied;
+   - GP0(02h): its rows of the slot filled with 0, the transparent index
+     (the GPU fills whole units of 16 halfwords: the slot starts on one;
+     a frame whose unit would pass the slot's end is copied whole), then
+     GP0(A0h): its opaque texels, a rectangle per run of rows over the
+     run's spans (a halfword on each side), the runs chosen for the fewest
+     words (a copy's three words and its packets' tags against the
+     transparent texels a wider span carries).
+   Then GP0(01h): the texture cache cleared. Either leaves the slot with
+   the frame's texels, to the texel. Its first and last packets' offsets. */
+static void ws_chain(gbuf *pix, const ws_frame *f, int sx, int sy, int slot_w, uint32_t *ofs, uint32_t *ofs_last)
+{
+	int w = f->w, h = f->h;
+	int lo[256], hi[256];                        /* each row's span; hi < 0: none */
+	for (int r = 0; r < h; r++) {
+		lo[r] = w;
+		hi[r] = -1;
+		for (int c = 0; c < w; c++)
+			if (f->px[r * w + c]) {
+				if (c < lo[r]) lo[r] = c;
+				hi[r] = c;
+			}
+		if (hi[r] >= 0) {
+			lo[r] &= ~1;
+			hi[r] |= 1;                          /* (w is even) */
+		}
+	}
+	/* cost[j]: the fewest words for rows 0 .. j-1; run[j]: where the
+	   rectangle ending there starts, -1 for row j-1 left to the fill */
+	long cost[257];
+	int run[257];
+	cost[0] = 0;
+	for (int j = 1; j <= h; j++) {
+		cost[j] = hi[j - 1] < 0 ? cost[j - 1] : 1L << 40;
+		run[j] = -1;
+		int l = w, r = -1;
+		for (int i = j - 1; i >= 0; i--) {
+			if (hi[i] < 0)
+				continue;                        /* (a rectangle starts on an opaque row) */
+			if (lo[i] < l) l = lo[i];
+			if (hi[i] > r) r = hi[i];
+			long c = ws_copy_words((long) (r - l + 1) / 2 * (j - i));
+			if (cost[i] + c < cost[j]) {
+				cost[j] = cost[i] + c;
+				run[j] = i;
+			}
+		}
+	}
+	int starts[256], ends[256], nrun = 0;
+	for (int j = h; j > 0; )
+		if (run[j] < 0) {
+			j--;
+		} else {
+			starts[nrun] = run[j];
+			ends[nrun++] = j;
+			j = run[j];
+		}
+
+	*ofs = (uint32_t) pix->len;
+	if (((w / 2 + 15) & ~15) > slot_w / 2 || 4 + cost[h] >= ws_copy_words((long) w / 2 * h)) {
+		ws_copy(pix, f, sx, sy, 0, h, 0, w - 1);     /* (whole) */
+	} else {
+		uint32_t fill[4] = { 3u << 24 | (uint32_t) (pix->len + 16), 0x02000000u,
+		                     (uint32_t) sy << 16 | (uint32_t) sx, (uint32_t) h << 16 | (uint32_t) (w / 2) };
+		gput(pix, fill, sizeof fill);
+		for (int n = nrun - 1; n >= 0; n--) {    /* (top to bottom) */
+			int i = starts[n], j = ends[n], l = w, r = -1;
+			for (int y = i; y < j; y++)
+				if (hi[y] >= 0) {
+					if (lo[y] < l) l = lo[y];
+					if (hi[y] > r) r = hi[y];
+				}
+			ws_copy(pix, f, sx, sy, i, j, l, r);
+		}
+	}
+	*ofs_last = (uint32_t) pix->len;
+	uint32_t cc[2] = { 1u << 24 | 0xffffffu, 0x01000000u };   /* the texture cache cleared */
+	gput(pix, cc, sizeof cc);
 }
 
 int cmd_game(int argc, char **argv)
@@ -2555,9 +2680,9 @@ int cmd_game(int argc, char **argv)
 		galign(&f, 4);
 	}
 	{	/* the 2D weapons: their table, their frames', then their packets: a
-		   weapon's CLUT, a frame's texels (GP0(A0h) to the slot, then
-		   GP0(01h)); a tag's link the next packet's offset in the block,
-		   the chain's last 0xffffff */
+		   weapon's CLUT, a frame's chain (ws_chain: its rows of the slot
+		   filled with 0, its opaque spans copied, GP0(01h)); a tag's link
+		   the next packet's offset in the block, the chain's last 0xffffff */
 		static qg_wsprite wt[QG_WEAPONS];
 		gbuf pix;
 		memset(&pix, 0, sizeof pix);
@@ -2565,8 +2690,9 @@ int cmd_game(int argc, char **argv)
 		for (int w = 0; w < QG_WEAPONS; w++)
 			nfr += wsw[w].nframes;
 		qg_wframe *fr = xcalloc((size_t) nfr, sizeof *fr);
+		int shared = 0;
 		int gp = QTEX_MAP_PAGES + ws_slot->page;
-		int sx = QTEX_PAGE_X0 + (gp % QTEX_PAGE_COLS) * (PT / 2) + ws_slot->u / 2;   /* (u even) */
+		int sx = QTEX_PAGE_X0 + (gp % QTEX_PAGE_COLS) * (PT / 2) + ws_slot->u / 2;   /* (u: 32 texels) */
 		int sy = (gp / QTEX_PAGE_COLS) * PT + ws_slot->v;
 		int k = 0;
 		for (int w = 0; w < QG_WEAPONS; w++) {
@@ -2586,30 +2712,19 @@ int cmd_game(int argc, char **argv)
 				fr[k].h = (uint8_t) f->h;
 				if (!f->w)                  /* (drawn 3D) */
 					continue;
-				fr[k].ofs = (uint32_t) pix.len;
-				size_t bytes = (size_t) f->w * f->h, words = (bytes + 3) / 4;
-				uint32_t *data = xcalloc(words, 4);
-				memcpy(data, f->px, bytes);
-				size_t done = 0;
-				int first = 1;
-				while (done < words || first) {
-					size_t room = first ? 252 : 255, n = words - done < room ? words - done : room;
-					size_t len = n + (first ? 3 : 0);
-					uint32_t tag = (uint32_t) len << 24 | (uint32_t) (pix.len + 4 * (1 + len));   /* (the next's) */
-					gput(&pix, &tag, 4);
-					if (first) {
-						uint32_t a0[3] = { 0xA0000000u, (uint32_t) sy << 16 | (uint32_t) sx,
-						                   (uint32_t) f->h << 16 | (uint32_t) (f->w / 2) };
-						gput(&pix, a0, sizeof a0);
-						first = 0;
-					}
-					gput(&pix, data + done, 4 * n);
-					done += n;
+				int same = -1;              /* an earlier frame of the same texels: its chain */
+				for (int j = 0; j < k && same < 0; j++) {
+					const ws_frame *g = ws_of(j);
+					if (fr[j].w && g->w == f->w && g->h == f->h && !memcmp(g->px, f->px, (size_t) f->w * f->h))
+						same = j;
 				}
-				free(data);
-				fr[k].ofs_last = (uint32_t) pix.len;
-				uint32_t cc[2] = { 1u << 24 | 0xffffffu, 0x01000000u };   /* the texture cache cleared */
-				gput(&pix, cc, sizeof cc);
+				if (same >= 0) {
+					fr[k].ofs      = fr[same].ofs;
+					fr[k].ofs_last = fr[same].ofs_last;
+					shared++;
+					continue;
+				}
+				ws_chain(&pix, f, sx, sy, ws_slot->w, &fr[k].ofs, &fr[k].ofs_last);
 			}
 		}
 		h.ofs_wsprites = (uint32_t) f.len; gput(&f, wt, sizeof wt);
@@ -2623,8 +2738,9 @@ int cmd_game(int argc, char **argv)
 		h.wslot.v = (uint8_t) ws_slot->v;
 		h.wslot.w = (uint16_t) ws_slot->w;
 		h.wslot.h = (uint16_t) ws_slot->h;
-		printf("qcook: 2D weapons: %d frames, %u B of packets, the slot at page %d (%d, %d), VRAM (%d, %d)\n",
-		       nfr, (unsigned) pix.len, ws_slot->page, ws_slot->u, ws_slot->v, sx, sy);
+		printf("qcook: 2D weapons: %d frames (%d sharing another's texels), %u B of packets, the slot at "
+		       "page %d (%d, %d), VRAM (%d, %d)\n", nfr, shared, (unsigned) pix.len, ws_slot->page, ws_slot->u,
+		       ws_slot->v, sx, sy);
 	}
 
 	{	/* the pages' free rectangles (the streamed skins' room) */

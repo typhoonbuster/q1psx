@@ -14,6 +14,8 @@
 
 #include <stdint.h>
 
+#define CD_SECTOR 2048           /* a data sector's bytes */
+
 void  cd_init(void);
 
 /* Called about once per frame while a read is in flight, with the bytes read
@@ -25,6 +27,7 @@ typedef void (*cd_poll_fn)(uint32_t bytes_done);
    runs in the background and `poll` is called until it is done; NULL
    blocks. */
 void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll);
+uint32_t cd_last_lba(void);      /* the last file cd_load found: its first sector */
 
 /* Is the file on the disc? (No read of the file; *size may be NULL.) Each
    call reads its directory again (a seek and a read: ~80 ms on the drive). */

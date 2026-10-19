@@ -427,6 +427,8 @@ int main(int argc, char **argv)
 		return cmd_game(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "stream"))
 		return cmd_stream(argc, argv);
+	if (argc >= 3 && !strcmp(argv[1], "bmf"))
+		return cmd_bmf(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "menu"))
 		return cmd_menu(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "carousel"))

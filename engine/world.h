@@ -3,7 +3,7 @@
  *
  * world_load() uploads the map's texture pages to VRAM (the QTX6 / QTX7 file
  * is transient but for its tables: the texture words, the UV maps, the
- * animated textures), then loads the QWVD world and the map's own models
+ * animated textures), then loads the QWVE world and the map's own models
  * (QMM1) into the level arena, maps their UVs onto the loaded set's tiles
  * and rewrites the world's link fields into absolute pointers for the asm
  * renderer: the nodes' children and face blocks, the leaves' marks and PVS

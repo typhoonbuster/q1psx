@@ -172,7 +172,7 @@ static void load_game(const char *path)
 	fclose(f);
 	qg_header h;
 	if ((size_t) len < sizeof h || memcmp(d, QGAME_MAGIC, 4)) {
-		fprintf(stderr, "pktview: %s is not a QGM6 file\n", path);
+		fprintf(stderr, "pktview: %s is not a %s file\n", path, QGAME_MAGIC);
 		exit(1);
 	}
 	memcpy(&h, d, sizeof h);
@@ -519,6 +519,16 @@ static void packet(const uint32_t *w, int n)
 				if (clip_y1 > H - 1) clip_y1 = H - 1;
 			}
 		}
+		return;
+	}
+	if (code == 0x02 && n >= 3) {        /* a fill (the 2D gun's slot): 16-halfword units */
+		int fx = (int) (w[1] & 0x3f0), fy = (int) ((w[1] >> 16) & 511);
+		int fw = (int) (((w[2] & 0x3ff) + 15) & ~15u), fh = (int) ((w[2] >> 16) & 511);
+		uint32_t c = w[0];
+		uint16_t v = (uint16_t) ((c >> 3 & 31) | (c >> 11 & 31) << 5 | (c >> 19 & 31) << 10);
+		for (int y = 0; y < fh; y++)
+			for (int x = 0; x < fw; x++)
+				vram[(fy + y) & 511][(fx + x) & 1023] = v;
 		return;
 	}
 	if (code == 0x80 && n >= 4) {        /* VRAM to VRAM (the animated textures' frames) */

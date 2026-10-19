@@ -102,6 +102,22 @@ static res_t    res[MAX_RES];
 
 static uint8_t *pool, *pool_end, *pool_top;   /* the RAM pool (bump, compacted) */
 
+/* The pool's end lent outside the assets: a block read from the disc (the
+   2D gun's packets, engine/game.c game_ws_sync). Asked for, it is given at
+   a map's start before the stream's own buffers (the 2D gun as sure of its
+   room as when it lived in the game arena), during the game from the
+   pool's end once no read is in flight (the assets wanted least dropped,
+   the pool compacted), then read in the stream's turn (the music paused
+   as for an asset's). Its bytes stay past pool_end: compaction never moves
+   them (its packets' links are absolute). */
+enum { L_NONE, L_WANT, L_SHORT, L_ROOM, L_READING, L_IN };
+static int32_t  lend_lba;
+static uint32_t lend_bytes;      /* asked for: whole sectors                     */
+static uint8_t *lend_at;         /* given: at pool_end, lend_bytes long          */
+static uint8_t  lend_state;      /* L_*; L_SHORT: the pool could not spare it
+                                    (asked again at the next map's start)       */
+static uint32_t lend_reads;      /* the block's reads: a new one to link again   */
+
 static vrect_t  regions[MAX_REGIONS];
 static int      num_regions;
 
@@ -1065,7 +1081,7 @@ static void xa_cancel(void)
 
 int stream_reading(void)
 {
-	return reading >= 0 || (sread.a >= 0 && (sread.step == SR_READ ||
+	return reading >= 0 || lend_state == L_READING || (sread.a >= 0 && (sread.step == SR_READ ||
 	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK))));
 }
 
@@ -1302,11 +1318,14 @@ static void pass(void)
 void stream_abort(void)
 {
 	xa_cancel();
-	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ)) {
+	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ) || lend_state == L_READING) {
 		CdReadBreak();
 		CdReadSync(0, 0);                     /* (the drive idle before the next command) */
 		reading = -1;
 	}
+	lend_at = 0;                              /* (asked for again at the map's start) */
+	if (lend_state != L_NONE)
+		lend_state = L_WANT;
 	if (sread.a >= 0) {
 		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (no DMA left reading the stage) */
 		sread.a = -1;
@@ -1329,17 +1348,30 @@ void stream_map_start(uint32_t keep)
 		assets[a].stuck   = ST_NONE;
 	}
 	memset(&stream_stats, 0, sizeof stream_stats);
-	mdl_reset(mem_level_alloc(MDL_CACHE), MDL_CACHE);
-	stage = mem_level_alloc(STAGE_SECTORS * QST_SECTOR);
-	uint32_t left = MEM_LEVEL_BYTES - mem_level_used();
-	left = left > keep + 64 ? (left - keep - 64) & ~15u : 0;
-	pool = left ? mem_level_alloc(left) : 0;
+	/* a lent block first, then the expanded frames' cache, the staging
+	   buffer, the pool; the lent block after the pool, at its end */
+	uint32_t room = MEM_LEVEL_BYTES - mem_level_used(), lend = 0;
+	if (lend_state == L_WANT) {
+		lend = room >= lend_bytes + keep + 64 ? lend_bytes : 0;
+		lend_state = lend ? L_ROOM : L_SHORT;
+	}
+	uint8_t *cache = room - lend >= MDL_CACHE ? mem_level_alloc(MDL_CACHE) : 0;
+	if (cache)
+		room -= MDL_CACHE;
+	mdl_reset(cache, MDL_CACHE);
+	stage = room - lend >= STAGE_SECTORS * QST_SECTOR ? mem_level_alloc(STAGE_SECTORS * QST_SECTOR) : 0;
+	if (stage)
+		room -= STAGE_SECTORS * QST_SECTOR;
+	uint32_t left = room - lend > keep + 64 ? (room - lend - keep - 64) & ~15u : 0;
+	pool = left + lend ? mem_level_alloc(left + lend) : 0;
 	pool_top = pool;
 	pool_end = pool ? pool + left : 0;
+	lend_at  = lend && pool ? pool_end : 0;
 	stream_stats.ram_size = left;
 	regions_build();
-	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions\n", (unsigned) left / 1024,
-	       (unsigned) stream_stats.vram_texels / 1024, num_regions);
+	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions; %u KB lent\n",
+	       (unsigned) left / 1024, (unsigned) stream_stats.vram_texels / 1024, num_regions,
+	       (unsigned) (lend_at ? lend : 0) / 1024);
 }
 
 /* the uploads the GPU took: the images' pixels go, the blocks may move */
@@ -1354,6 +1386,95 @@ static void trims(void)
 		r->tmp = 0;
 		r->tmp_size = 0;
 	}
+}
+
+/* the room taken from the pool's end: 1, or 0 when the pool cannot spare
+   it for the pinned assets (nothing dropped then) */
+static int lend_room(void)
+{
+	uint32_t n = lend_bytes, pinned = 0;
+	for (int i = 0; i < MAX_RES; i++)
+		if (res[i].asset >= 0 && assets[res[i].asset].last == STREAM_PIN)
+			pinned += res[i].ram_size + res[i].tmp_size;
+	if ((uint32_t) (pool_end - pool) < n + pinned)
+		return 0;
+	DrawSync(0);                              /* the images uploaded: their pixels go, */
+	for (int i = 0; i < MAX_RES; i++)         /* no block pinned */
+		if (res[i].asset >= 0 && res[i].trim)
+			res[i].trim = 1;
+	trims();
+	while (ram_used() > (uint32_t) (pool_end - pool) - n) {
+		int v = least_wanted(STREAM_PIN, NEED_RAM);
+		if (v < 0)
+			return 0;
+		evict(v);
+	}
+	ram_compact();
+	pool_end -= n;
+	lend_at = pool_end;
+	return 1;
+}
+
+/* the lent block's turn, the drive free (no read in flight, none
+   waiting): 1 while it holds the drive (no asset's read starts) */
+static int lend_turn(void)
+{
+	if (lend_state == L_READING) {
+		int left = CdReadSync(1, 0);          /* (also runs CdReadRetry's retries) */
+		if (left > 0)
+			return 1;
+		lend_state = left == 0 ? L_IN : L_ROOM;   /* (an error: read again) */
+		lend_reads += left == 0;
+		return left != 0;
+	}
+	if (lend_state == L_WANT) {
+		if (!lend_room()) {
+			lend_state = L_SHORT;
+			printf("stream: no room for the %u KB asked for\n", (unsigned) lend_bytes / 1024);
+			return 0;
+		}
+		lend_state = L_ROOM;
+	}
+	if (lend_state != L_ROOM)
+		return 0;
+	if (!music_suspend())                     /* (fading: the read waits) */
+		return 1;
+	if (!music_read_ok((int) (lend_bytes / QST_SECTOR)))
+		return 1;                             /* (the SPU music's ring too low: its refill first) */
+	CdlLOC loc;
+	CdIntToPos(lend_lba, &loc);
+	CdControl(CdlSetloc, &loc, 0);
+	if (CdReadRetry((int) (lend_bytes / QST_SECTOR), (uint32_t *) lend_at, CdlModeSpeed, 3))
+		lend_state = L_READING;
+	return 1;
+}
+
+void stream_lend(int32_t lba, int sectors)
+{
+	stream_unlend();
+	lend_lba   = lba;
+	lend_bytes = sectors > 0 ? (uint32_t) sectors * QST_SECTOR : 0;
+	lend_state = lend_bytes ? L_WANT : L_NONE;
+}
+
+uint8_t *stream_lent(uint32_t *reads)
+{
+	*reads = lend_reads;
+	return lend_state == L_IN ? lend_at : 0;
+}
+
+void stream_unlend(void)
+{
+	if (lend_state == L_READING) {
+		CdReadBreak();
+		CdReadSync(0, 0);
+	}
+	DrawSync(0);                              /* (the GPU done with the block's packets) */
+	if (lend_at && lend_at == pool_end)       /* (it always is: back to the pool) */
+		pool_end += lend_bytes;
+	lend_at    = 0;
+	lend_bytes = 0;
+	lend_state = L_NONE;
 }
 
 void stream_frame(void)
@@ -1393,6 +1514,8 @@ void stream_frame(void)
 	if (sread.a >= 0 && sread.step != SR_WAIT && !sound_step())   /* a sound's, piece by piece */
 		return;
 	if (waiting < 0) {
+		if (lend_turn())                      /* (the lent block's read first) */
+			return;
 		int a = next_wanted(0);                   /* (with a carousel: one it lacks) */
 		if (a < 0) {
 			if (music_suspended())
@@ -1424,6 +1547,11 @@ void stream_frame(void)
 
 void stream_preload(void)
 {
+	if (lend_state == L_ROOM &&               /* the lent block (the map's start gave it room) */
+	    read_sectors(lend_lba, (int) (lend_bytes / QST_SECTOR), lend_at)) {
+		lend_state = L_IN;
+		lend_reads++;
+	}
 	if (!num_assets || !pool)
 		return;
 	if (world.has_spawn)                      /* (the player is put there after the load) */
