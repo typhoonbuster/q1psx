@@ -5038,3 +5038,104 @@ Shortened; what was seen:
     the load nothing and could sample every way densely with a tighter
     margin; the cook would need the movers' travel (pos1 / pos2, the
     paths) and the cut on the host.
+
+## §45 — The 2D gun's packets only while it is drawn (2026-10-19)
+
+- **The ask**, after §44 left E3M4 and E4M7 with no stream pool: the 2D guns (102 KB) loaded only when chosen, that room back to the monsters'
+  streaming (E3M4, E4M7).
+- **Before**: the 2D gun's packets (§38: every frame's texels and each
+  weapon's CLUT as GPU packets, 107220 bytes) were copied to the game arena
+  at boot, whichever gun was chosen: 224 KB of game arena, 105 KB of them
+  for a gun most never draw.
+- **Now** the boot keeps the 2D gun's tables (its weapons and frames,
+  1 KB) and where its packets are on the disc (`gdata.ws_lba`,
+  `ws_sectors`, `ws_skew`: 53 sectors of GAME_<n>.DAT, the first one
+  1068 bytes in). The packets come to RAM only while the 2D gun is the gun
+  drawn:
+  - the stream lends them its RAM pool's end (`stream_lend`, `stream_lent`,
+    `stream_unlend`, engine/stream.c): at a map's start before its own
+    buffers (the expanded frames' cache, the sounds' staging buffer, the
+    pool), so the 2D gun finds its room wherever it found it in the game
+    arena; during the game (the option changed in the menu) from the
+    pool's end, once no read is in flight: the assets wanted least
+    dropped (never a pinned one; nothing dropped when the pool cannot
+    spare it), the pool compacted, then the 53 sectors read in the
+    stream's turn, the music paused as for an asset's read;
+  - the block sits past `pool_end`: compaction never moves it (the
+    packets' links are absolute) and it goes back to the pool when another
+    gun is chosen (after `DrawSync`: the GPU may still be reading a chain
+    the last frame hung);
+  - `game_ws_sync` (engine/game.c), at a map's start and each frame
+    outside the menu, asks for the block or gives it back; once read, its
+    chains' links are made absolute (`gdata_ws_link`); a new read (the
+    same place after a map's load) is told by the stream's count of reads;
+  - until the block is read the 3D gun is drawn (`ws_draw` returns 0): the
+    2D gun shows a few frames after the menu closes.
+- **The arenas**:
+  - game arena 224 → 116 KB (111.5 KB used at boot, `mem: game arena` in
+    the boot log);
+  - level arena 1136 → 1242 KB (the 108 KB, less 2 KB for the stack: the
+    lending code is 1.4 KB);
+  - `MEM_LEVEL_WORLD` (1136 KB) caps the arena while the world loads
+    (`mem_level_cap`): a map's geometry falls back exactly as before, and
+    the room goes to what follows the world (the brush models' pieces, the
+    stream's pool, the 2D gun), not to a larger world.
+- **The pools** (every map at its high levels, PCSX-Redux in fast
+  forward; `BENCH_MAPS=1 VIEWS=0`, `VIEWMODEL=2` for the 2D gun):
+
+  | Map | 2D gun (as before) | 3D gun or none |
+  |---|---|---|
+  | START | 332 KB (+ 106 KB lent) | 438 KB |
+  | E1M1 | 279 | 385 |
+  | E1M2 | 227 | 333 |
+  | E1M3 | 157 | 263 |
+  | E1M4 | 114 | 220 |
+  | E1M5 | 254 | 360 |
+  | E1M6 | 261 | 367 |
+  | E1M7 | 772 | 878 |
+  | E1M8 | 559 | 665 |
+  | E2M1 | 176 | 282 |
+  | E2M2 | 173 | 279 |
+  | E2M3 | 155 | 261 |
+  | E2M4 | 107 | 213 |
+  | E2M5 | 187 | 293 |
+  | E2M6 | 96 | 202 |
+  | E2M7 | 103 | 209 |
+  | E3M1 | 221 | 327 |
+  | E3M2 | 366 | 472 |
+  | E3M3 | 349 | 455 |
+  | E3M4 | 2 | 92 |
+  | E3M5 | 92 | 198 |
+  | E3M6 | 46 | 152 |
+  | E3M7 | 320 | 426 |
+  | E4M1 | 209 | 315 |
+  | E4M2 | 203 | 309 |
+  | E4M3 | 221 | 327 |
+  | E4M4 | 138 | 244 |
+  | E4M5 | 117 | 223 |
+  | E4M6 | 282 | 388 |
+  | E4M7 | 0 | 97 |
+  | E4M8 | 183 | 289 |
+  | END | 708 | 814 |
+
+  - With the 3D gun (the default) or none, every map's pool is 106 KB
+    larger; E3M4 92 KB (2 before), E4M7 97 KB (0), E3M6 152 KB (46).
+  - With the 2D gun, the pools are §44's to the kilobyte.
+  - `MONSTERS=1 MAP=E3M4` and `MAP=E4M7` (3D gun): streamed monsters
+    drawn in their dumps (1-2 at a time), none before; 163 and 104 reads,
+    no "not a sound". E3M4's 92 KB hold 28-38 of the 83 assets its
+    scenario wants: some kinds are still missing at their dumps.
+- **Checking:**
+  - the 2D gun drawn the same: `BENCH_GAME=1 VIEWMODEL=2 HASHONLY=1`, the
+    25 frame hashes identical to 000b210's (its packets in the game
+    arena);
+  - the release on PCSX-Redux's real GPU (Lua: the pad driven, the screen
+    saved): Graphics → Draw weapon 2D (the hint "uses 106 KB of RAM"),
+    the menu closed: the 3D gun, then the 2D gun 200 vblanks later; 3D
+    again: the 3D gun;
+  - the links: stack room 18272 B (default), 18672 B (release);
+  - `BENCH_GAME=1` links with a 4 KB stack floor (bench.sh's `STACK_MIN`,
+    4096 by default with it): its scenarios' code leaves the stack 6.8 KB,
+    4.8 KB of it never reached.
+- **Left:** in 2D the block is read again at each map's start (53
+  sectors: about 0.4 s of the load at the drive's 2x).

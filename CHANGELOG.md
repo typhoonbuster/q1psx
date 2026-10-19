@@ -1344,4 +1344,15 @@ followed by R0-R4.
     the stream's staging buffer, every streamed sound was read to address
     0 and given up for good. Those two maps still have no room for the
     monsters (their worlds take 742-783 KB).
+- **The 2D gun's packets only while it is drawn** (2026-10-19: that room back to the monsters' streaming). §45:
+  - **106 KB more for the monsters on every map** with the 3D gun (the
+    default) or none: the 2D gun's packets no longer sit in the game arena
+    (224 → 116 KB); the level arena grows to 1242 KB, the world keeping
+    its old 1136 KB. E3M4's pool 2 → 92 KB, E4M7's 0 → 97 KB: their
+    monsters are drawn.
+  - **The 2D gun as before:** chosen, it borrows the end of the stream's
+    pool (first at a map's start, so it fits wherever it did); chosen
+    during a game, it shows a few frames after the menu closes; left, its
+    room goes back to the stream. Its frames are drawn the same (the
+    game bench's hashes).
 
