@@ -27,7 +27,14 @@ typedef struct {
 	uint32_t        num_finales;
 	const qg_wsprite *wsprites;  /* [QG_WEAPONS]: the 2D weapons            */
 	const qg_wframe  *wframes;   /* their frames                             */
-	uint8_t          *wpix;      /* their packets (links made absolute)      */
+	uint32_t          num_wframes;
+	uint8_t          *wpix;      /* their packets (links made absolute), in
+	                                RAM only while the 2D gun is drawn (the
+	                                stream's pool lends them its end:
+	                                game_ws_sync), NULL otherwise          */
+	int32_t           ws_lba;    /* the packets' first sector on the disc    */
+	uint16_t          ws_sectors, ws_skew;   /* their sectors; their first
+	                                byte's place in the first              */
 	qg_pic            wslot;     /* the VRAM slot a frame is copied to       */
 	const qg_free  *free;      /* what the images leave of the game's pages
 	                              (the streamed skins' room), and its count */
@@ -44,6 +51,10 @@ int gdata_load(int level);
 /* The models of model level `level` in place of the loaded ones (the
    level arena stages the file: before a map's load). 1 on success. */
 int gdata_set_models(int level);
+
+/* The 2D weapons' packets just read to `block` (ws_sectors sectors from
+   ws_lba): their links made absolute; where they start (block + ws_skew). */
+uint8_t *gdata_ws_link(uint8_t *block);
 
 /* a model's frame pool and record stream */
 static inline const qw_vert *gd_frame(const qg_model *m, int frame)
