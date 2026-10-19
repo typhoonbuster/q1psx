@@ -381,10 +381,12 @@ static int load_level(int map)
 		r_bind_world();
 		bmf_level();                            /* (the brush models' pieces: anew) */
 		ents_load();                            /* the map's entities */
-		bmf_reserve();                          /* (their pieces' room, before the stream's) */
-		stream_map_start(STREAM_KEEP);          /* the arena's rest: the streamed assets */
 		monsters_map_start();
 		ents_spawn(1);
+		bmf_reserve();                          /* (their pieces' room, measured where they
+		                                           stand and along a mover's travel: before
+		                                           the stream's) */
+		stream_map_start(STREAM_KEEP);          /* the arena's rest: the streamed assets */
 		bmf_load();                             /* (the drawn ones cut where they stand) */
 		snd_map_start();                        /* (before any residency pass: it turns the
 		                                           bank's static sources into the entries

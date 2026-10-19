@@ -24,11 +24,12 @@
 #include "ents.h"
 
 /* At a level's load: bmf_level first (this level's caches to make), then,
-   once the map's entities are loaded and before the stream manager takes
+   once the map's entities are spawned and before the stream manager takes
    the level arena's rest, bmf_reserve (room for the pieces of every model
-   the entities name and the cook drew; a model without room keeps the old
-   way: drawn whole in one leaf). After each spawn (the load's, a death's):
-   bmf_load, the drawn models cut where they stand. */
+   the spawned entities stand with and the cook drew, sized on what their
+   cuts take: where a model stands, along a mover's travel; a model without
+   room keeps the old way: drawn whole in one leaf). After each spawn (the
+   load's, a death's): bmf_load, the drawn models cut where they stand. */
 void bmf_level(void);
 void bmf_reserve(void);
 void bmf_load(void);

@@ -359,6 +359,26 @@ static int32_t fabs_dot_size(const int32_t v[3], const edict_t *self)   /* 1/8 u
 	return (int32_t) ((d < 0 ? -d : d) / 4096);
 }
 
+/* fd_secret_use's two moves' ends: aside (or down), then back */
+static void secret_dests(const edict_t *self, int32_t dest1[3], int32_t dest2[3])
+{
+	int temp = self->spawnflags & SECRET_1ST_LEFT ? -1 : 1;
+	int32_t f[3], r[3], u[3];
+	secret_vectors(self, f, r, u);
+	int32_t width  = self->t_width * CLIP_SUB, length = self->t_length * CLIP_SUB;
+	if (!width)
+		width = fabs_dot_size(self->spawnflags & SECRET_1ST_DOWN ? u : r, self);
+	if (!length)
+		length = fabs_dot_size(f, self);
+	for (int k = 0; k < 3; k++) {
+		if (self->spawnflags & SECRET_1ST_DOWN)
+			dest1[k] = self->origin[k] - (int32_t) ((int64_t) u[k] * width / 4096);
+		else
+			dest1[k] = self->origin[k] + (int32_t) ((int64_t) r[k] * width * temp / 4096);
+		dest2[k] = dest1[k] + (int32_t) ((int64_t) f[k] * length / 4096);
+	}
+}
+
 static void fd_secret_use(edict_t *self)
 {
 	self->health = 10000;
@@ -373,21 +393,7 @@ static void fd_secret_use(edict_t *self)
 	self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
 	ent_sound(self, CHAN_VOICE, self->noise1, 255, ATTN_NORM);   /* a sound, a little wait */
 	self->nextthink = self->ltime + TICKS(10);
-	int temp = self->spawnflags & SECRET_1ST_LEFT ? -1 : 1;
-	int32_t f[3], r[3], u[3];
-	secret_vectors(self, f, r, u);
-	int32_t width  = self->t_width * CLIP_SUB, length = self->t_length * CLIP_SUB;
-	if (!width)
-		width = fabs_dot_size(self->spawnflags & SECRET_1ST_DOWN ? u : r, self);
-	if (!length)
-		length = fabs_dot_size(f, self);
-	for (int k = 0; k < 3; k++) {
-		if (self->spawnflags & SECRET_1ST_DOWN)
-			self->dest1[k] = self->origin[k] - (int32_t) ((int64_t) u[k] * width / 4096);
-		else
-			self->dest1[k] = self->origin[k] + (int32_t) ((int64_t) r[k] * width * temp / 4096);
-		self->dest2[k] = self->dest1[k] + (int32_t) ((int64_t) f[k] * length / 4096);
-	}
+	secret_dests(self, self->dest1, self->dest2);
 	sub_calc_move(self, self->dest1, self->speed, fd_secret_move1);
 	ent_sound(self, CHAN_VOICE, self->noise2, 255, ATTN_NORM);
 }
@@ -714,6 +720,45 @@ static void func_train_find(edict_t *self)
 		self->think     = train_next;
 		ent_wake(self);
 	}
+}
+
+/* The places a train's or a secret door's model goes through, for its
+   pieces' room (engine/bmfrag.c bmf_reserve): a train's corners in its
+   path's order (func_train_find's and train_next's: a corner's origin less
+   the model's mins), up to the first corner it comes back to (that one
+   again: the way back to it), a secret door's place and its two moves'
+   ends. Room in out for max + 1 places, in seen (the corners on the way)
+   for max. The count, 0 for anything else, -1 for a path of more than max
+   corners. */
+int movers_path(const edict_t *e, int32_t (*out)[3], const edict_t **seen, int max)
+{
+	if (e->class == QE_FUNC_DOOR_SECRET) {
+		if (max < 3)
+			return 0;
+		memcpy(out[0], e->origin, sizeof out[0]);
+		secret_dests(e, out[1], out[2]);
+		return 3;
+	}
+	if (e->class != QE_FUNC_TRAIN)
+		return 0;
+	int n = 0;
+	for (uint16_t name = e->target; name; ) {
+		const edict_t *targ = ent_find(0, name);
+		if (!targ)
+			break;
+		int back = 0;
+		for (int j = 0; j < n && !back; j++)
+			back = seen[j] == targ;
+		if (!back && n == max)
+			return -1;
+		for (int k = 0; k < 3; k++)
+			out[n][k] = targ->origin[k] - e->mins[k];
+		if (back)                                 /* looped: its way back to that corner */
+			return n + 1;
+		seen[n++] = targ;
+		name = targ->target;
+	}
+	return n;
 }
 
 static void func_train(edict_t *self, int teleporttrain)

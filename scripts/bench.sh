@@ -16,7 +16,11 @@
 #         with the flat shading. VIEWMODEL=0 / 2: no gun / the 2D gun (1, the
 #         3D model, by default).
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the
-#         world's BSP (engine/bmfrag.c): an A / B.
+#         world's BSP (engine/bmfrag.c): an A / B. BMFCHK=1 (with
+#         BENCH_MAPS=1 VIEWS=0) cuts every door, button, plat, train and
+#         secret door at 33 places along each of its ways in its room
+#         ("bmfchk" lines: the cuts that do not fit, the fullest rooms;
+#         docs/porting-notes.md §44).
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
@@ -63,6 +67,7 @@ DRAWDIST=${DRAWDIST:-0}
 FLAT=${FLAT:-0}
 VIEWMODEL=${VIEWMODEL:-1}
 NOBMF=${NOBMF:-0}
+BMFCHK=${BMFCHK:-0}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
@@ -81,6 +86,7 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
+      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null
@@ -94,7 +100,8 @@ LOG="$ROOT/build-bench/bench.log" \
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
-[ "$MONSTERS" != 0 ] && grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400
+[ "$BMFCHK" = 1 ] && { grep '^bmfchk' "$ROOT/build-bench/bench.log" || true; }
+[ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
 [ "$MONSTERS" = 2 ] && exit 0
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0
 [ "$ENTS" = 1 ] && MAP=E1M1          # (its dumps: e1m1's textures, the first map)
