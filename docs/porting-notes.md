@@ -4673,3 +4673,106 @@ Shortened; what was seen:
   shifts and two adds instead of two shifts and an add, +0.5 to +1.9 % on
   E1M1's views with no brush model in sight; the caches are found by model
   number instead.
+
+## §42 — The boot that found no map, and the stack's room (2026-10-19)
+
+- **The report**: after the merge of the monsters, the streaming and the brush models' cut, the
+  release broken. The release disc with every
+  map (pak1: 32 maps, 386 files in `\MAPS`) booted with `world: 0 maps on
+  the disc`, after `psxcd: invalid args to CdReadRetry()`.
+- **The cause, twice:**
+  - psxcd's ISO lookups (`CdSearchFile`, `CdOpenDir`) read a whole
+    directory into a buffer malloc'd from the SDK's heap, which libc's
+    start-up places between the end of the BSS (`_end`) and 0x801FFFF8,
+    under the stack. The monsters and the streaming grew the code from
+    180 KB to 269 KB, and the BSS with it: the heap was 21 KB, `\MAPS` is
+    24 KB (12 sectors) on a disc with every map. The malloc returned NULL;
+    `CdReadRetry` refused the NULL buffer (the SDK's argument check:
+    without it the DMA would have written 24 KB over the kernel at address
+    0). The listing came back empty, so no map; every lookup of a map's
+    file failed the same way.
+  - The brush models' pieces (§41) then grew the BSS past the RAM: the
+    release build's `_end` was 0x80200570, 1.4 KB beyond the 2 MB. That
+    is the RAM's mirror, so the kernel's first bytes. The stack, from
+    0x801FFFF0 down, started inside the BSS. Nothing checked either.
+- **The fix:**
+  - `engine/cd.c` reads the ISO9660 volume itself, at the first lookup
+    (after `music_init`, when the drive has answered):
+    - the volume descriptor (sector 16);
+    - the root's records;
+    - the directories in it (8 at most, one level deep: the disc has the
+      root and `\MAPS`).
+
+    A lookup reads its directory's records into the level arena's top
+    (mark, then release), where psxcd used its heap. It is the same seek
+    and read (about 80 ms for `\MAPS`).
+  - `cd_list_dir` works the same way. `cd_find` gives a file's first
+    sector and size; `stream_init` uses it for `STREAM.DAT`.
+  - Nothing calls psxcd's ISO code any more, so `isofs.o` is no longer
+    linked. That frees 4.5 KB of code, its 2 KB descriptor buffer and the
+    heap's directory copies.
+  - **The level arena:** 1152 KB → 1140 KB. Every preset gets back the
+    stack's 16 KB (architecture.md §4). The streamed assets' RAM pool,
+    which takes whatever the arena leaves, has 12 KB less on every map
+    (START: 262 → 250 KB).
+  - **`scripts/ramcheck.sh`** runs after every link (CMakeLists.txt, after
+    hazcheck). It measures `_end` against the stack's top (0x801FFFF0) and
+    fails the build under 16 KB.
+- **Stack room, measured:**
+
+  | Build | Default | Bench | Release |
+  |---|---|---|---|
+  | e6c2bde as merged | — | — | −1400 B (`_end` 0x80200570) |
+  | `cd.c` alone | 4560 B | 49880 B | 5024 B |
+  | With the arena | 16848 B | 62168 B | 17312 B |
+
+- **A level change that stopped the game** (found by the checks below).
+  `load_level` ran `stream_preload` before `snd_map_start`. The
+  preload's residency pass asks `snd_stream_wants` for the static
+  sources' streamed sounds, but only `snd_map_start` turns the new bank's
+  static sources (the file's 20-byte entries) into the 12-byte entries
+  that function reads, with this map's voices. The pass read the file's
+  entries with the previous map's voices: garbage reaches, one of them 0
+  on E2M7. The all-maps bench stopped there on a `break 7` (a division
+  by zero), on PCSX-Redux and DuckStation alike; in a game, a level
+  change could do the same.
+  - `snd_map_start` now runs first. It needs nothing streamed: a static
+    voice is keyed when its samples are in.
+  - The preload now also wants the static sources' sounds around the
+    spawn. They used to wait for the first passes of the game, each read
+    a music pause.
+- **The streamed skins' uploads** (found on the way). `LoadImage` sends
+  `w × h / 2` words for `w × h` halfwords, rounded down. Its DMA then
+  rounds them up to its 16-word unit, which the cook's 64-byte zero
+  padding feeds.
+  - An odd count of halfwords whose half is a multiple of 16 therefore
+    went one word short. The GPU took the next command's first word for
+    the last pixels: a broken command stream on the machine and on
+    DuckStation; PCSX-Redux forgives it.
+  - That hit 10 of STREAM.DAT's 212 images: `gib1`, `dog`, `h_demon` and
+    two more.
+  - `qcook`'s `cut_image` now gives every image an even count of
+    halfwords (two more edge columns when both halves are odd). The
+    engine reads each image's own size, so nothing else changed.
+  - `vram_upload` (world.c) has the same rounding for an odd rectangle;
+    no texture set or `GAME_<n>.DAT` rectangle is odd today.
+- **Checking:**
+  - **Every link:** `ramcheck` for the three presets (the table above).
+  - **The release disc with every map:** boots with `world: 32 maps on
+    the disc`; START loads, and its stream pool is 250 KB.
+  - **PCSX-Redux, fast forward** (`BENCH_MAPS=1 PLAY=1 HASHONLY=1`):
+    - The emulator paces itself on its audio output; a private config
+      with `SPU.Speed = 10` runs the same emulation ten times faster.
+      The frames' hashes of a normal-speed run are identical, for the 44
+      frames both runs reached.
+    - All 32 maps load and play their loading screen and 30 frames, up
+      to `bench done`; E2M7 passes since the load-order fix.
+  - **DuckStation:**
+    - Before the load-order fix, the first 15 maps loaded and played;
+      the run then stopped on E2M7's `break 7`, as PCSX-Redux did.
+    - After the fix it was not run again: the emulator no longer starts
+      on this machine. The display device failed once (`VK_INCOMPLETE`),
+      then every start waited before the boot, at any speed.
+    - **To do before a disc goes to the machine.**
+  - **The cook:** none of STREAM.DAT's 212 images has an odd count of
+    halfwords any more.

@@ -1294,3 +1294,21 @@ followed by R0-R4.
   over the pit touches more leaves than a box keeps: it went with them).
   The models are cut at the load and again when they move; the pressed
   E1M1 button, lost on the way, shown again.
+- **The boot that found no map, and the stack's room** (2026-10-19: the release broken after the merges). §42:
+  - **Every map found again.** The release disc with every map booted
+    with no map: psxcd's lookups malloc a whole directory from the SDK's
+    heap, 21 KB once the monsters were in, against `\MAPS`'s 24 KB. The
+    engine now reads the disc's directories itself, into the level
+    arena's top, and psxcd's ISO code is no longer linked.
+  - **The stack back under the BSS.** The merged build's BSS ended
+    1.4 KB past the 2 MB, with the stack inside it. The level arena goes
+    from 1152 to 1140 KB, giving the stack 16 KB in every preset (the
+    streaming pool loses 12 KB). `scripts/ramcheck.sh` fails the build
+    after each link when the stack gets less than 16 KB.
+  - **A level change could stop the game.** The static sounds' wants
+    were read before their table was built: a division by zero on E2M7.
+    `snd_map_start` now runs before the stream's preload.
+  - **Skin uploads.** 10 streamed skin images (gib1, dog, h_demon...)
+    sent their upload one word short, which breaks the GPU's command
+    stream on the machine. The cook now gives every image an even count
+    of halfwords.
