@@ -1,9 +1,13 @@
 /*
  * q1psx — the streamed assets "QST1": every resource a map loads only when
  * the player comes near what uses it (docs/porting-notes.md §40). Written
- * by `qcook stream`, one file on the disc (STREAM.DAT) for every map;
- * engine/stream.c reads its directory once at boot, then each asset on
- * demand, straight from the disc into its RAM pool, while the game runs.
+ * by `qcook stream`, one file on the disc per model level (STREAM_<n>.DAT,
+ * formats/qlevels.h: the same assets in the same order, the models'
+ * triangles reduced at that level: a monster's body at every level, the
+ * rest below high, §43) for every map; engine/stream.c reads the level's
+ * directory at boot (again when a map loads at another level), then each
+ * asset on demand, straight from the disc into its RAM pool, while the
+ * game runs.
  *
  * An asset is one Quake resource, named by the qs_hash() of its pak name
  * ("progs/soldier.mdl", "soldier/sight1.wav"), so the engine finds what an

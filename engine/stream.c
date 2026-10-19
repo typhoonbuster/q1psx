@@ -89,7 +89,7 @@ typedef struct {
 
 static asset_t *assets;
 static int      num_assets;
-static int32_t  base_lba;      /* STREAM.DAT's first sector on the disc          */
+static int32_t  base_lba;      /* STREAM_<n>.DAT's first sector on the disc      */
 
 static res_t    res[MAX_RES];
 
@@ -133,43 +133,44 @@ static int read_sectors(int32_t lba, int n, void *dst)
 	return CdReadSync(0, 0) >= 0;
 }
 
-void stream_init(void)
+static int stream_level = -1;   /* the model level whose STREAM_<n>.DAT is read */
+
+/* STREAM_<level>.DAT's directory into assets[] (allocated at the first:
+   every level's file holds the same assets in the same order, its models
+   reduced at that level, the same sounds), through the level arena's top */
+static int load_directory(int level)
 {
-	num_assets = 0;
-	for (int i = 0; i < MAX_RES; i++)
-		res[i].asset = -1;
+	char name[24];
+	snprintf(name, sizeof name, "\\STREAM_%d.DAT;1", level);
 	uint32_t lba;
-	if (!cd_find("\\STREAM.DAT;1", &lba, NULL)) {
-		printf("stream: no STREAM.DAT on the disc\n");
-		return;
+	if (!cd_find(name, &lba, NULL)) {
+		printf("stream: no %s on the disc\n", name);
+		return 0;
 	}
-	base_lba = (int32_t) lba;
 	uint32_t mark = mem_level_mark();
 	qst_header *h = mem_level_alloc(QST_SECTOR);
-	if (!h || !read_sectors(base_lba, 1, h) || memcmp(h->magic, QSTREAM_MAGIC, 4) ||
+	if (!h || !read_sectors((int32_t) lba, 1, h) || memcmp(h->magic, QSTREAM_MAGIC, 4) ||
 	    h->dir_sectors < 1 || h->dir_sectors > 16) {
-		printf("stream: STREAM.DAT unreadable or of another version\n");
+		printf("stream: %s unreadable or of another version\n", name);
 		mem_level_release(mark);
-		return;
+		return 0;
 	}
 	uint32_t n = h->num_assets, dir = h->dir_sectors, ofs = h->ofs_assets;
 	if (dir > 1) {
 		mem_level_release(mark);
 		h = mem_level_alloc(dir * QST_SECTOR);
-		if (!h || !read_sectors(base_lba, (int) dir, h)) {
+		if (!h || !read_sectors((int32_t) lba, (int) dir, h)) {
 			mem_level_release(mark);
-			return;
+			return 0;
 		}
 	}
-	if (ofs + n * sizeof(qst_asset) > dir * QST_SECTOR) {
+	if (ofs + n * sizeof(qst_asset) > dir * QST_SECTOR || (assets && n != (uint32_t) num_assets)) {
+		printf("stream: %s's directory does not match\n", name);
 		mem_level_release(mark);
-		return;
+		return 0;
 	}
-	assets = mem_game_alloc(n * sizeof *assets);
-	if (!assets) {
-		mem_level_release(mark);
-		return;
-	}
+	if (!assets)
+		assets = mem_game_alloc(n * sizeof *assets);
 	const qst_asset *d = (const qst_asset *) ((const uint8_t *) h + ofs);
 	for (uint32_t i = 0; i < n; i++) {
 		memset(&assets[i], 0, sizeof assets[i]);
@@ -192,7 +193,26 @@ void stream_init(void)
 		assets[i].group_first = (int16_t) first;
 	}
 	mem_level_release(mark);
-	printf("stream: STREAM.DAT, %d assets from sector %d\n", num_assets, (int) base_lba);
+	base_lba     = (int32_t) lba;
+	stream_level = level;
+	printf("stream: %s, %d assets from sector %d\n", name, num_assets, (int) base_lba);
+	return 1;
+}
+
+void stream_init(int level)
+{
+	num_assets = 0;
+	for (int i = 0; i < MAX_RES; i++)
+		res[i].asset = -1;
+	load_directory(level);
+}
+
+void stream_set_level(int level)
+{
+	if (level == stream_level || !assets)
+		return;
+	stream_abort();
+	load_directory(level);
 }
 
 int stream_find(const char *name)

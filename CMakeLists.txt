@@ -50,10 +50,12 @@ add_custom_command(TARGET q1psx POST_BUILD
 	VERBATIM)
 
 # The stack's room under the BSS (scripts/ramcheck.sh): the build fails when
-# the code and the arenas leave it less than 16 KB of the 2 MB.
+# the code and the arenas leave it less than Q1PSX_STACK_MIN bytes of the
+# 2 MB (16 KB; the boot log's "stack:" line says what a map's load reached).
 find_program(Q1PSX_NM NAMES mipsel-none-elf-nm REQUIRED)
+set(Q1PSX_STACK_MIN 16384 CACHE STRING "Least stack room the link accepts, bytes")
 add_custom_command(TARGET q1psx POST_BUILD
-	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/ramcheck.sh ${Q1PSX_NM} $<TARGET_FILE:q1psx> 16384
+	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/ramcheck.sh ${Q1PSX_NM} $<TARGET_FILE:q1psx> ${Q1PSX_STACK_MIN}
 	COMMENT "Checking the stack's room in main RAM (scripts/ramcheck.sh)"
 	VERBATIM)
 
@@ -205,11 +207,16 @@ foreach(_src ${_games})                                 # game_2.dat -> GAME_2.D
 	string(TOUPPER "${_base}" _name)
 	string(APPEND GAME_ENTRY "<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t")
 endforeach()
-# the streamed assets (formats/qstream.h: read while the game runs, engine/stream.c)
+# the streamed assets per model level (formats/qstream.h: read while the
+# game runs, engine/stream.c): stream_2.dat -> STREAM_2.DAT
 set(STREAM_ENTRY "")
-if(EXISTS "${PROJECT_SOURCE_DIR}/cooked/id1/stream.dat")
-	set(STREAM_ENTRY "<file name=\"STREAM.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/stream.dat\" />")
-endif()
+file(GLOB _streams CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/stream_*.dat)
+list(SORT _streams)
+foreach(_src ${_streams})
+	get_filename_component(_base "${_src}" NAME)
+	string(TOUPPER "${_base}" _name)
+	string(APPEND STREAM_ENTRY "<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t")
+endforeach()
 set(_maps "")
 set(_level_names low medium high ultra)
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld

@@ -3,7 +3,8 @@
  * §40): what a map loads only when the player comes near what uses it.
  *
  * Four pools, each a cache of the one above it:
- *   the disc     STREAM.DAT, every asset a sector apart;
+ *   the disc     STREAM_<n>.DAT (n: the model level), every asset a
+ *                sector apart;
  *   RAM          what the level arena leaves once the map is in (bump
  *                allocation, compacted when a block no longer fits);
  *   VRAM         a model's skin images, in what the map's textures and the
@@ -42,8 +43,14 @@
                                        one)                                   */
 #define STREAM_SOUND_REACH 1500u    /* a sound's (a full sound is heard to 1000) */
 
-/* boot, after cd_init and gdata_load: STREAM.DAT's directory */
-void stream_init(void);
+/* boot, after cd_init and gdata_load: the directory of STREAM_<level>.DAT,
+   the file of the model level (formats/qlevels.h: its models reduced at
+   that level, tools/qcook/game.c stream_reduce) */
+void stream_init(int level);
+
+/* a map's load at another model level than the file read: that level's
+   directory (every asset back on the disc) */
+void stream_set_level(int level);
 
 /* an asset's index from its pak name ("progs/soldier.mdl") or its qs_hash,
    -1 if the disc has none; an asset's hash */

@@ -29,9 +29,10 @@
 # once per model level, the game data (weapon models, projectiles, the
 # HUD; formats/qgame.h):
 #   cooked/id1/game_<N>.dat     QGM7                              -> disc GAME_<N>.DAT
-# and once, the streamed assets (the monsters, the items' models, the
-# positional sounds; formats/qstream.h):
-#   cooked/id1/stream.dat       QST1                              -> disc STREAM.DAT
+# and once per model level, the streamed assets (the monsters, the items'
+# models, the positional sounds; formats/qstream.h; the models reduced at
+# that level: tools/qcook/game.c stream_reduce):
+#   cooked/id1/stream_<N>.dat   QST1                              -> disc STREAM_<N>.DAT
 # and the music, as 44.1 kHz stereo WAV for mkpsxiso's audio tracks:
 #   cooked/music/trackNN.wav                              -> CD-DA track NN
 # Jobs run in parallel; each one's log is shown only if it fails.
@@ -64,15 +65,22 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
-      cooked/id1/game*.dat cooked/id1/stream.dat
+      cooked/id1/game*.dat cooked/id1/stream*.dat
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game > "$LOGS/game.log" 2>&1 \
 	|| { echo "cook FAILED: game data"; cat "$LOGS/game.log"; exit 1; }
-# the streamed assets (formats/qstream.h): the monsters' models, every map's
-tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} \
-                         --out cooked/id1/stream.dat > "$LOGS/stream.log" 2>&1 \
-	|| { echo "cook FAILED: streamed assets"; cat "$LOGS/stream.log"; exit 1; }
+# the streamed assets per model level (formats/qstream.h): the monsters, the
+# items' models, the positional sounds
+pids=""
+for n in 0 1 2; do                               # the model levels: low, medium, high
+	tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --level $n \
+	                         --out cooked/id1/stream_$n.dat > "$LOGS/stream_$n.log" 2>&1 &
+	pids="$pids $!"
+done
+for p in $pids; do
+	wait "$p" || { echo "cook FAILED: streamed assets"; cat "$LOGS"/stream_*.log; exit 1; }
+done
 
 cook_one() {   # map axis level (t / g / m, 0..3)
 	local pak=$QUAKE_PAK0

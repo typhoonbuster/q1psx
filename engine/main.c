@@ -356,6 +356,8 @@ static void loading_screen(uint32_t done, uint32_t total)
 /* Load `map` at the settings' levels (textures, geometry, models), or at
    the highest lower geometry that fits the level arena; the game data's
    models at the models' level. Sets world_ok and binds the renderer. */
+static uint32_t stack_untouched(void);
+
 static int load_level(int map)
 {
 	world_ok = 0;
@@ -364,6 +366,7 @@ static int load_level(int map)
 	music_stop();                               /* one drive: the reads need it */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	gdata_set_models(settings.level[QL_MODELS]);
+	stream_set_level(settings.level[QL_MODELS]);   /* (its monsters, items at that level) */
 	int geo = settings.level[QL_GEOMETRY];
 	for (int g = geo; g >= 0 && !world_ok; g--)
 		if (settings_level_mask[QL_GEOMETRY] & 1 << g)
@@ -394,6 +397,7 @@ static int load_level(int map)
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		music_play(snd_cd_track());
 	}
+	printf("stack: %u bytes never reached\n", (unsigned) stack_untouched());
 	return world_ok;
 }
 
@@ -406,6 +410,8 @@ static int load_due(void)
 }
 
 /* --------------------------------------------------------------- frame -- */
+
+static int menu_shown = Q1PSX_RELEASE;     /* Quake's menu drawn (the release build; the bench's check) */
 
 static void frame_work(void)
 {
@@ -425,6 +431,8 @@ static void frame_work(void)
 	ents_render();
 #endif
 	prof_add(PROF_ENTS, t0, prof_now());    /* (the dlights' share counted apart) */
+	r_ui_room = menu_shown && menu_active() ? R_MENU_ROOM : 0;   /* (the menu's packets, after
+	                                           the world's: a full arena left it none) */
 	r_frame();
 	rl_end();
 	if (game_active)
@@ -432,7 +440,6 @@ static void frame_work(void)
 }
 
 static int overlay_on = !Q1PSX_RELEASE;   /* START toggles (the debug build) */
-static int menu_shown = Q1PSX_RELEASE;     /* Quake's menu drawn (the release build; the bench's check) */
 static int release_in_game;                /* the release build: a game begun (New Game, or
                                               the menu left on the first map) */
 #if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
@@ -2263,8 +2270,32 @@ static void release_new_game(void)
 static int release_started(void) { return release_in_game; }
 #endif
 
+/* The stack's high-water mark: scripts/ramcheck.sh checks its room at the
+   link, this measures what the game takes of it. The room between the
+   BSS's end and the stack is painted first thing at boot (nothing has
+   malloc'd yet); each map's load prints how much of it was never reached. */
+extern uint8_t _end[];
+#define STACK_PAINT 0x57ac57acu
+
+static void stack_paint(void)
+{
+	uint32_t *p = (uint32_t *) (((uint32_t) _end + 3) & ~3u);
+	uint32_t *top = (uint32_t *) __builtin_frame_address(0) - 64;
+	while (p < top)
+		*p++ = STACK_PAINT;
+}
+
+static uint32_t stack_untouched(void)
+{
+	const uint32_t *p = (const uint32_t *) (((uint32_t) _end + 3) & ~3u), *q = p;
+	while (*q == STACK_PAINT)
+		q++;
+	return (uint32_t) ((const uint8_t *) q - (const uint8_t *) p);
+}
+
 int main(void)
 {
+	stack_paint();
 	/* the BIOS console (printf) goes out on SIO1 at its boot-time baud rate;
 	   an emulator that times the serial port (PCSX-Redux since 2026-10)
 	   would cap the bench's display-list dumps at a few KB/s */
@@ -2287,7 +2318,7 @@ int main(void)
 	settings_defaults();
 	apply_settings();
 	gdata_load(settings.level[QL_MODELS]);
-	stream_init();
+	stream_init(settings.level[QL_MODELS]);
 	dl_init();
 	game_init();
 #ifdef Q1PSX_BENCH

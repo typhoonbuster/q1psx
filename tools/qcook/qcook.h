@@ -148,7 +148,7 @@ int     qc_mdl_flags(const qc_mdl *q);
 void    qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out);
 /* the compact format of the streamed models (formats/qstream.h): the
    whole asset (qst_model, frames, records, skin) appended to `out` */
-void    qc_mdl_cook_compact(qc_mdl *q, buf_t *out);
+void    qc_mdl_cook_compact(qc_mdl *q, int model_level, int body, buf_t *out);
 
 /* ---------------------------------------------------------------- stream -- */
 

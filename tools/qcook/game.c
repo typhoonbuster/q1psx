@@ -1460,12 +1460,98 @@ static void cut_image(const image *im, int x0, int x1, buf_t *pix, uint16_t *w, 
 	*h = (uint16_t) bh;
 }
 
-void qc_mdl_cook_compact(qc_mdl *q, buf_t *out)
+/* A streamed model's triangles at a model level (formats/qlevels.h): a
+   monster's body at every level, high included (2026-10-19: START's nine
+   crucified zombies, 347 triangles each, filled the GPU's packet arena and
+   cost a frame), half of them at high, a third at medium, a quarter at
+   low (bounds of 64, 96, 128: the animation makes every collapse cost, a
+   bound of 3 kept 84 % of the zombie's triangles, 12 kept 68 %);
+   the rest (heads, gibs, projectiles, the items, the flames) as the map's
+   own models (reduce_mdl: Quake's at high). The vertices no triangle uses
+   any more leave the frames (the RAM pool's bytes, the expansion's work).
+   Returns 1 with *out filled (its own arrays), 0: the model as it is. */
+static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out)
+{
+	double keep, err;
+	if (body) {
+		keep = model_level >= QL_HIGH ? 0.5 : model_level == QL_MEDIUM ? 0.35 : 0.25;
+		err  = model_level >= QL_HIGH ? 64 : model_level == QL_MEDIUM ? 96 : 128;
+	} else if (model_level >= QL_HIGH) {
+		return 0;
+	} else {
+		keep = model_level == QL_LOW ? 0.5 : 0.75;
+		err  = model_level == QL_LOW ? 3.0 : 1.5;
+	}
+	if (m->ntris < DECIM_MIN)
+		return 0;
+	int (*tris)[4] = xmalloc((size_t) m->ntris * sizeof *tris);
+	memcpy(tris, m->tris, (size_t) m->ntris * sizeof *tris);
+	double *pos = xmalloc((size_t) m->nframes * m->nverts * 3 * sizeof *pos);
+	for (int f = 0; f < m->nframes; f++)
+		for (int v = 0; v < m->nverts; v++)
+			for (int c = 0; c < 3; c++)
+				pos[((size_t) f * m->nverts + v) * 3 + c] = m->frames[f][v].v[c] * m->scale[c] + m->origin[c];
+	double  *uv   = xmalloc((size_t) m->nverts * 2 * sizeof *uv);
+	uint8_t *seam = xmalloc((size_t) m->nverts);
+	for (int v = 0; v < m->nverts; v++) {
+		uv[v * 2]     = m->st[v][1];
+		uv[v * 2 + 1] = m->st[v][2];
+		seam[v]       = m->st[v][0] != 0;
+	}
+	dmesh dm = { m->nverts, m->nframes, pos, uv, 0.25, seam, m->skinw };
+	int left = decimate(&dm, tris, m->ntris, keep, err);
+	free(pos);
+	free(uv);
+	free(seam);
+	int *map = xmalloc((size_t) m->nverts * sizeof *map), nv = 0;
+	for (int v = 0; v < m->nverts; v++)
+		map[v] = -1;
+	for (int t = 0; t < left; t++)
+		for (int k = 1; k < 4; k++) {
+			int v = tris[t][k];
+			if (map[v] < 0)
+				map[v] = nv++;
+			tris[t][k] = map[v];
+		}
+	*out        = *m;
+	out->nverts = nv;
+	out->ntris  = left;
+	out->tris   = tris;
+	out->st     = xmalloc((size_t) nv * sizeof *out->st);
+	out->frames = xmalloc((size_t) m->nframes * sizeof *out->frames);
+	tvert *tv   = xmalloc((size_t) m->nframes * nv * sizeof *tv);
+	for (int v = 0; v < m->nverts; v++)
+		if (map[v] >= 0)
+			memcpy(out->st[map[v]], m->st[v], sizeof out->st[0]);
+	for (int f = 0; f < m->nframes; f++) {
+		out->frames[f] = tv + (size_t) f * nv;
+		for (int v = 0; v < m->nverts; v++)
+			if (map[v] >= 0)
+				out->frames[f][map[v]] = m->frames[f][v];
+	}
+	free(map);
+	return 1;
+}
+
+static void stream_reduce_free(mdl_t *r)
+{
+	free(r->tris);
+	free(r->st);
+	free(r->frames[0]);
+	free(r->frames);
+}
+
+void qc_mdl_cook_compact(qc_mdl *q, int model_level, int body, buf_t *out)
 {
 	model_src   *ms = &q->src;
 	const mdl_t *m  = &ms->mdl;
 	const image *im = ms->im;
 	int div = ms->sp->skin_div;
+	mdl_t reduced;
+	int full_tris = m->ntris, full_verts = m->nverts;
+	int is_reduced = stream_reduce(m, model_level, body, &reduced);
+	if (is_reduced)
+		m = &reduced;
 
 	/* the expansion's shift: the smallest that keeps a step within bounds */
 	double step_max = 0;
@@ -1684,6 +1770,11 @@ void qc_mdl_cook_compact(qc_mdl *q, buf_t *out)
 	       two ? "halves" : "whole", h.images[0].w, h.images[0].h, two ? " + " : "", two ? h.images[1].w : 0,
 	       two ? h.images[1].h : 0, h.small[0].w, h.small[0].h, shift, out->len - start,
 	       (size_t) m->nframes * m->nverts * 4);
+	if (is_reduced) {
+		printf("qcook: %-22s %s: %d of %d tris, %d of %d verts\n", q->file, level_name[model_level],
+		       m->ntris, full_tris, m->nverts, full_verts);
+		stream_reduce_free(&reduced);
+	}
 }
 
 /* ------------------------------------------------------------------ main -- */

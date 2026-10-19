@@ -21,7 +21,7 @@
 
 #include <stdint.h>
 
-#define MEM_LEVEL_BYTES (1140 * 1024)  /* (1152 until 2026-10-19: with the monsters,
+#define MEM_LEVEL_BYTES (1136 * 1024)  /* (1152 until 2026-10-19: with the monsters,
                                           the streaming and the brush models' pieces
                                           the BSS ended past the 2 MB; the stack's
                                           16 KB checked at every link:

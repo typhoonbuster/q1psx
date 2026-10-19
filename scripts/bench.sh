@@ -110,4 +110,4 @@ TEXEXT=tex; [ "$TEX4" = 1 ] && TEXEXT=tx4
 TEXMAP=start; [ -n "$MAP" ] && TEXMAP=$(echo "$MAP" | tr 'A-Z' 'a-z')
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
 	"$ROOT/cooked/id1/${TEXMAP}_t$TEXTURES.$TEXEXT" "$ROOT/build-bench/views/" \
-	"$ROOT/cooked/id1/game_$MODELS.dat" "$ROOT/cooked/id1/stream.dat" | sed 's/^/  /'
+	"$ROOT/cooked/id1/game_$MODELS.dat" "$ROOT/cooked/id1/stream_$MODELS.dat" | sed 's/^/  /'

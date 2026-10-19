@@ -1,6 +1,9 @@
 /*
  * qcook — the streamed assets: `qcook stream --pak <pak0.pak> [--pak1
- * <pak1.pak>] --out <stream.dat>` (formats/qstream.h).
+ * <pak1.pak>] --level <n> --out <stream_<n>.dat>` (formats/qstream.h), one
+ * file per model level (formats/qlevels.h: 0 low .. 2 high): the models'
+ * triangles reduced at that level (tools/qcook/game.c stream_reduce: a
+ * monster's body at every level, the rest below high).
  *
  * The models the maps' monsters bring, each with what its QC precaches
  * beside it (its head, its projectiles, its sounds), the gibs every monster
@@ -152,13 +155,15 @@ static int by_hash(const void *x, const void *y)
 int cmd_stream(int argc, char **argv)
 {
 	const char *pak_path = NULL, *pak1_path = NULL, *out_path = NULL;
+	int level = QL_HIGH;
 	for (int i = 2; i < argc - 1; i++) {
-		if (!strcmp(argv[i], "--pak"))  pak_path  = argv[i + 1];
-		if (!strcmp(argv[i], "--pak1")) pak1_path = argv[i + 1];
-		if (!strcmp(argv[i], "--out"))  out_path  = argv[i + 1];
+		if (!strcmp(argv[i], "--pak"))   pak_path  = argv[i + 1];
+		if (!strcmp(argv[i], "--pak1"))  pak1_path = argv[i + 1];
+		if (!strcmp(argv[i], "--out"))   out_path  = argv[i + 1];
+		if (!strcmp(argv[i], "--level")) level     = atoi(argv[i + 1]);
 	}
-	if (!pak_path || !out_path)
-		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>");
+	if (!pak_path || !out_path || level < QL_LOW || level > QL_HIGH)
+		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] [--level 0..2] --out <stream_<n>.dat>");
 
 	long pak_len, pak1_len = 0;
 	uint8_t *pak = read_file(pak_path, &pak_len), *pak1 = pak1_path ? read_file(pak1_path, &pak1_len) : NULL;
@@ -201,7 +206,8 @@ int cmd_stream(int argc, char **argv)
 		/* each asset on a sector of its own */
 		buf_put(&data, zero, (QST_SECTOR - data.len % QST_SECTOR) % QST_SECTOR);
 		e->ofs = data.len;
-		qc_mdl_cook_compact(q, &data);
+		int body = sm->group >= G_ARMY && sm->group <= G_BOSS && sm->div == 2;   /* a monster's body */
+		qc_mdl_cook_compact(q, level, body, &data);
 		e->len = data.len - e->ofs;
 		e->a.hash  = qs_hash(name);
 		e->a.kind  = QSTK_MODEL;
