@@ -17,6 +17,7 @@
 #include "mdl.h"
 #include "mem.h"
 #include "music.h"
+#include "prof.h"
 #include "qsound.h"
 #include "qtex.h"
 #include "qxa.h"
@@ -25,6 +26,9 @@
 #include "world.h"
 
 stream_stats_t stream_stats;
+#ifdef Q1PSX_BENCH
+uint32_t stream_xa_cycles, stream_xa_frames;     /* the bench's: the carousel's frame cost */
+#endif
 int            stream_log;
 int32_t        stream_origin[3];
 
@@ -145,6 +149,7 @@ typedef struct {
 	                                in the ring: not applied)                  */
 	qst_layout lay;              /* a model's: where its level's bytes are (from
 	                                its shared header, its first piece)        */
+	uint32_t armed;              /* the vblank it was wanted at (the log's wait) */
 } capture_t;
 static capture_t caps[MAX_CAPTURES];
 static const qxa_header *xa;                    /* the playing stream's, 0: none */
@@ -152,6 +157,7 @@ static const qxa_entry  *xa_ent;
 static const uint8_t    *xa_lut;
 static uint8_t           cap_of[QXA_MAX_ASSETS];   /* an entry's capture slot, 0xff none */
 static volatile uint8_t  ring_head, ring_tail;  /* the interrupt's, the frame's */
+static uint8_t           xa_rearm;              /* a pass ran, a capture ended: arm more */
 static struct { uint8_t cap, gen; uint16_t piece; } ring_tag[RING];
 
 #define ALIGN16(n) (((n) + 15u) & ~15u)
@@ -1114,7 +1120,9 @@ void stream_xa_sector(uint32_t i)
 		stream_stats.xa_dropped++;
 		return;
 	}
-	CdGetSector(stage + (uint32_t) hd * QST_SECTOR, QST_SECTOR / 4);
+	/* the data by DMA in the background (a word every 16 cycles: the CPU
+	   runs between; done long before the next sector, 13 ms on) */
+	CdGetSector2(stage + (uint32_t) hd * QST_SECTOR, QST_SECTOR / 4);
 	ring_tag[hd].cap   = k;
 	ring_tag[hd].gen   = cp->gen;
 	ring_tag[hd].piece = piece;
@@ -1173,6 +1181,8 @@ static void xa_drain(void)
 {
 	while (ring_tail != ring_head) {
 		uint8_t t = ring_tail;
+		if (((t + 1) & (RING - 1)) == ring_head && CdDataSync(1))
+			break;                            /* (the newest's DMA still running) */
 		capture_t *cp = &caps[ring_tag[t].cap];
 		uint16_t piece = ring_tag[t].piece;
 		if (cp->asset >= 0 && cp->gen == ring_tag[t].gen) {
@@ -1184,6 +1194,9 @@ static void xa_drain(void)
 				if (!ok || cp->done == cp->sectors) {
 					cap_of[cp->entry] = 0xff;     /* (the interrupt's first) */
 					cp->asset = -1;
+					xa_rearm = 1;
+					SLOG("stream: captured %08x, %u sectors, in %d vblanks\n", (unsigned) assets[a].d.hash,
+					     (unsigned) cp->sectors, VSync(-1) - (int) cp->armed);
 					if (!ok) {                    /* (never again: STREAM_<n>.DAT and
 					                                 the carousel disagree) */
 						printf("stream: asset %08x from the carousel is not one this engine reads\n",
@@ -1229,14 +1242,17 @@ static void xa_arm(void)
 			return;
 		asset_t *as = &assets[a];
 		if (as->d.kind == QSTK_SOUND ? !sound_room(a) : reserve(a) < 0) {
-			set_stuck(a);
-			continue;
+			set_stuck(a);                         /* (the next pass tries the others: a
+			                                         frame's every slot each time cost
+			                                         120 k cycles in E1M3's crowd) */
+			return;
 		}
 		cp->asset   = (int16_t) a;
 		cp->entry   = as->xa;
 		cp->sectors = xa_ent[as->xa].sectors;
 		cp->done    = 0;
 		cp->next    = 0;
+		cp->armed   = (uint32_t) VSync(-1);
 		cp->gen++;
 		cap_of[as->xa] = (uint8_t) k;             /* (last: the interrupt's from here) */
 		SLOG("stream: capturing %08x, %u sectors (score %u)\n", (unsigned) as->d.hash,
@@ -1258,6 +1274,7 @@ static int32_t pass_origin[3];             /* stream_origin at the last pass */
 
 static void pass(void)
 {
+	xa_rearm = 1;
 	memcpy(pass_origin, stream_origin, sizeof pass_origin);
 	for (int a = 0; a < num_assets; a++)
 		assets[a].score = ~0u;
@@ -1354,8 +1371,18 @@ void stream_frame(void)
 	if (frame_no % PASS_FRAMES == 0 || jump)
 		pass();
 	if (xa) {                                 /* the music's carousel: taken as it passes */
+#ifdef Q1PSX_BENCH
+		uint32_t t0 = prof_now();
+#endif
 		xa_drain();
-		xa_arm();
+		if (xa_rearm) {                       /* (after a pass, a capture's end) */
+			xa_rearm = 0;
+			xa_arm();
+		}
+#ifdef Q1PSX_BENCH
+		stream_xa_cycles += prof_cycles(t0, prof_now());
+		stream_xa_frames++;
+#endif
 	}
 	if (reading >= 0) {                       /* a model's read */
 		int left = CdReadSync(1, 0);          /* (also runs CdReadRetry's retries) */

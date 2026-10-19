@@ -74,9 +74,24 @@ static int bcd(uint8_t b)
    sectors go to the SPU on their own): its header (CdlModeSize: the
    sector's address, then its subheader), then stream.c takes its data
    when it is an asset's piece it waits for. */
+#ifdef Q1PSX_BENCH
+uint32_t music_irq_cycles, music_irq_n;          /* the bench's: the interrupt's cost */
+static void xa_ready_(CdlIntrResult irq);
 static void xa_ready(CdlIntrResult irq, uint8_t *result)
 {
 	(void) result;
+	uint32_t t0 = prof_now();
+	xa_ready_(irq);
+	music_irq_cycles += prof_cycles(t0, prof_now());
+	music_irq_n++;
+}
+static void xa_ready_(CdlIntrResult irq)
+{
+#else
+static void xa_ready(CdlIntrResult irq, uint8_t *result)
+{
+	(void) result;
+#endif
 	if (irq != CdlDataReady) {
 		failed = 1;
 		return;

@@ -1918,6 +1918,16 @@ static void mon_log(const char *what, const edict_t *e)
 		game_ents_cycles = game_ents_max = game_ents_ticks = 0;
 		ai_traces = 0;
 	}
+#if Q1PSX_MUSIC_XA
+	{
+		extern uint32_t music_irq_cycles, music_irq_n, stream_xa_cycles, stream_xa_frames;
+		if (music_irq_n && stream_xa_frames)
+			printf("xa cost: %u sectors' interrupts, avg %u cycles; carousel %u frames, avg %u cycles\n",
+			       (unsigned) music_irq_n, (unsigned) (music_irq_cycles / music_irq_n),
+			       (unsigned) stream_xa_frames, (unsigned) (stream_xa_cycles / stream_xa_frames));
+		music_irq_cycles = music_irq_n = stream_xa_cycles = stream_xa_frames = 0;
+	}
+#endif
 	printf("mon %s t %d state %d frame %d pos %d %d %d yaw %d ideal %d health %d enemy %d as %d "
 	       "flags %x | player health %d armor %d at %d %d %d | stream %d/%d in, %u reads, %u halved\n", what,
 	       (int) ent_time, e->mstate, e->frame, (int) e->origin[0] / CLIP_SUB, (int) e->origin[1] / CLIP_SUB,
