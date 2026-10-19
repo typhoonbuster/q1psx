@@ -5646,6 +5646,33 @@ the choices made:
 - **The stack's margin** is about 1 KB over the 16 KB threshold in both
   releases.
 
+### 48.10 The first build after a pull (2026-10-19)
+
+- **The report**: the release built with SPU music instead of XA, no background under the menu, no theme. That `build-release` was XA
+  (`Q1PSX_MUSIC_MODE=xa` in its cache), but its disc was 110 MB with an
+  empty `\MUSIC`, and no `CONBACK.DAT` nor `MENU.SND`: the boot found no
+  stream, no background, the menu's bank missing.
+- **The cause**: the SDK's `psn00bsdk_add_cd_image` writes the mkpsxiso
+  project at CMake's configure step, from the cooked files there then. A
+  pull brought new cooked files (the music's streams, the menu's bank and
+  background); the build cooked them after the configure, and the disc
+  went without them (a second build would have taken them). The cook also
+  made both music formats, the SPU's listed last.
+- **The fix**: the project's file list is made when the image is built,
+  after the cook (`scripts/cd_image.cmake`, run by the image's own custom
+  command: the same lists and level filters, and mkpsxiso after it); the
+  configure's globs only rebuild the image when a manual cook changes the
+  files. The cook makes the build's music only (`COOK_MUSIC_MODE`, from
+  `Q1PSX_MUSIC_MODE`; both when run by hand) and says which.
+- **Checked**: the music's, the background's and the menu bank's cooked
+  files moved away, a new build directory configured, then built: its
+  disc carries the ten XA streams, `CONBACK.DAT` and `MENU.SND` at that
+  first build (`q1psx disc: 32 maps, 10 music tracks (xa)`); the release
+  on PCSX-Redux shows the menu over the background, `music: track 2`;
+  track 2's sectors taken from the image and decoded by ffmpeg's own XA
+  decoder (its `psxstr` demuxer): 37.7 dB against the source, sample for
+  sample.
+
 ## §49 — The movers' re-cut in play: measured, then cut down (2026-10-19)
 
 - **The ask**: measure, then reduce, what `bmf_draw`'s re-cut of a moving

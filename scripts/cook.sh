@@ -113,24 +113,26 @@ done | xargs -P "$(nproc)" -n 3 bash -c 'cook_one "$0" "$1" "$2"'
 echo "cooked $(echo $MAPS | wc -w) maps: 4 texture, 3 geometry, 3 model levels -> $ROOT/cooked/"
 
 # the music: Quake's CD tracks 2..11 (worldspawn "sounds"), from the
-# rerelease's tracks, resampled once by ffmpeg: 37.8 kHz for the XA streams
-# (cooked/xa/trackNN.wav), each track's stream then cooked with the
-# carousel of its maps' streamed assets (formats/qxa.h: cooked/xa/xa_NN.str,
-# the tracks side by side; the maps cooked here only); 22.05 kHz for the
-# SPU-streamed music (cooked/spu/trackNN.wav -> spu_NN.dat). The build's
-# Q1PSX_MUSIC_MODE picks which go on the disc.
+# rerelease's tracks, resampled once by ffmpeg, then cooked for the
+# build's music (COOK_MUSIC_MODE, CMake's Q1PSX_MUSIC_MODE; unset: both):
+#   xa  (the default)  37.8 kHz -> cooked/xa/trackNN.wav -> xa_NN.str, each
+#       track's XA stream with the carousel of its maps' streamed assets
+#       (formats/qxa.h; the maps cooked here only), the tracks side by side
+#   spu (release-spu)  22.05 kHz -> cooked/spu/trackNN.wav -> spu_NN.dat
+#       (formats/qspu.h)
 QUAKE_MUSIC=${QUAKE_MUSIC:-"$(dirname "$QUAKE_PAK0")/../rerelease/id1/music"}
-rm -f cooked/xa/xa_*.str cooked/spu/spu_*.dat
+MODES=${COOK_MUSIC_MODE:-xa spu}
 if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/dev/null; then
 	mkdir -p cooked/xa cooked/spu
 	tracks=""
 	for src in "$QUAKE_MUSIC"/track*.ogg "$QUAKE_MUSIC"/track*.mp3 "$QUAKE_MUSIC"/track*.wav; do
 		[ -f "$src" ] || continue
 		nn=$(basename "${src%.*}" | sed 's/^track//')
-		for fmt in xa:37800 spu:22050; do
-			out="cooked/${fmt%%:*}/track$nn.wav"
+		for mode in $MODES; do
+			rate=37800; [ "$mode" = spu ] && rate=22050
+			out="cooked/$mode/track$nn.wav"
 			if [ ! -f "$out" ] || [ "$src" -nt "$out" ]; then
-				ffmpeg -loglevel error -y -i "$src" -ar "${fmt#*:}" -ac 2 -sample_fmt s16 \
+				ffmpeg -loglevel error -y -i "$src" -ar "$rate" -ac 2 -sample_fmt s16 \
 				       -fflags +bitexact -flags:a +bitexact "$out" || { echo "cook FAILED: music $src"; exit 1; }
 			fi
 		done
@@ -138,15 +140,26 @@ if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/d
 	done
 	MAPS_LIST=$(echo $MAPS)                      # (one line, single spaces)
 	export MAPS_LIST
-	for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
-		'tools/qcook/qcook carousel --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --pool cooked/xa/pool.dat \
-		    --maps "$MAPS_LIST" --music cooked/xa --track {} --out cooked/xa/xa_{}.str > "$LOGS/xa_{}.log" 2>&1 \
-		 || { echo "cook FAILED: the XA stream of track {}"; cat "$LOGS/xa_{}.log"; exit 1; }'
-	for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
-		'tools/qcook/qcook spumusic --music cooked/spu --track {} --out cooked/spu/spu_{}.dat > "$LOGS/spu_{}.log" 2>&1 \
-		 || { echo "cook FAILED: the SPU music of track {}"; cat "$LOGS/spu_{}.log"; exit 1; }'
-	cat "$LOGS"/xa_*.log "$LOGS"/spu_*.log | grep '^qcook: ' | sed 's|^qcook: .*/|music: |' || true
-	echo "music: $(echo $tracks | wc -w) tracks in $ROOT/cooked/xa/ and $ROOT/cooked/spu/"
+	for mode in $MODES; do
+		case $mode in
+		xa)  rm -f cooked/xa/xa_*.str
+		     for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
+		         'tools/qcook/qcook carousel --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} \
+		              --pool cooked/xa/pool.dat --maps "$MAPS_LIST" --music cooked/xa --track {} \
+		              --out cooked/xa/xa_{}.str > "$LOGS/xa_{}.log" 2>&1 \
+		          || { echo "cook FAILED: the XA stream of track {}"; cat "$LOGS/xa_{}.log"; exit 1; }'
+		     cat "$LOGS"/xa_*.log | grep '^qcook: ' | sed 's|^qcook: .*/|music: |' || true
+		     echo "music: $(echo $tracks | wc -w) XA streams in $ROOT/cooked/xa/ (the default music)" ;;
+		spu) rm -f cooked/spu/spu_*.dat
+		     for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
+		         'tools/qcook/qcook spumusic --music cooked/spu --track {} --out cooked/spu/spu_{}.dat \
+		              > "$LOGS/spu_{}.log" 2>&1 \
+		          || { echo "cook FAILED: the SPU music of track {}"; cat "$LOGS/spu_{}.log"; exit 1; }'
+		     cat "$LOGS"/spu_*.log | grep '^qcook: ' | sed 's|^qcook: .*/|music: |' || true
+		     echo "music: $(echo $tracks | wc -w) SPU streams in $ROOT/cooked/spu/ (release-spu's music)" ;;
+		*)   echo "cook FAILED: COOK_MUSIC_MODE $mode (xa or spu)"; exit 1 ;;
+		esac
+	done
 else
 	echo "music: none (set QUAKE_MUSIC / COOK_MUSIC=1, needs ffmpeg)"
 fi

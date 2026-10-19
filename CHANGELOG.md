@@ -1408,6 +1408,11 @@ followed by R0-R4.
   - **No map before New Game**: the menu over the console's background
     (`gfx/conback.lmp`, what Quake shows with no world and no demo); START
     loaded once, at New Game. The menu's clicks from their own small bank.
+- **The release's first build after a pull** (built with SPU music, no background, no theme). §48.10: the disc's file list was made at
+  CMake's configure, before the build's cook made the music's streams and
+  the menu's files: that disc had none of them. The list is now made when
+  the image is built, after the cook; the cook makes the build's music
+  format only (XA by default).
 - **The movers' re-cut in play, measured and cut down** (§49):
   - **Measured**: `MOVERS=1 scripts/bench.sh` moves E1M6's train *39,
     E1M3's train *3 and E3M4's door *71 in view. Each frame one has moved

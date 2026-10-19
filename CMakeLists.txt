@@ -181,6 +181,24 @@ else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
 endif()
 
+# The music (docs/porting-notes.md §48): Quake's CD tracks 2..11 as XA
+# streams carrying the carousels of their maps' streamed assets (xa, the
+# default: cooked/xa/xa_NN.str, mkpsxiso "mixed" files, formats/qxa.h) or
+# as ADPCM the SPU streams (spu: cooked/spu/spu_NN.dat, formats/qspu.h), in
+# \MUSIC after the streamed assets; the bench's disc has none (Q1PSX_MUSIC
+# OFF unless Q1PSX_BENCH_MUSIC). The cook makes the build's format.
+option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
+set(Q1PSX_MUSIC_MODE "xa" CACHE STRING "The music: xa (XA streams with the streamed assets' carousels) or spu (streamed by the SPU)")
+set_property(CACHE Q1PSX_MUSIC_MODE PROPERTY STRINGS xa spu)
+if(Q1PSX_MUSIC_MODE STREQUAL "spu")
+	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_SPU=1)
+	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
+elseif(Q1PSX_MUSIC_MODE STREQUAL "xa")
+	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_XA=1)
+	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/xa/xa_*.str)
+else()
+	message(FATAL_ERROR "Q1PSX_MUSIC_MODE: xa or spu, not ${Q1PSX_MUSIC_MODE}")
+endif()
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h, qworld.h,
 # qgame.h, qlevels.h). Every cooked map ships at the edition's levels of
 # each axis: <MAP>_T<N>.TEX / .TX4 (textures, .TX4 the 4-bit ones),
@@ -199,7 +217,7 @@ if(_pak0_path AND EXISTS "${_pak0_path}")
 	set(_cooked_stamp ${CMAKE_BINARY_DIR}/cooked.stamp)
 	add_custom_command(
 		OUTPUT  ${_cooked_stamp}
-		COMMAND ${PROJECT_SOURCE_DIR}/scripts/cook.sh
+		COMMAND ${CMAKE_COMMAND} -E env COOK_MUSIC_MODE=${Q1PSX_MUSIC_MODE} ${PROJECT_SOURCE_DIR}/scripts/cook.sh
 		COMMAND ${CMAKE_COMMAND} -E touch ${_cooked_stamp}
 		DEPENDS ${_qcook_deps}
 		WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
@@ -209,112 +227,47 @@ if(_pak0_path AND EXISTS "${_pak0_path}")
 	add_dependencies(q1psx cook)
 endif()
 
-set(COOKED_ENTRIES "")
-set(GAME_ENTRY "")
-file(GLOB _games CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/game_*.dat)
-list(SORT _games)
-foreach(_src ${_games})                                 # game_2.dat -> GAME_2.DAT
-	get_filename_component(_base "${_src}" NAME)
-	string(TOUPPER "${_base}" _name)
-	string(APPEND GAME_ENTRY "<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t")
-endforeach()
-# the console's background under the release's menu before a map is loaded
-# (formats/qmenu.h); the menu's sound bank is MAPS/MENU.SND (the .snd glob)
-if(EXISTS ${PROJECT_SOURCE_DIR}/cooked/id1/conback.dat)
-	string(APPEND GAME_ENTRY "<file name=\"CONBACK.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/conback.dat\" />\n\t\t")
-endif()
-# the streamed assets per model level (formats/qstream.h: read while the
-# game runs, engine/stream.c): stream_2.dat -> STREAM_2.DAT
-set(STREAM_ENTRY "")
-file(GLOB _streams CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/stream_*.dat)
-list(SORT _streams)
-foreach(_src ${_streams})
-	get_filename_component(_base "${_src}" NAME)
-	string(TOUPPER "${_base}" _name)
-	string(APPEND STREAM_ENTRY "<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t")
-endforeach()
-set(_maps "")
-set(_level_names low medium high ultra)
+# The cooked files the disc carries (their list is made when the image is
+# built, after the cook: scripts/cd_image.cmake); globbed here to rebuild
+# the image when a manual cook changes them, and for the configure's note.
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tex
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tx4
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.mdl
-                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.snd)
-list(SORT _cooked)
-foreach(_src ${_cooked})
-	get_filename_component(_base "${_src}" NAME_WE)     # e1m1_g2
-	get_filename_component(_ext "${_src}" EXT)          # .wld
-	if(_ext STREQUAL ".snd")                            # e1m1.snd -> E1M1.SND (formats/qsound.h)
-		string(TOUPPER "${_base}${_ext}" _name)
-		string(APPEND COOKED_ENTRIES
-			"<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t\t")
-		continue()
-	endif()
-	string(REGEX MATCH "^(.+)_([tgm])([0-3])$" _m "${_base}")
-	if(NOT _m)
-		continue()
-	endif()
-	set(_map "${CMAKE_MATCH_1}")
-	list(GET _level_names ${CMAKE_MATCH_3} _level)
-	if(CMAKE_MATCH_2 STREQUAL "t" AND NOT "${_level}" IN_LIST Q1PSX_TEXTURE_LEVELS)
-		continue()                                      # (another edition's level)
-	endif()
-	if(CMAKE_MATCH_2 STREQUAL "g" AND NOT "${_level}" IN_LIST Q1PSX_GEOMETRY_LEVELS)
-		continue()
-	endif()
-	string(TOUPPER "${_base}${_ext}" _name)             # E1M1_G2.WLD
-	string(APPEND COOKED_ENTRIES
-		"<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t\t")
-	list(APPEND _maps "${_map}")
-endforeach()
-list(REMOVE_DUPLICATES _maps)
-list(LENGTH _maps _nmaps)
-if(_nmaps EQUAL 0)
-	message(STATUS "q1psx: no cooked assets (run scripts/cook.sh)")
+                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.snd
+                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.dat)
+if(NOT _cooked)
+	message(STATUS "q1psx: no cooked assets yet (the build cooks them: scripts/cook.sh)")
 else()
-	message(STATUS "q1psx: bundling ${_nmaps} cooked maps, textures ${Q1PSX_TEXTURE_LEVELS}, "
-	               "geometry ${Q1PSX_GEOMETRY_LEVELS}")
+	message(STATUS "q1psx: the disc takes the textures ${Q1PSX_TEXTURE_LEVELS}, the geometry "
+	               "${Q1PSX_GEOMETRY_LEVELS}")
 endif()
 
-# The music (docs/porting-notes.md §46): Quake's CD tracks 2..11 as XA
-# streams carrying the carousels of their maps' streamed assets (xa, the
-# default: cooked/xa/xa_NN.str, mkpsxiso "mixed" files, formats/qxa.h) or
-# as ADPCM the SPU streams (spu: cooked/spu/spu_NN.dat, formats/qspu.h), in
-# \MUSIC next to the streamed assets; the bench's disc has none (Q1PSX_MUSIC
-# OFF unless Q1PSX_BENCH_MUSIC).
-option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
-set(Q1PSX_MUSIC_MODE "xa" CACHE STRING "The music: xa (XA streams with the streamed assets' carousels) or spu (streamed by the SPU)")
-set_property(CACHE Q1PSX_MUSIC_MODE PROPERTY STRINGS xa spu)
-if(Q1PSX_MUSIC_MODE STREQUAL "spu")
-	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_SPU=1)
-	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
-	set(_music_type data)
-elseif(Q1PSX_MUSIC_MODE STREQUAL "xa")
-	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_XA=1)
-	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/xa/xa_*.str)
-	set(_music_type mixed)
-else()
-	message(FATAL_ERROR "Q1PSX_MUSIC_MODE: xa or spu, not ${Q1PSX_MUSIC_MODE}")
-endif()
-set(MUSIC_ENTRIES "")
 set(_music "")
+set(_disc_music 0)
 set(Q1PSX_BENCH_MUSIC 0 CACHE STRING "1: the bench disc carries the music too (its streams, the carousels)")
 if(Q1PSX_MUSIC AND (NOT Q1PSX_BENCH OR Q1PSX_BENCH_MUSIC))
+	set(_disc_music 1)
 	file(GLOB _music CONFIGURE_DEPENDS ${_music_glob})
-	list(SORT _music)
-	foreach(_src ${_music})                             # xa_04.str -> MUSIC/XA_04.STR
-		get_filename_component(_base "${_src}" NAME)
-		string(TOUPPER "${_base}" _name)
-		string(APPEND MUSIC_ENTRIES "<file name=\"${_name}\" type=\"${_music_type}\" source=\"${_src}\" />\n\t\t\t")
-	endforeach()
-	list(LENGTH _music _ntracks)
-	message(STATUS "q1psx: ${_ntracks} music tracks (${Q1PSX_MUSIC_MODE})")
+	message(STATUS "q1psx: the music as ${Q1PSX_MUSIC_MODE}")
 endif()
 
 # --- CD image ---------------------------------------------------------------
-psn00bsdk_add_cd_image(
-	iso        # target
-	q1psx      # -> q1psx.bin + q1psx.cue
-	${PROJECT_SOURCE_DIR}/iso/iso.xml
-	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${_games} ${_streams}   # (a manual cook too)
-)
+# (psn00bsdk_add_cd_image's, with the project's file list made at the build:
+# scripts/cd_image.cmake, after the cook)
+string(REPLACE ";" "," _disc_textures "${Q1PSX_TEXTURE_LEVELS}")
+string(REPLACE ";" "," _disc_geometry "${Q1PSX_GEOMETRY_LEVELS}")
+set(_cd_xml ${CMAKE_CURRENT_BINARY_DIR}/cd_image.xml)
+add_custom_command(
+	OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/q1psx.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx.cue
+	COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DOUT=${_cd_xml}
+	        -DTEXTURE_LEVELS=${_disc_textures} -DGEOMETRY_LEVELS=${_disc_geometry}
+	        -DMUSIC=${_disc_music} -DMUSIC_MODE=${Q1PSX_MUSIC_MODE} -DPAK0=${_pak0_path}
+	        -DSDK_VERSION=${PSN00BSDK_VERSION} -P ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake
+	COMMAND ${MKPSXISO} -y -q -o q1psx.bin -c q1psx.cue ${_cd_xml}
+	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/iso/iso.xml
+	        ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake   # (a manual cook too)
+	WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+	COMMENT "Building CD image q1psx"
+	VERBATIM)
+add_custom_target(iso ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/q1psx.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx.cue)
