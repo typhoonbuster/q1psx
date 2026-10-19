@@ -427,6 +427,8 @@ int main(int argc, char **argv)
 		return cmd_game(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "stream"))
 		return cmd_stream(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "menu"))
+		return cmd_menu(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"
@@ -436,6 +438,7 @@ int main(int argc, char **argv)
 	        "            [--models low|medium|high --mdl <out.mdl>]\n"
 	        "  qcook check <file.wld>\n"
 	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n"
-	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n");
+	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
+	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n");
 	return 2;
 }

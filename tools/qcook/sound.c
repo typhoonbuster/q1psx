@@ -454,6 +454,72 @@ static size_t sound_bytes(const bank_sound *s)
 	return (size_t) ((pre + s->wav.n + 27) / 28) * 16;
 }
 
+/* the bank's sounds (sounds[0 .. nsounds)) encoded and written, with its
+   static sources and its CD track */
+static void bank_write(const qs_static *statics, int nstatics, int cd_track, int halved, const char *out_path)
+{
+	/* encode */
+	double worst_snr = 99;
+	const char *worst = "";
+	for (int i = 0; i < nsounds; i++) {
+		adpcm_encode(&sounds[i].wav, &sounds[i].adpcm, &sounds[i].snr);
+		if (sounds[i].snr < worst_snr) { worst_snr = sounds[i].snr; worst = sounds[i].name; }
+	}
+
+	/* the file */
+	bytes_t f = { 0 };
+	qs_header h;
+	memset(&h, 0, sizeof h);
+	bput(&f, &h, sizeof h);
+	qs_sound *dir = xcalloc((size_t) nsounds, sizeof *dir);
+	size_t data = 0;
+	for (int i = 0; i < nsounds; i++) {
+		bank_sound *s = &sounds[i];
+		dir[i].hash  = qs_hash(s->name);
+		dir[i].ofs   = (uint32_t) data;
+		dir[i].len   = (uint32_t) s->adpcm.len;
+		dir[i].pitch = (uint16_t) ((s->wav.rate * 4096 + 22050) / 44100);
+		dir[i].flags = s->wav.loopstart >= 0 ? QSF_LOOP : 0;
+		dir[i].ticks = (uint32_t) ((s->wav.n * 60 + s->wav.rate - 1) / s->wav.rate) + 1;
+		data += s->adpcm.len;
+	}
+	h.num_sounds = (uint32_t) nsounds; h.ofs_sounds = (uint32_t) f.len;
+	bput(&f, dir, (size_t) nsounds * sizeof *dir);
+	h.num_statics = (uint32_t) nstatics; h.ofs_statics = (uint32_t) f.len;
+	if (nstatics)
+		bput(&f, statics, (size_t) nstatics * sizeof *statics);
+	h.ofs_names = (uint32_t) f.len;
+	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].name, strlen(sounds[i].name) + 1);
+	h.len_names = (uint32_t) f.len - h.ofs_names;
+	while (f.len & 15) bput(&f, "", 1);
+	h.ofs_data = (uint32_t) f.len;
+	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].adpcm.p, sounds[i].adpcm.len);
+	h.len_data = (uint32_t) data;
+	h.cd_track = (uint32_t) cd_track;
+	memcpy(h.magic, QSOUND_MAGIC, 4);
+	memcpy(f.p, &h, sizeof h);
+	FILE *fp = fopen(out_path, "wb");
+	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", out_path);
+	fclose(fp);
+
+	int per_group[SG_COUNT] = { 0 };
+	for (int i = 0; i < nsounds; i++)
+		per_group[sounds[i].group]++;
+	printf("qcook: sounds — %d sounds, %zu KB of SPU RAM (%d halved), %d static sounds, CD track %d, worst SNR %.1f dB (%s)\n",
+	       nsounds, data / 1024, halved, nstatics, cd_track, worst_snr, worst);
+	printf("qcook: sounds — core %d", per_group[SG_CORE]);
+	for (int g = 1; g < SG_COUNT; g++)
+		if (per_group[g]) printf(", %s %d", group_name[g], per_group[g]);
+	printf("\n");
+
+	for (int i = 0; i < nsounds; i++) {
+		free(sounds[i].wav.s);
+		free(sounds[i].adpcm.p);
+	}
+	free(dir);
+	free(f.p);
+}
+
 void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
                  long pak0_len, const char *out_path)
 {
@@ -546,65 +612,24 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 		halved++;
 	}
 
-	/* encode */
-	double worst_snr = 99;
-	const char *worst = "";
-	for (int i = 0; i < nsounds; i++) {
-		adpcm_encode(&sounds[i].wav, &sounds[i].adpcm, &sounds[i].snr);
-		if (sounds[i].snr < worst_snr) { worst_snr = sounds[i].snr; worst = sounds[i].name; }
-	}
+	bank_write(statics, nstatics, cd_track, halved, out_path);
+}
 
-	/* the file */
-	bytes_t f = { 0 };
-	qs_header h;
-	memset(&h, 0, sizeof h);
-	bput(&f, &h, sizeof h);
-	qs_sound *dir = xcalloc((size_t) nsounds, sizeof *dir);
-	size_t data = 0;
-	for (int i = 0; i < nsounds; i++) {
-		bank_sound *s = &sounds[i];
-		dir[i].hash  = qs_hash(s->name);
-		dir[i].ofs   = (uint32_t) data;
-		dir[i].len   = (uint32_t) s->adpcm.len;
-		dir[i].pitch = (uint16_t) ((s->wav.rate * 4096 + 22050) / 44100);
-		dir[i].flags = s->wav.loopstart >= 0 ? QSF_LOOP : 0;
-		dir[i].ticks = (uint32_t) ((s->wav.n * 60 + s->wav.rate - 1) / s->wav.rate) + 1;
-		data += s->adpcm.len;
-	}
-	h.num_sounds = (uint32_t) nsounds; h.ofs_sounds = (uint32_t) f.len;
-	bput(&f, dir, (size_t) nsounds * sizeof *dir);
-	h.num_statics = (uint32_t) nstatics; h.ofs_statics = (uint32_t) f.len;
-	bput(&f, statics, (size_t) nstatics * sizeof *statics);
-	h.ofs_names = (uint32_t) f.len;
-	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].name, strlen(sounds[i].name) + 1);
-	h.len_names = (uint32_t) f.len - h.ofs_names;
-	while (f.len & 15) bput(&f, "", 1);
-	h.ofs_data = (uint32_t) f.len;
-	for (int i = 0; i < nsounds; i++) bput(&f, sounds[i].adpcm.p, sounds[i].adpcm.len);
-	h.len_data = (uint32_t) data;
-	h.cd_track = (uint32_t) cd_track;
-	memcpy(h.magic, QSOUND_MAGIC, 4);
-	memcpy(f.p, &h, sizeof h);
-	FILE *fp = fopen(out_path, "wb");
-	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", out_path);
-	fclose(fp);
-
-	int per_group[SG_COUNT] = { 0 };
-	for (int i = 0; i < nsounds; i++)
-		per_group[sounds[i].group]++;
-	printf("qcook: sounds — %d sounds, %zu KB of SPU RAM (%d halved), %d static sounds, CD track %d, worst SNR %.1f dB (%s)\n",
-	       nsounds, data / 1024, halved, nstatics, cd_track, worst_snr, worst);
-	printf("qcook: sounds — core %d", per_group[SG_CORE]);
-	for (int g = 1; g < SG_COUNT; g++)
-		if (per_group[g]) printf(", %s %d", group_name[g], per_group[g]);
-	printf("\n");
-
-	for (int i = 0; i < nsounds; i++) {
-		free(sounds[i].wav.s);
-		free(sounds[i].adpcm.p);
-	}
-	free(dir);
-	free(f.p);
+/* The release's menu bank (`qcook menu`): what the menu plays before any
+   map is loaded, the clicks (M_Main_Key and the others' S_LocalSound), with
+   CD track 2. Quake starts its demo loop under the menu (quake.rc:
+   startdemos demo1 demo2 demo3); demo1.dem was recorded with a forced
+   track, 2, on its first line (CL_PlayDemo_f's cls.forcetrack, which
+   svc_cdtrack plays in place of E1M3's 9), so the theme plays under the
+   menu until demo2 (E1M4: track 5). The port has no demos: the theme
+   loops. */
+void sound_build_menu(const uint8_t *pak0, long pak0_len, const char *out_path)
+{
+	static const char *const clicks[] = { "misc/menu1.wav", "misc/menu2.wav", "misc/menu3.wav" };
+	nsounds = 0;
+	for (size_t k = 0; k < sizeof clicks / sizeof clicks[0]; k++)
+		sound_add(clicks[k], SG_CORE, pak0, pak0_len, NULL, 0);
+	bank_write(NULL, 0, 2, 0, out_path);
 }
 
 /* ------------------------------------------------------------- streamed -- */

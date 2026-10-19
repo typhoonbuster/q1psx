@@ -227,8 +227,12 @@ void menu_draw(void)
 	if (m_state == M_NONE)
 		return;
 	ui_begin();
-	ui_fade();                                    /* Draw_FadeScreen */
-	hud_invalidate();                             /* (the fade darkens the bars too) */
+	if (hooks.no_world && hooks.no_world()) {
+		ui_conback();                             /* the console down: Draw_ConsoleBackground */
+	} else {
+		ui_fade();                                /* Draw_FadeScreen */
+		hud_invalidate();                         /* (the fade darkens the bars too) */
+	}
 	ui_begin();
 	switch (m_state) {
 	case M_MAIN:         main_draw(); break;

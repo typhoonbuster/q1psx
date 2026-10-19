@@ -35,4 +35,14 @@ void ui_fade(void);
 /* M_DrawTextBox: the box pieces around width x lines of characters */
 void ui_text_box(int x, int y, int width, int lines);
 
+/* The console's background (formats/qmenu.h), what the release shows
+   before any map is loaded (Quake's forced console: no world, no demo).
+   ui_conback_load reads it into VRAM where the map's texture pages go
+   (through the level arena: before a map's load), 1 done; ui_conback draws
+   it over the whole screen (Draw_ConsoleBackground (vid.height)) while it
+   is there; ui_conback_forget: a map's textures took its place. */
+int  ui_conback_load(void);
+void ui_conback(void);
+void ui_conback_forget(void);
+
 #endif

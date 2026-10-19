@@ -209,6 +209,11 @@ foreach(_src ${_games})                                 # game_2.dat -> GAME_2.D
 	string(TOUPPER "${_base}" _name)
 	string(APPEND GAME_ENTRY "<file name=\"${_name}\" type=\"data\" source=\"${_src}\" />\n\t\t")
 endforeach()
+# the console's background under the release's menu before a map is loaded
+# (formats/qmenu.h); the menu's sound bank is MAPS/MENU.SND (the .snd glob)
+if(EXISTS ${PROJECT_SOURCE_DIR}/cooked/id1/conback.dat)
+	string(APPEND GAME_ENTRY "<file name=\"CONBACK.DAT\" type=\"data\" source=\"${PROJECT_SOURCE_DIR}/cooked/id1/conback.dat\" />\n\t\t")
+endif()
 # the streamed assets per model level (formats/qstream.h: read while the
 # game runs, engine/stream.c): stream_2.dat -> STREAM_2.DAT
 set(STREAM_ENTRY "")

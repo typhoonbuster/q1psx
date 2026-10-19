@@ -41,6 +41,7 @@
 #include "rlist.h"
 #include "settings.h"
 #include "stream.h"
+#include "ui.h"
 #include "vid.h"
 #include "world.h"
 
@@ -364,6 +365,7 @@ static int load_level(int map)
 	load_map = map;
 	stream_abort();                             /* (the arena is reset, the drive taken) */
 	music_stop();                               /* one drive: the reads need it */
+	ui_conback_forget();                        /* (the map's textures over it) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	gdata_set_models(settings.level[QL_MODELS]);
 	stream_set_level(settings.level[QL_MODELS]);   /* (its monsters, items at that level) */
@@ -404,9 +406,12 @@ static int load_level(int map)
 }
 
 /* the settings ask for other levels than the map was loaded at (or another
-   texture depth): its reload is due */
+   texture depth): its reload is due (none with no map: the next load takes
+   the settings as they are) */
 static int load_due(void)
 {
+	if (!world_ok)
+		return 0;
 	return settings.tex4 != world.tex4 || loaded[QL_TEXTURES] != settings.level[QL_TEXTURES] ||
 	       loaded[QL_GEOMETRY] != settings.level[QL_GEOMETRY] || loaded[QL_MODELS] != settings.level[QL_MODELS];
 }
@@ -442,11 +447,7 @@ static void frame_work(void)
 }
 
 static int overlay_on = !Q1PSX_RELEASE;   /* START toggles (the debug build) */
-static int release_in_game;                /* the release build: a game begun (New Game, or
-                                              the menu left on the first map) */
-#if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
-static void release_start_map(void);
-#endif
+static int release_in_game;                /* the release build: a game begun (New Game) */
 
 static void draw_overlay(void)
 {
@@ -513,11 +514,6 @@ static void run_frame(int interactive, int dump)
 		if (menu_active()) {                  /* the world paused under the menu */
 			menu_key(&pad);
 			nticks = 0;
-			if (!menu_active() && !release_in_game) {   /* left on the first map: playing it, */
-				if (load_due())
-					release_start_map();      /* at the levels just chosen */
-				release_in_game = 1;
-			}
 		} else if (pad.pressed & PAD_START) {
 			menu_open();                      /* togglemenu */
 			nticks = 0;
@@ -533,7 +529,8 @@ static void run_frame(int interactive, int dump)
 			overlay_on = !overlay_on;
 #endif
 		PLAY_STEP("player");
-		player_update(ticks, nticks);
+		if (world_ok)                         /* (none before the release's New Game) */
+			player_update(ticks, nticks);
 	}
 	if (interactive) {                      /* a trigger_changelevel's map, between frames */
 		char next[16];
@@ -560,9 +557,17 @@ static void run_frame(int interactive, int dump)
 	frame_work();
 	if (game_active) {
 		uint32_t t1 = prof_now();
-		game_view_tint();                   /* the contents' colour over the view */
-		PLAY_STEP("hud");
-		hud_draw();
+		if (world_ok) {
+			game_view_tint();               /* the contents' colour over the view */
+			PLAY_STEP("hud");
+			hud_draw();
+		}
+#if Q1PSX_RELEASE
+		else if (!menu_active())
+			ui_conback();                   /* no world: the forced console's background
+			                                   (SCR_DrawConsole; Sbar_Draw draws nothing
+			                                   under a full-screen console) */
+#endif
 		if (menu_shown)
 			menu_draw();                    /* M_Draw: over everything */
 		uint32_t t2 = prof_now();
@@ -2270,6 +2275,21 @@ static void release_new_game(void)
 }
 
 static int release_started(void) { return release_in_game; }
+
+static int release_no_world(void) { return !world_ok; }
+
+/* The release's boot: Quake starts its demo loop under the menu (quake.rc
+   "startdemos demo1 demo2 demo3"); the port has no demos and loads no map
+   until New Game, so its screen is Quake's with neither (con_forcedup): the
+   console's background, the menu over it (M_Draw), and the music of the
+   first demo, CD track 2, which demo1.dem forces (the menu's bank,
+   MAPS/MENU.SND: its clicks and that track; tools/qcook/menu.c) */
+static void release_title(void)
+{
+	snd_load_bank("MENU");
+	ui_conback_load();
+	music_play(snd_cd_track());
+}
 #endif
 
 /* The stack's high-water mark: scripts/ramcheck.sh checks its room at the
@@ -2330,13 +2350,10 @@ int main(void)
 		player_spawn();
 	run_bench();
 #elif Q1PSX_RELEASE
-	/* Quake starts its demo loop under the menu; with no demos to play,
-	   the first map waits under it, a new game's kit in hand */
-	static const menu_hooks_t hooks = { release_new_game, release_started, load_due };
+	static const menu_hooks_t hooks = { release_new_game, release_started, load_due, release_no_world };
 	menu_init(&hooks);
 	game_active = 1;
-	release_start_map();
-	release_in_game = 0;
+	release_title();                           /* (no map before New Game) */
 	menu_open();
 	for (;;)
 		run_frame(1, 0);

@@ -29,6 +29,9 @@
 # once per model level, the game data (weapon models, projectiles, the
 # HUD; formats/qgame.h):
 #   cooked/id1/game_<N>.dat     QGM7                              -> disc GAME_<N>.DAT
+# the release menu's (formats/qsound.h, formats/qmenu.h):
+#   cooked/id1/menu.snd         QSB2, the clicks and CD track 2   -> disc MAPS/MENU.SND
+#   cooked/id1/conback.dat      QCB1, the console's background    -> disc CONBACK.DAT
 # and once per model level, the streamed assets (the monsters, the items'
 # models, the positional sounds; formats/qstream.h; the models reduced at
 # that level: tools/qcook/game.c stream_reduce):
@@ -65,11 +68,15 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
-      cooked/id1/game*.dat cooked/id1/stream*.dat
+      cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game > "$LOGS/game.log" 2>&1 \
 	|| { echo "cook FAILED: game data"; cat "$LOGS/game.log"; exit 1; }
+# the release menu's: its sound bank (the clicks, the theme's CD track) and
+# the console's background, shown before any map is loaded
+tools/qcook/qcook menu --pak "$QUAKE_PAK0" --sounds cooked/id1/menu.snd --conback cooked/id1/conback.dat \
+	> "$LOGS/menu.log" 2>&1 || { echo "cook FAILED: menu"; cat "$LOGS/menu.log"; exit 1; }
 # the streamed assets per model level (formats/qstream.h): the monsters, the
 # items' models, the positional sounds
 pids=""
