@@ -1408,3 +1408,21 @@ followed by R0-R4.
   - **No map before New Game**: the menu over the console's background
     (`gfx/conback.lmp`, what Quake shows with no world and no demo); START
     loaded once, at New Game. The menu's clicks from their own small bank.
+- **The movers' re-cut in play, measured and cut down** (§49):
+  - **Measured**: `MOVERS=1 scripts/bench.sh` moves E1M6's train *39,
+    E1M3's train *3 and E3M4's door *71 in view. Each frame one has moved
+    and is drawn, it is cut again: 916 k, 372 k and 658 k cycles a cut,
+    the frame then 3.97, 2.29 and 3.00 vblanks.
+  - **Each record's sphere down the BSP first**: its polygons start where
+    the sphere stops (exact).
+  - **No cut out of view**: a moved model whose pieces the record loop
+    would all cull is not cut again until it is in view (the same
+    frames). On the way, a fix: a model that moved while not drawn was
+    judged by its old pieces' leaves, and a train back in the PVS
+    elsewhere stayed undrawn.
+  - **The whole cut in hand-written asm** (`engine/bmfrag.s`): 482 k,
+    218 k and 361 k a cut (-47 %, -41 %, -45 %). The C stays as its
+    check (`BMF_C=1|2`): no byte differs over 44295 cuts on the 32 maps.
+  - **`tools/hazcheck` checks the branches' targets too**: a load in a
+    delay slot read by the target's first instruction, which made the
+    asm clear RAM under the interpreter while the dynarec hid it.

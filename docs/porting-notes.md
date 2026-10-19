@@ -889,7 +889,8 @@ visible node in the walk. The spawn view is the one over budget.
 - **Rules adopted.**
   - `tools/hazcheck` scans the linked ELF (`objdump -d -z`) after every build
     and fails it on any load-delay, GTE (register write < 2 instructions
-    before a command) or HI/LO hazard.
+    before a command) or HI/LO hazard; since §49 also on a load in a
+    branch's delay slot that the target's first instruction reads.
   - Correctness runs use `EMU_ARGS=-interpreter scripts/bench.sh` (slow but
     exact). The dynarec bench stays the one for timings, because it is what
     the PCSX-Redux GUI runs.
@@ -1607,8 +1608,8 @@ correct light.
 - `scripts/dlcheck.sh check <ref>`: the display lists of the 12 bench views
   are identical, word for word, to the reference;
 - the interpreter's hashes (`EMU_ARGS=-interpreter`) match the dynarec's,
-  because the dynarec hides load-delay mistakes (hazcheck only sees linear
-  code, not branch targets);
+  because the dynarec hides load-delay mistakes (hazcheck saw only linear
+  code then, not branch targets: §49 added them);
 - the bench's C-vs-asm physics diffs: 0 mismatches.
 
 One step changes packets on purpose: one texture-window command per run of
@@ -5776,9 +5777,11 @@ the choices made:
   - **A load in a branch's delay slot read by the target's first
     instruction.** The record's light padding then counted from a stale
     value and cleared RAM, under the interpreter (as hardware would); the
-    dynarec hands the new value over. `tools/hazcheck` checks only the
-    next instruction in address order. A script checked every branch
-    target of the ELF: none left, and the rest of the engine had none.
+    dynarec hands the new value over. `tools/hazcheck` checked only the
+    next instruction in address order; it now checks every static branch
+    target too (a load in the delay slot, the target's first instruction
+    reading it): none in the engine; a deliberate one in `cut_record`
+    failed the link.
   - **A four-instruction macro in a delay slot**: only its first
     instruction ran.
   - **`put_pieces`' done mark** (bit 24 of a piece's n / cut / quad word)
@@ -5864,7 +5867,5 @@ the choices made:
   - **The stack's room**: 440 B over the floor in the default build.
     The unrolled corners and box (3 %) need 530 B more, the lone piece's
     own radius, header and polygon (4.5 %) 400 B more again.
-  - **`tools/hazcheck`** could check branch targets too (the pitfall
-    above).
   - **The worst frames stay over budget**: E1M6's train still takes 482 k
     a cut, about 40 % of the CPU at the 32 Hz tick while it is in view.
