@@ -1778,6 +1778,28 @@ static void bench_movers(void)
 		       (unsigned) (cut_frames ? vbl_cut / cut_frames : 0),
 		       (unsigned) (cut_frames ? vbl_cut * 100 / cut_frames % 100 : 0),
 		       (unsigned) (n_still ? f_still / n_still : 0), (unsigned) n_still);
+		/* then turned a quarter left for 16 frames in 32: a moved model out
+		   of view is not cut again (bmf_draw's all_culled) until it is in
+		   view (the door started again; a train runs on) */
+		if (e->use)
+			e->use(e);
+		uint32_t cuts2 = 0, off0 = bmf_stats[6];
+		for (int f = 0; f < 256; f++) {
+			game_tick(&cmd);
+			uint32_t c0 = bmf_stats[2] + bmf_stats[3];
+			mv_look(e, eye);
+			if (f & 16)
+				cam.yaw += ANG_TURN / 4;
+			run_frame(0, 0);
+			cuts2 += bmf_stats[2] + bmf_stats[3] - c0;
+			if (f % 16 == 15) {
+				printf("mvhash %s t%d\n", names[ti], f);
+				run_frame(0, 2);
+				fold = (fold ^ vid_dump_hash) * 16777619u;
+			}
+		}
+		printf("bmfcut %s turning: 256 frames, %u cuts, %u put off out of view\n", names[ti],
+		       (unsigned) cuts2, (unsigned) (bmf_stats[6] - off0));
 		printf("bmfhash %s: %08x\n", names[ti], (unsigned) fold);
 	}
 	game_active = 0;

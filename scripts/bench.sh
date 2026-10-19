@@ -16,7 +16,9 @@
 #         with the flat shading. VIEWMODEL=0 / 2: no gun / the 2D gun (1, the
 #         3D model, by default).
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the
-#         world's BSP (engine/bmfrag.c): an A / B. BMFCHK=1 (with
+#         world's BSP (engine/bmfrag.c): an A / B. NOBMFCULL=1 cuts a moved
+#         brush model again even when none of it is in view (an A / B: the
+#         same frames). BMFCHK=1 (with
 #         BENCH_MAPS=1 VIEWS=0) cuts every door, button, plat, train and
 #         secret door at 33 places along each of its ways in its room
 #         ("bmfchk" lines: the cuts that do not fit, the fullest rooms;
@@ -72,6 +74,7 @@ DRAWDIST=${DRAWDIST:-0}
 FLAT=${FLAT:-0}
 VIEWMODEL=${VIEWMODEL:-1}
 NOBMF=${NOBMF:-0}
+NOBMFCULL=${NOBMFCULL:-0}
 BMFCHK=${BMFCHK:-0}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
@@ -92,6 +95,7 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
+      -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \

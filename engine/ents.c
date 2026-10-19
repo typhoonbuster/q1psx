@@ -1445,7 +1445,7 @@ static void ents_visible(uint16_t vis)
 				e->vismask |= (uint8_t) (1 << j);
 		int seen = e->vismask != 0;
 		if (bm && bm[e->model] && (seen || e->num_leaves == ENT_MAX_LEAVES))
-			seen = bmf_seen(bm[e->model], vis, seen);
+			seen = bmf_seen(bm[e->model], e, vis, seen);
 		if (seen)
 			vis_list[num_vis++] = draw_list[i];
 	}

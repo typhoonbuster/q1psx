@@ -69,6 +69,8 @@ struct bmf_cache {
 	uint8_t    valid;        /* 1 cut, 0 too cut up there (drawn whole until it
 	                            moves, not cut each frame)                     */
 	uint16_t   num_nodes;
+	uint16_t   rmax;         /* the largest sphere its pieces' records can have
+	                            (vertex units: all_culled)                     */
 	bmf_node  *nodes;
 	uint8_t   *recs;         /* the pieces' records (qw_record, the world's)     */
 	uint32_t   recs_len, recs_cap;
@@ -80,7 +82,7 @@ struct bmf_cache {
 static qw_vert  *bmf_pool;
 static uint32_t  bmf_pool_cap, bmf_pool_used;
 #ifdef Q1PSX_BENCH
-uint32_t bmf_stats[6];
+uint32_t bmf_stats[7];
 #endif
 
 static inline const qw_node *node_at(uint32_t at)   /* (KUSEG, as the walk keeps them) */
@@ -558,6 +560,51 @@ uint32_t bmf_model_bytes(int model)
 }
 #endif
 
+/* the largest sphere a record of a model's pieces can have (vertex
+   units): a piece record's corners are in its source record's box, so its
+   own box is, and its sphere (put_record: about its box's centre,
+   truncated, to its farthest corner, + 1) is at most that box's half
+   diagonal + 0.87 + 1 */
+static uint32_t model_rmax(uint32_t at)
+{
+	uint32_t most = 0;
+	while (!(at & 1)) {
+		const qw_node *nd = node_at(at);
+		for (int s = 0; s < 2; s++) {
+			const uint8_t *p = (const uint8_t *) nd->faces[s], *end = (const uint8_t *) qw_face_end(nd, s);
+			while (p < end) {
+				const qw_record *r = (const qw_record *) p;
+				if (!r->size)
+					break;
+				const uint16_t *idx = (const uint16_t *) (p + sizeof *r);
+				int32_t lo[3] = { 32767, 32767, 32767 }, hi[3] = { -32768, -32768, -32768 };
+				for (int i = 0; i < r->num_verts; i++) {
+					const qw_vert *v = &world.verts[idx[i]];
+					const int32_t q[3] = { v->x, v->y, v->z };
+					for (int k = 0; k < 3; k++) {
+						if (q[k] < lo[k]) lo[k] = q[k];
+						if (q[k] > hi[k]) hi[k] = q[k];
+					}
+				}
+				uint32_t d2 = 0;
+				for (int k = 0; k < 3; k++) {
+					uint32_t hk = (uint32_t) (hi[k] - lo[k] + 1) / 2;
+					d2 += hk * hk;
+				}
+				uint32_t rad = q_isqrt32(d2) + 3;
+				if (rad > most)
+					most = rad;
+				p += r->size;
+			}
+		}
+		uint32_t back = model_rmax(nd->child[1]);
+		if (back > most)
+			most = back;
+		at = nd->child[0];
+	}
+	return most;
+}
+
 bmf_cache **bmf_models;          /* this level's caches, by brush model: an
                                     edict spawned again (a death) finds its own */
 
@@ -798,6 +845,8 @@ void bmf_reserve(void)
 		if (build_nodes(c, bm->root, &count, nodes) < 0)
 			continue;
 		c->num_nodes  = (uint16_t) count;
+		uint32_t rmax = model_rmax(bm->root);
+		c->rmax       = (uint16_t) (rmax > 0xffff ? 0xffff : rmax);
 		c->pool_first = bmf_pool_used;
 		c->pool_cap   = need[m].verts;
 		bmf_pool_used += need[m].verts;
@@ -919,9 +968,56 @@ static void draw_node(const bmf_cache *c, int k)
 #ifndef Q1PSX_BENCH_BMF
 #define Q1PSX_BENCH_BMF 1        /* 0: the models drawn whole (NOBMF=1 scripts/bench.sh, an A / B) */
 #endif
+#ifndef Q1PSX_BENCH_BMFCULL
+#define Q1PSX_BENCH_BMFCULL 1    /* 0: a moved model cut again out of view too (NOBMFCULL=1, an A / B) */
+#endif
 
-int bmf_seen(const bmf_cache *c, uint16_t vis, int whole)
+static int32_t clamp16(int32_t v)
 {
+	return v < -32768 ? -32768 : v > 32767 ? 32767 : v;
+}
+
+/* Would the record loop cull every record of a model's pieces where it
+   now stands? r_world.s RECLOOP keeps a record whose sphere (centre
+   through the GTE, IR saturated, view space x6) passes the four planes:
+   right / left z -+ x + 2.125 r >= 0, bottom / top 3z -+ 4y + 8 r >= 0.
+   Every piece record's centre is in the model's box and its radius at
+   most rmax, so the view-space box (its centre's coordinates, the
+   extents |rot| h, 2 more for the roundings, saturated as IR is) wholly
+   behind one plane by more than its 2.125 or 8 rmax culls them all; no
+   leaf it would be drawn in can be wholly in view either (it holds the
+   piece). Then the frame draws nothing of it: it is not cut again until
+   it is in view (bmf_seen finds it by its box meanwhile). */
+static int all_culled(const edict_t *e, int32_t rmax)
+{
+	const int16_t *rot = r_state.rot, *ar = r_state.absrot;
+	int32_t c[3], h[3], lo[3], hi[3];
+	for (int k = 0; k < 3; k++) {                 /* 1/8 units -> vertex units */
+		c[k] = (e->absmin[k] + e->absmax[k]) >> 2;
+		h[k] = ((e->absmax[k] - e->absmin[k]) >> 2) + 1;
+	}
+	for (int i = 0; i < 3; i++) {
+		int32_t v = ((rot[3 * i] * c[0] + rot[3 * i + 1] * c[1] + rot[3 * i + 2] * c[2]) >> 12) + r_state.tr[i];
+		int32_t x = ((ar[3 * i] * h[0] + ar[3 * i + 1] * h[1] + ar[3 * i + 2] * h[2]) >> 12) + 3;
+		lo[i] = clamp16(v - x);
+		hi[i] = clamp16(v + x);
+	}
+	int32_t lr = 2 * rmax + (rmax >> 3) + 1, tb = 8 * rmax;
+	return hi[2] - lo[0] + lr < 0 || hi[2] + hi[0] + lr < 0 ||
+	       3 * hi[2] - 4 * lo[1] + tb < 0 || 3 * hi[2] + 4 * hi[1] + tb < 0;
+}
+
+int bmf_seen(const bmf_cache *c, const edict_t *e, uint16_t vis, int whole)
+{
+	if (c->org[0] != e->origin[0] || c->org[1] != e->origin[1] || c->org[2] != e->origin[2]) {
+		/* cut elsewhere (it moved while not drawn): its pieces' leaves say
+		   nothing of where it is now; its box's leaves do, or its top node
+		   when they were cut short (every leaf of its box is under it, and
+		   the PVS marking stamps a visible leaf's ancestors) */
+		if (e->num_leaves < ENT_MAX_LEAVES)
+			return whole;
+		return ((const qw_node *) ((e->topnode & ~1u) | 0x80000000u))->visframe == vis;
+	}
 	if (!c->valid)
 		return whole;
 	for (uint32_t g = 0; g < c->num_groups; g++)
@@ -935,8 +1031,15 @@ int bmf_draw(edict_t *e, uint16_t vis)
 	bmf_cache *c = bmf_models[e->model];
 	if (!Q1PSX_BENCH_BMF)
 		return 0;
-	if (c->org[0] != e->origin[0] || c->org[1] != e->origin[1] || c->org[2] != e->origin[2])
+	if (c->org[0] != e->origin[0] || c->org[1] != e->origin[1] || c->org[2] != e->origin[2]) {
+		if (Q1PSX_BENCH_BMFCULL && all_culled(e, c->rmax)) {
+#ifdef Q1PSX_BENCH
+			bmf_stats[6]++;
+#endif
+			return 1;                             /* moved, none of it in view: not cut yet */
+		}
 		cut_at(c, e);                             /* moved: cut again */
+	}
 	if (!c->valid)
 		return 0;
 	draw_vis = vis;
