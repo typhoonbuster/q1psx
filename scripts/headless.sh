@@ -26,7 +26,7 @@ STOP=${3:-}
 EMU=${EMU:-$(sed -n 's/^[[:space:]]*EMU[[:space:]]*=[[:space:]]*//p' "$ROOT/local.env" 2>/dev/null | tail -n 1 || true)}
 : "${EMU:?set EMU (the PCSX-Redux AppImage) in local.env or the environment}"
 LOG=${LOG:-"$ROOT/build/headless.log"}
-CRASH='break 0x|Unrecoverable|Exception|PANIC|Sys_Error|panic|Program counter'
+CRASH='break 0x|Unrecoverable|Exception|PANIC|Sys_Error|panic|Program counter|=== halting ==='
 
 mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
