@@ -6124,3 +6124,21 @@ lines):
 - **Not run**: DuckStation; a hands-on play (E1M1's nailgun room, the
   doors and lifts with monsters by them, the bodies in a lit room, the
   big maps E3M4 and E4M7).
+
+### 50.7 The merge with §49 (master 4d5d91a)
+
+- **The asm cut's layouts** (§49, engine/bmfrag.s): the nodes are 16
+  bytes now (`BN_SIZE`; `end` follows the groups' fields, at 14); the
+  eye in a model's space (`cam`) goes at the cache's end, past the asm's
+  offsets. `build_nodes` is §49's (`BMF_COLD`), with `end`; the rare ways
+  of §50.1 share `BMF_COLD`.
+- **Checked**:
+  - `BMF_C=2 BMFCHK=1 BENCH_MAPS=1 VIEWS=0`: 44295 cuts, the asm against
+    the C, 0 mismatches (§49's count);
+  - the nailgun scenario (`TICKS=232`): the soldier hidden until the wall
+    slides;
+  - the 128 spawn views against master's: the 25 lists §50.1 and §50.5
+    change, +0.18 % of the frame cycles in all.
+- **The stack's room**: release 16648 B, default 16632 B, ultra 16648 B,
+  about 250 bytes over the 16 KB floor. The next code needs room (an
+  arena, or less code elsewhere).
