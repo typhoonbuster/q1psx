@@ -718,12 +718,15 @@ static int spu_victim(uint32_t n, uint32_t score)
 /* ---------------------------------------------------------- sound reads -- */
 
 /* a place in the SPU pool for sound a (room made by dropping the sounds
-   wanted less), its slot taken: its read can start (0: no room) */
+   wanted less), its slot taken: its read can start (0: no room; none
+   without the staging buffer either: a level arena too full for it, as
+   E3M4's and E4M7's were, read the sounds to address 0, each found "not a
+   sound") */
 static int sound_start(int a)
 {
 	asset_t *as = &assets[a];
 	int slot = free_slot();
-	if (slot < 0 || as->d.size <= sizeof(qst_sound))
+	if (slot < 0 || !stage || as->d.size <= sizeof(qst_sound))
 		return 0;
 	uint32_t n = ALIGN64(as->d.size - sizeof(qst_sound)), at = 0;
 	while (!spu_place(n, &at)) {
