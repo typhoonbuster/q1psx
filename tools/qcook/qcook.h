@@ -165,6 +165,8 @@ int cmd_menu(int argc, char **argv);
    take from the stream, by name (its monsters', stream.c; its items'
    models, items.c; its entities' and ambients' sounds, sound.c) */
 int cmd_carousel(int argc, char **argv);
+/* `qcook spumusic`: a CD track as the SPU music (formats/qspu.h) */
+int cmd_spumusic(int argc, char **argv);
 int stream_monster_needs(const ent_list *l, const char **list, int max);
 int items_streamed(const ent_list *l, int worldtype, const char **list, int max);
 int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max);

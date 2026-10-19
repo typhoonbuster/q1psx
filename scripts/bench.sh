@@ -37,8 +37,9 @@
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds
-#         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B); MUSIC=1 puts the music on the bench disc (the .cue
-#         then carries the tracks: docs/porting-notes.md §26).
+#         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B); MUSIC=1 puts the music on the bench disc (its
+#         streams: the XA ones with their carousels, or MUSIC_MODE=spu the
+#         SPU's; docs/porting-notes.md §46).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
 #         by record by the C ("dlchk" lines).
@@ -75,6 +76,7 @@ HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
 PLAY=${PLAY:-0}
 MUSIC=${MUSIC:-0}
+MUSIC_MODE=${MUSIC_MODE:-xa}
 MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
@@ -88,6 +90,7 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_MUSIC_MODE="$MUSIC_MODE" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \

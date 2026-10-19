@@ -120,7 +120,7 @@ echo "cooked $(echo $MAPS | wc -w) maps: 4 texture, 3 geometry, 3 model levels -
 # SPU-streamed music (cooked/spu/trackNN.wav -> spu_NN.dat). The build's
 # Q1PSX_MUSIC_MODE picks which go on the disc.
 QUAKE_MUSIC=${QUAKE_MUSIC:-"$(dirname "$QUAKE_PAK0")/../rerelease/id1/music"}
-rm -f cooked/xa/xa_*.str
+rm -f cooked/xa/xa_*.str cooked/spu/spu_*.dat
 if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/dev/null; then
 	mkdir -p cooked/xa cooked/spu
 	tracks=""
@@ -142,8 +142,11 @@ if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/d
 		'tools/qcook/qcook carousel --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --pool cooked/xa/pool.dat \
 		    --maps "$MAPS_LIST" --music cooked/xa --track {} --out cooked/xa/xa_{}.str > "$LOGS/xa_{}.log" 2>&1 \
 		 || { echo "cook FAILED: the XA stream of track {}"; cat "$LOGS/xa_{}.log"; exit 1; }'
-	cat "$LOGS"/xa_*.log | grep '^qcook: ' | sed 's|^qcook: .*/|music: |' || true
-	echo "music: $(echo $tracks | wc -w) tracks in $ROOT/cooked/xa/"
+	for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
+		'tools/qcook/qcook spumusic --music cooked/spu --track {} --out cooked/spu/spu_{}.dat > "$LOGS/spu_{}.log" 2>&1 \
+		 || { echo "cook FAILED: the SPU music of track {}"; cat "$LOGS/spu_{}.log"; exit 1; }'
+	cat "$LOGS"/xa_*.log "$LOGS"/spu_*.log | grep '^qcook: ' | sed 's|^qcook: .*/|music: |' || true
+	echo "music: $(echo $tracks | wc -w) tracks in $ROOT/cooked/xa/ and $ROOT/cooked/spu/"
 else
 	echo "music: none (set QUAKE_MUSIC / COOK_MUSIC=1, needs ffmpeg)"
 fi

@@ -8,6 +8,7 @@
 #include "dlight.h"
 #include "game.h"
 #include "mem.h"
+#include "music.h"
 #include "qsound.h"
 #include "render.h"
 #include "snd.h"
@@ -22,7 +23,8 @@ int snd_log;
 #define V_DYNAMIC   2            /* MAX_DYNAMIC_CHANNELS                     */
 #define NUM_DYNAMIC 8
 #define V_STATIC    (V_DYNAMIC + NUM_DYNAMIC)
-#define NUM_STATIC  (24 - V_STATIC)
+#define NUM_STATIC  (24 - V_STATIC - MUSIC_SPU_VOICES)   /* (the SPU music's two last) */
+#define SND_VOICES  ((1u << (V_STATIC + NUM_STATIC)) - 1)   /* the sounds' voices */
 
 #define CD_VOL      0x2ccc       /* bgmvolume 1: the CD as loud as it was under
                                     the old 0.7 master (the mix unchanged)  */
@@ -233,12 +235,13 @@ int snd_load_bank(const char *map)
 		int s = snd_find(names[i]);
 		named[i] = s >= 0 ? s : -1;
 	}
-	SpuSetKey(0, 0xffffff);
+	SpuSetKey(0, SND_VOICES);
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetTransferStartAddr(QS_SPU_BASE);
 	SpuWrite((const uint32_t *) (f + h->ofs_data), (h->len_data + 63) & ~63u);
 	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
-	stream_spu_pool(QS_SPU_BASE + ((h->len_data + 63) & ~63u), 512 * 1024);   /* the rest: the streamed sounds' */
+	stream_spu_pool(QS_SPU_BASE + ((h->len_data + 63) & ~63u),   /* the rest: the streamed sounds' */
+	                512 * 1024 - MUSIC_SPU_BYTES);                /* (but the SPU music's ring) */
 	printf("snd: %s — %d sounds, %u KB of SPU RAM, %d static sounds, CD track %d\n",
 	       name, bank_n, (unsigned) h->len_data / 1024, statics_n, cd_track);
 	mem_level_reset();
@@ -264,7 +267,7 @@ static int sound_of_hash(uint32_t h)
 
 void snd_stop_all(void)
 {
-	SpuSetKey(0, 0xffffff);
+	SpuSetKey(0, SND_VOICES);
 	for (int i = 0; i < NUM_DYNAMIC; i++)
 		dyn[i].sfx = -1;
 	for (int v = 0; v < 24; v++)

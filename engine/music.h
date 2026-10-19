@@ -22,6 +22,16 @@
 #ifndef Q1PSX_MUSIC_H
 #define Q1PSX_MUSIC_H
 
+/* the SPU music's: its voices (the last two: left, right) and its ring at
+   the top of SPU RAM, which the sounds leave it (engine/snd.c) */
+#if Q1PSX_MUSIC_SPU
+#define MUSIC_SPU_VOICES 2
+#define MUSIC_SPU_BYTES  (2 * 6 * 4096)  /* 6 chunks a channel: 2 s at 22 kHz */
+#else
+#define MUSIC_SPU_VOICES 0
+#define MUSIC_SPU_BYTES  0
+#endif
+
 void music_init(void);
 void music_play(int track);      /* the CD track number (2: the theme, ...) */
 void music_stop(void);
@@ -37,5 +47,13 @@ int  music_track(void);          /* the one playing, 0 = none */
 int  music_suspend(void);
 void music_resume(void);
 int  music_suspended(void);
+
+/* The SPU music shares the drive with the streamed assets' reads
+   (engine/stream.c): a read of `sectors` may start when the ring holds
+   the music for it (and the refill after it) and the music is not
+   reading; the music refills when the stream is not (stream_reading).
+   Always 1 / 0 with the XA music (the stream suspends it). */
+int  music_read_ok(int sectors);
+int  music_reading(void);
 
 #endif

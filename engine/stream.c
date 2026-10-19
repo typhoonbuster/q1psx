@@ -213,6 +213,7 @@ static int load_directory(int level)
 		memset(&assets[i], 0, sizeof assets[i]);
 		assets[i].d = d[i];
 		assets[i].score = assets[i].last = ~0u;
+		assets[i].xa = XA_NONE;               /* (a carousel's: stream_carousel) */
 	}
 	num_assets = (int) n;
 	for (int i = 0; i < num_assets; i++) {      /* the groups' lists, in the file's order */
@@ -900,6 +901,8 @@ static int sound_step(void)
 		sound_done(1, 0);
 		return 1;
 	}
+	if (!music_read_ok(STAGE_SECTORS))       /* (the SPU music's refill first) */
+		return 0;
 	if (!sound_read_piece()) {
 		sound_done(0, 0);
 		return 1;
@@ -1052,6 +1055,17 @@ static void xa_cancel(void)
 		cp->asset = -1;
 	}
 	ring_head = ring_tail = 0;
+}
+
+int stream_reading(void)
+{
+	return reading >= 0 || (sread.a >= 0 && (sread.step == SR_READ ||
+	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK))));
+}
+
+uint8_t *stream_stage(void)
+{
+	return stage;
 }
 
 void stream_carousel(const qxa_header *h)
@@ -1368,6 +1382,9 @@ void stream_frame(void)
 	}
 	if (!music_suspend())                     /* (fading: the read waits) */
 		return;
+	if (!music_read_ok(assets[waiting].d.kind == QSTK_SOUND ? STAGE_SECTORS
+	                   : (int) ((assets[waiting].d.size + QST_SECTOR - 1) / QST_SECTOR)))
+		return;                               /* (the SPU music's ring too low: its refill first) */
 	if (xa)
 		xa_flush();                           /* (the stream left: the reads' buffer) */
 	int a = waiting;

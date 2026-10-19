@@ -1933,7 +1933,9 @@ static void mon_log(const char *what, const edict_t *e)
 static void bench_stream_frames(void)
 {
 	stream_frame();
+	music_tick();                                 /* (the music's stream goes on too) */
 	stream_frame();
+	music_tick();
 }
 
 /* the scenario's monster and the player both solid, their boxes

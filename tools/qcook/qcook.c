@@ -431,6 +431,8 @@ int main(int argc, char **argv)
 		return cmd_menu(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "carousel"))
 		return cmd_carousel(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "spumusic"))
+		return cmd_spumusic(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"
@@ -443,6 +445,7 @@ int main(int argc, char **argv)
 	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
 	        "  qcook carousel --pak <pak0.pak> [--pak1 <pak1.pak>] --pool <pool.dat> --music <dir>\n"
-	        "                 --track <n> --out <xa_nn.str> [--maps \"start e1m1 ...\"] [--needs <list.txt>]\n");
+	        "                 --track <n> --out <xa_nn.str> [--maps \"start e1m1 ...\"] [--needs <list.txt>]\n"
+	        "  qcook spumusic --music <dir> --track <n> --out <spu_nn.dat>\n");
 	return 2;
 }

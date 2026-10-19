@@ -107,6 +107,12 @@ int  stream_is_sound(int a);
 void stream_carousel(const qxa_header *h);
 void stream_xa_sector(uint32_t i);
 
+/* the SPU music's (engine/music.c): the drive or the staging buffer busy
+   with an asset's read; the staging buffer (STAGE_SECTORS of 2048 bytes:
+   the music's refills between the reads), 0 before any map */
+int      stream_reading(void);
+uint8_t *stream_stage(void);
+
 /* the SPU pool's bounds (bytes), engine/snd.c's once a map's bank is in */
 void stream_spu_pool(uint32_t lo, uint32_t hi);
 

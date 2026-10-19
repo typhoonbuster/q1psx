@@ -30,12 +30,13 @@
 #include "qcook.h"
 #include "../../formats/qsound.h"
 #include "../../formats/qstream.h"
+#include "../../formats/qspu.h"
 #include "../../formats/qxa.h"
 
 /* ------------------------------------------------------------------ XA -- */
 
-static const int XA_K0[4] = { 0, 60, 115, 98 };
-static const int XA_K1[4] = { 0, 0, -52, -55 };
+static const int XA_K0[5] = { 0, 60, 115, 98, 122 };    /* (the 5th: the SPU's only) */
+static const int XA_K1[5] = { 0, 0, -52, -55, -60 };
 
 typedef struct { int h1, h2; } xa_chan;
 
@@ -45,14 +46,15 @@ static int clamp16(int v)
 }
 
 /* one sound unit of 28 samples (x, stride apart): its parameter byte and
-   nibbles; the channel's history moved on as the decoder will; returns
-   the squared error */
-static double xa_unit(const int16_t *x, int stride, xa_chan *c, uint8_t *param, uint8_t nib[28])
+   nibbles, with `filters` of them (4: the CD-ROM's; 5: the SPU's, whose
+   decoder is the same, psx-spx); the channel's history moved on as the
+   decoder will; returns the squared error */
+static double xa_unit(const int16_t *x, int stride, xa_chan *c, uint8_t *param, uint8_t nib[28], int filters)
 {
 	double best = 1e300;
 	int bf = 0, bs = 0;
 	uint8_t bn[28] = { 0 };
-	for (int f = 0; f < 4; f++) {
+	for (int f = 0; f < filters; f++) {
 		/* the shift the residual needs, predicted from the signal itself */
 		int p1 = c->h1, p2 = c->h2, maxd = 0;
 		for (int i = 0; i < 28; i++) {
@@ -122,7 +124,7 @@ static void xa_sector(const int16_t *pcm, uint32_t left, xa_chan ch[2], uint8_t 
 				*sig += (double) x[i] * x[i];
 			}
 			uint8_t nib[28];
-			*err += xa_unit(x, 1, &ch[c], &param[b], nib);
+			*err += xa_unit(x, 1, &ch[c], &param[b], nib, 4);
 			for (int i = 0; i < 28; i++)
 				grp[16 + i * 4 + (b >> 1)] |= (uint8_t) (nib[i] << ((b & 1) * 4));
 		}
@@ -138,8 +140,8 @@ static void xa_sector(const int16_t *pcm, uint32_t left, xa_chan ch[2], uint8_t 
 static uint32_t rd32(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t) p[3] << 24; }
 static uint16_t rd16(const uint8_t *p) { return (uint16_t) (p[0] | p[1] << 8); }
 
-/* a 16-bit stereo PCM WAV at QXA_RATE: its frames */
-static const int16_t *wav_stereo(const uint8_t *d, long len, const char *path, uint32_t *frames)
+/* a 16-bit stereo PCM WAV at `rate`: its frames */
+static const int16_t *wav_stereo(const uint8_t *d, long len, const char *path, uint32_t rate, uint32_t *frames)
 {
 	if (len < 12 || memcmp(d, "RIFF", 4) || memcmp(d + 8, "WAVE", 4))
 		die("%s: not a WAV", path);
@@ -147,9 +149,9 @@ static const int16_t *wav_stereo(const uint8_t *d, long len, const char *path, u
 	for (long p = 12; p + 8 <= len; ) {
 		uint32_t n = rd32(d + p + 4);
 		if (!memcmp(d + p, "fmt ", 4)) {
-			if (rd16(d + p + 8) != 1 || rd16(d + p + 10) != 2 || rd32(d + p + 12) != QXA_RATE ||
+			if (rd16(d + p + 8) != 1 || rd16(d + p + 10) != 2 || rd32(d + p + 12) != rate ||
 			    rd16(d + p + 22) != 16)
-				die("%s: not 16-bit stereo PCM at %d Hz", path, QXA_RATE);
+				die("%s: not 16-bit stereo PCM at %u Hz", path, (unsigned) rate);
 			ok = 1;
 		} else if (!memcmp(d + p, "data", 4)) {
 			if (!ok)
@@ -335,7 +337,7 @@ int cmd_carousel(int argc, char **argv)
 	long wlen;
 	uint8_t *wav = read_file(wpath, &wlen);
 	uint32_t frames;
-	const int16_t *pcm = wav_stereo(wav, wlen, wpath, &frames);
+	const int16_t *pcm = wav_stereo(wav, wlen, wpath, QXA_RATE, &frames);
 	uint32_t na_sec = (frames + QXA_SAMPLES - 1) / QXA_SAMPLES;
 
 	/* the header */
@@ -406,5 +408,71 @@ int cmd_carousel(int argc, char **argv)
 	free(pf);
 	free(pak);
 	free(pak1);
+	return 0;
+}
+
+/* ------------------------------------------------------------ SPU music -- */
+
+/* `qcook spumusic --music <dir> --track <n> --out <spu_nn.dat>`: the track
+   (<dir>/trackNN.wav, 22.05 kHz 16-bit stereo) as SPU ADPCM, chunk by
+   chunk, each channel encoded against its own decoder's history through
+   the whole track (formats/qspu.h), as the XA is (xa_unit: the SPU's five
+   filters, the residual rounded) */
+int cmd_spumusic(int argc, char **argv)
+{
+	const char *music = NULL, *out_path = NULL;
+	int track = 0;
+	for (int i = 2; i < argc - 1; i++) {
+		if (!strcmp(argv[i], "--music")) music    = argv[i + 1];
+		if (!strcmp(argv[i], "--track")) track    = atoi(argv[i + 1]);
+		if (!strcmp(argv[i], "--out"))   out_path = argv[i + 1];
+	}
+	if (!music || !out_path || track < 2 || track > 99)
+		die("usage: qcook spumusic --music <dir> --track <n> --out <spu_nn.dat>");
+	char wpath[512];
+	snprintf(wpath, sizeof wpath, "%s/track%02d.wav", music, track);
+	long wlen;
+	uint8_t *wav = read_file(wpath, &wlen);
+	uint32_t frames;
+	const int16_t *pcm = wav_stereo(wav, wlen, wpath, QSPU_RATE, &frames);
+	uint32_t chunks = (frames + QSPU_SAMPLES - 1) / QSPU_SAMPLES;
+
+	FILE *f = fopen(out_path, "wb");
+	if (!f)
+		die("cannot write %s", out_path);
+	uint8_t sec[2048] = { 0 };
+	qspu_header h;
+	memset(&h, 0, sizeof h);
+	memcpy(h.magic, QSPU_MAGIC, 4);
+	h.track  = (uint16_t) track;
+	h.rate   = QSPU_RATE;
+	h.chunks = chunks;
+	memcpy(sec, &h, sizeof h);
+	fwrite(sec, 1, sizeof sec, f);
+	xa_chan ch[2] = { { 0, 0 }, { 0, 0 } };
+	double err = 0, sig = 0;
+	uint8_t chunk[2 * QSPU_CHUNK];
+	for (uint32_t k = 0; k < chunks; k++) {
+		for (int c = 0; c < 2; c++)
+			for (int b = 0; b < QSPU_CHUNK / 16; b++) {
+				int16_t x[28];
+				for (int i = 0; i < 28; i++) {
+					uint32_t fr = k * QSPU_SAMPLES + (uint32_t) (b * 28 + i);
+					x[i] = fr < frames ? pcm[fr * 2 + c] : 0;
+					sig += (double) x[i] * x[i];
+				}
+				uint8_t *blk = chunk + c * QSPU_CHUNK + b * 16, nib[28];
+				err += xa_unit(x, 1, &ch[c], &blk[0], nib, 5);
+				blk[1] = 0;                           /* (no flags: the engine's) */
+				for (int i = 0; i < 14; i++)
+					blk[2 + i] = (uint8_t) (nib[2 * i] | nib[2 * i + 1] << 4);
+			}
+		fwrite(chunk, 1, sizeof chunk, f);
+	}
+	fclose(f);
+	printf("qcook: %s — track %d, %.1f s at %d Hz, %.1f dB, %u chunks, %.1f MB\n", out_path, track,
+	       frames / (double) QSPU_RATE, QSPU_RATE, err > 0 ? 10 * log10(sig / err) : 99.0, chunks,
+	       (1 + chunks * QSPU_CHUNK_SECTORS) * 2048.0 / 1048576);
+	free(wav);
 	return 0;
 }
