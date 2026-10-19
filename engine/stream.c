@@ -1551,6 +1551,72 @@ uint32_t stream_score(int a)
 	return a >= 0 && a < num_assets ? assets[a].last : ~0u;
 }
 
+static uint8_t sim_in[512];
+
+uint32_t stream_size(int a)
+{
+	return a >= 0 && a < num_assets ? assets[a].d.size : 0;
+}
+
+int stream_sim_in(int a)
+{
+	return a >= 0 && a < num_assets && a < 512 && sim_in[a];
+}
+
+int stream_rank_mode;
+
+void stream_want_group_but(int a, uint32_t score, int but)
+{
+	if (a < 0 || a >= num_assets)
+		return;
+	for (int i = assets[a].group_first; i >= 0; i = assets[i].group_next)
+		if (i != but)
+			stream_want(i, score);
+}
+
+void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uint32_t *wanted_bytes,
+                     uint32_t *in, uint32_t *in_bytes)
+{
+	memcpy(stream_origin, org, sizeof stream_origin);
+	pass();
+	memset(sim_in, 0, sizeof sim_in);
+	*wanted = *wanted_bytes = *in = *in_bytes = 0;
+	uint32_t ram = stream_stats.ram_size, spu = spu_hi > spu_lo ? spu_hi - spu_lo : 0;
+	for (int a = 0; a < num_assets && a < 512; a++) {
+		const asset_t *as = &assets[a];
+		if (as->last <= (as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : reach)) {
+			(*wanted)++;
+			*wanted_bytes += as->d.size;
+		}
+	}
+	for (;;) {                                    /* (next_wanted's order) */
+		int best = -1;
+		for (int a = 0; a < num_assets && a < 512; a++) {
+			const asset_t *as = &assets[a];
+			if (sim_in[a] || as->stuck == ST_BROKEN ||
+			    as->last > (as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : reach))
+				continue;
+			if (best < 0 || as->last < assets[best].last ||
+			    (as->last == assets[best].last && as->d.size > assets[best].d.size))
+				best = a;
+		}
+		if (best < 0)
+			break;
+		sim_in[best] = 2;                         /* (looked at) */
+		uint32_t n = assets[best].d.kind == QSTK_SOUND ? ALIGN64(assets[best].d.size - sizeof(qst_sound))
+		                                              : ALIGN16(assets[best].d.size);
+		uint32_t *pool_left = assets[best].d.kind == QSTK_SOUND ? &spu : &ram;
+		if (n > *pool_left)
+			continue;                             /* (no room: the next ones may fit) */
+		*pool_left -= n;
+		sim_in[best] = 1;
+		(*in)++;
+		*in_bytes += assets[best].d.size;
+	}
+	for (int a = 0; a < 512; a++)
+		sim_in[a] = sim_in[a] == 1;
+}
+
 static const int32_t *preload_at;          /* stream_preload_at's origin */
 
 void stream_preload_at(const int32_t org[3])

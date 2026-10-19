@@ -462,6 +462,14 @@ void monsters_stream_wants(void)
 		if (!e->inuse)
 			continue;
 		uint32_t d = cheb(e->origin, p);
+#ifdef Q1PSX_BENCH
+		if ((stream_rank_mode == 1 || stream_rank_mode == 3) && e->mdef) {   /* (the residency
+		                                                                          bench: the PVS first) */
+			const qw_leaf *l = ent_model_leaf((edict_t *) e);
+			if (!l || l->visframe != (uint16_t) r_state.visframe)
+				d += STREAM_REACH;
+		}
+#endif
 		int k = e->mdef ? e->mdef->kind : -1;
 		if (k < 0 && e->class >= QE_MONSTER_ARMY && e->class <= QE_MONSTER_OLDONE)
 			k = kind_of(e->class);
@@ -478,6 +486,16 @@ void monsters_stream_wants(void)
 	for (int k = 0; k < MK_COUNT; k++) {
 		if (near[k] == ~0u)
 			continue;
+#ifdef Q1PSX_BENCH
+		if (stream_rank_mode == 3) {              /* (the bench: the head under the models) */
+			stream_want_group_but(kind_asset[k][0], near[k], kind_asset[k][1]);
+			for (int i = 0; i < MK_ASSETS; i++)
+				stream_want(kind_asset[k][i], i == 1 ? near[k] + STREAM_REACH : near[k]);
+			if (near[k] < gibs)
+				gibs = near[k];
+			continue;
+		}
+#endif
 		stream_want_group(kind_asset[k][0], near[k]);   /* its model, head, sounds */
 		for (int i = 0; i < MK_ASSETS; i++)
 			stream_want(kind_asset[k][i], near[k]);
@@ -485,7 +503,11 @@ void monsters_stream_wants(void)
 			gibs = near[k];
 	}
 	for (int i = 0; i < 3; i++)
+#ifdef Q1PSX_BENCH
+		stream_want(gib_asset[i], stream_rank_mode == 3 && gibs != ~0u ? gibs + STREAM_REACH : gibs);
+#else
 		stream_want(gib_asset[i], gibs);
+#endif
 }
 
 #ifdef Q1PSX_BENCH

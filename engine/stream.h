@@ -158,6 +158,19 @@ extern int stream_log;               /* print the loads and evictions      */
 void stream_dump(void);              /* before a frame's dump: the images' places */
 void stream_preload_at(const int32_t org[3]);   /* stream_preload's reads from there */
 uint32_t stream_score(int a);                   /* asset a's want, the last pass's */
+/* the residency bench: a pass from `org`, then the map start's reads
+   simulated (nearest first, each within its reach, the models into the
+   RAM pool, the sounds into the SPU pool, while they fit): the assets
+   wanted within reach and their bytes, those that would be in and theirs;
+   stream_sim_in(a): asset a would be in */
+void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uint32_t *wanted_bytes,
+                     uint32_t *in, uint32_t *in_bytes);
+extern int stream_rank_mode;                    /* the bench's wants: 0 as the game, 1 the PVS
+                                                   first, 2 a short radius, 3 the PVS first
+                                                   and the heads, the gibs under the models */
+void stream_want_group_but(int a, uint32_t score, int but);
+int  stream_sim_in(int a);
+uint32_t stream_size(int a);                    /* asset a's bytes on the disc */
 #endif
 
 #endif

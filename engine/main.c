@@ -1204,6 +1204,91 @@ static void bench_pmove_diff(void)
 
 static void bench_stream_frames(void);
 
+#ifndef Q1PSX_BENCH_RESIDENCY
+#define Q1PSX_BENCH_RESIDENCY 0   /* 1: what the stream loads around the player (RESIDENCY=1) */
+#endif
+
+/* What the stream loads around the player (§50): the player put at the
+   map's items in turn (they lie along his way), a map start's reads
+   simulated there (stream_simulate); the pool, what is wanted within
+   reach, what would be in; the living monsters by distance, in the PVS of
+   the player's leaf or not, their model in or not. "res" lines. */
+static void bench_residency(const char *map)
+{
+	int idx[64], n = 0;
+	for (int i = 2; i < num_edicts && n < 64; i++)
+		if (edicts[i].inuse && (edicts[i].item_model >= 0 || (edicts[i].masset >= 0 && !edicts[i].mdef)))
+			idx[n++] = i;                         /* (an item: its model; FL_ITEM comes with
+			                                         PlaceItem's think) */
+	int step = n > 24 ? n / 24 : 1;
+	uint32_t tot[12] = { 0 };
+	int spots = 0;
+	for (int s = 0; s < n; s += step) {
+		const edict_t *it = &edicts[idx[s]];
+		memcpy(pl.pm.pos, it->origin, sizeof pl.pm.pos);
+		pl.pm.pos[2] += 24 * CLIP_SUB;
+		memcpy(cam.pos, pl.pm.pos, sizeof cam.pos);
+		cam.pos[2] += 22 * CLIP_SUB;
+		cam.yaw = cam.pitch = cam.roll = 0;
+		run_frame(0, 0);                          /* (the PVS from the player's leaf) */
+		uint32_t w, wb, r, rb;
+		stream_rank_mode = Q1PSX_BENCH_RESIDENCY - 1;   /* (RESIDENCY=2: the PVS first, 3: 1200 u,
+		                                                   4: the PVS first, the heads under) */
+		stream_simulate(pl.pm.pos, Q1PSX_BENCH_RESIDENCY == 2 || Q1PSX_BENCH_RESIDENCY == 4 ? 2 * STREAM_REACH
+		                           : Q1PSX_BENCH_RESIDENCY == 3 ? 1200 : STREAM_REACH, &w, &wb, &r, &rb);
+		stream_rank_mode = 0;
+		uint16_t vis = (uint16_t) r_state.visframe;
+		int near1 = 0, near2 = 0, pvs = 0, pvs_in = 0;
+		uint32_t knear = 0, kpvs = 0, kin = 0, kpvs_in = 0, models_kb = 0;
+		for (int i = 2; i < num_edicts; i++) {
+			edict_t *e = &edicts[i];
+			if (!e->inuse || !e->mdef || e->health <= 0)
+				continue;
+			uint32_t d = 0;
+			for (int k = 0; k < 3; k++) {
+				int32_t v = (e->origin[k] - pl.pm.pos[k]) / CLIP_SUB;
+				if ((uint32_t) (v < 0 ? -v : v) > d) d = (uint32_t) (v < 0 ? -v : v);
+			}
+			const qw_leaf *l = ent_model_leaf(e);
+			int seen = l && l->visframe == vis, in = stream_sim_in(e->masset);
+			uint32_t kb = 1u << e->mdef->kind;
+			near1 += d <= 1000;
+			near2 += d <= STREAM_REACH;
+			pvs += seen;
+			pvs_in += seen && in;
+			if (d <= STREAM_REACH) knear |= kb;
+			if (seen) kpvs |= kb;
+			if (in) kin |= kb;
+		}
+		kpvs_in = kpvs & kin;
+		for (int k = 0; k < MK_COUNT; k++)
+			if (kin & 1u << k)
+				models_kb += stream_size(monsters_kind_asset(k, 0)) / 1024;
+		printf("res %s @%d,%d,%d: pool %u KB, wanted %u (%u KB), in %u (%u KB) | monsters <=1000 %d, <=2500 %d, "
+		       "PVS %d (in %d) | kinds <=2500 %d, PVS %d (in %d), in %d (%u KB of models)\n", map,
+		       (int) (pl.pm.pos[0] / CLIP_SUB), (int) (pl.pm.pos[1] / CLIP_SUB), (int) (pl.pm.pos[2] / CLIP_SUB),
+		       (unsigned) (stream_stats.ram_size / 1024), (unsigned) w, (unsigned) (wb / 1024), (unsigned) r,
+		       (unsigned) (rb / 1024), near1, near2, pvs, pvs_in, __builtin_popcount(knear),
+		       __builtin_popcount(kpvs), __builtin_popcount(kpvs_in), __builtin_popcount(kin),
+		       (unsigned) models_kb);
+		tot[0] += (uint32_t) near1; tot[1] += (uint32_t) near2; tot[2] += (uint32_t) pvs;
+		tot[3] += (uint32_t) pvs_in; tot[4] += (uint32_t) __builtin_popcount(knear);
+		tot[5] += (uint32_t) __builtin_popcount(kpvs); tot[6] += (uint32_t) __builtin_popcount(kpvs_in);
+		tot[7] += (uint32_t) __builtin_popcount(kin); tot[8] += models_kb;
+		tot[9] += stream_stats.ram_size / 1024; tot[10] += wb / 1024;
+		tot[11] += (uint32_t) (pvs > pvs_in);
+		spots++;
+	}
+#define AVG(x) (unsigned) ((x) / spots), (unsigned) ((x) * 10 / spots % 10)
+	if (spots)
+		printf("res %s: %d spots | pool %u KB, wanted %u KB | monsters <=1000 %u.%u, <=2500 %u.%u, PVS %u.%u "
+		       "(in %u.%u) | kinds <=2500 %u.%u, PVS %u.%u (in %u.%u), in %u.%u (%u KB) | spots with a monster "
+		       "in the PVS not in: %u\n", map, spots, (unsigned) (tot[9] / spots), (unsigned) (tot[10] / spots),
+		       AVG(tot[0]), AVG(tot[1]), AVG(tot[2]), AVG(tot[3]), AVG(tot[4]), AVG(tot[5]), AVG(tot[6]),
+		       AVG(tot[7]), (unsigned) (tot[8] / spots), (unsigned) tot[11]);
+#undef AVG
+}
+
 /* a VIEW's ticks (TICKS=n): the player standing there, the game running
    (his touches, the movers, the monsters, the stream), the view dumped
    every 8 ticks as <map>.v<view>t<tick> */
@@ -1259,6 +1344,12 @@ static void bench_maps(void)
 		}
 		printf("bench map %s geometry %s arena %u KB\n", world_map_name(m), level_name[world.level[QL_GEOMETRY]],
 		       mem_level_used() / 1024);
+		if (Q1PSX_BENCH_RESIDENCY) {
+			stream_log = 0;
+			bench_residency(world_map_name(m));
+			stream_log = 1;
+			continue;
+		}
 		if (Q1PSX_BENCH_PLAY) {                 /* the game's frames on the map, as a player's */
 			ents_check("load");
 			game_spawn();
