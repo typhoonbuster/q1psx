@@ -1382,3 +1382,29 @@ followed by R0-R4.
     symmetric, their light and skins are not (17-52 % of the texels equal
     their mirror's): the gun would look lit from both sides.
 
+- **The music: XA streams carrying their maps' assets** (2026-10-19: XA streaming in place of the CD-DA, to end the music's cuts and the stutter during play, the data interleaved). §48:
+  - **What cut it**: every streamed read paused the CD-DA (a blocking
+    `CdlPause`: about four frames frozen) for 1.4-1.9 s of silence (the
+    seeks to the data and back).
+  - **Each CD track an XA stream**, read at single speed: one sector of
+    four is the music (37.8 kHz stereo, played by the drive), the three
+    others carry, over and over, the streamed assets of the maps that play
+    the track (a carousel: a turn of 7.5-14.6 s). The engine takes the
+    assets it wants as they pass: no seek, no cut, no freeze. The track
+    loops from its stream's start. The disc keeps its size (735 MB, one
+    data track).
+  - **One asset for the three model levels**: a model's vertices numbered
+    by the lowest level keeping them, each level assembled from the shared
+    asset (the frames the same: the scenarios hash the same pictures).
+  - **The SPU music, a build alternative** (`release-spu`): 22 kHz stereo
+    from a 2 s ring at the top of SPU RAM, the drive refilling it between
+    the assets' reads, wherever they lie (a 213 MB disc).
+  - **Measured**: E1M3's monsters' scenario took 46 assets from its
+    carousel (7 s at the median from their arming), read none; the
+    carousel costs 77 cycles a quiet frame, 13-16 k in E1M3's crowd.
+- **The release's title** (Quake's theme under the menu, START no longer loaded before New Game). §48.7:
+  - **Quake's theme under the menu**: track 2, the one Quake's first demo
+    forces (demo1.dem's first line), looping (no demos here).
+  - **No map before New Game**: the menu over the console's background
+    (`gfx/conback.lmp`, what Quake shows with no world and no demo); START
+    loaded once, at New Game. The menu's clicks from their own small bank.

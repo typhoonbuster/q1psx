@@ -5394,3 +5394,252 @@ Shortened; what was seen:
 - **Left:** the nailgun's near-identical firing frames could become
   small patches over a shared base (about 15 KB more), at the price of
   chains linked to one another at run time.
+
+## §48 — The music: XA streams carrying their maps' assets, the SPU alternative, the release's title (2026-10-19)
+
+- **The asks**: the music in XA instead of CD-DA, to end the cuts and the
+  stutter when the stream reads during play; then, on the options: the data interleaved so the sound never cuts; Quake's theme under the
+  release's menu; START no longer loaded before New Game.
+
+### 48.1 What cut the music (measured)
+
+The CD-DA path (§40.2), PCSX-Redux in fast forward, E1M1's monsters'
+scenario with the music on the bench disc:
+
+| Stage | Cost |
+|---|---|
+| `music_suspend`'s fade | 8 frames, 133 ms |
+| `CdControlB(CdlGetlocP)` | 30 k cycles, 0.9 ms |
+| `CdControlB(CdlPause)`: it waits for the pause's second response | **2.40 M cycles, 71 ms: about four frames frozen** (psx-spx: 64 ms at single speed, CD-DA's) |
+| the reads (3 to 9 small assets, 31 KB: 0.1 s of transfer) | **1.4 to 1.9 s of silence** (86-114 vblanks): each sound piece its own read and seek, the seeks to the data and back to the CD-DA track |
+| `music_resume` | 89 k cycles (three commands), then 133 ms of fade |
+
+What the stream asks for (the bench's sets, every asset a map's entities
+use): 0.6 to 1.1 MB a map at the models' high level, 0.7 to 1.4 MB per CD
+track (the union of the maps that play it: track 4 plays on six maps,
+track 8 on five).
+
+### 48.2 The choices
+
+An XA stream plays its music while the head reads the data sectors beside
+it, so data laid out next to the music arrives with no seek. Data wanted
+on demand must come round again: a carousel, the assets repeated over the
+whole track. A stream lasts as long as its music (59 minutes for the ten
+tracks): at double speed that is 530 000 sectors, the disc has 333 000, so
+the streams are read at single speed (75 sectors a second, the CD-DA's
+room). The options shown (XA with a carousel; the same with direct reads
+for urgent assets; the music from an SPU ring; XA without the data) and
+the choices made:
+
+- **XA with a carousel per track, the default.**
+- **The SPU ring, a build-time alternative** (both do not fit one disc):
+  22 kHz, 2 s, in SPU RAM.
+- **The models' three levels in one asset** (shared vertices; asked again
+  with the risks spelled out: rendering and RAM identical, the carousel
+  10-15 % longer, the format and the expansion's input new).
+
+### 48.3 The XA streams (formats/qxa.h, tools/qcook/carousel.c)
+
+- **A stream per track** (`MUSIC/XA_<nn>.STR`, mkpsxiso "mixed" files of
+  2336-byte sectors: the subheader twice, then the data; mkpsxiso writes
+  the sync, the header and the EDC/ECC, checked on a test image): one
+  sector of four is the music, XA ADPCM at 37.8 kHz, stereo, 4-bit (2016
+  samples a channel a sector, 18.75 sectors a second); the three others
+  are Mode 2 Form 1 data sectors, the turn's sectors one after the other
+  (56.25 sectors, 112.5 KB a second). The first sector holds the header:
+  the turn's assets (STREAM_<n>.DAT's indices, their sectors) and a byte a
+  turn sector naming its asset. Every sector's file number is the track:
+  the drive's filter plays the track's own music only.
+- **The encoder**: per 28-sample unit of a channel, the filter (the
+  CD-ROM's four) and the shift with the least squared error, the residual
+  rounded and encoded against the decoder's own history (psx-spx's
+  decoder, its +32), the shifts tried around the one the unit's residual
+  needs (a full search gives the same error). 1.5 s a track.
+- **The tracks**:
+
+  | Track | Maps | Music | XA's SNR | Turn: assets, KB | A turn |
+  |---|---|---|---|---|---|
+  | 2 | (the menu, the episodes' ends) | 308.6 s | 38.4 dB | none | |
+  | 3 | (the intermission) | 146.0 s | 54.5 dB | none | |
+  | 4 | START, E1M6, E2M6, E3M6, E4M6, END | 500.3 s | 37.1 dB | 127, 1546 | 13.7 s |
+  | 5 | E1M4, E2M4, E3M7, E4M4 | 365.4 s | 48.3 dB | 125, 1510 | 13.4 s |
+  | 6 | E1M1, E2M1, E3M1, E4M1 | 444.6 s | 51.0 dB | 71, 844 | 7.5 s |
+  | 7 | E1M7, E2M7, E4M7 | 518.2 s | 57.1 dB | 120, 1644 | 14.6 s |
+  | 8 | E1M2, E2M2, E3M2, E3M4, E4M2 | 335.9 s | 54.6 dB | 133, 1614 | 14.3 s |
+  | 9 | E1M3, E2M3, E3M3, E4M3 | 388.9 s | 57.3 dB | 127, 1528 | 13.6 s |
+  | 10 | E1M8, E4M8 | 212.6 s | 58.7 dB | 102, 1088 | 9.7 s |
+  | 11 | E1M5, E2M5, E3M5, E4M5 | 317.4 s | 57.4 dB | 124, 1564 | 13.9 s |
+
+  265 366 sectors in all, what the CD-DA took; the release's image is
+  735 MB (738 with the CD-DA), one data track.
+- **A map's assets in the cook**: its monsters' kinds (each kind's
+  group, the gibs and the backpack with any monster, zom_gib with the
+  ogres', demons' and shamblers' melee: SpawnMeatSpray), its items'
+  models (`items_streamed`), its entities' and ambients' sounds
+  (`sound_map_streamed`: the QC's defaults for `sounds`, item_health's by
+  its flags, every func_door's key sounds: doors.qc gives them to every
+  door), leaving out the entities single player never spawns (flagged not
+  easy, not medium and not hard). Against the sets the engine asked for on
+  the 32 maps (the bench, every asset's distance after the spawn): none
+  missing; the cook's hold 1 to 17 more (an entity of one skill, START's
+  backpack and lava ball).
+
+### 48.4 The models' three levels in one asset (formats/qstream.h qst_shared)
+
+- **Nested levels.** decim.c's half-edge collapses go cheapest first in
+  the same order at every level and stop sooner for a higher one: a lower
+  level keeps a subset of a higher level's vertices (the cook checks it).
+  The vertices are numbered by the lowest level that keeps them (low's in
+  low's order, then medium's others, then high's): a level's vertices are
+  the first `num_verts` of each frame. Every level's asset in
+  STREAM_<n>.DAT is cooked from that numbering.
+- **The shared asset**: qst_shared, the high level's frames, the levels'
+  records (a level with another's triangles shares its block), the images
+  (the same at every level: checked). `qst_level_model` makes the level's
+  header and `qst_assemble` copies its bytes from any range of the shared
+  asset (a sector at a time, as captured): the frames' first words, the
+  level's records, the images. The cook assembles every level from the
+  shared asset sector by sector and compares it with the level's asset:
+  byte for byte, on every model. `qcook stream` writes the three levels
+  and the pool (cooked/xa/pool.dat, the carousels' source) in one run.
+- **The cost**: the pool 2349 KB against 2215 KB for high alone (+6 %).
+  Low's assets are unchanged; 27 medium and 32 high models only have their
+  vertices renumbered (the same sizes, the same records but their vertex
+  indices): the monsters' scenarios hash the same frames on E1M3 and E1M5
+  at high and at medium.
+
+### 48.5 The engine: assets taken as they pass (engine/music.c, stream.c)
+
+- **The music** (`music_play`): the stream's header read (at a map's
+  load, a track change), the drive set to single speed, CdlModeRT (the
+  drive plays the music's sectors), CdlModeSF (the track's file number),
+  CdlModeSize (each data sector with its header), then CdlReadS. The CD
+  interrupt reads a data sector's 12 header bytes, works out its place in
+  the stream from its address, and hands it to `stream_xa_sector`. Past
+  the music's last sector the drive goes back to the stream's start (the
+  track loops, Quake's CDAudio_Play(track, true)). No pause during play:
+  the 71 ms freeze is gone with the cuts.
+- **The captures** (stream.c): an asset the carousel carries is wanted
+  from farther than a read's (4000 units for a model, 3000 for a sound: a
+  turn's run ahead), given its room as for a read (RAM and VRAM, or its
+  SPU place), then captured: the interrupt takes each of its sectors in
+  order from its first into a ring of eight (the staging buffer), by DMA
+  in the background (CdGetSector2: a word every 16 cycles, the CPU running
+  between; done long before the next sector); a sector missed (the ring
+  full) starts the asset over at its next turn. Each frame drains the
+  ring: a model's level assembled into its block (qst_assemble), a sound's
+  samples to SPU RAM; the last piece in, the asset installed as a read's.
+  Eight captures at most at once, armed after a residency pass or a
+  capture's end.
+- **What the carousel lacks** is read as before (the music suspended): an
+  asset of no turn (none on the 32 maps), the 2D gun's packets lent by the
+  stream (§45) when they come during play.
+- **Measured** (PCSX-Redux, fast forward, the music on the bench disc):
+  E1M1's monsters' scenario took 16-17 assets from track 6's carousel and
+  read none during play; E1M3's (track 9, a turn of 13.6 s) took 46: from
+  their arming, 7 s at the median, 0.3 to 13.6 s. The interrupt costs 333
+  cycles a data sector (56 a second), the carousel 77 cycles a quiet frame
+  and 13-16 k cycles a frame on average in E1M3's crowd (arming every free
+  slot each frame cost 117 k: each stuck asset's room measured again);
+  installing a model costs what a read's does.
+- **RAM**: the stream's header 2 KB in the game arena; BSS and code about
+  5 KB, given back to the stack by the arenas (the level arena 1240 KB,
+  the game arena 115 KB: its boot tables 114 KB).
+
+### 48.6 The SPU music, the build's alternative (formats/qspu.h)
+
+- `Q1PSX_MUSIC_MODE=spu` (the `release-spu` preset): each track SPU ADPCM
+  at 22.05 kHz stereo (`MUSIC/SPU_<nn>.DAT`), in chunks of 0.325 s a
+  channel; the last two voices play a ring of six chunks a channel at the
+  top of SPU RAM (2 s, 48 KB, taken from the streamed sounds' pool; the
+  static sounds keep twelve voices). The ring's first and last blocks get
+  their loop flags at the upload; after the track's last chunk its first:
+  the track loops seamlessly.
+- **The drive shared**: the music refills two chunks at a time when no
+  read is in flight; a read (an asset's, a sound's piece, the lent block)
+  starts when the ring holds the music for it, its seeks (250 ms each, the
+  music lying next to the streamed assets) and the refill after
+  (`music_read_ok`). Where the voices are comes from root counter 2,
+  sysclock / 8, whose clock the SPU shares (44.1 kHz is sysclock / 768: a
+  22.05 kHz sample is 192 ticks): no drift, no SPU interrupt.
+- **The encoder** as the XA's (the SPU's five filters): 34.3 to 57 dB a
+  track (track 2: 34.3, 4: 38.5, 5: 43.1, 8: 49.5, the others 52-57), 5 dB
+  over the sounds' encoder (which truncates). 84.6 MB for the ten tracks;
+  the release-spu image is 213 MB.
+- **Measured**: the release's menu and START; E1M1's monsters' scenario
+  read 19 assets during play with the ring never dry; START's preload 20
+  assets (23 in the XA build: 48 KB less of SPU pool).
+
+### 48.7 The release's title: no map before New Game
+
+- **What Quake does**: quake.rc ends with `startdemos demo1 demo2 demo3`:
+  the demo loop runs under the menu. demo1.dem's first line is its forced
+  CD track, 2, which svc_cdtrack plays in place of E1M3's 9
+  (CL_PlayDemo_f, cls.forcetrack): Quake's theme plays under the menu
+  until demo2 (E1M4, track 5), then demo3 (E1M6, track 4). Quake did play
+  the theme under its menu, as the first demo's music.
+- **With no demo and no world** (con_forcedup), the console is down, and
+  M_Draw draws the console's background in place of the faded game. The
+  port has no demos and now loads no map before New Game: the release
+  boots to `gfx/conback.lmp` stretched over the screen (Quake's rows ×
+  240 / 200) with the menu over it, and track 2 looping. Quake also draws
+  its version number in the picture's corner and the console's text
+  (there is no console): neither is drawn. ESC closes the menu (the
+  background alone, SCR_DrawConsole's), START opens it again; no game runs
+  before New Game.
+- **The menu's own bank**, `MAPS/MENU.SND`: its three clicks and CD track
+  2 (`qcook menu`, which also cooks `CONBACK.DAT`: the picture and an
+  opaque copy of the palette, loaded where the map's texture pages go).
+- **New Game loads START once**: the boot logs one `START.SND` and one
+  `START_G2.WLD` (START was loaded under the menu at boot, then again by
+  New Game). The settings changed before New Game apply at that load.
+- **The disc's order**: the maps, then the streamed assets and the music
+  (the XA streams' 600 MB had pushed the maps away from the game data: the
+  boot 2.7 s longer on PCSX-Redux; 950 vblanks to the menu now, 970 with
+  the SPU music).
+
+### 48.8 Checking
+
+- The cook: the levels' nesting and the assembled assets checked on every
+  model; the carousels' sets against the engine's (32 maps, none missing);
+  a test image's mixed sectors (the subheaders, the data, the Form 1 EDC).
+- The monsters' scenarios without music (`MONSTERS=1 MAP=E1M3|E1M5
+  MODELS=2|1 HASHONLY=1`): the same `H` lines as before the shared
+  numbering and the capture code.
+- `MONSTERS=1 MUSIC=1 MAP=E1M1|E1M3`: the `stream: capturing` / `captured
+  ... in N vblanks` / `stream: in` lines, no `stream: reading` during play,
+  no `not one this engine reads`, the `xa cost` lines; `MUSIC_MODE=spu`:
+  `stream: in` lines, no `ran dry`.
+- The releases (XA and SPU) on PCSX-Redux with its UI and a Lua script
+  (`PCSX.GPU.takeScreenShot()` at chosen vblanks, the pad driven by
+  `setOverride`): the menu over the console's background, ESC (the
+  background alone), START (the menu again), Single Player, New Game
+  (START drawn); the boot logs (`music: track 2 ...`, then track 4 with
+  its carousel; one START load); the first frame's vblank.
+- Every link's `ramcheck`: the release 17.3 KB of stack, release-spu 17.7.
+
+### 48.9 Left
+
+- **The ears**: the XA (37.8 kHz, 4-bit) and the SPU music (22 kHz)
+  against the CD's 16 bits; the music's level against the effects (the
+  SPU music set as loud as the CD input was). The loop points (the
+  decoders' history jumps back to the track's start).
+- **DuckStation and the machine**: not run (DuckStation did not start on
+  this host, §42). The XA with data at single speed, the speed switches
+  around the loads, a worn drive (XA sectors carry no error correction: a
+  drive that skips them skips the music, not the data).
+- **The carousel's waits**: an asset comes on its next turn, up to 14.6 s
+  (track 7): a monster can stay undrawn, a sound unheard, that long after
+  it is wanted. The reach (4000 / 3000) is a first guess; shorter turns
+  would come from fewer or smaller assets (the entities' sounds are half
+  of a turn).
+- **The lent block** (§45) read during play leaves the XA stream: a cut
+  (when the 2D gun is chosen during a game).
+- **The intermission's and the finale's tracks** (3, 2) are streams of
+  their own: a seek and no carousel while they play.
+- **The bench's `BENCH_GAME=1` build fails the stack check**, as it did
+  before this work (6.8 KB of stack at 000b210, 5.2 KB now): the game
+  scenario's code; its own threshold (`Q1PSX_STACK_MIN`) or less code in
+  that build.
+- **The stack's margin** is about 1 KB over the 16 KB threshold in both
+  releases.

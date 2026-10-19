@@ -118,8 +118,10 @@ general-purpose heap at runtime.
 The first 4 KB are the hardware's capture buffers; from 0x1010 up, the
 map's sound bank (`MAPS/<MAP>.SND`, formats/qsound.h): every sound the map
 can play as SPU ADPCM, 400-492 KB, uploaded by DMA at map load. No reverb
-work area (reverb off). The music never touches it: it is CD-DA
-(`docs/porting-notes.md` §23).
+work area (reverb off). The music never touches it in the default build:
+its XA streams go to the SPU's CD input (`docs/porting-notes.md` §48); the
+SPU music build (`release-spu`) keeps a 48 KB ring at its top, two voices
+playing it.
 
 ### Scratchpad (1 KB) — owned by the renderer during `r_frame`
 
