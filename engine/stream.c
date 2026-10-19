@@ -10,6 +10,7 @@
 #include <psxgpu.h>
 #include <psxspu.h>
 
+#include "cd.h"
 #include "ents.h"
 #include "game.h"
 #include "gdata.h"
@@ -137,12 +138,12 @@ void stream_init(void)
 	num_assets = 0;
 	for (int i = 0; i < MAX_RES; i++)
 		res[i].asset = -1;
-	CdlFILE file;
-	if (!CdSearchFile(&file, "\\STREAM.DAT;1")) {
+	uint32_t lba;
+	if (!cd_find("\\STREAM.DAT;1", &lba, NULL)) {
 		printf("stream: no STREAM.DAT on the disc\n");
 		return;
 	}
-	base_lba = CdPosToInt(&file.pos);
+	base_lba = (int32_t) lba;
 	uint32_t mark = mem_level_mark();
 	qst_header *h = mem_level_alloc(QST_SECTOR);
 	if (!h || !read_sectors(base_lba, 1, h) || memcmp(h->magic, QSTREAM_MAGIC, 4) ||
