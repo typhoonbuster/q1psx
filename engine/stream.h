@@ -99,6 +99,20 @@ typedef struct {
 const stream_sound_t *stream_sound(int a);
 int  stream_is_sound(int a);
 
+/* The pool's end lent to a block read from the disc outside the assets
+   (the 2D gun's packets, engine/game.c game_ws_sync): stream_lend asks for
+   `sectors` sectors at `lba` (given at a map's start before anything else
+   of the stream's, during the game from the pool's end, the assets wanted
+   least dropped; read in the stream's turn); stream_lent gives the block
+   once it is read (NULL before, and while the pool cannot spare it: asked
+   again at the next map's start) and the count of its reads (a new read,
+   maybe at the same place: its contents as on the disc again);
+   stream_unlend gives the room back (the GPU done with it first). The
+   block never moves. */
+void     stream_lend(int32_t lba, int sectors);
+uint8_t *stream_lent(uint32_t *reads);
+void     stream_unlend(void);
+
 /* the SPU pool's bounds (bytes), engine/snd.c's once a map's bank is in */
 void stream_spu_pool(uint32_t lo, uint32_t hi);
 

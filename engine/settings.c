@@ -221,7 +221,7 @@ void settings_hint(int row, const char *line[2])
 		else                  { a = "+ no relighting: faster in fights"; b = "- shots and explosions stay dark"; }
 		break;
 	case SET_WEAPON:
-		if (settings.viewmodel == 2)      { a = "+ about 4% faster (up to 12%)";    b = "- the gun's frames as flat pictures"; }
+		if (settings.viewmodel == 2)      { a = "+ about 4% faster (up to 12%)";    b = "- flat frames, uses 106 KB of RAM"; }
 		else if (settings.viewmodel == 1) { a = "Quake's gun: 5 to 20% of a frame"; b = "2D: about 4% faster, flat frames"; }
 		else                              { a = "+ saves 5 to 20% of a frame";      b = "- no gun on screen"; }
 		break;

@@ -38,6 +38,9 @@ extern int32_t game_view_lerp[3];
 extern int     game_draw_viewmodel;   /* the weapon drawn (r_drawviewmodel): 0 none,
                                          1 the 3D gun, 2 the 2D one */
 void game_ws_invalidate(void);           /* the 2D gun's slot filled again (a dump) */
+void game_ws_sync(void);                 /* the 2D gun's packets asked for while it is the
+                                            gun drawn, given back when not (a map's start,
+                                            then each frame outside the menu) */
 extern int     game_view_cut;   /* set by a spawn outside a tick: the scheduler
                                    takes the view afresh, no lerp across it */
 

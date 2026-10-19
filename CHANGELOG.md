@@ -1344,6 +1344,17 @@ followed by R0-R4.
     the stream's staging buffer, every streamed sound was read to address
     0 and given up for good. Those two maps still have no room for the
     monsters (their worlds take 742-783 KB).
+- **The 2D gun's packets only while it is drawn** (2026-10-19: that room back to the monsters' streaming). §45:
+  - **106 KB more for the monsters on every map** with the 3D gun (the
+    default) or none: the 2D gun's packets no longer sit in the game arena
+    (224 → 116 KB); the level arena grows to 1242 KB, the world keeping
+    its old 1136 KB. E3M4's pool 2 → 92 KB, E4M7's 0 → 97 KB: their
+    monsters are drawn.
+  - **The 2D gun as before:** chosen, it borrows the end of the stream's
+    pool (first at a map's start, so it fits wherever it did); chosen
+    during a game, it shows a few frames after the menu closes; left, its
+    room goes back to the stream. Its frames are drawn the same (the
+    game bench's hashes).
 - **The brush models' room measured in the cook** (§46):
   - **No measure at the load.** The cook cuts each brush model as the
     engine does, wherever its entity can stand: a door, button, plat,
@@ -1354,7 +1365,8 @@ followed by R0-R4.
     on E2M5's train *21. The stream gets 10-98 KB more on every map
     (48 KB on average).
   - **The starved maps stream their monsters**: E3M4 goes from 2 to 84 KB
-    of pool, E4M7 from 0 to 54 KB, E3M6 from 46 to 94 KB.
+    of pool, E4M7 from 0 to 54 KB, E3M6 from 46 to 94 KB; with §45's
+    106 KB, E3M4 has 190 KB, E4M7 160 KB and E3M6 200 KB.
   - **Checked:**
     - `BMFCHK=1`: no cut given up on the 32 maps;
     - at each load, a still model's room equals its cut to the byte;

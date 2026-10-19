@@ -2197,14 +2197,43 @@ static const int weapon_model[W_COUNT] = { QGM_V_AXE, QGM_V_SHOT, QGM_V_SHOT2, Q
    and row (transparent: a texel the GPU reads past its quad's edge is the
    frame's own, never the slot's leftovers from a bigger frame). */
 static int ws_shown = -1, ws_clut = -1, ws_clut_row;
+static int ws_asked;                              /* the stream asked for the packets */
+static uint8_t *ws_block;                         /* the block they were read to, */
+static uint32_t ws_reads;                         /* at that read */
 
 void game_ws_invalidate(void)
 {
 	ws_shown = ws_clut = -1;
 }
 
+/* The 2D gun's packets (105 KB) in RAM only while it is the gun drawn: the
+   stream lends them its pool's end (at a map's start before its own
+   buffers, during the game once a read is done), and has it back when
+   another gun is chosen (docs/porting-notes.md §45). Until they are read
+   the 3D gun is drawn. Outside a frame's render list (rl_begin .. the end
+   of r_frame): the stream may compact its pool. */
+void game_ws_sync(void)
+{
+	int want = game_draw_viewmodel == 2 && gdata.ws_sectors;
+	if (want && !ws_asked)
+		stream_lend(gdata.ws_lba, gdata.ws_sectors);
+	else if (!want && ws_asked)
+		stream_unlend();
+	ws_asked = want;
+	uint32_t reads;
+	uint8_t *b = stream_lent(&reads);
+	if (b != ws_block || reads != ws_reads) {     /* (read again: a map's start) */
+		ws_block   = b;
+		ws_reads   = reads;
+		gdata.wpix = b ? gdata_ws_link(b) : 0;
+		game_ws_invalidate();
+	}
+}
+
 static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3D */
 {
+	if (!gdata.wpix)                              /* (not read yet) */
+		return 0;
 	const qg_wsprite *ws = &gdata.wsprites[wpn];
 	if (frame < 0 || frame >= ws->count)
 		frame = 0;

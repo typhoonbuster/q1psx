@@ -368,10 +368,12 @@ static int load_level(int map)
 	gdata_set_models(settings.level[QL_MODELS]);
 	stream_set_level(settings.level[QL_MODELS]);   /* (its monsters, items at that level) */
 	int geo = settings.level[QL_GEOMETRY];
+	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
 	for (int g = geo; g >= 0 && !world_ok; g--)
 		if (settings_level_mask[QL_GEOMETRY] & 1 << g)
 			world_ok = world_load(map, settings.level[QL_TEXTURES], g, settings.level[QL_MODELS],
 			                      settings.tex4, LOAD_PROGRESS);
+	mem_level_cap(MEM_LEVEL_BYTES);
 	for (int a = 0; a < QL_AXES; a++)
 		loaded[a] = settings.level[a];
 	if (world_ok) {
@@ -385,6 +387,7 @@ static int load_level(int map)
 		ents_spawn(1);
 		bmf_reserve();                          /* (their pieces' room, the cook's: before
 		                                           the stream's) */
+		game_ws_sync();                         /* (the 2D gun's packets asked for: first) */
 		stream_map_start(STREAM_KEEP);          /* the arena's rest: the streamed assets */
 		bmf_load();                             /* (the drawn ones cut where they stand) */
 		snd_map_start();                        /* (before any residency pass: it turns the
@@ -394,6 +397,7 @@ static int load_level(int map)
 		                                           20 bytes each: a garbage reach of 0 on
 		                                           E2M7 divided by zero) */
 		stream_preload();                       /* what the spawn's surroundings want */
+		game_ws_sync();                         /* (the 2D gun's packets, read: linked) */
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		music_play(snd_cd_track());
@@ -502,6 +506,8 @@ static void run_frame(int interactive, int dump)
 {
 	prof_frame_reset();
 	uint32_t t0 = prof_now();
+	if (world_ok && !menu_active())
+		game_ws_sync();                     /* (the 2D gun chosen or left: its packets) */
 	if (world_ok && game_active)
 		stream_frame();                     /* (between frames: the pools may move) */
 	if (interactive) {
@@ -2322,6 +2328,7 @@ int main(void)
 	stream_init(settings.level[QL_MODELS]);
 	dl_init();
 	game_init();
+	printf("mem: game arena %u of %u B\n", (unsigned) mem_game_used(), (unsigned) MEM_GAME_BYTES);
 #ifdef Q1PSX_BENCH
 	if (!Q1PSX_BENCH_MAPS && Q1PSX_BENCH_MAP[0] && world_find_map(Q1PSX_BENCH_MAP) >= 0)
 		map_index = world_find_map(Q1PSX_BENCH_MAP);  /* MAP=: the physics diffs there too */

@@ -77,9 +77,8 @@ int gdata_load(int level)
 	uint8_t *g = mem_game_alloc(geo_room);       /* (room for any level's models) */
 	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
 	uint8_t *wt = mem_game_alloc(wtab);
-	uint8_t *wp = mem_game_alloc(h->len_wpix);
 	uint8_t *fr = h->num_free ? mem_game_alloc(h->num_free * sizeof(qg_free)) : 0;
-	if (!t || !g || (h->len_finales && !fin) || !wt || !wp || (h->num_free && !fr)) {
+	if (!t || !g || (h->len_finales && !fin) || !wt || (h->num_free && !fr)) {
 		mem_level_release(mark);
 		return 0;
 	}
@@ -95,25 +94,19 @@ int gdata_load(int level)
 		gdata.finales     = (const qg_finale *) fin;
 		gdata.num_finales = h->num_finales;
 	}
-	/* the 2D weapons: their tables, their packets with absolute links (KUSEG,
-	   as the ordering table's); a chain's last stays 0xffffff (game.c hangs
-	   it in the ordering table); the same in every model level's file */
+	/* the 2D weapons: their tables; their packets (105 KB) stay on the disc
+	   until the 2D gun is chosen (game_ws_sync): where they are; the same
+	   in every model level's file */
 	memcpy(wt, f + h->ofs_wsprites, QG_WEAPONS * sizeof(qg_wsprite));
 	memcpy(wt + QG_WEAPONS * sizeof(qg_wsprite), f + h->ofs_wframes, h->num_wframes * sizeof(qg_wframe));
-	memcpy(wp, f + h->ofs_wpix, h->len_wpix);
-	gdata.wsprites = (const qg_wsprite *) wt;
-	gdata.wframes  = (const qg_wframe *) (wt + QG_WEAPONS * sizeof(qg_wsprite));
-	gdata.wpix     = wp;
-	gdata.wslot    = h->wslot;
-	for (uint32_t i = 0; i < h->num_wframes; i++) {
-		uint32_t at = gdata.wframes[i].ofs;
-		for (;;) {
-			uint32_t *tag = (uint32_t *) (wp + at), next = *tag & 0xffffffu;
-			if (next == 0xffffffu)
-				break;
-			*tag = (*tag & 0xff000000u) | (((uint32_t) wp + next) & 0xffffffu);
-			at = next;
-		}
+	gdata.wsprites    = (const qg_wsprite *) wt;
+	gdata.wframes     = (const qg_wframe *) (wt + QG_WEAPONS * sizeof(qg_wsprite));
+	gdata.num_wframes = h->num_wframes;
+	gdata.wslot       = h->wslot;
+	if (h->len_wpix) {
+		gdata.ws_lba     = (int32_t) (cd_last_lba() + h->ofs_wpix / CD_SECTOR);
+		gdata.ws_skew    = (uint16_t) (h->ofs_wpix % CD_SECTOR);
+		gdata.ws_sectors = (uint16_t) ((gdata.ws_skew + h->len_wpix + CD_SECTOR - 1) / CD_SECTOR);
 	}
 	if (fr) {                                    /* (the same in every level's file) */
 		memcpy(fr, f + h->ofs_free, h->num_free * sizeof(qg_free));
@@ -128,4 +121,22 @@ int gdata_load(int level)
 	printf("gdata: %u models, %u pictures, %u VRAM rects, %u B of geometry -> game arena %u KB\n",
 	       h->num_models, h->num_pics, h->num_rects, h->len_geo, mem_game_used() / 1024);
 	return 1;
+}
+
+/* their links made absolute (KUSEG, as the ordering table's); a chain's
+   last stays 0xffffff (game.c hangs it in the ordering table) */
+uint8_t *gdata_ws_link(uint8_t *block)
+{
+	uint8_t *wp = block + gdata.ws_skew;
+	for (uint32_t i = 0; i < gdata.num_wframes; i++) {
+		uint32_t at = gdata.wframes[i].ofs;
+		for (;;) {
+			uint32_t *tag = (uint32_t *) (wp + at), next = *tag & 0xffffffu;
+			if (next == 0xffffffu)
+				break;
+			*tag = (*tag & 0xff000000u) | (((uint32_t) wp + next) & 0xffffffu);
+			at = next;
+		}
+	}
+	return wp;
 }
