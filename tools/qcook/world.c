@@ -1,5 +1,5 @@
 /*
- * qcook — world: QWVD file (formats/qworld.h), one per geometry level.
+ * qcook — world: QWVE file (formats/qworld.h), one per geometry level.
  *
  * Faces are attached to their BSP node (front block / back block), cut on
  * texture-repeat boundaries so every piece's UVs stay inside one VRAM tile
@@ -1144,12 +1144,10 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	if ((long) b->num_nodes * QW_NODE_WORDS >= QW_NOPARENT)
 		die("%d nodes: parent offsets do not fit 16 bits", b->num_nodes);
 	qw_node *nodes = xcalloc((size_t) b->num_nodes + 1, sizeof *nodes);   /* + sentinel */
-	uint32_t *bm_records = xcalloc((size_t) b->num_models, sizeof *bm_records);
 	for (int i = 0; i < b->num_nodes; i++) {
 		const bsp_node *bn = &b->nodes[i];
 		const bsp_plane *pl = &b->planes[bn->planenum];
 		qw_node *n = &nodes[i];
-		uint32_t recs_before = o.records;
 
 		bbox(bn->mins, bn->maxs, n->c, n->h);
 		(void) pl;
@@ -1232,8 +1230,6 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 				free(r);
 			}
 		}
-		if (reach[i] > 1)
-			bm_records[reach[i] - 1] += o.records - recs_before;
 	}
 	o.bmodel = 0;
 
@@ -1436,7 +1432,8 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 		die("BSP depth %u exceeds the renderer stack (%d)", h.max_depth, QW_MAX_DEPTH);
 
 	/* the brush models: bounds spread by a unit (Mod_LoadSubmodels), the
-	   hull-0 root (its subtree is walked by the renderer), the clip roots */
+	   hull-0 root (its subtree is walked by the renderer), the clip roots;
+	   their pieces' rooms once the file is whole (bmf_rooms) */
 	qw_bmodel *bmodels = xcalloc((size_t) b->num_models, sizeof *bmodels);
 	h.max_bm_depth = 0;
 	for (int m = 1; m < b->num_models; m++) {
@@ -1448,13 +1445,14 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 		}
 		q->root  = bm->headnode[0] >= 0 ? (uint32_t) bm->headnode[0]
 		         : 0x80000000u | (uint32_t) (-1 - bm->headnode[0]);
-		q->hull1 = bm->headnode[1];
-		q->hull2 = bm->headnode[2];
+		if (bm->headnode[1] < 0 || bm->headnode[1] > 32767 || bm->headnode[2] < 0 || bm->headnode[2] > 32767)
+			die("brush model %d: clip roots %d, %d", m, bm->headnode[1], bm->headnode[2]);
+		q->hull1 = (int16_t) bm->headnode[1];
+		q->hull2 = (int16_t) bm->headnode[2];
 		int d = depth_of(b, bm->headnode[0]);
 		if (d > QW_MAX_BM_DEPTH)
 			die("brush model %d: depth %d > %d", m, d, QW_MAX_BM_DEPTH);
-		q->depth       = (uint16_t) d;
-		q->num_records = (uint16_t) bm_records[m];
+		q->depth = (uint16_t) d;
 		if ((uint32_t) d > h.max_bm_depth)
 			h.max_bm_depth = (uint32_t) d;
 	}
@@ -1547,6 +1545,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	h.len_strings = (uint32_t) estr.len;
 	buf_put(&f, estr.p, estr.len);
 	memcpy(f.p, &h, sizeof h);
+	bmf_rooms(f.p, f.len);                 /* (on the file as the engine reads it) */
 
 	FILE *fp = fopen(out_path, "wb");
 	if (!fp)
@@ -1577,7 +1576,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 
 	free(f.p); free(o.stream.p); free(nodes); free(leaves); free(bmodels);
 	free(etab.p); free(estr.p); ents_free(&ents);
-	free(node_parent); free(leaf_parent); free(reach); free(bm_records);
+	free(node_parent); free(leaf_parent); free(reach);
 	free(face_group); free(gmarks); free(gfirst); free(gcount); free(uf_up); free(edge_face);
 	free(memb); free(order); free(o.pair_face); free(o.pair_rec);
 	free(face_mfirst); free(face_mleaf); free(face_model);
@@ -1718,6 +1717,10 @@ int world_check(const char *path)
 		for (int k = 0; k < 3; k++)
 			if (bm[i].mins[k] > bm[i].maxs[k]) FAIL("bmodel %u: bounds", i);
 		if (bm[i].depth > h.max_bm_depth) FAIL("bmodel %u: depth %u", i, bm[i].depth);
+		if (!bm[i].room_verts != !bm[i].room_recs || !bm[i].room_verts != !bm[i].room_groups ||
+		    bm[i].room_recs * 4u < bm[i].room_groups * (uint32_t) sizeof(qw_record))
+			FAIL("bmodel %u: a room of %u B, %u vertices, %u groups", i, bm[i].room_recs * 4u,
+			     bm[i].room_verts, bm[i].room_groups);
 	}
 	const qw_ent *ents = (const qw_ent *) (d + h.ofs_ents);
 	const char *strs = (const char *) (d + h.ofs_strings);

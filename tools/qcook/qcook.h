@@ -3,13 +3,14 @@
  *
  *   qcook.c   command line, pak access, BSP lump parsing, the levels
  *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX6 output
- *   world.c   face splitting, face records, nodes/leaves/PVS, QWVD output
+ *   world.c   face splitting, face records, nodes/leaves/PVS, QWVE output
  *   game.c    models, sprites, HUD pictures -> QGM6 (formats/qgame.h)
  *   items.c   the map's own models -> QMM1 (formats/qgame.h)
  *   decim.c   an alias model's triangles reduced (the model levels)
  *   ents.c    the entity lump: parsed for the world's entity table, the
  *             sound bank and the player start
  *   sound.c   the map's sound bank -> QSND (formats/qsound.h)
+ *   bmf.c     the brush models' room for their cut pieces (engine/bmfrag.c)
  *
  * See docs/architecture.md §6-§7, formats/qworld.h / qtex.h / qlevels.h.
  */
@@ -287,5 +288,14 @@ void world_build(const bsp_t *b, const tex_set *canon, int geo_level, const char
 
 /* `qcook check`: reload a QWV2 file and verify every invariant. */
 int  world_check(const char *path);
+
+/* ------------------------------------------------------------------ bmf -- */
+
+/* bmf.c: the room each drawn brush model's pieces take when the world's BSP
+   cuts it (engine/bmfrag.c), wherever its entity can stand, written into
+   the cooked world's qw_bmodel table (f: the whole file, len bytes) */
+void bmf_rooms(uint8_t *f, size_t len);
+/* `qcook bmf <file.wld> [-v]`: measured again, against the file's */
+int  cmd_bmf(int argc, char **argv);
 
 #endif

@@ -18,9 +18,11 @@
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the
 #         world's BSP (engine/bmfrag.c): an A / B. BMFCHK=1 (with
 #         BENCH_MAPS=1 VIEWS=0) cuts every door, button, plat, train and
-#         secret door at 33 places along each of its ways in its room
-#         ("bmfchk" lines: the cuts that do not fit, the fullest rooms;
-#         docs/porting-notes.md §44).
+#         secret door at 33 places along each of its ways in the room the
+#         cook measured ("bmfchk" lines: the cuts that do not fit, the
+#         fullest rooms; "bmf room" lines: a room that is not the cut
+#         where its model stands, every bench checks it at the load;
+#         docs/porting-notes.md §44, §46).
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
@@ -100,7 +102,7 @@ LOG="$ROOT/build-bench/bench.log" \
 grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
-[ "$BMFCHK" = 1 ] && { grep '^bmfchk' "$ROOT/build-bench/bench.log" || true; }
+[ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$ROOT/build-bench/bench.log" || true; }
 [ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
 [ "$MONSTERS" = 2 ] && exit 0
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0

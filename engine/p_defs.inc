@@ -32,8 +32,8 @@
 .set BM_MINS,        0     # int32[3], 1/8 units, a unit spread
 .set BM_MAXS,       12
 .set BM_ROOT,       24     # hull 0: its render nodes' root (KUSEG pointer)
-.set BM_HULL1,      28     # clipnode roots
-.set BM_HULL2,      32
+.set BM_HULL1,      28     # int16 clipnode roots
+.set BM_HULL2,      30
 
 # ---- world_t: the clip-hull fields --------------------------------------------
 .set W_ROOT,         8     # the render BSP's root: hull 0, the point hull
