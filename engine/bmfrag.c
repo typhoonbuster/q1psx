@@ -530,6 +530,16 @@ static void model_size(uint32_t at, uint32_t *bytes, uint32_t *corners, int *nod
 	model_size(nd->child[1], bytes, corners, nodes);
 }
 
+#ifdef Q1PSX_BENCH
+uint32_t bmf_model_bytes(int model)
+{
+	uint32_t bytes = 0, corners = 0;
+	int nodes = 0;
+	model_size(world.bmodels[model].root, &bytes, &corners, &nodes);
+	return bytes;
+}
+#endif
+
 bmf_cache **bmf_models;          /* this level's caches, by brush model: an
                                     edict spawned again (a death) finds its own */
 

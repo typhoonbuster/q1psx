@@ -54,6 +54,8 @@ int bmf_draw(edict_t *e, uint16_t vis);
 /* this level: models with pieces, pieces made, cuts, cuts given up, the
    cuts' cycles, the dearest cut's */
 extern uint32_t bmf_stats[6];
+/* a brush model's records' bytes (the movers' scenario: the biggest) */
+uint32_t bmf_model_bytes(int model);
 #endif
 
 #endif

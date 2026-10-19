@@ -21,6 +21,11 @@
 #         secret door at 33 places along each of its ways in its room
 #         ("bmfchk" lines: the cuts that do not fit, the fullest rooms;
 #         docs/porting-notes.md §44).
+#         MOVERS=1 moves the big movers in view (E1M6's train *39, E1M3's
+#         biggest train, E3M4's biggest door; MAP= one of them, a frame
+#         dumped): "bench mv.*" and "bmfcut" lines, the frame's, the ents'
+#         and the re-cut's cycles; "bmfhash": every 16th frame's hash folded
+#         (the identical-display-list check).
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
@@ -80,6 +85,7 @@ VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
 ENTS=${ENTS:-0}
 MONSTERS=${MONSTERS:-0}
+MOVERS=${MOVERS:-0}
 SAMPLE=${SAMPLE:-0}
 cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="$GEOMETRY" \
       -DQ1PSX_BENCH_MODELS="$MODELS" -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
@@ -89,7 +95,8 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" \
-      -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" "$ROOT" >/dev/null
 cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
 	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
 
@@ -101,6 +108,8 @@ grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' 
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 [ "$BMFCHK" = 1 ] && { grep '^bmfchk' "$ROOT/build-bench/bench.log" || true; }
+[ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$ROOT/build-bench/bench.log" || true; }
+[ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
 [ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
 [ "$MONSTERS" = 2 ] && exit 0
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0

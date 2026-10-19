@@ -1562,6 +1562,224 @@ static void bench_ents(void)
 	game_active = 0;
 }
 
+/* The big movers moving in view (MOVERS=1 scripts/bench.sh): E1M6's train
+   *39, E1M3's biggest train, E3M4's biggest door, each started and watched
+   from a spot that sees it along its way, one 60 Hz tick a frame (each
+   frame it moved and is drawn, bmf_draw cuts it again). Per mover a bench
+   line (the frame's and the ents' stages) and a "bmfcut" line: the cuts,
+   their cycles, the frames with a cut against those without; every 16th
+   frame's hash ("mvhash", "H" lines; "bmfhash": all of them folded, the
+   identical-display-list check). MAP= one of them, its frame 240 dumped
+   (pktview). */
+#ifndef Q1PSX_BENCH_MOVERS
+#define Q1PSX_BENCH_MOVERS 0  /* 1: the big movers' scenario (MOVERS=1 scripts/bench.sh) */
+#endif
+
+#define MV_FRAMES 600
+#define MV_PATH   64
+
+static const struct {
+	const char *map;
+	uint8_t     cls;
+	int16_t     model;           /* 0: the class's biggest (its records' bytes) */
+} mv_targets[] = {
+	{ "E1M6", QE_FUNC_TRAIN, 39 },
+	{ "E1M3", QE_FUNC_TRAIN, 0 },
+	{ "E3M4", QE_FUNC_DOOR, 0 },
+};
+
+/* the mover's centre were it at org (1/8 units) */
+static void mv_centre(const edict_t *e, const int32_t org[3], int32_t c[3])
+{
+	for (int k = 0; k < 3; k++)
+		c[k] = org[k] + (e->mins[k] + e->maxs[k]) / 2;
+}
+
+/* the line from p to the mover's centre at org clear of the world (the
+   mover itself may end it) */
+static int mv_sees(const edict_t *e, const int32_t p[3], const int32_t org[3])
+{
+	int32_t c[3];
+	trace_t tr;
+	mv_centre(e, org, c);
+	clip_trace(0, p, c, &tr);
+	return tr.fraction == Q_FIX_ONE || (tr.ent && tr.ent == e->clip);
+}
+
+/* a spot in the open that sees the mover along its way (its places and
+   halfway between): out of its box at one of its first 8 places, along x
+   and y both ways, at five distances, at the box's centre's height and 48
+   units over its foot; the one seeing the most places, the first found
+   (the nearest) of those; 0 none */
+static int mv_spot(const edict_t *e, int32_t (*path)[3], int np, int32_t out[3])
+{
+	static const int16_t dist[5] = { 24, 64, 128, 256, 448 };
+	int best = 0;
+	for (int q = 0; q < np && q < 8; q++)
+		for (int d = 0; d < 5; d++)
+			for (int a = 0; a < 4; a++)
+				for (int foot = 0; foot < 2; foot++) {
+					int k = a >> 1;
+					int32_t p[3];
+					mv_centre(e, path[q], p);
+					if (foot)
+						p[2] = path[q][2] + e->mins[2] + 48 * CLIP_SUB;
+					p[k] = a & 1 ? path[q][k] + e->mins[k] - dist[d] * CLIP_SUB
+					             : path[q][k] + e->maxs[k] + dist[d] * CLIP_SUB;
+					if (p[k] < -4000 * CLIP_SUB || p[k] > 4000 * CLIP_SUB ||
+					    clip_contents(0, p) != QW_CONTENTS_EMPTY)
+						continue;
+					int score = 0;
+					for (int w = 0; w < np; w++) {
+						score += mv_sees(e, p, path[w]);
+						if (w + 1 < np) {
+							int32_t h[3];
+							for (int j = 0; j < 3; j++)
+								h[j] = (path[w][j] + path[w + 1][j]) / 2;
+							score += mv_sees(e, p, h);
+						}
+					}
+					if (score > best) {
+						best = score;
+						memcpy(out, p, sizeof p);
+					}
+				}
+	return best;
+}
+
+/* the camera at eye, toward the mover's centre */
+static void mv_look(const edict_t *e, const int32_t eye[3])
+{
+	int32_t c[3], d[3];
+	mv_centre(e, e->origin, c);
+	for (int k = 0; k < 3; k++)
+		d[k] = (c[k] - eye[k]) / CLIP_SUB;
+	int32_t hd = (int32_t) q_isqrt32((uint32_t) (d[0] * d[0] + d[1] * d[1]));
+	memcpy(cam.pos, eye, sizeof cam.pos);
+	cam.yaw   = r_atan2(d[1], d[0]);
+	cam.pitch = r_atan2(-d[2], hd);             /* (down positive) */
+	cam.roll  = 0;
+}
+
+static void bench_movers(void)
+{
+	static char names[3][20];
+	static int32_t path[MV_PATH + 1][3];
+	static const edict_t *seen[MV_PATH];
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	game_active = 1;
+	for (unsigned ti = 0; ti < sizeof mv_targets / sizeof mv_targets[0]; ti++) {
+		const char *map = mv_targets[ti].map;
+		if (Q1PSX_BENCH_MAP[0] && strcmp(map, Q1PSX_BENCH_MAP))
+			continue;
+		int m = world_find_map(map);
+		if (m < 0 || !load_level(m)) {
+			printf("bmfcut %s: not loaded\n", map);
+			continue;
+		}
+		map_index = m;
+		game_spawn();
+		ents_ticks(30, &cmd);                         /* LinkDoors, the trains' first corner */
+		edict_t *e = 0;
+		uint32_t most = 0;
+		for (int i = 2; i < num_edicts; i++) {
+			edict_t *x = &edicts[i];
+			if (!x->inuse || x->class != mv_targets[ti].cls || x->model <= 0 || !bmf_models ||
+			    !bmf_models[x->model])
+				continue;
+			uint32_t b = bmf_model_bytes(x->model);
+			if (mv_targets[ti].model ? x->model == mv_targets[ti].model : b > most) {
+				most = b;
+				e = x;
+			}
+		}
+		if (!e) {
+			printf("bmfcut %s: no such mover\n", map);
+			continue;
+		}
+		int np = 2;
+		if (e->class == QE_FUNC_TRAIN) {
+			np = movers_path(e, path, seen, MV_PATH);
+		} else {
+			memcpy(path[0], e->pos1, sizeof path[0]);
+			memcpy(path[1], e->pos2, sizeof path[1]);
+		}
+		int32_t eye[3] = { 0, 0, 0 };
+		int spots = np > 0 ? mv_spot(e, path, np, eye) : 0;
+		printf("bmfcut %s *%d: class %d, %u B of records, box %d..%d %d..%d %d..%d, %d places (first %d %d %d), "
+		       "seen at %d of %d from %d %d %d\n", map, e->model, e->class, (unsigned) most,
+		       (int) e->mins[0] / CLIP_SUB, (int) e->maxs[0] / CLIP_SUB, (int) e->mins[1] / CLIP_SUB,
+		       (int) e->maxs[1] / CLIP_SUB, (int) e->mins[2] / CLIP_SUB, (int) e->maxs[2] / CLIP_SUB, np,
+		       np > 0 ? (int) path[0][0] / CLIP_SUB : 0, np > 0 ? (int) path[0][1] / CLIP_SUB : 0,
+		       np > 0 ? (int) path[0][2] / CLIP_SUB : 0, spots, np * 2 - 1, (int) eye[0] / CLIP_SUB,
+		       (int) eye[1] / CLIP_SUB, (int) eye[2] / CLIP_SUB);
+		if (!spots)
+			continue;
+		ent_activator = ent_player;                   /* started (a train without a name runs) */
+		if (e->use)
+			e->use(e);
+		snprintf(names[ti], sizeof names[ti], "mv.%s.%d", map, e->model);
+		bench_acc_t acc;
+		bench_reset(&acc, names[ti]);
+		uint32_t moved = 0, cut_frames = 0, cuts = 0, given_up = 0, cyc = 0, cyc_max = 0, pieces = 0;
+		uint32_t f_cut = 0, f_cut_max = 0, n_ents_cut = 0, f_still = 0, n_still = 0, vbl_cut = 0;
+		uint32_t fold = 2166136261u;
+		bmf_stats[5] = 0;
+		for (int f = 0; f < MV_FRAMES; f++) {
+			int32_t was[3];
+			memcpy(was, e->origin, sizeof was);
+			game_tick(&cmd);
+			moved += memcmp(was, e->origin, sizeof was) != 0;
+			uint32_t c0 = bmf_stats[2] + bmf_stats[3], g0 = bmf_stats[3], y0 = bmf_stats[4], p0 = bmf_stats[1];
+			mv_look(e, eye);
+			run_frame(0, 0);
+			bench_add(&acc, vid_stats.vbl);
+			uint32_t n = bmf_stats[2] + bmf_stats[3] - c0, y = bmf_stats[4] - y0;
+			cuts += n;
+			given_up += bmf_stats[3] - g0;
+			pieces += bmf_stats[1] - p0;
+			if (n) {
+				cut_frames++;
+				cyc += y;
+				if (y > cyc_max) cyc_max = y;
+				f_cut += prof_stage[PROF_FRAME];
+				if (prof_stage[PROF_FRAME] > f_cut_max) f_cut_max = prof_stage[PROF_FRAME];
+				n_ents_cut += prof_stage[PROF_ENTS];
+				vbl_cut += vid_stats.vbl;
+			} else {
+				f_still += prof_stage[PROF_FRAME];
+				n_still++;
+			}
+			if (f % 16 == 15) {                       /* (not timed: the same state again) */
+				printf("mvhash %s f%d\n", names[ti], f);
+				run_frame(0, 2);
+				fold = (fold ^ vid_dump_hash) * 16777619u;
+			}
+			if (Q1PSX_BENCH_MAP[0] && f == 240) {
+				printf("D %s\n", names[ti]);
+				ents_debug = 1;
+				run_frame(0, 1);
+				ents_debug = 0;
+			}
+		}
+		bench_print(&acc);
+		printf("bmfcut %s: %d frames, moved in %u, cut in %u: %u cuts (%u given up), %u pieces a cut; "
+		       "the cuts %u cycles a frame with one, %u the most, %u the dearest cut; the frame %u / %u "
+		       "with a cut (ents %u, %u.%02u vbl), %u without (%u frames)\n", names[ti], MV_FRAMES,
+		       (unsigned) moved, (unsigned) cut_frames, (unsigned) cuts, (unsigned) given_up,
+		       (unsigned) (cuts ? pieces / cuts : 0), (unsigned) (cut_frames ? cyc / cut_frames : 0),
+		       (unsigned) cyc_max, (unsigned) bmf_stats[5], (unsigned) (cut_frames ? f_cut / cut_frames : 0),
+		       (unsigned) f_cut_max, (unsigned) (cut_frames ? n_ents_cut / cut_frames : 0),
+		       (unsigned) (cut_frames ? vbl_cut / cut_frames : 0),
+		       (unsigned) (cut_frames ? vbl_cut * 100 / cut_frames % 100 : 0),
+		       (unsigned) (n_still ? f_still / n_still : 0), (unsigned) n_still);
+		printf("bmfhash %s: %08x\n", names[ti], (unsigned) fold);
+	}
+	game_active = 0;
+}
+
 /* the release build's menu (engine/menu.c) driven by pressed keys, a frame
    of each page dumped: the main menu, single player, the new-game
    question, the options, the graphics page in each warp mode (the greyed
@@ -2154,6 +2372,12 @@ static void run_bench(void)
 		bench_ents();
 		printf("bench done\n");
 		return;
+	}
+	if (Q1PSX_BENCH_MOVERS) {
+		bench_movers();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_GAME) {
 		bench_game();

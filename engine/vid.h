@@ -91,5 +91,6 @@ int   vid_frame_vbl(void);
 int   vid_back(void);                          /* the framebuffer this frame is drawn into (0, 1) */
 void  vid_dump(int hash_only);                  /* display list -> stdout (P lines,
                                                    then its hash; or the hash only) */
+extern uint32_t vid_dump_hash;                  /* the last dump's hash */
 
 #endif

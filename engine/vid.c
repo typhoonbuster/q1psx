@@ -289,6 +289,8 @@ void vid_flip(void)
 
 /* Print this frame's display list (draw order) to stdout for tools/pktview:
    one "P <hex words...>" line per packet, then "E". Bench builds only. */
+uint32_t vid_dump_hash;
+
 void vid_dump(int hash_only)
 {
 	const uint32_t *ot = vid_frame.ot;
@@ -321,4 +323,5 @@ void vid_dump(int hash_only)
 	/* the hash survives a console that drops or doubles characters (the
 	   emulator's interpreter does on long dumps) */
 	printf("E\nH %08x %u\n", (unsigned) hash, (unsigned) words);
+	vid_dump_hash = hash;
 }
