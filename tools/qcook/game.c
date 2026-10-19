@@ -1896,12 +1896,14 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 		if (out[l].len - imgl != img_len || memcmp(out[l].p + imgl, out[2].p + img2, img_len))
 			die("%s: the %s level's images are not the high level's", q->file, level_name[l]);
 		qst_model lm;
+		qst_layout lay;
 		uint32_t size = qst_level_model(&sh, l, &lm);
+		qst_layout_of(&sh, l, &lay);
 		uint8_t *a = xcalloc(size, 1);
 		memcpy(a, &lm, sizeof lm);
 		for (uint32_t ofs = 0; ofs < sb.len; ofs += QST_SECTOR) {   /* (sector by sector, as captured) */
 			uint32_t piece = sb.len - ofs < QST_SECTOR ? (uint32_t) (sb.len - ofs) : QST_SECTOR;
-			qst_assemble(&sh, l, ofs, sb.p + ofs, piece, a);
+			qst_assemble(&lay, ofs, sb.p + ofs, piece, a);
 		}
 		if (size != out[l].len || memcmp(a, out[l].p, size))
 			die("%s: the %s level's asset made from the shared one differs", q->file, level_name[l]);

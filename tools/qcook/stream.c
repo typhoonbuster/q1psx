@@ -309,3 +309,46 @@ int cmd_stream(int argc, char **argv)
 	free(ents);
 	return 0;
 }
+
+/* The streamed assets a map's monsters bring (the music's carousels,
+   tools/qcook/carousel.c): each kind's group (its models, head,
+   projectiles, sounds), the gibs and the backpack with any monster (the
+   registered game's kinds are not streamed); their names */
+int stream_monster_needs(const ent_list *l, const char **list, int max)
+{
+	static const struct { const char *classname; int group; } KINDS[] = {
+		{ "monster_army", G_ARMY }, { "monster_dog", G_DOG }, { "monster_ogre", G_OGRE },
+		{ "monster_ogre_marksman", G_OGRE }, { "monster_knight", G_KNIGHT }, { "monster_zombie", G_ZOMBIE },
+		{ "monster_wizard", G_WIZARD }, { "monster_demon1", G_DEMON }, { "monster_shambler", G_SHAMBLER },
+		{ "monster_boss", G_BOSS },
+	};
+	int have[G_WORLD + 1] = { 0 }, any = 0;
+	for (int i = 0; i < l->num; i++)
+		for (size_t k = 0; k < sizeof KINDS / sizeof KINDS[0]; k++)
+			if (!strcmp(l->ents[i].classname, KINDS[k].classname))
+				have[KINDS[k].group] = any = 1;
+	have[G_GIBS] = have[G_BACKPACK] = any;
+	static char names[NUM_MODELS][64];
+	int n = 0;
+	if (have[G_OGRE] || have[G_DEMON] || have[G_SHAMBLER])   /* their melee's meat (SpawnMeatSpray: */
+		list[n++] = "progs/zom_gib.mdl";                      /* the zombie's flesh; engine/m_*.c) */
+	for (int i = 0; i < NUM_MODELS; i++) {
+		if (!have[MODELS[i].group] || (n && list[0] == MODELS[i].file && !strcmp(MODELS[i].file, "progs/zom_gib.mdl")))
+			continue;
+		if (n >= max)
+			die("too many monster assets");
+		if (MODELS[i].skin)
+			snprintf(names[i], sizeof names[i], "%s#%d", MODELS[i].file, MODELS[i].skin);
+		else
+			snprintf(names[i], sizeof names[i], "%s", MODELS[i].file);
+		list[n++] = names[i];
+	}
+	for (int k = 0; k < NUM_MONSTER_SOUNDS; k++) {
+		if (!have[MONSTER_SOUNDS[k].group])
+			continue;
+		if (n >= max)
+			die("too many monster assets");
+		list[n++] = MONSTER_SOUNDS[k].file;
+	}
+	return n;
+}

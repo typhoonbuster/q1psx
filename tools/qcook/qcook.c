@@ -429,6 +429,8 @@ int main(int argc, char **argv)
 		return cmd_stream(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "menu"))
 		return cmd_menu(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "carousel"))
+		return cmd_carousel(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"
@@ -439,6 +441,8 @@ int main(int argc, char **argv)
 	        "  qcook check <file.wld>\n"
 	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n"
 	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
-	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n");
+	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
+	        "  qcook carousel --pak <pak0.pak> [--pak1 <pak1.pak>] --pool <pool.dat> --music <dir>\n"
+	        "                 --track <n> --out <xa_nn.str> [--maps \"start e1m1 ...\"] [--needs <list.txt>]\n");
 	return 2;
 }

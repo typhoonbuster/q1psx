@@ -31,8 +31,9 @@ static int     level_mask[QL_AXES];   /* the levels the disc's maps come in, per
 /* cd_list_dir's call: a "<MAP>_G<N>.WLD" marks its map present at geometry
    level N, a "<MAP>_T<N>.TEX" and a "<MAP>_M<N>.MDL" add texture and model
    level N (the release disc carries low to high, the ultra one ultra) */
-static void note_map_file(const char *name, uint32_t size)
+static void note_map_file(const char *name, uint32_t lba, uint32_t size)
 {
+	(void) lba;
 	(void) size;
 	const char *s = name;
 	while (*s && *s != '_') s++;

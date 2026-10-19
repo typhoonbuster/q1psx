@@ -196,7 +196,6 @@ typedef struct {
 
 static int list_file(const char *name, int nlen, uint32_t lba, uint32_t size, int dir, void *arg)
 {
-	(void) lba;
 	list_t *l = arg;
 	if (dir)
 		return 0;
@@ -205,7 +204,7 @@ static int list_file(const char *name, int nlen, uint32_t lba, uint32_t size, in
 		nlen = (int) sizeof s - 1;
 	memcpy(s, name, (size_t) nlen);
 	s[nlen] = 0;
-	l->fn(s, size);
+	l->fn(s, lba, size);
 	l->n++;
 	return 0;
 }

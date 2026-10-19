@@ -112,22 +112,38 @@ done | xargs -P "$(nproc)" -n 3 bash -c 'cook_one "$0" "$1" "$2"'
 
 echo "cooked $(echo $MAPS | wc -w) maps: 4 texture, 3 geometry, 3 model levels -> $ROOT/cooked/"
 
-# the music: Quake's CD tracks 2..11 (worldspawn "sounds"), converted once
+# the music: Quake's CD tracks 2..11 (worldspawn "sounds"), from the
+# rerelease's tracks, resampled once by ffmpeg: 37.8 kHz for the XA streams
+# (cooked/xa/trackNN.wav), each track's stream then cooked with the
+# carousel of its maps' streamed assets (formats/qxa.h: cooked/xa/xa_NN.str,
+# the tracks side by side; the maps cooked here only); 22.05 kHz for the
+# SPU-streamed music (cooked/spu/trackNN.wav -> spu_NN.dat). The build's
+# Q1PSX_MUSIC_MODE picks which go on the disc.
 QUAKE_MUSIC=${QUAKE_MUSIC:-"$(dirname "$QUAKE_PAK0")/../rerelease/id1/music"}
+rm -f cooked/xa/xa_*.str
 if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/dev/null; then
-	mkdir -p cooked/music
-	n=0
+	mkdir -p cooked/xa cooked/spu
+	tracks=""
 	for src in "$QUAKE_MUSIC"/track*.ogg "$QUAKE_MUSIC"/track*.mp3 "$QUAKE_MUSIC"/track*.wav; do
 		[ -f "$src" ] || continue
-		out="cooked/music/$(basename "${src%.*}").wav"
-		if [ ! -f "$out" ] || [ "$src" -nt "$out" ]; then
-			ffmpeg -loglevel error -y -i "$src" -ar 44100 -ac 2 -sample_fmt s16 \
-			       -fflags +bitexact -flags:a +bitexact "$out" || { echo "cook FAILED: music $src"; exit 1; }
-		fi
-		n=$((n + 1))
+		nn=$(basename "${src%.*}" | sed 's/^track//')
+		for fmt in xa:37800 spu:22050; do
+			out="cooked/${fmt%%:*}/track$nn.wav"
+			if [ ! -f "$out" ] || [ "$src" -nt "$out" ]; then
+				ffmpeg -loglevel error -y -i "$src" -ar "${fmt#*:}" -ac 2 -sample_fmt s16 \
+				       -fflags +bitexact -flags:a +bitexact "$out" || { echo "cook FAILED: music $src"; exit 1; }
+			fi
+		done
+		tracks="$tracks $nn"
 	done
-	echo "music: $n CD-DA tracks in $ROOT/cooked/music/"
+	MAPS_LIST=$(echo $MAPS)                      # (one line, single spaces)
+	export MAPS_LIST
+	for nn in $tracks; do echo "$nn"; done | xargs -P "$(nproc)" -I{} bash -c \
+		'tools/qcook/qcook carousel --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --pool cooked/xa/pool.dat \
+		    --maps "$MAPS_LIST" --music cooked/xa --track {} --out cooked/xa/xa_{}.str > "$LOGS/xa_{}.log" 2>&1 \
+		 || { echo "cook FAILED: the XA stream of track {}"; cat "$LOGS/xa_{}.log"; exit 1; }'
+	cat "$LOGS"/xa_*.log | grep '^qcook: ' | sed 's|^qcook: .*/|music: |' || true
+	echo "music: $(echo $tracks | wc -w) tracks in $ROOT/cooked/xa/"
 else
-	rm -rf cooked/music
 	echo "music: none (set QUAKE_MUSIC / COOK_MUSIC=1, needs ffmpeg)"
 fi

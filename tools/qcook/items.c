@@ -133,6 +133,25 @@ static void need_for(const ent_list *l, const ent_rec *e, int worldtype)
 	else if (!strcmp(c, "misc_teleporttrain")) need[QIM_TELEPORT] = 1;
 }
 
+/* the streamed models a map's items use (formats/qstream.h's names, the
+   armour's skins "progs/armor.mdl#1" and "#2": engine/items.c qim_stream),
+   for the music's carousels (tools/qcook/carousel.c) */
+int items_streamed(const ent_list *l, int worldtype, const char **list, int max)
+{
+	memset(need, 0, sizeof need);
+	for (int i = 0; i < l->num; i++)
+		need_for(l, &l->ents[i], worldtype);
+	int n = 0;
+	for (int q = 0; q < QIM_COUNT; q++) {
+		if (!need[q] || is_bsp(q))
+			continue;
+		if (n >= max)
+			die("too many streamed item models");
+		list[n++] = q == QIM_ARMOR2 ? "progs/armor.mdl#1" : q == QIM_ARMOR3 ? "progs/armor.mdl#2" : QIMS[q].file;
+	}
+	return n;
+}
+
 /* an extra texture; a box's identical to one already there (the same
    name, size and texels: the ammo boxes' rockettop) shared; its index */
 static int add_extra(const bsp_miptex *mt, int skin, int div, int shift)

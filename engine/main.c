@@ -2343,6 +2343,7 @@ int main(void)
 	stream_init(settings.level[QL_MODELS]);
 	dl_init();
 	game_init();
+	printf("mem: game arena %u of %u bytes\n", (unsigned) mem_game_used(), (unsigned) MEM_GAME_BYTES);
 #ifdef Q1PSX_BENCH
 	if (!Q1PSX_BENCH_MAPS && Q1PSX_BENCH_MAP[0] && world_find_map(Q1PSX_BENCH_MAP) >= 0)
 		map_index = world_find_map(Q1PSX_BENCH_MAP);  /* MAP=: the physics diffs there too */

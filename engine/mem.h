@@ -26,8 +26,10 @@
                                           the BSS ended past the 2 MB; the stack's
                                           16 KB checked at every link:
                                           scripts/ramcheck.sh) */
-#define MEM_GAME_BYTES  (224 * 1024)   /* (+ the 2D weapons' 102 KB since 2026-10-18;
-                                          the dynamic lights' and the sounds' tables follow) */
+#define MEM_GAME_BYTES  (220 * 1024)   /* (+ the 2D weapons' 102 KB since 2026-10-18;
+                                          the dynamic lights' and the sounds' tables follow;
+                                          224 until the music's carousel, 2026-10-19: the
+                                          stack's 16 KB again, the arena 1 KB from full) */
 
 void     mem_level_reset(void);
 void    *mem_level_alloc(uint32_t bytes);      /* 16-byte aligned; NULL if full */

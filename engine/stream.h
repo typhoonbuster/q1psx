@@ -36,6 +36,7 @@
 
 #include "qstream.h"
 #include "qworld.h"
+#include "qxa.h"
 
 #define STREAM_PIN    0u            /* stream_want's score: always resident */
 #define STREAM_REACH  2500u         /* world units: a model wanted from farther
@@ -99,6 +100,13 @@ typedef struct {
 const stream_sound_t *stream_sound(int a);
 int  stream_is_sound(int a);
 
+/* The music's carousel (formats/qxa.h, engine/music.c): the playing XA
+   stream's header (0: none); its assets are captured as they pass, the
+   CD interrupt handing each data sector of the stream to
+   stream_xa_sector (i: its place in the stream) */
+void stream_carousel(const qxa_header *h);
+void stream_xa_sector(uint32_t i);
+
 /* the SPU pool's bounds (bytes), engine/snd.c's once a map's bank is in */
 void stream_spu_pool(uint32_t lo, uint32_t hi);
 
@@ -115,6 +123,8 @@ typedef struct {
 	uint32_t halved;                 /* skins at their fallback (VRAM short) */
 	uint16_t resident, wanted;       /* assets, the last pass              */
 	uint16_t music_pauses;
+	uint32_t xa_captures;            /* assets taken from the music's carousel */
+	uint32_t xa_dropped;             /* its sectors the frames were too late for */
 } stream_stats_t;
 extern stream_stats_t stream_stats;
 extern int stream_log;               /* print the loads and evictions      */

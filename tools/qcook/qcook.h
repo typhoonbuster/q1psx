@@ -160,6 +160,15 @@ int cmd_stream(int argc, char **argv);
    (menu.c, formats/qmenu.h) */
 int cmd_menu(int argc, char **argv);
 
+/* `qcook carousel`: the music's XA streams with the streamed assets of
+   their tracks' maps (carousel.c, formats/qxa.h); what a map's entities
+   take from the stream, by name (its monsters', stream.c; its items'
+   models, items.c; its entities' and ambients' sounds, sound.c) */
+int cmd_carousel(int argc, char **argv);
+int stream_monster_needs(const ent_list *l, const char **list, int max);
+int items_streamed(const ent_list *l, int worldtype, const char **list, int max);
+int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max);
+
 /* ---------------------------------------------------------------- sound -- */
 
 /* `qcook map --sounds`: the map's sound bank (formats/qsound.h, sound.c).

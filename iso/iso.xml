@@ -26,6 +26,10 @@
 			<file name="HELLO.TXT"  type="data" source="${PROJECT_SOURCE_DIR}/iso/hello.txt" />
 			@GAME_ENTRY@
 			@STREAM_ENTRY@
+			<!-- the music (read while the game runs: next to the streamed assets) -->
+			<dir name="MUSIC">
+			@MUSIC_ENTRIES@
+			</dir>
 			@PAK0_ENTRY@
 			<!-- in a subdirectory: the BIOS only reads the root directory's first
 			     sector, and SYSTEM.CNF must stay in it -->
@@ -36,5 +40,4 @@
 			<dummy sectors="1024"/>
 		</directory_tree>
 	</track>
-	@AUDIO_TRACKS@
 </iso_project>

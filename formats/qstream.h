@@ -199,42 +199,71 @@ static inline uint32_t qst_level_model(const qst_shared *s, int level, qst_model
 	return img + s->len_images;
 }
 
+/* (words when the three are 4-aligned: every region of an asset is, its
+   frames, records and images; the engine's memcpy goes by bytes) */
 static inline void qst_copy(uint8_t *d, const uint8_t *s, uint32_t n)
 {
+	if (!(((uintptr_t) d | (uintptr_t) s | n) & 3)) {
+		uint32_t *dw = (uint32_t *) d;
+		const uint32_t *sw = (const uint32_t *) s;
+		for (n >>= 2; n; n--)
+			*dw++ = *sw++;
+		return;
+	}
 	while (n--)
 		*d++ = *s++;
 }
 
+/* where a level's asset takes the shared asset's bytes (qst_layout_of) */
+typedef struct {
+	uint32_t ofs_frames, frames;   /* the shared asset's frames                 */
+	uint32_t frame_bytes;          /* a shared frame's (the high level's)       */
+	uint32_t level_bytes;          /* the level's part of it (its first words)  */
+	uint32_t ofs_records, len_records;   /* the level's records                 */
+	uint32_t ofs_images, len_images;
+} qst_layout;                      /* 32 bytes */
+
+static inline void qst_layout_of(const qst_shared *s, int level, qst_layout *l)
+{
+	l->ofs_frames  = s->ofs_frames;
+	l->frames      = s->num_frames;
+	l->frame_bytes = (uint32_t) s->num_verts * 4;
+	l->level_bytes = (uint32_t) s->level[level].num_verts * 4;
+	l->ofs_records = s->level[level].ofs_records;
+	l->len_records = s->level[level].len_records;
+	l->ofs_images  = s->ofs_images;
+	l->len_images  = s->len_images;
+}
+
 /* the shared asset's bytes [ofs, ofs + n) (src) into the level's asset
    (dst, its whole block; its header is qst_level_model's): the frames'
-   first num_verts words, the level's records, the images; the rest (the
-   shared header, the frames' other words, the other levels' records)
-   skipped. Any range: a sector of the asset at a time. */
-static inline void qst_assemble(const qst_shared *s, int level, uint32_t ofs, const uint8_t *src, uint32_t n,
-                                uint8_t *dst)
+   first words, the level's records, the images; the rest (the shared
+   header, the frames' other words, the other levels' records) skipped.
+   Any range: a sector of the asset at a time. */
+static inline void qst_assemble(const qst_layout *l, uint32_t ofs, const uint8_t *src, uint32_t n, uint8_t *dst)
 {
-	uint32_t end = ofs + n, nl = s->level[level].num_verts, fh = (uint32_t) s->num_verts * 4;
-	uint32_t f0 = s->ofs_frames, f1 = f0 + (uint32_t) s->num_frames * fh;
-	uint32_t rec = (uint32_t) sizeof(qst_model) + (uint32_t) s->num_frames * nl * 4;
+	uint32_t end = ofs + n, fh = l->frame_bytes, nl = l->level_bytes;
+	uint32_t f0 = l->ofs_frames, f1 = f0 + l->frames * fh;
+	uint32_t rec = (uint32_t) sizeof(qst_model) + l->frames * nl;
 	if (end > f0 && ofs < f1 && nl) {                        /* the frames */
 		uint32_t a = ofs > f0 ? ofs : f0, b = end < f1 ? end : f1;
-		for (uint32_t f = (a - f0) / fh; f < s->num_frames && f0 + f * fh < b; f++) {
-			uint32_t lo = f0 + f * fh, hi = lo + nl * 4;
+		for (uint32_t f = (a - f0) / fh; f < l->frames && f0 + f * fh < b; f++) {
+			uint32_t lo = f0 + f * fh, hi = lo + nl;
 			if (lo < a) lo = a;
 			if (hi > b) hi = b;
 			if (lo < hi)
-				qst_copy(dst + sizeof(qst_model) + f * nl * 4 + (lo - f0 - f * fh), src + (lo - ofs), hi - lo);
+				qst_copy(dst + sizeof(qst_model) + f * nl + (lo - f0 - f * fh), src + (lo - ofs), hi - lo);
 		}
 	}
-	uint32_t r0 = s->level[level].ofs_records, r1 = r0 + s->level[level].len_records;
+	uint32_t r0 = l->ofs_records, r1 = r0 + l->len_records;
 	if (end > r0 && ofs < r1) {                              /* the level's records */
 		uint32_t lo = ofs > r0 ? ofs : r0, hi = end < r1 ? end : r1;
 		qst_copy(dst + rec + (lo - r0), src + (lo - ofs), hi - lo);
 	}
-	uint32_t i0 = s->ofs_images, i1 = i0 + s->len_images;
+	uint32_t i0 = l->ofs_images, i1 = i0 + l->len_images;
 	if (end > i0 && ofs < i1) {                              /* the images */
 		uint32_t lo = ofs > i0 ? ofs : i0, hi = end < i1 ? end : i1;
-		qst_copy(dst + rec + s->level[level].len_records + (lo - i0), src + (lo - ofs), hi - lo);
+		qst_copy(dst + rec + l->len_records + (lo - i0), src + (lo - ofs), hi - lo);
 	}
 }
 

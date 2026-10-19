@@ -669,6 +669,50 @@ int sound_streamed(const char **list, int max)
 	return n;
 }
 
+/* The streamed sounds a map's entities use (the music's carousels,
+   tools/qcook/carousel.c): their spawn functions' precaches as the map's
+   bank took them before the stream (the QC's defaults for `sounds`,
+   item_health's by its flags, a key door's), the ambient sources'; what
+   every bank has left out */
+int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max)
+{
+	int n = 0;
+	for (int i = 0; i < ents->num; i++) {
+		const ent_rec *e = &ents->ents[i];
+		const char *cls = e->classname;
+		int spawnflags = (int) ent_float(ents, e, "spawnflags", 0);
+		int sn = (int) ent_float(ents, e, "sounds", 0);
+		for (size_t k = 0; k < sizeof AMBIENTS / sizeof AMBIENTS[0]; k++) {
+			if (strcmp(cls, AMBIENTS[k].classname))
+				continue;
+			if (!strcmp(cls, "trigger_teleport") && (spawnflags & 1))   /* SILENT */
+				continue;
+			list_add(list, &n, max, AMBIENTS[k].sound);
+		}
+		if (!strcmp(cls, "func_door_secret") && !sn) sn = 3;
+		if (!strcmp(cls, "func_plat") && !sn) sn = 2;
+		if (!strcmp(cls, "trigger_secret") && !sn) sn = 1;
+		for (size_t k = 0; k < sizeof ENT_SOUNDS / sizeof ENT_SOUNDS[0]; k++) {
+			const ent_sound_spec *sp = &ENT_SOUNDS[k];
+			if (strcmp(cls, sp->classname))
+				continue;
+			if (sp->sounds != ANY && sp->sounds != sn)
+				continue;
+			if (sp->worldtype != ANY && sp->worldtype != worldtype)
+				continue;
+			const char *name = sp->sound;
+			if (!strcmp(cls, "item_health"))          /* items.qc: rotten, mega, or plain */
+				name = (spawnflags & H_ROTTEN) ? "items/r_item1.wav"
+				     : (spawnflags & H_MEGA) ? "items/r_item2.wav" : "items/health1.wav";
+			list_add(list, &n, max, name);
+		}
+		if (!strcmp(cls, "func_door") && worldtype >= 0 && worldtype <= 2)   /* (doors.qc gives */
+			for (int k = 0; k < 2; k++)                                     /* every door them) */
+				list_add(list, &n, max, KEY_DOOR_SOUNDS[worldtype][k]);
+	}
+	return n;
+}
+
 int sound_is_banked(const char *name)
 {
 	return in_bank_set(name);
