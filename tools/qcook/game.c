@@ -1469,8 +1469,9 @@ static void cut_image(const image *im, int x0, int x1, buf_t *pix, uint16_t *w, 
    the rest (heads, gibs, projectiles, the items, the flames) as the map's
    own models (reduce_mdl: Quake's at high). The vertices no triangle uses
    any more leave the frames (the RAM pool's bytes, the expansion's work).
-   Returns 1 with *out filled (its own arrays), 0: the model as it is. */
-static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out)
+   Returns 1 with *out filled (its own arrays), 0: the model as it is;
+   orig (m->nverts entries) receives each kept vertex's index in m. */
+static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out, int *orig)
 {
 	double keep, err;
 	if (body) {
@@ -1513,6 +1514,9 @@ static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out)
 				map[v] = nv++;
 			tris[t][k] = map[v];
 		}
+	for (int v = 0; v < m->nverts; v++)
+		if (map[v] >= 0)
+			orig[map[v]] = v;
 	*out        = *m;
 	out->nverts = nv;
 	out->ntris  = left;
@@ -1541,17 +1545,13 @@ static void stream_reduce_free(mdl_t *r)
 	free(r->frames);
 }
 
-void qc_mdl_cook_compact(qc_mdl *q, int model_level, int body, buf_t *out)
+/* a model's compact asset (formats/qstream.h qst_model) from its triangles
+   and vertices as given (a level's, numbered for the shared asset) */
+static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 {
 	model_src   *ms = &q->src;
-	const mdl_t *m  = &ms->mdl;
 	const image *im = ms->im;
 	int div = ms->sp->skin_div;
-	mdl_t reduced;
-	int full_tris = m->ntris, full_verts = m->nverts;
-	int is_reduced = stream_reduce(m, model_level, body, &reduced);
-	if (is_reduced)
-		m = &reduced;
 
 	/* the expansion's shift: the smallest that keeps a step within bounds */
 	double step_max = 0;
@@ -1770,11 +1770,151 @@ void qc_mdl_cook_compact(qc_mdl *q, int model_level, int body, buf_t *out)
 	       two ? "halves" : "whole", h.images[0].w, h.images[0].h, two ? " + " : "", two ? h.images[1].w : 0,
 	       two ? h.images[1].h : 0, h.small[0].w, h.small[0].h, shift, out->len - start,
 	       (size_t) m->nframes * m->nverts * 4);
-	if (is_reduced) {
-		printf("qcook: %-22s %s: %d of %d tris, %d of %d verts\n", q->file, level_name[model_level],
-		       m->ntris, full_tris, m->nverts, full_verts);
-		stream_reduce_free(&reduced);
+}
+
+/* The three model levels of a streamed model (formats/qstream.h
+   qst_shared): each level's reduction (stream_reduce), nested (a lower
+   level's vertices a subset of the higher's: the collapses go on in the
+   same order); the vertices numbered by the lowest level keeping them,
+   each level's asset cooked with that numbering (out[level]); the shared
+   asset (shared) from them: the high level's frames, the levels' records,
+   the images (the same at every level), checked against each level's
+   asset through qst_assemble. */
+void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
+{
+	const mdl_t *m = &q->src.mdl;
+	mdl_t red[3];
+	int *orig[3], nv[3], reduced[3];
+	for (int l = 0; l < 3; l++) {
+		orig[l] = xmalloc((size_t) m->nverts * sizeof *orig[l]);
+		reduced[l] = stream_reduce(m, l, body, &red[l], orig[l]);
+		if (!reduced[l]) {                        /* the model as it is */
+			red[l] = *m;
+			for (int v = 0; v < m->nverts; v++)
+				orig[l][v] = v;
+		}
+		nv[l] = red[l].nverts;
 	}
+	/* the shared numbering: low's vertices in low's order, then medium's
+	   others in medium's, then high's */
+	int *rank = xmalloc((size_t) m->nverts * sizeof *rank), *order = xmalloc((size_t) m->nverts * sizeof *order);
+	int n = 0, prefix[3];
+	for (int v = 0; v < m->nverts; v++)
+		rank[v] = -1;
+	for (int l = 0; l < 3; l++) {
+		for (int i = 0; i < nv[l]; i++)
+			if (rank[orig[l][i]] < 0) {
+				rank[orig[l][i]] = n;
+				order[n++] = orig[l][i];
+			}
+		prefix[l] = n;
+		if (prefix[l] != nv[l])
+			die("%s: the model levels' vertices are not nested (level %d: %d of %d)", q->file, l, nv[l],
+			    prefix[l]);
+	}
+	for (int l = 0; l < 3; l++) {
+		mdl_t lv = red[l];
+		lv.nverts = nv[l];
+		lv.st     = xmalloc((size_t) nv[l] * sizeof *lv.st);
+		lv.tris   = xmalloc((size_t) red[l].ntris * sizeof *lv.tris);
+		lv.frames = xmalloc((size_t) m->nframes * sizeof *lv.frames);
+		tvert *tv = xmalloc((size_t) m->nframes * nv[l] * sizeof *tv);
+		for (int j = 0; j < nv[l]; j++)
+			memcpy(lv.st[j], m->st[order[j]], sizeof lv.st[0]);
+		for (int f = 0; f < m->nframes; f++) {
+			lv.frames[f] = tv + (size_t) f * nv[l];
+			for (int j = 0; j < nv[l]; j++)
+				lv.frames[f][j] = m->frames[f][order[j]];
+		}
+		for (int t = 0; t < red[l].ntris; t++) {
+			lv.tris[t][0] = red[l].tris[t][0];
+			for (int k = 1; k < 4; k++)
+				lv.tris[t][k] = rank[orig[l][red[l].tris[t][k]]];
+		}
+		memset(&out[l], 0, sizeof out[l]);
+		cook_compact(q, &lv, &out[l]);
+		if (reduced[l])
+			printf("qcook: %-22s %s: %d of %d tris, %d of %d verts\n", q->file, level_name[l], lv.ntris,
+			       m->ntris, lv.nverts, m->nverts);
+		free(lv.st);
+		free(lv.tris);
+		free(tv);
+		free(lv.frames);
+	}
+	/* the shared asset */
+	const qst_model *h[3];
+	for (int l = 0; l < 3; l++)
+		h[l] = (const qst_model *) out[l].p;
+	uint32_t img_len = (uint32_t) out[2].len - (h[2]->ofs_records + h[2]->len_records);
+	qst_shared sh;
+	memset(&sh, 0, sizeof sh);
+	sh.num_frames = h[2]->num_frames;
+	sh.num_verts  = h[2]->num_verts;
+	sh.flags      = h[2]->flags;
+	sh.shift      = h[2]->shift;
+	sh.num_images = h[2]->num_images;
+	memcpy(sh.scale, h[2]->scale, sizeof sh.scale);
+	memcpy(sh.origin, h[2]->origin, sizeof sh.origin);
+	uint32_t img2 = h[2]->ofs_records + h[2]->len_records;
+	for (int k = 0; k < 2; k++) {
+		sh.images[k] = h[2]->images[k];
+		sh.small[k]  = h[2]->small[k];
+		if (k < sh.num_images) {
+			sh.images[k].ofs -= img2;
+			sh.small[k].ofs  -= img2;
+		}
+	}
+	buf_t sb = { 0 };
+	buf_put(&sb, &sh, sizeof sh);
+	sh.ofs_frames = (uint32_t) sb.len;
+	buf_put(&sb, out[2].p + h[2]->ofs_frames, (size_t) h[2]->num_frames * h[2]->num_verts * 4);
+	for (int l = 0; l < 3; l++) {
+		const uint8_t *r = out[l].p + h[l]->ofs_records;
+		int same = -1;
+		for (int k = 0; k < l && same < 0; k++)
+			if (h[k]->len_records == h[l]->len_records &&
+			    !memcmp(out[k].p + h[k]->ofs_records, r, h[l]->len_records))
+				same = k;
+		sh.level[l].num_verts   = h[l]->num_verts;
+		sh.level[l].num_records = h[l]->num_records;
+		sh.level[l].len_records = h[l]->len_records;
+		sh.level[l].radius      = h[l]->radius;
+		if (same >= 0) {
+			sh.level[l].ofs_records = sh.level[same].ofs_records;
+		} else {
+			sh.level[l].ofs_records = (uint32_t) sb.len;
+			buf_put(&sb, r, h[l]->len_records);
+		}
+	}
+	sh.ofs_images = (uint32_t) sb.len;
+	sh.len_images = img_len;
+	buf_put(&sb, out[2].p + img2, img_len);
+	memcpy(sb.p, &sh, sizeof sh);
+	/* every level's asset as the engine will make it from the shared one */
+	for (int l = 0; l < 3; l++) {
+		uint32_t imgl = h[l]->ofs_records + h[l]->len_records;
+		if (out[l].len - imgl != img_len || memcmp(out[l].p + imgl, out[2].p + img2, img_len))
+			die("%s: the %s level's images are not the high level's", q->file, level_name[l]);
+		qst_model lm;
+		uint32_t size = qst_level_model(&sh, l, &lm);
+		uint8_t *a = xcalloc(size, 1);
+		memcpy(a, &lm, sizeof lm);
+		for (uint32_t ofs = 0; ofs < sb.len; ofs += QST_SECTOR) {   /* (sector by sector, as captured) */
+			uint32_t piece = sb.len - ofs < QST_SECTOR ? (uint32_t) (sb.len - ofs) : QST_SECTOR;
+			qst_assemble(&sh, l, ofs, sb.p + ofs, piece, a);
+		}
+		if (size != out[l].len || memcmp(a, out[l].p, size))
+			die("%s: the %s level's asset made from the shared one differs", q->file, level_name[l]);
+		free(a);
+	}
+	*shared = sb;
+	for (int l = 0; l < 3; l++) {
+		if (reduced[l])
+			stream_reduce_free(&red[l]);
+		free(orig[l]);
+	}
+	free(rank);
+	free(order);
 }
 
 /* ------------------------------------------------------------------ main -- */

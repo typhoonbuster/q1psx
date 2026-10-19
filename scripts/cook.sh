@@ -34,8 +34,9 @@
 #   cooked/id1/conback.dat      QCB1, the console's background    -> disc CONBACK.DAT
 # and once per model level, the streamed assets (the monsters, the items'
 # models, the positional sounds; formats/qstream.h; the models reduced at
-# that level: tools/qcook/game.c stream_reduce):
+# that level: tools/qcook/game.c stream_reduce), with their shared pool:
 #   cooked/id1/stream_<N>.dat   QST1                              -> disc STREAM_<N>.DAT
+#   cooked/xa/pool.dat          QSX1 (the carousels' source: not on the disc)
 # and the music, as 44.1 kHz stereo WAV for mkpsxiso's audio tracks:
 #   cooked/music/trackNN.wav                              -> CD-DA track NN
 # Jobs run in parallel; each one's log is shown only if it fails.
@@ -78,16 +79,12 @@ tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game > "$LOGS/game.l
 tools/qcook/qcook menu --pak "$QUAKE_PAK0" --sounds cooked/id1/menu.snd --conback cooked/id1/conback.dat \
 	> "$LOGS/menu.log" 2>&1 || { echo "cook FAILED: menu"; cat "$LOGS/menu.log"; exit 1; }
 # the streamed assets per model level (formats/qstream.h): the monsters, the
-# items' models, the positional sounds
-pids=""
-for n in 0 1 2; do                               # the model levels: low, medium, high
-	tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --level $n \
-	                         --out cooked/id1/stream_$n.dat > "$LOGS/stream_$n.log" 2>&1 &
-	pids="$pids $!"
-done
-for p in $pids; do
-	wait "$p" || { echo "cook FAILED: streamed assets"; cat "$LOGS"/stream_*.log; exit 1; }
-done
+# items' models, the positional sounds; and their pool for the music's
+# carousels (cooked/xa/pool.dat: the three model levels in one asset)
+mkdir -p cooked/xa
+tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --out cooked/id1/stream \
+                         --pool cooked/xa/pool.dat > "$LOGS/stream.log" 2>&1 \
+	|| { echo "cook FAILED: streamed assets"; cat "$LOGS/stream.log"; exit 1; }
 
 cook_one() {   # map axis level (t / g / m, 0..3)
 	local pak=$QUAKE_PAK0

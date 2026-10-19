@@ -141,9 +141,15 @@ static const struct { const char *file; int group; } MONSTER_SOUNDS[] = {
 #define NUM_MONSTER_SOUNDS (int) (sizeof MONSTER_SOUNDS / sizeof MONSTER_SOUNDS[0])
 #define MAX_WORLD_SOUNDS 96
 
+/* the outputs: STREAM_<level>.DAT for the three model levels, then the pool
+   of shared assets (formats/qstream.h qst_shared: the music's carousels',
+   tools/qcook/carousel.c) */
+#define NOUT 4
+#define OUT_POOL 3
+
 typedef struct {
-	qst_asset a;
-	size_t    ofs, len;     /* in the data buffer */
+	qst_asset a;               /* (size: the high level's file's)           */
+	size_t    ofs[NOUT], len[NOUT];   /* in each output's data buffer        */
 } entry;
 
 static int by_hash(const void *x, const void *y)
@@ -152,18 +158,53 @@ static int by_hash(const void *x, const void *y)
 	return a->a.hash < b->a.hash ? -1 : a->a.hash > b->a.hash;
 }
 
+static void sector_pad(buf_t *b)
+{
+	static const uint8_t zero[QST_SECTOR];
+	buf_put(b, zero, (QST_SECTOR - b->len % QST_SECTOR) % QST_SECTOR);
+}
+
+/* one output: the directory (the assets' sizes and first sectors in it),
+   sorted by hash as every output, then the data a sector apart */
+static void write_out(const char *path, const char *magic, entry *ents, int n, int o, const buf_t *data)
+{
+	static const uint8_t zero[QST_SECTOR];
+	size_t dir_bytes = sizeof(qst_header) + (size_t) n * sizeof(qst_asset);
+	uint32_t dir_sectors = (uint32_t) ((dir_bytes + QST_SECTOR - 1) / QST_SECTOR);
+	qst_header h;
+	memcpy(h.magic, magic, 4);
+	h.num_assets  = (uint32_t) n;
+	h.ofs_assets  = sizeof h;
+	h.dir_sectors = dir_sectors;
+	FILE *f = fopen(path, "wb");
+	if (!f)
+		die("cannot write %s", path);
+	fwrite(&h, sizeof h, 1, f);
+	for (int i = 0; i < n; i++) {
+		qst_asset a = ents[i].a;
+		a.sector = dir_sectors + (uint32_t) (ents[i].ofs[o] / QST_SECTOR);
+		a.size   = (uint32_t) ents[i].len[o];
+		fwrite(&a, sizeof a, 1, f);
+	}
+	fwrite(zero, 1, (size_t) dir_sectors * QST_SECTOR - dir_bytes, f);
+	fwrite(data->p, 1, data->len, f);
+	fwrite(zero, 1, (QST_SECTOR - data->len % QST_SECTOR) % QST_SECTOR, f);
+	fclose(f);
+	printf("qcook: %s — %d assets, %zu KB (+ %u directory sectors)\n", path, n, data->len / 1024, dir_sectors);
+}
+
 int cmd_stream(int argc, char **argv)
 {
-	const char *pak_path = NULL, *pak1_path = NULL, *out_path = NULL;
-	int level = QL_HIGH;
+	const char *pak_path = NULL, *pak1_path = NULL, *out_prefix = NULL, *pool_path = NULL;
 	for (int i = 2; i < argc - 1; i++) {
-		if (!strcmp(argv[i], "--pak"))   pak_path  = argv[i + 1];
-		if (!strcmp(argv[i], "--pak1"))  pak1_path = argv[i + 1];
-		if (!strcmp(argv[i], "--out"))   out_path  = argv[i + 1];
-		if (!strcmp(argv[i], "--level")) level     = atoi(argv[i + 1]);
+		if (!strcmp(argv[i], "--pak"))   pak_path   = argv[i + 1];
+		if (!strcmp(argv[i], "--pak1"))  pak1_path  = argv[i + 1];
+		if (!strcmp(argv[i], "--out"))   out_prefix = argv[i + 1];
+		if (!strcmp(argv[i], "--pool"))  pool_path  = argv[i + 1];
 	}
-	if (!pak_path || !out_path || level < QL_LOW || level > QL_HIGH)
-		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] [--level 0..2] --out <stream_<n>.dat>");
+	if (!pak_path || !out_prefix || !pool_path)
+		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <prefix> --pool <pool.dat>   "
+		    "(<prefix>_<level>.dat per model level)");
 
 	long pak_len, pak1_len = 0;
 	uint8_t *pak = read_file(pak_path, &pak_len), *pak1 = pak1_path ? read_file(pak1_path, &pak1_len) : NULL;
@@ -177,9 +218,8 @@ int cmd_stream(int argc, char **argv)
 	int nworld = sound_streamed(world_sounds, MAX_WORLD_SOUNDS);
 	entry  *ents = xcalloc((size_t) (NUM_MODELS + NUM_MONSTER_SOUNDS + nworld), sizeof *ents);
 	int     n = 0, nsnd = 0;
-	buf_t   data = { 0 };
-	size_t  total = 0, sound_bytes = 0;
-	static const uint8_t zero[QST_SECTOR];
+	buf_t   data[NOUT] = { { 0 } };
+	size_t  sound_bytes = 0;
 	for (int i = 0; i < NUM_MODELS; i++) {
 		const stream_model *sm = &MODELS[i];
 		const uint8_t *d = NULL;
@@ -203,17 +243,22 @@ int cmd_stream(int argc, char **argv)
 			snprintf(name, sizeof name, "%s", sm->file);
 		qc_mdl *q = qc_mdl_load(name, d, len, sm->skin, sm->div, sm->flat);
 		entry *e = &ents[n++];
-		/* each asset on a sector of its own */
-		buf_put(&data, zero, (QST_SECTOR - data.len % QST_SECTOR) % QST_SECTOR);
-		e->ofs = data.len;
 		int body = sm->group >= G_ARMY && sm->group <= G_BOSS && sm->div == 2;   /* a monster's body */
-		qc_mdl_cook_compact(q, level, body, &data);
-		e->len = data.len - e->ofs;
+		buf_t lv[3], shared;
+		qc_mdl_cook_levels(q, body, lv, &shared);
+		for (int o = 0; o < NOUT; o++) {      /* each asset on a sector of its own */
+			const buf_t *b = o == OUT_POOL ? &shared : &lv[o];
+			sector_pad(&data[o]);
+			e->ofs[o] = data[o].len;
+			buf_put(&data[o], b->p, b->len);
+			e->len[o] = b->len;
+		}
+		for (int l = 0; l < 3; l++)
+			free(lv[l].p);
+		free(shared.p);
 		e->a.hash  = qs_hash(name);
 		e->a.kind  = QSTK_MODEL;
 		e->a.group = (uint16_t) sm->group;
-		e->a.size  = (uint32_t) e->len;
-		total += e->len;
 		/* the monster's sounds after its last model */
 		if (i + 1 < NUM_MODELS && MODELS[i + 1].group == sm->group)
 			continue;
@@ -229,49 +274,38 @@ int cmd_stream(int argc, char **argv)
 				continue;
 			}
 			e = &ents[n++];
-			buf_put(&data, zero, (QST_SECTOR - data.len % QST_SECTOR) % QST_SECTOR);
-			e->ofs = data.len;
-			sound_encode_stream(name, pak, pak_len, pak1, pak1_len, &data, NULL);
-			e->len = data.len - e->ofs;
+			buf_t sb = { 0 };
+			sound_encode_stream(name, pak, pak_len, pak1, pak1_len, &sb, NULL);
+			for (int o = 0; o < NOUT; o++) {   /* (a sound: the same everywhere) */
+				sector_pad(&data[o]);
+				e->ofs[o] = data[o].len;
+				buf_put(&data[o], sb.p, sb.len);
+				e->len[o] = sb.len;
+			}
+			free(sb.p);
 			e->a.hash  = qs_hash(name);
 			e->a.kind  = QSTK_SOUND;
 			e->a.group = (uint16_t) (world ? G_WORLD : sm->group);
-			e->a.size  = (uint32_t) e->len;
-			total += e->len;
-			sound_bytes += e->len;
+			sound_bytes += sb.len;
 			nsnd++;
 		}
 	}
 
-	/* the directory, sorted by hash; the data after it, a sector apart */
 	for (int i = 0; i < n; i++)
 		for (int j = 0; j < i; j++)
 			if (ents[i].a.hash == ents[j].a.hash)
 				die("two assets with one hash (%08x)", ents[i].a.hash);
 	qsort(ents, (size_t) n, sizeof *ents, by_hash);
-	size_t dir_bytes = sizeof(qst_header) + (size_t) n * sizeof(qst_asset);
-	uint32_t dir_sectors = (uint32_t) ((dir_bytes + QST_SECTOR - 1) / QST_SECTOR);
-	qst_header h;
-	memcpy(h.magic, QSTREAM_MAGIC, 4);
-	h.num_assets  = (uint32_t) n;
-	h.ofs_assets  = sizeof h;
-	h.dir_sectors = dir_sectors;
-	for (int i = 0; i < n; i++)
-		ents[i].a.sector = dir_sectors + (uint32_t) (ents[i].ofs / QST_SECTOR);
-
-	FILE *f = fopen(out_path, "wb");
-	if (!f)
-		die("cannot write %s", out_path);
-	fwrite(&h, sizeof h, 1, f);
-	for (int i = 0; i < n; i++)
-		fwrite(&ents[i].a, sizeof ents[i].a, 1, f);
-	fwrite(zero, 1, (size_t) dir_sectors * QST_SECTOR - dir_bytes, f);
-	fwrite(data.p, 1, data.len, f);
-	fwrite(zero, 1, (QST_SECTOR - data.len % QST_SECTOR) % QST_SECTOR, f);
-	fclose(f);
-	printf("qcook: %s — %d assets (%d sounds, %zu KB), %zu KB (+ %u directory sectors)\n", out_path, n, nsnd,
-	       sound_bytes / 1024, total / 1024, dir_sectors);
-	free(data.p);
+	for (int o = 0; o < NOUT; o++) {
+		char path[512];
+		if (o == OUT_POOL)
+			snprintf(path, sizeof path, "%s", pool_path);
+		else
+			snprintf(path, sizeof path, "%s_%d.dat", out_prefix, o);
+		write_out(path, o == OUT_POOL ? QSX_MAGIC : QSTREAM_MAGIC, ents, n, o, &data[o]);
+		free(data[o].p);
+	}
+	printf("qcook: streamed — %d assets, %d sounds (%zu KB)\n", n, nsnd, sound_bytes / 1024);
 	free(ents);
 	return 0;
 }

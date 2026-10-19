@@ -146,9 +146,10 @@ qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int ski
 void    qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px);
 int     qc_mdl_flags(const qc_mdl *q);
 void    qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out);
-/* the compact format of the streamed models (formats/qstream.h): the
-   whole asset (qst_model, frames, records, skin) appended to `out` */
-void    qc_mdl_cook_compact(qc_mdl *q, int model_level, int body, buf_t *out);
+/* the compact format of the streamed models (formats/qstream.h): each
+   model level's whole asset (qst_model, frames, records, skin: out[level],
+   STREAM_<level>.DAT's) and their shared asset (qst_shared) */
+void    qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared);
 
 /* ---------------------------------------------------------------- stream -- */
 
