@@ -5670,3 +5670,174 @@ the choices made:
   track 2's sectors taken from the image and decoded by ffmpeg's own XA
   decoder (its `psxstr` demuxer): 37.7 dB against the source, sample for
   sample.
+
+## §50 — Monsters through a wall, paused, faded; what the stream keeps near the player (2026-10-19)
+
+- **The asks**:
+  - The dead monsters after the living ones, unloaded after a few seconds with
+    a fade.
+  - A monster not loaded paused, so that no unseen monster hits the player.
+  - On residency: loading near the monsters was the idea, as Mario 64 does, where
+    the behaviour seemed random, too wide an area perhaps loaded.
+  - On E1M1, once the nailgun is taken, the soldier and the ammo behind
+    the wall that has not opened yet are seen through it.
+
+### 50.1 Through the wall: the order within a leaf
+
+- **Reproduced** with a new bench mode: `MAP=E1M1 BENCH_MAPS=1
+  VIEW=112,2352,62,0,0 TICKS=128 scripts/bench.sh` puts the player at
+  the view, streams in what he would have around him, runs the game and
+  dumps the view every 8 ticks (`E1M1.v12t<tick>.png`).
+  - The player at the nailgun touches `trigger_once` *11, which opens the
+    `func_door_secret` *10 (spawnflags 3). The door first backs 16 units
+    into the room behind it: `t_width` is the BSP's 14 plus
+    Mod_LoadSubmodels' unit on each side. It waits a second, then slides
+    away.
+  - From tick 8 the soldier and the ammo box are drawn over the closed
+    door.
+- **The cause**: within a leaf, the render list's order did nothing of
+  what Quake's z-buffer does.
+  - The brush models' pieces (§41) were added first and every alias
+    model after them. The list's head is drawn last: the walk goes front
+    to back and prepends each packet. So an alias model was drawn over
+    every piece of its leaf.
+  - Closed, the door's west face lies in the nailgun room's leaves (443,
+    446), nearer than the soldier's: drawn over him by the leaves' order.
+    Backed 16 units, the face lies in the soldier's leaf (440) and the
+    ammo box's (439), and both were drawn over it.
+- **The fix** (engine/rlist.c, engine/bmfrag.c):
+  - The brush models go into the lists first (`ents_render_bmodels`,
+    before `game_render`). The projectiles, the items and the monsters
+    follow; the particles come last (`game_render_particles`).
+  - An alias model (its box's centre) or a particle takes its place among
+    its leaf's pieces by its model's BSP walk. Take the deepest node that
+    the point's way down shares with the pieces' node (the node's DFS
+    range: `bmf_node.end`). A point beyond that node from the eye comes
+    before the subtree the walk takes after it: those pieces are drawn
+    over the point. A point on the eye's side comes after them.
+  - A model's pieces over the point come first in the list: the first one
+    under it ends that model's.
+  - The alias models of a leaf among themselves by their depth (their
+    GTE translation, in units of two world units), the nearest drawn
+    last. Before, the monsters were drawn over the items and the items
+    over the projectiles, whatever their depth.
+  - The particles are drawn over the alias models of their leaf (they
+    came under them), and among the pieces where they stand.
+- **The cost, off the common way**:
+  - `rl_add_pieces` writes what it wrote: the model goes into the item's
+    free `colour` byte, stored with the type.
+  - Each list's head is recorded once a frame (`rl_pieces_done`), in
+    `r_lists`' upper half (the walk's ids are 7 bits).
+  - The rest runs only when an alias model or a particle comes to a leaf
+    with pieces (`place_by_pieces`, compiled for size): the pieces'
+    nodes found by their records' offsets, the point's way down taken as
+    deep as needed, its sides cached. A model whose box the eye-to-point
+    segment's box misses is skipped.
+  - The nodes are 16 bytes now (an index is one shift): `draw_node` is
+    as cheap as before or cheaper.
+- **Measured**: `BENCH_MAPS=1 HASHONLY=1 PROFILE=0 scripts/dlcheck.sh`,
+  the 128 spawn views against ce9220f:
+  - +0.16 % of the frame cycles in all; −0.3 % to +2.4 % per view;
+  - the dearest view is E3M3.v1 (+10.6 k cycles): three monsters in a
+    leaf with five brush models' pieces, about 550 cycles per monster and
+    model (the plane tests, in C);
+  - 22 of the 128 views' lists differ (their order). START's and E1M4's
+    pictures are identical to before. On E3M3.v1 a monster that showed
+    through a closed door before is hidden now (the same bug); on
+    E3M3.v5 a health box's 200-pixel sliver goes under a step's edge.
+- **Room**: 3 KB of code. The level arena goes 1240 → 1237 KB; the
+  release's stack room is 17464 bytes.
+
+### 50.2 The paused monsters
+
+- `ents_tick`: a monster whose model is not resident (`stream_model`)
+  neither thinks nor moves. It stays solid and can be hurt; a death
+  waits for its model like the rest.
+- §40's choice ("far monsters run Quake's AI as they are, only their
+  drawing waits for their model") is undone.
+- **Checked**: `MONSTERS=1 MAP=E3M4` (the smallest pool, 183 KB). The
+  `mon` lines now print `model in` / `model OUT (paused)` and the want.
+  - The zombie's line reads `OUT (paused)` for 90 ticks: state 0, frame
+    0, the same position, the player's health unchanged. It acts once its
+    model is in.
+  - The fiend starts paused, is loaded, fights.
+
+### 50.3 The dead
+
+- **The body goes 6 s after the death** (`CORPSE_TICKS`), and so does a
+  gibbed monster's head. `pain_finished`, unused once a monster is dead,
+  holds the time (set in Killed).
+  - The last second (`CORPSE_FADE`) darkens the body to black. The GPU
+    has no alpha to fade with: its blend modes add, subtract or halve the
+    background.
+  - Until its end the body stays in the entities' active set, then
+    `ents_tick` removes it.
+  - Quake keeps its corpses, as SOLID_NOT; they no longer take damage
+    (Killed's `DAMAGE_NO`). Nothing in the game reads them.
+- **The dead's assets come after the living's**: a body's or a head's
+  model, and a gib's, is wanted at `STREAM_DEAD` (0x8000) + its distance.
+  - That is past every reach: never read for, kept while nothing wanted
+    more needs its room, evicted first.
+  - A kind is wanted at its nearest *living* member's distance.
+- **Checked**: `MONSTERS=1 MAP=E1M1` / `E3M4`, with two new lines:
+  - a dump in the fade's middle (`m<map>_<kind>_d.png`: the body nearly
+    black);
+  - `mon body: gone at t ...`, 360 ticks after the death.
+  - On E3M4 the fiend's model is evicted for the living 2 s after its
+    death (its want `32818`). Its body vanishes then, before its six
+    seconds.
+
+### 50.4 Residency: what is loaded today
+
+How the stream chooses (§40.2, §43, §45, §48):
+
+- **The wants**: every 8 frames a pass gives each asset a score, the
+  smallest the most needed.
+  - A monster kind's model, head and sounds are scored at the Chebyshev
+    distance (the largest of |dx|, |dy|, |dz|) from the player to the
+    kind's nearest member, through any wall.
+  - An item's model is scored at its own distance. The keys', the rune's
+    and the weapons' are pinned: always in.
+  - An entity's sounds are scored at its box's centre.
+- **The loads**: the most wanted asset that is not in is fetched first,
+  within its reach.
+  - The reaches are 2500 units for a read (1500 for a sound), and 4000
+    units (3000 for a sound) for a capture from the music's carousel.
+  - Room is made by evicting what is wanted less.
+  - A capture waits for the asset's turn in the carousel: up to 14.6 s.
+- **The unit is the kind**: one model serves every member of its kind.
+  A kind costs 50-100 KB of RAM (its model with its skins and its head).
+
+**Measured** (`BENCH_MAPS=1 RESIDENCY=1 scripts/bench.sh`, "res"
+lines):
+
+- The method: the player is put at each of a map's items in turn (up to
+  24 a map; they lie along his way). A map start's reads are simulated
+  there with the game's wants: nearest first, the models into the RAM
+  pool and the sounds into the SPU pool, while they fit. The PVS comes
+  from the player's leaf.
+- **The zone is most of the map**:
+  - within the 2500-unit reach: 5 to 74 living monsters (E4M3 74, E2M7
+    53, E1M3 45);
+  - of these, in the PVS: 0.3 to 10 (3 to 6 on most maps);
+  - 2 to 5 kinds are wanted, of which 1 to 2.4 are in the PVS.
+- **What is in**:
+  - the wants within reach total 300-870 KB, against pools of 154-892 KB;
+  - where everything fits (21 of 32 maps), every visible kind is in;
+  - on the others, at 7-15 spots of 32 (E2M2, E2M3, E2M4, E2M6, E2M7,
+    E3M4, E3M5, E3M6) a kind in the PVS is not in. The kinds behind
+    walls, nearer by distance, took its room.
+- **Other rankings, simulated** (`RESIDENCY=2..4`): the count of spots
+  where a kind in the PVS is not in, of 1020.
+
+  | Ranking | Spots |
+  |---|---|
+  | Today (the distance) | 90 |
+  | A short radius (models within 1200 units, Mario 64's way) | 96 |
+  | The PVS first: a monster outside the player's PVS 2500 units farther, the same reach | 59 |
+  | The PVS first, and the heads and gibs under the models (+2500) | 41 |
+
+  The short radius drops the kinds the player sees across a big room
+  and keeps the ones behind the walls nearby. The PVS is the map's own
+  "near": what can be seen from where the player stands.
+- **A choice** is due before any change to the policy (§50.5).

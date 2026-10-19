@@ -1413,3 +1413,31 @@ followed by R0-R4.
   the menu's files: that disc had none of them. The list is now made when
   the image is built, after the cook; the cook makes the build's music
   format only (XA by default).
+- **Monsters seen through a closed wall** (2026-10-19: on E1M1, the soldier and the ammo behind a wall not yet open seen through it). §50.1:
+  - **The cause**: within a BSP leaf, every alias model was drawn over
+    every piece of a brush model. E1M1's secret wall by the nailgun backs
+    16 units into the soldier's room before sliding, into his leaf.
+  - **The fix**: a monster, an item, a projectile or a particle takes its
+    place among a leaf's door pieces by the door's own BSP, as Quake's
+    z-buffer would decide. The alias models of a leaf are drawn by their
+    depth (before: the monsters over the items over the projectiles).
+  - **Cost**: +0.16 % of the frame on the 128 spawn views (+2.4 % at
+    worst: three monsters among five doors' pieces); 3 KB of the level
+    arena for the code.
+- **Monsters paused while their model is not loaded** (else unseen monsters hit the player). §50.2: no
+  think, no move, no attack until the model is in.
+- **The dead fade and go** (the dead after the living, unloaded after a few seconds with a fade). §50.3:
+  - a body (or a head) is removed 6 s after the death, darkened to black
+    in its last second;
+  - the dead's models are wanted under every living one's, never read
+    for.
+- **What the stream keeps near the player, measured** (too wide an area seemed loaded). §50.4:
+  - today a kind is wanted at its nearest member's distance through the
+    walls, within 2500 units (4000 for the music's carousel): most of a
+    map;
+  - on 8 maps with tight pools, a monster kind visible from the player
+    is not loaded at 7-15 spots of 32;
+  - simulated rankings: a short radius does worse (96 spots of 1020
+    against 90 today); the PVS first does better (59), with the heads
+    and gibs under the models better still (41). The choice is the
+    one made in §50.5.
