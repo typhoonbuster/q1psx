@@ -1372,4 +1372,13 @@ followed by R0-R4.
     - at each load, a still model's room equals its cut to the byte;
     - the spawn views are identical to §44's, except where a streamed
       model is now resident.
+- **The 2D gun's frames, their opaque spans only** (2026-10-19: less RAM for the 2D guns). §47:
+  - **28 KB less RAM while the 2D gun is drawn** (106 → 78 KB lent by the
+    stream; START's pool 354 → 382 KB): each frame fills its rows of the
+    VRAM slot with transparency, then copies only its opaque spans; two
+    identical frames share their packets. Not a pixel changes (the
+    pictures compared byte for byte).
+  - **The halves rebuilt by symmetry, left out**: the guns' outlines are
+    symmetric, their light and skins are not (17-52 % of the texels equal
+    their mirror's): the gun would look lit from both sides.
 

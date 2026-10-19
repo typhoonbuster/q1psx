@@ -5321,3 +5321,76 @@ Shortened; what was seen:
     geometry level for those worlds is the lever left.
   - **The cut while a model moves** (§41, §44): its cost in play is still
     unmeasured.
+
+## §47 — The 2D gun's frames: their opaque spans only (2026-10-19)
+
+- **The ask**: less RAM for the 2D guns, every gun but the axe being symmetric when not firing:
+  half of each frame kept, the other half rebuilt by symmetry. Measured
+  first, then done losslessly instead.
+- **Where the 2D gun's bytes are.**
+  - VRAM: one slot of 68 × 66 texels (4.4 KB) and its CLUT (§38). A frame
+    is copied into the slot when it is shown, so halving the frames would
+    save at most 2 KB of VRAM.
+  - RAM: 107 KB of packets (60 frames, 103 KB of them), lent by the stream
+    only while the 2D gun is drawn (§45).
+- **The symmetry, measured** (every frame, its mirror about the screen's
+  centre):
+  - the silhouettes mirror at 94-99 % of their texels (the axe 17 %);
+  - but only 17-52 % of the texels equal their mirror's (the rocket
+    launcher's 17 %, the super nailgun's 52 %), the colours 1.5-3.5 levels
+    of 93 apart on average: the light comes from one side (Quake's shading
+    table) and the skins carry asymmetric details;
+  - a frame rebuilt from its half would show symmetric lighting: a change
+    from Quake's look. Left out;
+  - the nailguns' frames are no mirrors of one another either:
+    - the nailgun's firing frames are near-copies as they are (frames
+      1 / 7, 2 / 4 / 6 / 8, 3 / 5: 99-100 % of the texels equal);
+    - the super nailgun's frames 1 / 7, 2 / 6 and 3 / 5 are closer
+      mirrored (56-64 %) than as they are (45-49 %), far from equal.
+- **The opaque spans instead.**
+  - **Before:** each frame copied whole (GP0(A0h), its w × h texels). The
+    frames are 41 % transparent (60,072 opaque texels of 101,312).
+  - **Now:** a frame's chain fills its rows of the slot with 0 (GP0(02h):
+    the transparent index), then copies its opaque spans: a rectangle per
+    run of rows over the run's spans, a halfword on each side.
+  - **The runs** (tools/qcook/game.c `ws_chain`) are chosen for the fewest
+    words. A copy costs its three words and a tag per 255 words, against
+    the transparent texels a wider span carries. A packet a row would cost
+    as much as the whole frame (102 KB): its 16 bytes are the price of 32
+    transparent texels.
+  - **The fill unit.** The GPU fills whole units of 16 halfwords (x down,
+    the width up), so the slot starts on 32 texels. A frame whose fill
+    would pass the slot's end (the axe's frame 7, 68 texels wide) is
+    copied whole, as is any frame where that is smaller; the slot keeps
+    its 68 texels.
+  - **Shared frames.** Frames of the same texels share a chain (the rocket
+    launcher's 5 and 6).
+  - **The engine:**
+    - `gdata_ws_link` makes a shared chain's links absolute once;
+    - `ws_draw` keys the slot's content by the chain, not the frame, so
+      the slot is not copied again, and a chain is still never hung in
+      two frames in a row.
+  - **The format.** `QGM8` (QGM7 had no fill and no shared chain).
+- **What it gives:**
+  - the packets go from 107,220 B (53 sectors) to 78,540 B (39 sectors):
+    55 chains (54 filled then spanned, 1 whole), 475 packets;
+  - while the 2D gun is drawn, the stream lends 78 KB instead of 106 (START:
+    `stream: pools 382 KB ...; 78 KB lent`, 354 KB before), and a map's
+    start reads 14 sectors less (about 0.1 s);
+  - the 3D gun, or none, is as before (the packets are not in RAM).
+- **Checking:**
+  - **The cook's chains** against the old file's, simulated on the host
+    (with stale texels in the slot before each): every one of the 56 2D
+    frames leaves the same texels in its part of the slot.
+  - **The pictures.** `BENCH_GAME=1 VIEWMODEL=2 scripts/bench.sh`: the 25
+    views' pktview pictures are identical to the previous commit's, byte
+    for byte. pktview now applies GP0(02h) fills. The frame hashes change
+    by design: the display list carries the copies.
+  - **DuckStation**: the game bench with the 2D gun ran to `bench done`,
+    with no GP0 error. Its first start that afternoon never booted, as
+    since §42 (the cause was not found); every later one booted. A run
+    stopped by `timeout`'s SIGTERM hangs in DuckStation's "graceful
+    shutdown": stop it with `timeout -s KILL`.
+- **Left:** the nailgun's near-identical firing frames could become
+  small patches over a shared base (about 15 KB more), at the price of
+  chains linked to one another at run time.
