@@ -4711,7 +4711,7 @@ Shortened; what was seen:
   - Nothing calls psxcd's ISO code any more, so `isofs.o` is no longer
     linked. That frees 4.5 KB of code, its 2 KB descriptor buffer and the
     heap's directory copies.
-  - **The level arena:** 1152 KB → 1140 KB. Every preset gets back the
+  - **The level arena:** 1152 KB → 1140 KB (1136 KB with §43's code). Every preset gets back the
     stack's 16 KB (architecture.md §4). The streamed assets' RAM pool,
     which takes whatever the arena leaves, has 12 KB less on every map
     (START: 262 → 250 KB).
@@ -4776,3 +4776,110 @@ Shortened; what was seen:
     - **To do before a disc goes to the machine.**
   - **The cook:** none of STREAM.DAT's 212 images has an odd count of
     halfwords any more.
+
+## §43 — The packet arena after the monsters: the world, the menu, lighter monsters (2026-10-19)
+
+- **The report**, on the release build of §42: menu pieces and many textures no longer drawn
+  (START showed it at once), the options no longer editable.
+- **Seeing it.** The release build ran under PCSX-Redux with its UI and a
+  Lua script (`-dofile`):
+  - `PCSX.GPU.takeScreenShot()` saved the emulated screen, nothing of the
+    desktop;
+  - `PCSX.SIO0.slots[1].pads[1].setOverride` / `clearOverride` drove the
+    pad;
+  - the private config's `SPU.Speed` ran it fast.
+
+  Seen that way, START's far rooms through the hall's arches were the flat
+  sky colour, and the menu over the paused game lost its pieces. The bench
+  dumps and pktview, the offline renders, had not shown it.
+- **The cause: the GPU packet arena (96 KB a frame) full.**
+  - START has nine `monster_zombie` with spawnflags 1: crucified ones, a
+    decoration Quake draws and does not count as a monster. Since §40
+    they spawn and are drawn with zombie.mdl's 347 triangles, about
+    12.5 KB of packets each.
+  - The walk emits front to back, so once the arena is full the farther
+    records are not drawn. The menu, drawn after the world, got no room
+    either: its pieces were missing, and the options seemed stuck.
+  - START's 12 views, packet bytes (`MAP=START BENCH_MAPS=1 PROFILE=0
+    HASHONLY=1`):
+
+    | Commit | v0 | v4 | v6 | v8 |
+    |---|---|---|---|---|
+    | 8a4f883 (before the merges) | 57500 | 31408 | 26316 | 24108 |
+    | 2ffa4ba (quality settings), e28946a (brush models' cut) | the same | | | |
+    | b502832 (streaming and monsters), e6c2bde, 65a7647 | full | 59232 | 40228 | 38020 |
+
+  - View 0's display list had 1249 more triangles in the game data's
+    palette, on the streamed images' pages.
+  - With the level arena too small for zombie.mdl (a test), the views went
+    back to 8a4f883's bytes and cycles.
+- **The world and the menu first.**
+  - `draw_model` (r_world.s) leaves an alias model out (a monster, an
+    item, a flame, a gib) when less than `R_MODEL_ROOM` (24 KB) of packet
+    room is left. Brush models and the view model are always drawn. A
+    left-out model costs nothing, and the room goes to the walk's farther
+    records.
+  - While Quake's menu is up, `r_ui_room` keeps `R_MENU_ROOM` (12 KB) at
+    the arena's end: the walk stops short of it, and the menu's packets
+    always fit.
+  - With room to spare, nothing changes: the display lists are the same.
+- **The monsters lighter, per model level.** `qcook stream --level <n>`
+  writes `STREAM_<n>.DAT` for each model level. Every file holds the same
+  assets in the same order. `stream_reduce` (tools/qcook/game.c) applies
+  `decim.c`'s collapses:
+  - **A monster's body, at every level, high included:**
+    - high: half its triangles, error bound 64;
+    - medium: a third, bound 96;
+    - low: a quarter, bound 128.
+
+    The animation makes every collapse costly (zombie.mdl has 198
+    frames): a bound of 3 kept 84 % of the zombie's triangles, 12 kept
+    68 %.
+  - **The rest** (heads, gibs, projectiles, items, flames): as the map's
+    own models, Quake's detail at high.
+  - The vertices no triangle uses any more leave the frames.
+  - At high: soldier 188 of 328 triangles, dog 264 of 426, ogre 244 of
+    326, knight 145 of 213, zombie 173 of 347, wizard 107 of 157, demon
+    191 of 275, shambler 220 of 284, boss 543 of 555.
+  - The engine reads the directory of the models level's file at boot,
+    and again when a map loads at another level (`stream_set_level`, in
+    `load_level` beside `gdata_set_models`). The Graphics page's Models
+    hint says so.
+- **Measured** (PCSX-Redux, `PROFILE=0`), frame cycles of START's views:
+
+  | View | 8a4f883 | the merge | now |
+  |---|---|---|---|
+  | v0 | 637 k | 833 k (arena full) | 786 k (85284 B) |
+  | v4 | 440 k | 602 k | 511 k |
+  | v6 | 435 k | 510 k | 471 k |
+  | v8 | 405 k | 502 k | 451 k |
+
+  - v4, v6 and v8 are back under one vblank. v0 was over it before the
+    monsters.
+  - START's preload takes 85 KB of the RAM pool, against 155 KB: more
+    room for the stream, fewer reads.
+- **Checking:**
+  - **The release on PCSX-Redux's real GPU:**
+    - START whole, the menu whole;
+    - Graphics: Textures high → medium on a Left press, its hint and
+      "Takes effect at the next level";
+    - Models low, then the menu closed: START reloaded with `GAME` level 0
+      and `\STREAM_0.DAT` (the preload: 69 KB).
+  - **The all-maps play bench** (fast forward): 32 maps of 32, no arena
+    full at a spawn view.
+  - **The soldier at 188 triangles**, close up (`MONSTERS=1 MAP=E1M1`):
+    whole, recognisable.
+  - **The stack meter** (`stack: N bytes never reached` at each load):
+    14.3 KB or more untouched.
+  - DuckStation not run (it no longer starts on this host, §42).
+  - **The links:** the default preset's needed 4 KB more, so the level
+    arena is 1136 KB. Stack room: default 20.4 KB, release 20.8 KB.
+- **Left: the stream's RAM on the biggest maps.** The brush models' cut
+  (§41) reserves, up front, three times every brush model's corners and
+  record bytes (`BMF_GROW`), 285 KB on E1M3. With the edicts, the stream's
+  RAM pool comes to 0-6 KB on E2M6, E3M4, E3M6, E4M7, E2M4, E1M3 and E4M5
+  (24 KB on E2M7). A monster's model needs 40-80 KB even reduced, so there
+  the monsters think but are never drawn. e6c2bde had the same, with 12 KB
+  more. Fixing it is a choice of where the RAM comes from: the cut's
+  reserve sized to its use, the 2D weapons' 102 KB loaded only when that
+  option is on, or the monsters' frames.

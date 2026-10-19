@@ -104,9 +104,9 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | BIOS / kernel | 64 KB | `0x80000000-0x8000FFFF`, untouchable |
 | Code + rodata + data/bss | ~300 KB | release 2026-10-19: 275 KB of code, 23 KB of rodata; the renderer asm is small, the game's C (monsters, streaming) is not |
 | Stack | 16 KB | from 0x801FFFF0 down to the BSS's end; the build fails under 16 KB (`scripts/ramcheck.sh`, porting-notes §42). The SDK's heap shares this gap: nothing in the engine mallocs (cd.c reads the disc's directories itself) |
-| Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes) |
+| Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes); an alias model is left out when under 24 KB of room is left (`R_MODEL_ROOM`), and the menu keeps 12 KB while it is up (`R_MENU_ROOM`, porting-notes §43) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
-| Level arena | 1140 KB | world render data + clip hulls + PVS (the biggest map 696 KB) + the brush models' pieces (§41, what room is left) + the streamed assets' RAM pool (the rest); 1152 KB until 2026-10-19 (§42) |
+| Level arena | 1136 KB | world render data + clip hulls + PVS (the biggest map 696 KB) + the brush models' pieces (§41, what room is left) + the streamed assets' RAM pool (the rest); 1152 KB until 2026-10-19 (§42, §43) |
 | Game arena | 224 KB | the game data every map needs (`GAME_<n>.DAT`, n the model level: weapon and projectile models, 63 KB at high, the block sized for the largest level so another level's models replace them in place before a map's load; the 2D weapons' packets, 102 KB), filled at boot, plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB) |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 

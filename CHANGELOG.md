@@ -1312,3 +1312,18 @@ followed by R0-R4.
     sent their upload one word short, which breaks the GPU's command
     stream on the machine. The cook now gives every image an even count
     of halfwords.
+- **The world and the menu drawn again; the monsters lighter** (after §42: menu pieces and many textures no longer drawn). §43:
+  - **The cause.** START's nine crucified zombies, at zombie.mdl's 347
+    triangles each, filled the GPU's 96 KB packet arena. The far rooms
+    went undrawn, and so did the menu's pieces over the paused game.
+  - **The world first.** An alias model is now left out when less than
+    24 KB of packet room is left; the menu keeps 12 KB of its own.
+  - **Lighter monsters.** The streamed assets come per model level
+    (`STREAM_<n>.DAT`), each monster's body reduced at every level (half
+    its triangles at high, a third at medium, a quarter at low), the
+    vertices it no longer uses dropped. START's views 4, 6 and 8 are back
+    under one vblank (602 k → 511 k cycles), and its preload uses 85 KB
+    of the stream's RAM instead of 155.
+  - **The stack** is measured at every load (`stack:` in the log), and
+    the link's threshold is configurable (`Q1PSX_STACK_MIN`).
+
