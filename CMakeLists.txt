@@ -93,6 +93,11 @@ endif()
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.
 set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference, 2 the asm checked by the C")
+# The brush models' cut by the world's BSP: the asm (engine/bmfrag.s) or its
+# C specification (engine/bmfrag.c cut_model_c); 2 runs both on every cut
+# and compares them ("bmfasm" lines).
+set(Q1PSX_BMF_C 0 CACHE STRING "Brush models' cut: 0 the asm, 1 the C reference, 2 the asm checked by the C")
+target_compile_definitions(q1psx PRIVATE Q1PSX_BMF_C=${Q1PSX_BMF_C})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${Q1PSX_DLIGHT_C}>)
 target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_C=${Q1PSX_DLIGHT_C})
 
@@ -114,11 +119,13 @@ set(Q1PSX_BENCH_DRAWDIST 0 CACHE STRING "The draw distance the bench renders wit
 set(Q1PSX_BENCH_FLAT 0 CACHE STRING "The flat shading the bench renders with: 0 off, 1 far, 2 all")
 set(Q1PSX_BENCH_VIEWMODEL 1 CACHE STRING "The gun the bench draws: 0 none, 1 the 3D model, 2 the 2D pictures")
 set(Q1PSX_BENCH_BMF 1 CACHE STRING "0: the brush models drawn whole, not cut by the world's BSP (an A / B)")
+set(Q1PSX_BENCH_BMFCULL 1 CACHE STRING "0: a moved brush model is cut again out of view too (an A / B)")
 set(Q1PSX_BENCH_BMFCHK 0 CACHE STRING "1: every mover cut at 33 places along its ways in its room (bmfchk lines)")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
 set(Q1PSX_BENCH_ENTS 0 CACHE STRING "1: the map entities' scenarios (doors, buttons, plats, teleporters, the exit)")
+set(Q1PSX_BENCH_MOVERS 0 CACHE STRING "1: the big movers moving in view: the frame's, the ents' and the re-cut's cycles (bmfcut lines)")
 set(Q1PSX_BENCH_MONSTERS 0 CACHE STRING "1: the monsters' scenarios (one of each kind wakes, attacks, is killed; the streaming), then the crowd; 2: the crowd alone")
 set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map, dumped")
 set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the game run this many ticks, a picture every 8")
@@ -134,11 +141,13 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
 		Q1PSX_BENCH_DRAWDIST=${Q1PSX_BENCH_DRAWDIST} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
 		Q1PSX_BENCH_VIEWMODEL=${Q1PSX_BENCH_VIEWMODEL} Q1PSX_BENCH_BMF=${Q1PSX_BENCH_BMF}
+		Q1PSX_BENCH_BMFCULL=${Q1PSX_BENCH_BMFCULL}
 		Q1PSX_BENCH_BMFCHK=${Q1PSX_BENCH_BMFCHK}
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
 		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS} Q1PSX_BENCH_MONSTERS=${Q1PSX_BENCH_MONSTERS}
-		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY})
+		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
+		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS})
 	if(Q1PSX_BENCH_VIEW)
 		# groups of five numbers, one definition with no spaces (a quoted string
 		# with spaces does not survive the generator's command line)

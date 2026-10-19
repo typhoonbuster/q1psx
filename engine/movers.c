@@ -722,10 +722,11 @@ static void func_train_find(edict_t *self)
 	}
 }
 
-#if defined(Q1PSX_BENCH_BMFCHK) && Q1PSX_BENCH_BMFCHK
+#ifdef Q1PSX_BENCH
 /* The places a train's or a secret door's model goes through, for the
    check of its pieces' room (engine/bmfrag.c bmf_check, BMFCHK=1; the
-   room is the cook's: tools/qcook/bmf.c follows the same travel): a
+   room is the cook's: tools/qcook/bmf.c follows the same travel) and the
+   movers' scenario's spot (engine/main.c bench_movers, MOVERS=1): a
    train's corners in its path's order (func_train_find's and train_next's:
    a corner's origin less the model's mins), up to the first corner it
    comes back to (that one again: the way back to it), a secret door's

@@ -40,10 +40,12 @@ void bmf_load(void);
 typedef struct bmf_cache bmf_cache;
 extern bmf_cache **bmf_models;
 
-/* At a new PVS stamp `vis`: is a leaf of the model's pieces in the PVS?
+/* At a new PVS stamp `vis`: is a leaf of edict e's pieces in the PVS?
    (exact, where the box's kept leaves are a superset, cut short past 8;
-   a model too cut up answers `whole`, its box's leaves' answer) */
-int bmf_seen(const bmf_cache *c, uint16_t vis, int whole);
+   a model too cut up answers `whole`, its box's leaves' answer; one whose
+   pieces were cut elsewhere, having moved while not drawn, its box's
+   leaves' answer too, or its top node's when they were cut short) */
+int bmf_seen(const bmf_cache *c, const edict_t *e, uint16_t vis, int whole);
 
 /* Each frame, a drawn brush model with pieces (bmf_models) in the PVS `vis`:
    its pieces facing the eye in their leaves' render lists, cut again if it
@@ -63,8 +65,13 @@ int bmf_may_hide(int model, const int32_t p[3]);
 
 #ifdef Q1PSX_BENCH
 /* this level: models with pieces, pieces made, cuts, cuts given up, the
-   cuts' cycles, the dearest cut's */
-extern uint32_t bmf_stats[6];
+   cuts' cycles, the dearest cut's, cuts put off (moved out of view) */
+extern uint32_t bmf_stats[7];
+/* a brush model's records' bytes (the movers' scenario: the biggest) */
+uint32_t bmf_model_bytes(int model);
+#if Q1PSX_BMF_C == 2
+extern uint32_t bmf_asm_checks, bmf_asm_mismatches;   /* the asm's cuts checked by the C */
+#endif
 #endif
 
 #endif

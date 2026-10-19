@@ -889,7 +889,8 @@ visible node in the walk. The spawn view is the one over budget.
 - **Rules adopted.**
   - `tools/hazcheck` scans the linked ELF (`objdump -d -z`) after every build
     and fails it on any load-delay, GTE (register write < 2 instructions
-    before a command) or HI/LO hazard.
+    before a command) or HI/LO hazard; since §49 also on a load in a
+    branch's delay slot that the target's first instruction reads.
   - Correctness runs use `EMU_ARGS=-interpreter scripts/bench.sh` (slow but
     exact). The dynarec bench stays the one for timings, because it is what
     the PCSX-Redux GUI runs.
@@ -1607,8 +1608,8 @@ correct light.
 - `scripts/dlcheck.sh check <ref>`: the display lists of the 12 bench views
   are identical, word for word, to the reference;
 - the interpreter's hashes (`EMU_ARGS=-interpreter`) match the dynarec's,
-  because the dynarec hides load-delay mistakes (hazcheck only sees linear
-  code, not branch targets);
+  because the dynarec hides load-delay mistakes (hazcheck saw only linear
+  code then, not branch targets: §49 added them);
 - the bench's C-vs-asm physics diffs: 0 mismatches.
 
 One step changes packets on purpose: one texture-window command per run of
@@ -5033,7 +5034,8 @@ Shortened; what was seen:
   - **The cut while a model moves** (§41): a mover is cut again each time
     it has moved and is drawn, 0.1-1 M cycles for a big train or door
     (E1M6's *39 about 1 M, E1M3's trains about 0.35 M), against 564 k
-    cycles a frame at 60 fps. Not measured in play yet.
+    cycles a frame at 60 fps. Not measured in play yet (§49: measured,
+    then cut down).
   - **The measure in the cook**: the same cuts made offline would cost
     the load nothing and could sample every way densely with a tighter
     margin; the cook would need the movers' travel (pos1 / pos2, the
@@ -5670,6 +5672,230 @@ the choices made:
   track 2's sectors taken from the image and decoded by ffmpeg's own XA
   decoder (its `psxstr` demuxer): 37.7 dB against the source, sample for
   sample.
+
+## §49 — The movers' re-cut in play: measured, then cut down (2026-10-19)
+
+- **The ask**: measure, then reduce, what `bmf_draw`'s re-cut of a moving
+  brush model costs in play (§41, §44's "Left": 0.1-1 M cycles a cut at
+  the load, never measured in play).
+- **The scenario**: `MOVERS=1 scripts/bench.sh` (engine/main.c
+  `bench_movers`):
+  - the movers: E1M6's train *39, E1M3's biggest train (*3), E3M4's
+    biggest door (*71);
+  - each one started, then watched from a spot in the open out of its box
+    at one of its first 8 places (x or y, both ways, five distances, its
+    centre's height or 48 units over its foot), the one that sees its
+    centre at the most places of its way and halfway between; the camera
+    turns to follow it;
+  - one 60 Hz tick a frame for 600 frames: each frame it moved and is
+    drawn cuts it again;
+  - per mover a bench line (the frame's and the ents' stages) and a
+    `bmfcut` line: the cuts, their cycles in a frame with one, the dearest
+    cut, the frame with a cut and without;
+  - then 256 frames turned a quarter away 16 frames in 32 (the door
+    started again);
+  - every 16th frame's hash, folded into a `bmfhash` line: the
+    identical-display-list check of every change below;
+  - `MAP=` keeps one of the three and dumps its frame 240 (pktview);
+    `SAMPLE=1` samples the PC over the 600 frames.
+- **What it cost** (PCSX-Redux in fast forward; §44's C cut):
+
+  | Mover | A cut, average / dearest | The frame with a cut | Without |
+  |---|---|---|---|
+  | E1M6 train *39 | 916 k / 1235 k | 1735 k (3.97 vbl) | 642 k |
+  | E1M3 train *3 | 372 k / 671 k | 946 k (2.29 vbl) | 505 k |
+  | E3M4 door *71 | 658 k / 663 k | 1180 k (3.00 vbl) | 521 k |
+
+  - A frame at 60 fps has 564 k cycles. At the default 32 Hz tick about
+    one frame in two carries a cut.
+  - A model is cut again whenever it has moved and is in the PVS in front
+    of the eye: behind a wall, or out of the view to the side, too.
+  - Where it went (E1M6's *39, the PC sampler): the descent corner by
+    corner about 45 % of a cut, `put_record` 32 %, the corners' copies
+    10 %. A cut there takes 172 polygons in 120 records, 997 record-node
+    and 1174 polygon-node tests, 4195 corners' distances, 21 splits, and
+    makes 186 pieces in 135 records.
+- **The options**:
+  - A, each record's sphere down the BSP before its corners: done at
+    once, being exact;
+  - B1, the descent in hand-written asm;
+  - B2, the whole cut in hand-written asm;
+  - D, no cut out of view;
+  - E, inexact ones (a cut every N ticks, or spread over frames).
+
+  B2 and D were taken.
+- **A: the record's sphere first** (04e736d). A node the record's
+  bounding sphere lies wholly on one side of sends every polygon of it
+  that way: each corner's distance has the centre's sign, since
+  |d(p) - d(c)| <= |n| |p - c| < 4097 sr (the cook's radius is
+  ceil(rad + 1), a normal at most 4096.87 long). The polygons start where
+  the sphere stopped; a record wholly in a solid leaf makes no piece.
+  807 k / 368 k / 534 k a cut (-12 %, -1 %, -19 %), the same frames.
+- **D: no cut out of view** (7133b36):
+  - **A bug found on the way.** `bmf_seen` judged a model by the leaves of
+    its cached pieces even when it had moved since the cut (it moved
+    while not drawn). A train that left the PVS and came back elsewhere
+    stayed undrawn until its old place was seen. A stale cache now
+    answers with the box's leaves, or, when they were cut short at 8,
+    with the box's top node (mark_pvs stamps a visible leaf's
+    ancestors).
+  - **The test.** `bmf_draw` no longer cuts a moved model again when the
+    record loop would cull every record of its pieces (`all_culled`):
+    - r_world.s RECLOOP keeps a record whose sphere passes the four planes:
+      right / left z -+ x + 2.125 r >= 0, bottom / top 3z -+ 4y + 8 r >= 0,
+      in view space x6, IR saturated;
+    - every piece record's centre is in the model's box, and its radius is
+      at most `rmax`: each source record's box half diagonal + 3, made once
+      per model at the load (`model_d2`);
+    - so the box in view space (its centre, the extents |rot| h, 2 more for
+      the roundings, each bound saturated as IR is) wholly behind one plane
+      by more than 2.125 or 8 rmax culls them all;
+    - no leaf the pieces would be drawn in can be wholly in view either: it
+      holds them.
+  - **Its effect.** `NOBMFCULL=1` is the A / B: the same frame hashes both
+    ways. In the turned pass, E1M6's *39 was cut 192 times instead of 256
+    and E3M4's *71 97 times instead of 162; E1M3's *3 stayed at 23, mostly
+    out of the PVS there.
+  - **A first bound was too loose.** It took 1.75 x the cooked radius
+    (a cube about the sphere) and put off nothing on E1M6.
+- **B2: the whole cut in hand-written asm** (`engine/bmfrag.s`,
+  `bmf_cut`):
+  - **The record level.** The model's nodes come in build_nodes' order.
+    For each record: its sphere from the top node (axial planes on the
+    CPU by sc x 4096, general ones on the GTE with sc as the first row).
+  - **The polygon level, as it is.** Each polygon is unpacked into the
+    next piece's slot, in a loop over its corners (their PS1 order a byte
+    each), with its box (min / max per axis, branch-free, a triangle's
+    taken as a quad's with its corner 2 again as the fourth).
+    - Its descent: an axial plane against the box (2 halfwords, 2
+      compares); a general plane on the GTE, with the corners as the
+      rotation matrix's rows and a quad's fourth as the light matrix's
+      first row, one or two MVMVAs of the normal.
+    - In a leaf it is the piece, as it is, in the slot it was unpacked
+      in: no copy.
+  - **Both sides of a plane.** The polygon goes the C's way: the corners'
+    distances again, the split (into the scratchpad's two buffers, the
+    back piece pushed), the crossing exactly as `cross`, the cut pieces
+    corner by corner.
+  - **The records.** `put_pieces` / `put_record` follow the C's batching,
+    so the bytes match. A lone piece as it was (most records of a big
+    mover) takes a short way: its sizes known, its box its own, its
+    group put at once.
+  - **Squares and roots.** The radius sums the GTE's SQR of each corner's
+    differences. The root goes bit by bit from the GTE's leading-zero
+    count.
+  - **Scratch space.** The scratchpad's per-frame part (0x000-0x2ff, as
+    the physics borrows it) holds the scratch buffers, the distances and
+    the state. The rotation and light matrices are borrowed too:
+    r_render loads them again.
+- **Checking the asm** (`BMF_C=1`: the C alone, `BMF_C=2`: both, cut by
+  cut, `cut_check`):
+  - the C cut, `cut_model_c`, is the specification. It and the asm share
+    `bmf_pieces` / `bmf_pending`, and the C is not in the default builds;
+  - the C runs first, the asm second into the same cache, each with the
+    nodes' group fields poisoned first;
+  - the result, the overflow flag, the piece count, the lengths and every
+    byte (records, pool vertices, groups, the nodes' groups) are hashed;
+    on a mismatch, a `bmfasm MISMATCH` line with the first record bytes
+    that differ;
+  - the check build carries both cuts: bench.sh lowers its stack floor to
+    10 KB (`STACK_MIN` overrides it).
+- **Pitfalls found** (all caught by the C check or the interpreter):
+  - **A load in a branch's delay slot read by the target's first
+    instruction.** The record's light padding then counted from a stale
+    value and cleared RAM, under the interpreter (as hardware would); the
+    dynarec hands the new value over. `tools/hazcheck` checked only the
+    next instruction in address order; it now checks every static branch
+    target too (a load in the delay slot, the target's first instruction
+    reading it): none in the engine; a deliberate one in `cut_record`
+    failed the link.
+  - **A four-instruction macro in a delay slot**: only its first
+    instruction ran.
+  - **`put_pieces`' done mark** (bit 24 of a piece's n / cut / quad word)
+    read into a quad test without a mask.
+  - **The record pointer** never passed to `cut_record`.
+  - **PCSX-Redux keeps a word's upper half in the GTE's lone 16-bit
+    registers** (VZ0, R33, L13): they are loaded from sign-extended
+    halfwords, as r_world.s does.
+- **The stack's room.** The asm took 7.6 KB at first, 2 KB more than the
+  C cut it replaces, and the default build fell under the 16 KB floor.
+  Then master brought the rooms' measure into the cook (§46, which took
+  most of `bmf_reserve`'s code away) and the music's XA streams (§48):
+  master alone leaves 17288 B in the default build. What fits on it:
+  - the corners in a loop, the box's axes in a loop (the unrolled ones
+    were 3 % faster and 530 bytes more);
+  - the crossing's fields in two loops;
+  - the load-time code compiled for size (`BMF_COLD`: `bmf_reserve`,
+    `model_nodes`, `build_nodes`, `model_d2`, `all_culled`...);
+  - the lone piece's short way through the general way's radius, header
+    and polygon (its own copy was 4.5 % faster, 400 bytes more again).
+
+  The rooms now: 16824 B (default), 16872 B (release, release-ultra).
+- **What it gives** (PCSX-Redux in fast forward, the same frames):
+
+  | Mover | C (§44) | + A | + the asm | The frame with a cut | Without |
+  |---|---|---|---|---|---|
+  | E1M6 train *39 | 916 k | 807 k | 482 k (-47 %), dearest 803 k | 1292 k (3.11 vbl) | 647 k |
+  | E1M3 train *3 | 372 k | 368 k | 218 k (-41 %), dearest 396 k | 838 k (2.10 vbl) | 498 k |
+  | E3M4 door *71 | 658 k | 534 k | 361 k (-45 %), dearest 370 k | 951 k (2.03 vbl) | 608 k |
+
+  - The C columns are measured before the merge with master (§45-§48);
+    the asm's after it. After the merge, the C with A measures
+    786 k / 352 k / 516 k; the asm before the merge, in its faster form,
+    measured 469 k / 211 k / 346 k.
+  - With D, a moved model out of view is not cut at all (above).
+  - `BMFCHK`'s 33 cuts a way on the 32 maps: 4.42 G cycles down to
+    3.12 G (C's own part included: `cut_where`). Before the merge, the
+    load's rooms' measure went 375 M down to 255 M (3844 cuts over 33
+    loads): the cook does it now (§46).
+  - Where an asm cut goes (E1M6, the sampler, before the merge):
+    - the polygons' descent about 15 %;
+    - unpacking with the boxes 13 %;
+    - the records' radius and root 14 %;
+    - the records' setup and sphere 14 %;
+    - the rest spread out.
+
+    The work itself is what is left: about 2170 node tests, 172 polygons
+    and 135 records a cut.
+- **Checking:**
+  - `MOVERS=1`, the same `bmfhash`:
+    - before and after A (the first pass then: `dd76ed86`, `d60664b3`,
+      `9ae23bc0`);
+    - D on and off, and the C and the asm (both passes: `057752f4`,
+      `9e700ae0`, `184a8cda` before the merge; after it the C and the asm
+      still alike, `057752f4`, `59299081`, `88efca4d`, master's streaming
+      changing E1M3's and E3M4's frames);
+  - `BMF_C=2`, no mismatch:
+    - before the merge: `MOVERS=1`, 2765 cuts; `BMFCHK=1 BENCH_MAPS=1
+      VIEWS=0`, 48139 cuts over the 32 maps (the rooms' measure, the 33
+      places a way, the loads' cuts); under the interpreter
+      (`EMU_ARGS=-interpreter`, START and E1M6), 2420 cuts;
+    - after it, the final asm: `MOVERS=1`, 2114 cuts; `BMFCHK`, 44295
+      cuts over the 32 maps; under the interpreter, 2215 cuts;
+  - the asm against the C on the frames, after the merge:
+    - START's views (`HASHONLY=1`): 12 frames;
+    - the entities' scenarios (`ENTS=1`): 23 frames;
+    - the same hashes both ways;
+  - `BMFCHK=1 BENCH_MAPS=1 VIEWS=0` with the asm:
+    - no cut given up on the 32 maps;
+    - the cook's rooms against the asm's cuts at every load (§46): 75
+      still models' rooms their cut to the byte, 1122 movers' holding it,
+      none off;
+  - the links (hazcheck, ramcheck) of the default, release,
+    release-ultra and bench builds;
+  - not checked on the real GPU or DuckStation.
+- **Left:**
+  - **The work itself.** A model node's cooked box could start its
+    records' spheres lower: about 5 % on E1M6, if every box holds its
+    subtree's faces, which needs a check at the load. Records that stay
+    wholly in one leaf could also be moved rather than cut again: their
+    pieces are the polygons moved, except where sc's rounding changes,
+    and the cache's offsets shift as soon as one record's cut changes.
+  - **The stack's room**: 440 B over the floor in the default build.
+    The unrolled corners and box (3 %) need 530 B more, the lone piece's
+    own radius, header and polygon (4.5 %) 400 B more again.
+  - **The worst frames stay over budget**: E1M6's train still takes 482 k
+    a cut, about 40 % of the CPU at the 32 Hz tick while it is in view.
 
 ## §50 — Monsters through a wall, paused, faded; what the stream keeps near the player (2026-10-19)
 
