@@ -21,7 +21,11 @@
 
 #include <stdint.h>
 
-#define MEM_LEVEL_BYTES (1152 * 1024)
+#define MEM_LEVEL_BYTES (1140 * 1024)  /* (1152 until 2026-10-19: with the monsters,
+                                          the streaming and the brush models' pieces
+                                          the BSS ended past the 2 MB; the stack's
+                                          16 KB checked at every link:
+                                          scripts/ramcheck.sh) */
 #define MEM_GAME_BYTES  (224 * 1024)   /* (+ the 2D weapons' 102 KB since 2026-10-18;
                                           the dynamic lights' and the sounds' tables follow) */
 

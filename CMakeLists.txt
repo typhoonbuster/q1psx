@@ -49,6 +49,14 @@ add_custom_command(TARGET q1psx POST_BUILD
 	COMMENT "Checking pipeline hazards (tools/hazcheck)"
 	VERBATIM)
 
+# The stack's room under the BSS (scripts/ramcheck.sh): the build fails when
+# the code and the arenas leave it less than 16 KB of the 2 MB.
+find_program(Q1PSX_NM NAMES mipsel-none-elf-nm REQUIRED)
+add_custom_command(TARGET q1psx POST_BUILD
+	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/ramcheck.sh ${Q1PSX_NM} $<TARGET_FILE:q1psx> 16384
+	COMMENT "Checking the stack's room in main RAM (scripts/ramcheck.sh)"
+	VERBATIM)
+
 # Renderer counters and stage timers (debug overlay, bench breakdown). Off in
 # the "release" preset: the asm renderer then skips their per-node, per-record
 # and per-polygon upkeep (R_PROFILE in engine/r_defs.inc).
