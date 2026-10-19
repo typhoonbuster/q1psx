@@ -2190,20 +2190,23 @@ static const int weapon_model[W_COUNT] = { QGM_V_AXE, QGM_V_SHOT, QGM_V_SHOT2, Q
    and the damage's pitch (the camera's pitch over the gun's: a shift),
    the lean's roll (a turn about the view's centre); its light as the 3D
    gun's, the colour light x 128 / QG_WS_L0. A chain is never hung again
-   in the next frame (only when the frame or the weapon changes), so the
-   GPU never follows a link this frame rewrites. The weapon's CLUT goes to
+   in the next frame (only when the chain shown or the weapon changes:
+   frames of the same texels share theirs), so the GPU never follows a
+   link this frame rewrites. The weapon's CLUT goes to
    row 507 or 508 in turn (the GPU's CLUT cache keyed by the address never
    serves the last weapon's); the quad leaves out the frame's last column
    and row (transparent: a texel the GPU reads past its quad's edge is the
    frame's own, never the slot's leftovers from a bigger frame). */
-static int ws_shown = -1, ws_clut = -1, ws_clut_row;
+static int ws_clut = -1, ws_clut_row;
+static uint32_t ws_shown = ~0u;                   /* the chain the slot holds (frames share one) */
 static int ws_asked;                              /* the stream asked for the packets */
 static uint8_t *ws_block;                         /* the block they were read to, */
 static uint32_t ws_reads;                         /* at that read */
 
 void game_ws_invalidate(void)
 {
-	ws_shown = ws_clut = -1;
+	ws_shown = ~0u;
+	ws_clut = -1;
 }
 
 /* The 2D gun's packets (105 KB) in RAM only while it is the gun drawn: the
@@ -2241,9 +2244,9 @@ static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3
 	const qg_wframe *fr = &gdata.wframes[key];
 	if (!fr->w)                                   /* (an axe's swing: the cook's 3D) */
 		return 0;
-	if (key != ws_shown) {                        /* (hung first: drawn after the CLUT's) */
+	if (fr->ofs != ws_shown) {                    /* (hung first: drawn after the CLUT's) */
 		addPrims(&vid_frame.ot[OT_SKY], gdata.wpix + fr->ofs, gdata.wpix + fr->ofs_last);
-		ws_shown = key;
+		ws_shown = fr->ofs;
 	}
 	if (wpn != ws_clut) {
 		uint32_t *c = (uint32_t *) (gdata.wpix + ws->ofs_clut);

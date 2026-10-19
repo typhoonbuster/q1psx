@@ -123,13 +123,20 @@ int gdata_load(int level)
 	return 1;
 }
 
-/* their links made absolute (KUSEG, as the ordering table's); a chain's
-   last stays 0xffffff (game.c hangs it in the ordering table) */
+/* their links made absolute (KUSEG, as the ordering table's), a chain
+   two frames share once; a chain's last stays 0xffffff (game.c hangs it
+   in the ordering table) */
 uint8_t *gdata_ws_link(uint8_t *block)
 {
 	uint8_t *wp = block + gdata.ws_skew;
 	for (uint32_t i = 0; i < gdata.num_wframes; i++) {
-		uint32_t at = gdata.wframes[i].ofs;
+		uint32_t at = gdata.wframes[i].ofs, j = 0;
+		if (!gdata.wframes[i].w)
+			continue;                             /* (drawn 3D: no chain) */
+		while (j < i && gdata.wframes[j].ofs != at)
+			j++;
+		if (j < i)
+			continue;                             /* (shared: linked already) */
 		for (;;) {
 			uint32_t *tag = (uint32_t *) (wp + at), next = *tag & 0xffffffu;
 			if (next == 0xffffffu)
