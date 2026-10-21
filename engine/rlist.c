@@ -215,15 +215,66 @@ r_ent_t *rl_bmodel(const qw_bmodel *bm, const int32_t org[3])
 	return e;
 }
 
-void rl_view_model(r_ent_t *e)
+/* The view model (docs/porting-notes.md §53): its frame, Quake's own vertex
+   words (formats/qgame.h qg_view), expanded into its pool when the frame
+   drawn changes; its matrix and translation worked out here from the
+   camera's, the products in 64 bits rounded once, not through the world
+   as rl_model's (a vertex there takes the world's quarter unit, up to 9 px
+   at the eye): the gun's axes in the view (the camera's rotation over the
+   gun's: the view's roll and kick between them), its steps folded into the
+   columns, every row x 4 for the GTE's divide (r_world.s's RE_VIEW: the
+   near plane at SZ 120, 5 units). */
+r_ent_t *rl_view_gun(const qg_model *m, int frame, int yaw, int pitch, const int32_t rel[3], int light)
 {
-	if (!e)
-		return;
-	for (int i = 0; i < 6; i++)
-		e->rot[i] = (int16_t) (e->rot[i] * 4);
-	e->tr[0] *= 4;
-	e->tr[1] *= 4;
+	static const qg_model *shown;
+	static int shown_frame = -1;
+	if (n_ents >= RL_MAX_ENTS || !gd_view_pool || !(m->flags & QGF_VIEW))
+		return 0;
+	if (frame < 0 || frame >= m->num_frames)
+		frame = 0;
+	const uint32_t *frames = (const uint32_t *) (gdata.geo + m->ofs_frames);
+	if (m != shown || frame != shown_frame) {
+		mdl_expand_shift(gd_view_pool, frames + (uint32_t) frame * m->num_verts, m->num_verts, 2);
+		shown       = m;
+		shown_frame = frame;
+	}
+	const qg_view *qv = (const qg_view *) frames - 1;
+	r_ent_t *e = &r_ents[n_ents++];
+	e->pool     = (uint32_t) gd_view_pool;
+	e->recs     = (uint32_t) gd_records(m);
+	e->recs_end = e->recs + m->len_records;
+	e->tex      = (uint32_t) &m->tex;
+	if (light > 170) light = 170;
+	if (light < 0) light = 0;
+	e->light = (uint32_t) light;
+	e->dots  = (uint32_t) (gdata.dots + ((yaw * QG_LIGHT_YAWS / ANG_TURN) & (QG_LIGHT_YAWS - 1)) * QG_NORMALS);
 	e->flags = RE_VIEW;
+
+	/* the model's axes in the world: forward, -right, up (rl_model's) */
+	int32_t f[3], r[3], u[3], c[3][3];
+	angle_vectors(-pitch, yaw, 0, f, r, u);
+	for (int j = 0; j < 3; j++) {
+		c[0][j] = f[j];
+		c[1][j] = -r[j];
+		c[2][j] = u[j];
+	}
+	/* the origin in the world's axes from the camera: vertex units x 65536
+	   (within 2^24: the guns reach 40 units) */
+	int32_t d[3];
+	for (int j = 0; j < 3; j++)
+		d[j] = (int32_t) (((int64_t) c[0][j] * qv->origin[0] + (int64_t) c[1][j] * qv->origin[1] +
+		                   (int64_t) c[2][j] * qv->origin[2]) >> 12) + rel[j];
+	const int16_t *v = r_state.rot;              /* world -> view, x 4096 x 1.5 */
+	for (int i = 0; i < 3; i++) {
+		for (int k = 0; k < 3; k++) {            /* x 2^24: view units a vertex unit */
+			int32_t a = v[i * 3] * c[k][0] + v[i * 3 + 1] * c[k][1] + v[i * 3 + 2] * c[k][2];
+			e->rot[i * 3 + k] = (int16_t) (((int64_t) a * qv->step[k] + (1 << 25)) >> 26);
+		}
+		int64_t t = (int64_t) v[i * 3] * d[0] + (int64_t) v[i * 3 + 1] * d[1] + (int64_t) v[i * 3 + 2] * d[2];
+		e->tr[i] = (int32_t) ((t + (1 << 25)) >> 26);
+	}
+	e->rot[9] = 0;
+	return e;
 }
 
 /* the leaf's list id in its vis word's top byte, with bit 31 set: the walk

@@ -52,6 +52,10 @@ int gdata_load(int level);
    ws_lba): their links made absolute; where they start (block + ws_skew). */
 uint8_t *gdata_ws_link(uint8_t *block);
 
+/* the view model's frame being drawn, expanded (engine/rlist.c rl_view_gun:
+   formats/qgame.h qg_view): the largest view model's vertices */
+extern qw_vert *gd_view_pool;
+
 /* a model's frame pool and record stream */
 static inline const qw_vert *gd_frame(const qg_model *m, int frame)
 {

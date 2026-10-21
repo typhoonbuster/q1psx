@@ -2354,10 +2354,13 @@ void game_render(void)
 		} else
 #endif
 		{
-			r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
-			                      pl.pm.yaw, -pl.pm.pitch, 0, light);
-			rl_view_model(e);            /* no subdivision; clipped at 5 units, like Quake */
-			r_state.viewmodel = (uint32_t) e;
+			int32_t rel[3];              /* from the camera: the bob's 0.4 ahead, the */
+			for (int k = 0; k < 3; k++)  /* viewport's 2 units (vertex units x 65536) */
+				rel[k] = f[k] * bob * 16 / 5;
+			if (r_viewport_rows() < 240)
+				rel[2] += 2 * QW_VSCALE * 65536;
+			r_state.viewmodel = (uint32_t) rl_view_gun(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe,
+			                                           pl.pm.yaw, -pl.pm.pitch, rel, light);
 		}
 	}
 

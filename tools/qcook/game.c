@@ -3,7 +3,8 @@
  * on every map, cooked from the pak into one QGM7 file per model level
  * (formats/qgame.h, formats/qlevels.h).
  *
- *   qcook game --pak <pak0.pak> --out <prefix>      (<prefix>_<level>.dat)
+ *   qcook game --pak <pak0.pak> [--textures medium|high] --out <prefix>
+ *                                                   (<prefix>_<level>.dat)
  *
  * Models (Quake MDL): the triangles are cut into face records exactly like
  * the world's (formats/qworld.h), so the renderer draws them with its own
@@ -250,6 +251,10 @@ typedef struct {
 	int   (*st)[3];                 /* onseam, s, t                  */
 	int   (*tris)[4];               /* facesfront, v0, v1, v2        */
 	tvert **frames;                 /* [nframes][nverts]             */
+	double *fine;                   /* a view model the cook cut (tess_build):
+	                                   [nverts][nframes][3], Quake's steps, its
+	                                   middles' exact; NULL: the frames' bytes */
+	double (*stf)[2];               /* and its skin coordinates, exact (s, t) */
 } mdl_t;
 
 static int mdl_skin_index;      /* the skin mdl_parse keeps (a map's armor: 0 .. 2) */
@@ -265,6 +270,8 @@ static void mdl_parse(mdl_t *m, const uint8_t *d, uint32_t len, const char *name
 	int nskins = rdi(d + 48);
 	if (mdl_skin_index >= nskins)
 		die("%s: no skin %d", name, mdl_skin_index);
+	m->fine    = NULL;
+	m->stf     = NULL;
 	m->skinw   = rdi(d + 52);
 	m->skinh   = rdi(d + 56);
 	m->nverts  = rdi(d + 60);
@@ -415,26 +422,28 @@ typedef struct {
 	int         skin_div;  /* the skin's resolution: 1 / skin_div (a view model
 	                          2: the screen never shows it larger; a
 	                          projectile 4: small and far) */
+	double      warp;      /* a view model: the affine error its triangles are
+	                          cut under, px (tess_build; 0: not cut) */
 	double      scale[3];  /* extra scale per axis (the lightning bolt is drawn
 	                          twice as long: one bolt per 60 units, not 30) */
 } model_spec;
 
 static const model_spec MODELS[] = {
-	{ "progs/v_axe.mdl",    QGM_V_AXE,    1, 0, 2, { 1, 1, 1 } },
-	{ "progs/v_shot.mdl",   QGM_V_SHOT,   1, 0, 2, { 1, 1, 1 } },
-	{ "progs/v_shot2.mdl",  QGM_V_SHOT2,  1, 0, 2, { 1, 1, 1 } },
-	{ "progs/v_nail.mdl",   QGM_V_NAIL,   1, 0, 2, { 1, 1, 1 } },
-	{ "progs/v_nail2.mdl",  QGM_V_NAIL2,  1, 0, 2, { 1, 1, 1 } },
-	{ "progs/v_rock.mdl",   QGM_V_ROCK,   1, 0, 2, { 1, 1, 1 } },
-	{ "progs/v_rock2.mdl",  QGM_V_ROCK2,  1, 0, 2, { 1, 1, 1 } },
-	{ "progs/v_light.mdl",  QGM_V_LIGHT,  1, 0, 2, { 1, 1, 1 } },
-	{ "progs/spike.mdl",    QGM_SPIKE,    0, 1, 4, { 1, 1, 1 } },
-	{ "progs/s_spike.mdl",  QGM_S_SPIKE,  0, 1, 4, { 1, 1, 1 } },
-	{ "progs/grenade.mdl",  QGM_GRENADE,  0, 1, 4, { 1, 1, 1 } },
-	{ "progs/missile.mdl",  QGM_MISSILE,  0, 0, 4, { 1, 1, 1 } },
-	{ "progs/bolt2.mdl",    QGM_BOLT,     0, 1, 4, { 2, 1, 1 } },
-	{ "progs/s_explod.spr", QGM_S_EXPLOD, 0, 1, 1, { 1, 1, 1 } },
-	{ "progs/s_bubble.spr", QGM_S_BUBBLE, 0, 1, 1, { 1, 1, 1 } },
+	{ "progs/v_axe.mdl",    QGM_V_AXE,    1, 0, 2, 0, { 1, 1, 1 } },
+	{ "progs/v_shot.mdl",   QGM_V_SHOT,   1, 0, 2, 8, { 1, 1, 1 } },
+	{ "progs/v_shot2.mdl",  QGM_V_SHOT2,  1, 0, 2, 8, { 1, 1, 1 } },
+	{ "progs/v_nail.mdl",   QGM_V_NAIL,   1, 0, 2, 8, { 1, 1, 1 } },
+	{ "progs/v_nail2.mdl",  QGM_V_NAIL2,  1, 0, 2, 8, { 1, 1, 1 } },
+	{ "progs/v_rock.mdl",   QGM_V_ROCK,   1, 0, 2, 8, { 1, 1, 1 } },
+	{ "progs/v_rock2.mdl",  QGM_V_ROCK2,  1, 0, 2, 8, { 1, 1, 1 } },
+	{ "progs/v_light.mdl",  QGM_V_LIGHT,  1, 0, 2, 8, { 1, 1, 1 } },
+	{ "progs/spike.mdl",    QGM_SPIKE,    0, 1, 4, 0, { 1, 1, 1 } },
+	{ "progs/s_spike.mdl",  QGM_S_SPIKE,  0, 1, 4, 0, { 1, 1, 1 } },
+	{ "progs/grenade.mdl",  QGM_GRENADE,  0, 1, 4, 0, { 1, 1, 1 } },
+	{ "progs/missile.mdl",  QGM_MISSILE,  0, 0, 4, 0, { 1, 1, 1 } },
+	{ "progs/bolt2.mdl",    QGM_BOLT,     0, 1, 4, 0, { 2, 1, 1 } },
+	{ "progs/s_explod.spr", QGM_S_EXPLOD, 0, 1, 1, 0, { 1, 1, 1 } },
+	{ "progs/s_bubble.spr", QGM_S_BUBBLE, 0, 1, 1, 0, { 1, 1, 1 } },
 };
 #define NUM_MODELS (int) (sizeof MODELS / sizeof MODELS[0])
 
@@ -444,11 +453,58 @@ typedef struct {
 	uint32_t          len;
 	mdl_t             mdl;      /* a model */
 	spr_t             spr;      /* or a sprite */
-	image            *im;       /* the skin / the sprite sheet                */
+	image            *im;       /* the skin / the sprite sheet (a gun's: its atlas) */
 	int               fx[32], fy[32];   /* a sprite's frames in its sheet     */
+	mdl_t             vmesh;    /* a gun: its triangles as drawn (view_mesh)  */
+	int             (*vuv)[3][2];   /* and their corners in its atlas, texels */
+	int               vnear, vback, vtris;   /* the culling's drops, of vtris  */
 } model_src;
 
+static int gun_tex = QL_MEDIUM; /* the guns' skins: half (view_atlas; qcook game
+                                   --textures high: Quake's where the screen
+                                   spreads them, measured in §53, too big for the
+                                   game's pages: not on a disc) */
+
 static model_src srcs[QGM_COUNT];
+
+static double mdl_wind(const mdl_t *m);
+static void view_mesh(model_src *ms);
+static void view_atlas(model_src *ms);
+static void skin_reduce(const mdl_t *m, const uint8_t *cover, int d, uint8_t *out);
+
+/* The texels a model's triangles show: whose centre is inside a triangle's
+   skin coordinates (a back face's onseam vertices on the right half, as
+   the renderer maps them; a cut model's middles exact), sw x sh, 1 shown */
+static uint8_t *skin_cover(const mdl_t *m)
+{
+	int sw = m->skinw, sh = m->skinh;
+	uint8_t *cover = xcalloc((size_t) sw * sh, 1);
+	for (int t = 0; t < m->ntris; t++) {
+		double tx[3], ty[3];
+		for (int k = 0; k < 3; k++) {
+			int vi = m->tris[t][k + 1];
+			tx[k] = (m->stf ? m->stf[vi][0] : m->st[vi][1]) + (!m->tris[t][0] && m->st[vi][0] ? sw / 2 : 0) + 0.5;
+			ty[k] = (m->stf ? m->stf[vi][1] : m->st[vi][2]) + 0.5;
+		}
+		double area = (tx[1] - tx[0]) * (ty[2] - ty[0]) - (tx[2] - tx[0]) * (ty[1] - ty[0]);
+		if (area == 0) continue;
+		double sgn = area > 0 ? 1 : -1;
+		int x0 = (int) floor(fmin(fmin(tx[0], tx[1]), tx[2])) - 1, x1 = (int) ceil(fmax(fmax(tx[0], tx[1]), tx[2])) + 1;
+		int y0 = (int) floor(fmin(fmin(ty[0], ty[1]), ty[2])) - 1, y1 = (int) ceil(fmax(fmax(ty[0], ty[1]), ty[2])) + 1;
+		for (int y = y0 < 0 ? 0 : y0; y <= y1 && y < sh; y++)
+			for (int x = x0 < 0 ? 0 : x0; x <= x1 && x < sw; x++) {
+				double px = x + 0.5, py = y + 0.5, in = 1;
+				for (int e = 0; e < 3 && in; e++) {           /* on the inner side of each edge */
+					int a = e, b = (e + 1) % 3;
+					double ex = tx[b] - tx[a], ey = ty[b] - ty[a], len = sqrt(ex * ex + ey * ey);
+					double dd = sgn * (ex * (py - ty[a]) - ey * (px - tx[a])) / (len > 0 ? len : 1);
+					if (dd < -0.01) in = 0;
+				}
+				if (in) cover[y * sw + x] = 1;
+			}
+	}
+	return cover;
+}
 
 /* parse the model and make its image (not placed yet) */
 static void model_prepare(model_src *ms)
@@ -478,6 +534,12 @@ static void model_prepare(model_src *ms)
 	}
 	mdl_t *m = &ms->mdl;
 	mdl_parse(m, ms->data, ms->len, sp->file);
+	if (sp->view) {                              /* a gun: its triangles as drawn, and
+		                                            an atlas of the texels they show */
+		view_mesh(ms);
+		view_atlas(ms);
+		return;
+	}
 	/* The skin's used texels: the ones whose centre is inside a triangle's
 	   texture coordinates (a back face's onseam vertices on the right
 	   half, as the renderer maps them); no margin, since the skin's fill
@@ -486,36 +548,20 @@ static void model_prepare(model_src *ms)
 	   that the reduction below would average into the edge texels: that
 	   is where blue pixels on the barrels came from. */
 	int sw = m->skinw, sh = m->skinh;
-	uint8_t *cover = xcalloc((size_t) sw * sh, 1);
-	for (int t = 0; t < m->ntris; t++) {
-		double tx[3], ty[3];
-		for (int k = 0; k < 3; k++) {
-			int vi = m->tris[t][k + 1];
-			tx[k] = m->st[vi][1] + (!m->tris[t][0] && m->st[vi][0] ? sw / 2 : 0) + 0.5;
-			ty[k] = m->st[vi][2] + 0.5;
-		}
-		double area = (tx[1] - tx[0]) * (ty[2] - ty[0]) - (tx[2] - tx[0]) * (ty[1] - ty[0]);
-		if (area == 0) continue;
-		double sgn = area > 0 ? 1 : -1;
-		int x0 = (int) floor(fmin(fmin(tx[0], tx[1]), tx[2])) - 1, x1 = (int) ceil(fmax(fmax(tx[0], tx[1]), tx[2])) + 1;
-		int y0 = (int) floor(fmin(fmin(ty[0], ty[1]), ty[2])) - 1, y1 = (int) ceil(fmax(fmax(ty[0], ty[1]), ty[2])) + 1;
-		for (int y = y0 < 0 ? 0 : y0; y <= y1 && y < sh; y++)
-			for (int x = x0 < 0 ? 0 : x0; x <= x1 && x < sw; x++) {
-				double px = x + 0.5, py = y + 0.5, in = 1;
-				for (int e = 0; e < 3 && in; e++) {           /* on the inner side of each edge */
-					int a = e, b = (e + 1) % 3;
-					double ex = tx[b] - tx[a], ey = ty[b] - ty[a], len = sqrt(ex * ex + ey * ey);
-					double dd = sgn * (ex * (py - ty[a]) - ey * (px - tx[a])) / (len > 0 ? len : 1);
-					if (dd < -0.01) in = 0;
-				}
-				if (in) cover[y * sw + x] = 1;
-			}
-	}
-	/* the skin at 1 / skin_div resolution: the used texels of each block
-	   averaged; a block with none takes its used neighbours' colour, so
-	   the GPU's stray texel next to an edge is never the blue */
-	int d = sp->skin_div, w2 = (sw + d - 1) / d, h2 = (sh + d - 1) / d;
-	ms->im = add_image(sp->file, w2, h2, GP_BORDER);
+	uint8_t *cover = skin_cover(m);
+	int d = sp->skin_div;
+	ms->im = add_image(sp->file, (sw + d - 1) / d, (sh + d - 1) / d, GP_BORDER);
+	skin_reduce(m, cover, d, ms->im->px);
+	free(cover);
+}
+
+/* The skin at 1 / d resolution ((w + d - 1) / d x (h + d - 1) / d into
+   out): the used texels (cover) of each block averaged; a block with
+   none takes its used neighbours' colour, so the GPU's stray texel next
+   to an edge is never the blue */
+static void skin_reduce(const mdl_t *m, const uint8_t *cover, int d, uint8_t *out)
+{
+	int sw = m->skinw, sh = m->skinh, w2 = (sw + d - 1) / d, h2 = (sh + d - 1) / d;
 	uint8_t *done = xcalloc((size_t) w2 * h2, 1);
 	int (*rgb)[3] = xcalloc((size_t) w2 * h2, sizeof *rgb);
 	for (int y = 0; y < h2; y++)
@@ -556,10 +602,9 @@ static void model_prepare(model_src *ms)
 		free(now);
 	}
 	for (int i = 0; i < w2 * h2; i++)
-		ms->im->px[i] = done[i] ? (uint8_t) nearest_colour(rgb[i][0], rgb[i][1], rgb[i][2])
-		                        : (uint8_t) nearest_colour(palette[m->skin[0] * 3], palette[m->skin[0] * 3 + 1],
-		                                                   palette[m->skin[0] * 3 + 2]);
-	free(cover);
+		out[i] = done[i] ? (uint8_t) nearest_colour(rgb[i][0], rgb[i][1], rgb[i][2])
+		                 : (uint8_t) nearest_colour(palette[m->skin[0] * 3], palette[m->skin[0] * 3 + 1],
+		                                            palette[m->skin[0] * 3 + 2]);
 	free(done);
 	free(rgb);
 }
@@ -574,6 +619,9 @@ typedef struct {
 
 static int   *slots;            /* pool slot -> model vertex */
 static int    nslots, slots_cap;
+static int   *slot_of;          /* model vertex -> its pool slot, -1: none yet (one
+                                   slot a vertex: the records share the pool's
+                                   entries, as the world's do) */
 
 static int rec_slot(mrec *r, int vi)
 {
@@ -617,6 +665,19 @@ static void mdl_vertex(const mdl_t *m, int f, int vi, const double extra[3], int
 		if (l < -32768 || l > 32767) die("model vertex out of int16 range");
 		out[k] = (int16_t) l;
 	}
+}
+
+/* vertex vi of frame f in Quake's steps (a cut model's middles exact), and
+   in world units, the model's axes */
+static double vstep(const mdl_t *m, int f, int vi, int k)
+{
+	return m->fine ? m->fine[((size_t) vi * m->nframes + f) * 3 + k] : m->frames[f][vi].v[k];
+}
+
+static void vpos(const mdl_t *m, int f, int vi, double p[3])
+{
+	for (int k = 0; k < 3; k++)
+		p[k] = vstep(m, f, vi, k) * m->scale[k] + m->origin[k];
 }
 
 /* flush record r: header + indices (global slots) + light bytes + tris */
@@ -667,13 +728,17 @@ static void mrec_flush(gbuf *geo, mrec *r, const mdl_t *m, const double extra[3]
 
 	uint16_t idx[QW_MAX_VERTS + 3] = { 0 };
 	for (int i = 0; i < r->nv; i++) {
-		if (nslots == slots_cap) {
-			slots_cap = slots_cap ? slots_cap * 2 : 256;
-			slots = realloc(slots, (size_t) slots_cap * sizeof *slots);
-			if (!slots) die("out of memory");
+		int vi = r->mv[i];
+		if (slot_of[vi] < 0) {
+			if (nslots == slots_cap) {
+				slots_cap = slots_cap ? slots_cap * 2 : 256;
+				slots = realloc(slots, (size_t) slots_cap * sizeof *slots);
+				if (!slots) die("out of memory");
+			}
+			slots[nslots] = vi;
+			slot_of[vi] = nslots++;
 		}
-		slots[nslots] = r->mv[i];
-		idx[i] = (uint16_t) nslots++;
+		idx[i] = (uint16_t) slot_of[vi];
 	}
 	for (int i = r->nv; i < nidx; i++)
 		idx[i] = idx[0];
@@ -866,6 +931,32 @@ static int hand_tri(const mdl_t *m, const model_spec *sp, double wind, int a, in
 	return 1;
 }
 
+/* the file's winding convention, read off the model itself: the side its
+   vertex normals point to, by majority (> 0: their side is the triangles'
+   (v1 - v0) x (v2 - v0); Quake's files, all 76: < 0, the world's faces'
+   the other way) */
+static double mdl_wind(const mdl_t *m)
+{
+	static const double one[3] = { 1, 1, 1 };
+	double wind = 0;
+	for (int t = 0; t < m->ntris; t++) {
+		int16_t v[3][3];
+		double n[3] = { 0, 0, 0 }, c[3];
+		for (int k = 0; k < 3; k++) {
+			int vi = m->tris[t][k + 1];
+			mdl_vertex(m, 0, vi, one, v[k]);
+			int ni = m->frames[0][vi].n;
+			if (ni >= QG_NORMALS) ni = 0;
+			for (int a = 0; a < 3; a++) n[a] += anorms[ni][a];
+		}
+		tri_normal(v, c);
+		double l = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
+		if (l > 0)
+			wind += (c[0] * n[0] + c[1] * n[1] + c[2] * n[2]) / l;
+	}
+	return wind;
+}
+
 /* the gun's triangles by hand in place of the file's (m's copy in out): 1,
    or 0 for a model with none */
 static int gun_hand_build(const mdl_t *m, const model_spec *sp, double wind, mdl_t *out)
@@ -936,55 +1027,408 @@ static int gun_hand_build(const mdl_t *m, const model_spec *sp, double wind, mdl
 	return 1;
 }
 
-static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
-{
-	const model_spec *sp = ms->sp;
-	mdl_t *m = &ms->mdl;
-	const image *im = ms->im;
-	out->tex.tpage  = page_tpage(im->page);
-	out->tex.window = 0xE2000000u;
+/* ------------------------------------------------- a view model's order -- */
 
-	/* A view model is only ever seen from the eye, which sits about the
-	   model's origin (Quake's view.c: the gun's origin is the view's plus
-	   0.4 x bob forward and bob up, the view size's 2-unit fudge; the bob
-	   runs -2.56 .. 4): a triangle behind the near plane in every frame
-	   (x < 3 units: the renderer clips at 5) is never drawn, nor is one
-	   whose plane keeps every eye position on its back in every frame
-	   (Quake's alias drawer skips a triangle wound backwards on screen,
-	   d_polyse.c D_DrawNonSubdiv, zero-area ones included). Both are
-	   dropped. The file's winding convention is read off the model
-	   itself: the side its vertex normals point to, by majority. */
+/* A view model is drawn with no depth buffer, in its records' order (the
+   renderer prepends each polygon to one bucket: the first written is drawn
+   last), and only ever from about the eye, so its order is worked out here
+   once, from where the eye sees it: in every frame, from every place the
+   eye takes (at rest; the bob's forward reach, 0.4 x -2.56 .. 4; the
+   full-screen viewport's gun, 2 units lower), every two triangles (clipped
+   at the renderer's 5 units) whose pictures overlap must come nearer
+   first. Those turned away from the eye too: the renderer draws them (it
+   culls no model's triangle by its winding; the culling above dropped
+   only those never facing it), so they must go under the ones facing it
+   (the super shotgun's barrels' far sides came over their near ones). A
+   pair's say is its overlap's area, frame 0 (the gun at rest) four times,
+   the eye at rest twice, a tenth between two turned away (hidden behind
+   the others but in a hole); the frames that disagree are outvoted. The centroid's distance (the order until
+   then) put the nailgun's barrels over its blocks, the super shotgun's
+   gap over a barrel, the rocket launcher's outside over its muzzle. */
+#define VO_NEAR 5.0          /* the renderer's near clip for the view model     */
+#define VO_UP   2.0          /* the status bar's viewport fudge (game.c)        */
+#define VO_CX   160.0        /* the projection (render.c): the overlaps' areas */
+#define VO_CY   96.0         /* in pixels                                      */
+#define VO_PROJ 160.0
+
+typedef struct { double x, y, iz; } vo_pt;
+
+static int vo_project(const double p[3][3], vo_pt out[4])   /* eye-relative: x ahead, y left, z up */
+{
+	double c[4][3];
+	int n = 0;
+	for (int i = 0; i < 3; i++) {
+		const double *a = p[i], *b = p[(i + 1) % 3];
+		int ina = a[0] >= VO_NEAR, inb = b[0] >= VO_NEAR;
+		if (ina)
+			memcpy(c[n++], a, sizeof c[0]);
+		if (ina != inb) {
+			double f = (VO_NEAR - a[0]) / (b[0] - a[0]);
+			for (int k = 0; k < 3; k++)
+				c[n][k] = a[k] + f * (b[k] - a[k]);
+			n++;
+		}
+	}
+	for (int i = 0; i < n; i++) {
+		out[i].x  = VO_CX - VO_PROJ * c[i][1] / c[i][0];
+		out[i].y  = VO_CY - VO_PROJ * c[i][2] / c[i][0];
+		out[i].iz = 1 / c[i][0];
+	}
+	return n;
+}
+
+/* convex a clipped by convex b (Sutherland-Hodgman): the overlap, its count */
+static int vo_overlap(const vo_pt *a, int na, const vo_pt *b, int nb, vo_pt *out)
+{
+	vo_pt buf[2][16];
+	int n = na, cur = 0;
+	memcpy(buf[0], a, (size_t) na * sizeof *a);
+	double area = 0;
+	for (int i = 0; i < nb; i++)
+		area += b[i].x * b[(i + 1) % nb].y - b[(i + 1) % nb].x * b[i].y;
+	double s = area > 0 ? 1 : -1;
+	for (int e = 0; e < nb && n; e++) {
+		const vo_pt *p = &b[e], *q = &b[(e + 1) % nb];
+		int m = 0;
+		for (int i = 0; i < n; i++) {
+			const vo_pt *u = &buf[cur][i], *v = &buf[cur][(i + 1) % n];
+			double du = s * ((q->x - p->x) * (u->y - p->y) - (q->y - p->y) * (u->x - p->x));
+			double dv = s * ((q->x - p->x) * (v->y - p->y) - (q->y - p->y) * (v->x - p->x));
+			if (du >= 0 && m < 15)
+				buf[!cur][m++] = *u;
+			if ((du >= 0) != (dv >= 0) && m < 15) {
+				double f = du / (du - dv);
+				vo_pt w = { u->x + f * (v->x - u->x), u->y + f * (v->y - u->y), 0 };
+				buf[!cur][m++] = w;
+			}
+		}
+		cur = !cur;
+		n = m;
+	}
+	memcpy(out, buf[cur], (size_t) n * sizeof *out);
+	return n;
+}
+
+/* 1 / z at (x, y) on the plane of polygon a (n >= 3) */
+static double vo_iz(const vo_pt *a, int n, double x, double y)
+{
+	int i1 = 1, i2 = 2;
+	double d = (a[1].x - a[0].x) * (a[2].y - a[0].y) - (a[2].x - a[0].x) * (a[1].y - a[0].y);
+	if (n > 3) {
+		double d3 = (a[2].x - a[0].x) * (a[3].y - a[0].y) - (a[3].x - a[0].x) * (a[2].y - a[0].y);
+		if (fabs(d3) > fabs(d)) { d = d3; i1 = 2; i2 = 3; }
+	}
+	if (fabs(d) < 1e-12)
+		return a[0].iz;
+	double w1 = ((x - a[0].x) * (a[i2].y - a[0].y) - (a[i2].x - a[0].x) * (y - a[0].y)) / d;
+	double w2 = ((a[i1].x - a[0].x) * (y - a[0].y) - (x - a[0].x) * (a[i1].y - a[0].y)) / d;
+	return a[0].iz + w1 * (a[i1].iz - a[0].iz) + w2 * (a[i2].iz - a[0].iz);
+}
+
+/* net[i * n + j] > 0: triangle i is written before j (in front of it where
+   they overlap), by that much say */
+static double *view_order(const mdl_t *m, const model_spec *sp, double wind, const uint8_t *drawn)
+{
+	static const double eyes[4][3] = { { 0, 0, -VO_UP }, { 1.0, 0, -VO_UP }, { -1.6, 0, -VO_UP }, { 0, 0, 0 } };
+	int n = m->ntris;
+	double *say = xcalloc((size_t) n * n, sizeof *say);
+	vo_pt (*poly)[4] = xmalloc((size_t) n * sizeof *poly);
+	int    *np  = xmalloc((size_t) n * sizeof *np);
+	uint8_t *away = xmalloc((size_t) n);
+	double (*box)[4] = xmalloc((size_t) n * sizeof *box);
+	for (int f = 0; f < m->nframes; f++)
+		for (int e = 0; e < 4; e++) {
+			double w = (f == 0 ? 4 : 1) * (e == 0 ? 2 : 1);
+			for (int t = 0; t < n; t++) {
+				np[t] = 0;
+				if (!drawn[t])
+					continue;
+				double p[3][3];
+				for (int k = 0; k < 3; k++) {
+					vpos(m, f, m->tris[t][k + 1], p[k]);
+					for (int a = 0; a < 3; a++)
+						p[k][a] = p[k][a] * sp->scale[a] - eyes[e][a];
+				}
+				double a[3], b[3], c[3];
+				for (int k = 0; k < 3; k++) { a[k] = p[1][k] - p[0][k]; b[k] = p[2][k] - p[0][k]; }
+				c[0] = a[1] * b[2] - a[2] * b[1];
+				c[1] = a[2] * b[0] - a[0] * b[2];
+				c[2] = a[0] * b[1] - a[1] * b[0];
+				double d = -(c[0] * p[0][0] + c[1] * p[0][1] + c[2] * p[0][2]);   /* the eye at 0 */
+				if (wind < 0) d = -d;
+				away[t] = d <= 0;                      /* its back to the eye (drawn all the same) */
+				np[t] = vo_project(p, poly[t]);
+				if (np[t] < 3) {
+					np[t] = 0;
+					continue;
+				}
+				box[t][0] = box[t][2] = poly[t][0].x;
+				box[t][1] = box[t][3] = poly[t][0].y;
+				for (int k = 1; k < np[t]; k++) {
+					box[t][0] = fmin(box[t][0], poly[t][k].x); box[t][2] = fmax(box[t][2], poly[t][k].x);
+					box[t][1] = fmin(box[t][1], poly[t][k].y); box[t][3] = fmax(box[t][3], poly[t][k].y);
+				}
+			}
+			for (int i = 0; i < n; i++) {
+				if (!np[i]) continue;
+				for (int j = i + 1; j < n; j++) {
+					if (!np[j] || box[i][0] >= box[j][2] || box[j][0] >= box[i][2] ||
+					    box[i][1] >= box[j][3] || box[j][1] >= box[i][3])
+						continue;
+					vo_pt o[16];
+					int no = vo_overlap(poly[i], np[i], poly[j], np[j], o);
+					if (no < 3)
+						continue;
+					double area = 0, cx = 0, cy = 0;
+					for (int k = 0; k < no; k++) {
+						area += o[k].x * o[(k + 1) % no].y - o[(k + 1) % no].x * o[k].y;
+						cx += o[k].x / no;
+						cy += o[k].y / no;
+					}
+					area = fabs(area) / 2;
+					if (area < 0.05)                   /* (neighbours along an edge) */
+						continue;
+					double zi = vo_iz(poly[i], np[i], cx, cy), zj = vo_iz(poly[j], np[j], cx, cy);
+					if (fabs(zi - zj) < 1e-9)
+						continue;
+					double ws = away[i] && away[j] ? w / 10 : w;
+					if (zi > zj) say[(size_t) i * n + j] += ws * area;   /* i nearer */
+					else         say[(size_t) j * n + i] += ws * area;
+				}
+			}
+		}
+	for (int i = 0; i < n; i++)
+		for (int j = i + 1; j < n; j++) {
+			double a = say[(size_t) i * n + j], b = say[(size_t) j * n + i];
+			say[(size_t) i * n + j] = a > b ? a - b : 0;
+			say[(size_t) j * n + i] = b > a ? b - a : 0;
+		}
+	free(poly);
+	free(np);
+	free(away);
+	free(box);
+	return say;
+}
+
+/* --------------------------------------------- a view model's affine cut -- */
+
+/* The GPU maps a texture linearly over the screen: a triangle deep along
+   the view shows its far end's texels too large and its near end's too
+   small (the shotgun's barrel bent, the grenade launcher's band and the
+   rocket launcher's rim smeared over their middles). A view model's edges
+   are cut at their middles where, seen from the eye at rest in frame 0,
+   the texture's displacement there passes the model's warp (px): the slow
+   path's measure (engine/r_slow.c), L |dz| / (2 (za + zb)), L the edge's
+   length on the screen, of its part in front of the renderer's near plane.
+   A triangle is cut as the slow path cuts one (an edge: two, two: three,
+   three: four), its pieces again. The decision is the edge's alone, so the
+   two triangles on an edge cut it alike: no cracks. A middle is a vertex
+   of its own in every frame: the middle of the ends' places (exact in the
+   pools, Quake's steps x QG_VIEW_SUB), the normal nearest their normals'
+   mean (the light), its skin coordinates the ends' mean (on the seam if
+   both ends are; a seam end and one off it: the triangle's half, which
+   every triangle on that edge shares). A piece behind the eye in every
+   frame (x < 3 units, as the culling's) goes. */
+#define TESS_MAX   4096          /* middles a model */
+#define TESS_DEEP  12            /* (a bound the measure never reaches) */
+
+typedef struct {
+	mdl_t  m;                    /* the model as it is cut: its vertices grow   */
+	int    cap;
+	double warp;
+	int  (*key)[3];              /* an edge (a < b) and its middle              */
+	int    nkey;
+	int  (*tris)[4];
+	int    ntris, tcap;
+} tess_t;
+
+/* edge (a, b)'s affine displacement at its middle, frame 0, the eye at rest */
+static double tess_err(const mdl_t *m, int a, int b)
+{
+	double pa[3], pb[3];
+	vpos(m, 0, a, pa);
+	vpos(m, 0, b, pb);
+	pa[2] += VO_UP;                              /* (the eye 2 units under the gun) */
+	pb[2] += VO_UP;
+	if (pa[0] < VO_NEAR && pb[0] < VO_NEAR)
+		return 0;
+	if (pa[0] < VO_NEAR || pb[0] < VO_NEAR) {    /* its part in front of the near plane */
+		double *n = pa[0] < VO_NEAR ? pa : pb, *f = n == pa ? pb : pa;
+		double t = (f[0] - VO_NEAR) / (f[0] - n[0]);
+		for (int k = 0; k < 3; k++)
+			n[k] = f[k] + t * (n[k] - f[k]);
+	}
+	double ax = VO_CX - VO_PROJ * pa[1] / pa[0], ay = VO_CY - VO_PROJ * pa[2] / pa[0];
+	double bx = VO_CX - VO_PROJ * pb[1] / pb[0], by = VO_CY - VO_PROJ * pb[2] / pb[0];
+	double len = fabs(ax - bx) + fabs(ay - by);
+	return len * fabs(pa[0] - pb[0]) / (2 * (pa[0] + pb[0]));
+}
+
+static int tess_mid(tess_t *c, int a, int b, int ff, const char *file)
+{
+	if (a > b) { int t = a; a = b; b = t; }
+	for (int i = 0; i < c->nkey; i++)
+		if (c->key[i][0] == a && c->key[i][1] == b)
+			return c->key[i][2];
+	mdl_t *o = &c->m;
+	if (o->nverts >= c->cap)
+		die("%s: more than %d middles", file, TESS_MAX);
+	int v = o->nverts++;
+	for (int f = 0; f < o->nframes; f++) {
+		double nv[3];
+		for (int k = 0; k < 3; k++) {
+			double x = (vstep(o, f, a, k) + vstep(o, f, b, k)) / 2;
+			o->fine[((size_t) v * o->nframes + f) * 3 + k] = x;
+			o->frames[f][v].v[k] = (uint8_t) lround(x);
+			int na = o->frames[f][a].n < QG_NORMALS ? o->frames[f][a].n : 0;
+			int nb = o->frames[f][b].n < QG_NORMALS ? o->frames[f][b].n : 0;
+			nv[k] = anorms[na][k] + anorms[nb][k];
+		}
+		int best = 0;
+		double bd = -1e9;
+		for (int n = 0; n < QG_NORMALS; n++) {
+			double d = anorms[n][0] * nv[0] + anorms[n][1] * nv[1] + anorms[n][2] * nv[2];
+			if (d > bd) { bd = d; best = n; }
+		}
+		o->frames[f][v].n = (uint8_t) best;
+	}
+	double sa = o->stf[a][0], sb = o->stf[b][0];
+	int seam = o->st[a][0] && o->st[b][0];
+	if (!seam) {                                 /* a seam end takes the triangle's half */
+		if (o->st[a][0] && !ff) sa += o->skinw / 2;
+		if (o->st[b][0] && !ff) sb += o->skinw / 2;
+	}
+	o->stf[v][0] = (sa + sb) / 2;
+	o->stf[v][1] = (o->stf[a][1] + o->stf[b][1]) / 2;
+	o->st[v][0] = seam;
+	o->st[v][1] = (int) lround(o->stf[v][0]);
+	o->st[v][2] = (int) lround(o->stf[v][1]);
+	if (c->nkey >= TESS_MAX)
+		die("%s: more than %d middles", file, TESS_MAX);
+	c->key[c->nkey][0] = a;
+	c->key[c->nkey][1] = b;
+	c->key[c->nkey][2] = v;
+	c->nkey++;
+	return v;
+}
+
+static void tess_tri(tess_t *c, int ff, int v0, int v1, int v2, int depth, const char *file)
+{
+	int v[3] = { v0, v1, v2 }, cut[3], n = 0;
+	if (depth > TESS_DEEP)
+		die("%s: an edge cut more than %d times", file, TESS_DEEP);
+	for (int i = 0; i < 3; i++) {
+		cut[i] = tess_err(&c->m, v[i], v[(i + 1) % 3]) > c->warp;
+		n += cut[i];
+	}
+	if (!n) {
+		int behind = 1;                          /* behind the eye in every frame: gone */
+		for (int f = 0; f < c->m.nframes && behind; f++)
+			for (int k = 0; k < 3; k++) {
+				double p[3];
+				vpos(&c->m, f, v[k], p);
+				if (p[0] >= 3)
+					behind = 0;
+			}
+		if (behind)
+			return;
+		if (c->ntris == c->tcap) {
+			c->tcap *= 2;
+			c->tris = realloc(c->tris, (size_t) c->tcap * sizeof *c->tris);
+			if (!c->tris) die("out of memory");
+		}
+		c->tris[c->ntris][0] = ff;
+		c->tris[c->ntris][1] = v0;
+		c->tris[c->ntris][2] = v1;
+		c->tris[c->ntris][3] = v2;
+		c->ntris++;
+		return;
+	}
+	int mid[3];
+	for (int i = 0; i < 3; i++)
+		mid[i] = cut[i] ? tess_mid(c, v[i], v[(i + 1) % 3], ff, file) : -1;
+	if (n == 3) {
+		tess_tri(c, ff, v[0], mid[0], mid[2], depth + 1, file);
+		tess_tri(c, ff, mid[0], v[1], mid[1], depth + 1, file);
+		tess_tri(c, ff, mid[2], mid[1], v[2], depth + 1, file);
+		tess_tri(c, ff, mid[0], mid[1], mid[2], depth + 1, file);
+	} else if (n == 1) {                         /* edge i cut */
+		int i = cut[0] ? 0 : cut[1] ? 1 : 2, j = (i + 1) % 3, k = (i + 2) % 3;
+		tess_tri(c, ff, v[i], mid[i], v[k], depth + 1, file);
+		tess_tri(c, ff, mid[i], v[j], v[k], depth + 1, file);
+	} else {                                     /* edge i whole */
+		int i = !cut[0] ? 0 : !cut[1] ? 1 : 2, j = (i + 1) % 3, k = (i + 2) % 3;
+		tess_tri(c, ff, v[i], v[j], mid[k], depth + 1, file);
+		tess_tri(c, ff, v[j], mid[j], mid[k], depth + 1, file);
+		tess_tri(c, ff, mid[j], v[k], mid[k], depth + 1, file);
+	}
+}
+
+/* m's triangles kept (keep) cut into out: 1, or 0 when nothing was cut */
+static int tess_build(const mdl_t *m, const model_spec *sp, const uint8_t *keep, mdl_t *out)
+{
+	tess_t c;
+	memset(&c, 0, sizeof c);
+	c.cap  = m->nverts + TESS_MAX;
+	c.warp = sp->warp;
+	c.m    = *m;
+	c.m.fine   = xmalloc((size_t) c.cap * m->nframes * 3 * sizeof *c.m.fine);
+	c.m.stf    = xmalloc((size_t) c.cap * sizeof *c.m.stf);
+	c.m.st     = xmalloc((size_t) c.cap * sizeof *c.m.st);
+	c.m.frames = xmalloc((size_t) m->nframes * sizeof *c.m.frames);
+	for (int f = 0; f < m->nframes; f++) {
+		c.m.frames[f] = xmalloc((size_t) c.cap * sizeof **c.m.frames);
+		memcpy(c.m.frames[f], m->frames[f], (size_t) m->nverts * sizeof **c.m.frames);
+	}
+	for (int v = 0; v < m->nverts; v++) {
+		for (int f = 0; f < m->nframes; f++)
+			for (int k = 0; k < 3; k++)
+				c.m.fine[((size_t) v * m->nframes + f) * 3 + k] = vstep(m, f, v, k);
+		memcpy(c.m.st[v], m->st[v], sizeof c.m.st[v]);
+		c.m.stf[v][0] = m->stf ? m->stf[v][0] : m->st[v][1];
+		c.m.stf[v][1] = m->stf ? m->stf[v][1] : m->st[v][2];
+	}
+	c.key  = xmalloc((size_t) TESS_MAX * sizeof *c.key);
+	c.tcap = 2 * m->ntris + 16;
+	c.tris = xmalloc((size_t) c.tcap * sizeof *c.tris);
+	int kept = 0;
+	for (int t = 0; t < m->ntris; t++)
+		if (keep[t]) {
+			kept++;
+			tess_tri(&c, m->tris[t][0], m->tris[t][1], m->tris[t][2], m->tris[t][3], 0, sp->file);
+		}
+	free(c.key);
+	if (!c.nkey && c.ntris == kept) {
+		free(c.tris);
+		return 0;
+	}
+	*out = c.m;
+	out->tris  = c.tris;
+	out->ntris = c.ntris;
+	printf("qcook: %s cut under %.0f px of affine error: %d triangles -> %d, %d middles\n", sp->file, sp->warp,
+	       kept, c.ntris, c.nkey);
+	return 1;
+}
+
+/* ------------------------------------------------- a gun's mesh and atlas -- */
+
+/* A view model is only ever seen from the eye, which sits about the
+   model's origin (Quake's view.c: the gun's origin is the view's plus 0.4
+   x bob forward and bob up, the view size's 2-unit fudge; the bob runs
+   -2.56 .. 4): a triangle behind the near plane in every frame (x < 3
+   units: the renderer clips at 5) is never drawn, nor is one whose plane
+   keeps every eye position on its back in every frame (Quake's alias
+   drawer skips a triangle wound backwards on screen, d_polyse.c
+   D_DrawNonSubdiv, zero-area ones included; so does the renderer since
+   §53). Both are dropped (keep[t] 0). */
+static void view_cull(const mdl_t *m, const model_spec *sp, double wind, uint8_t *keep, int *dnear, int *dback)
+{
 	static const double eye[8][3] = {
 		{ -2.5, -1, -7 }, { 2, -1, -7 }, { -2.5, 1, -7 }, { 2, 1, -7 },
 		{ -2.5, -1, 3.5 }, { 2, -1, 3.5 }, { -2.5, 1, 3.5 }, { 2, 1, 3.5 } };
-	uint8_t *keep = xmalloc((size_t) m->ntris);
-	int dropped_near = 0, dropped_back = 0;
-	double wind = 0;
-	for (int t = 0; t < m->ntris && sp->view; t++) {
-		int16_t v[3][3];
-		double n[3] = { 0, 0, 0 }, c[3];
-		for (int k = 0; k < 3; k++) {
-			int vi = m->tris[t][k + 1];
-			mdl_vertex(m, 0, vi, sp->scale, v[k]);
-			int ni = m->frames[0][vi].n;
-			if (ni >= QG_NORMALS) ni = 0;
-			for (int a = 0; a < 3; a++) n[a] += anorms[ni][a];
-		}
-		tri_normal(v, c);
-		double l = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
-		if (l > 0)
-			wind += (c[0] * n[0] + c[1] * n[1] + c[2] * n[2]) / l;
-	}
-	mdl_t hand;                                    /* a gun rebuilt by hand: its triangles */
-	if (sp->view && gun_hand_build(m, sp, wind, &hand)) {
-		m = &hand;
-		free(keep);
-		keep = xmalloc((size_t) m->ntris);
-	}
+	*dnear = *dback = 0;
 	for (int t = 0; t < m->ntris; t++) {
 		keep[t] = 1;
-		if (!sp->view)
-			continue;
 		int behind = 1, back = 1;
 		for (int f = 0; f < m->nframes && (behind || back); f++) {
 			int16_t v[3][3];
@@ -1000,18 +1444,274 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 				for (int a = 0; a < 3; a++)
 					d += n[a] * (eye[e][a] * QW_VSCALE - v[0][a]);
 				if (wind < 0) d = -d;
-				if (d > 0)                  /* this eye position sees its front */
+				if (d > 0)                      /* this eye position sees its front */
 					back = 0;
 			}
 		}
-		if (behind) { keep[t] = 0; dropped_near++; }
-		else if (back) { keep[t] = 0; dropped_back++; }
+		if (behind) { keep[t] = 0; (*dnear)++; }
+		else if (back) { keep[t] = 0; (*dback)++; }
 	}
+}
+
+/* a gun's triangles as the renderer draws them: rebuilt by hand (if it
+   is), culled, cut against the affine mapping */
+static void view_mesh(model_src *ms)
+{
+	const model_spec *sp = ms->sp;
+	mdl_t *m = &ms->mdl, *hand = xmalloc(sizeof *hand);
+	double wind = mdl_wind(m);
+	if (gun_hand_build(m, sp, wind, hand))
+		m = hand;
+	uint8_t *keep = xmalloc((size_t) m->ntris);
+	view_cull(m, sp, wind, keep, &ms->vnear, &ms->vback);
+	ms->vtris = m->ntris;
+	if (!(sp->warp > 0 && tess_build(m, sp, keep, &ms->vmesh))) {
+		ms->vmesh = *m;                          /* (nothing cut: the kept ones) */
+		ms->vmesh.tris  = xmalloc((size_t) m->ntris * sizeof *ms->vmesh.tris);
+		ms->vmesh.ntris = 0;
+		for (int t = 0; t < m->ntris; t++)
+			if (keep[t])
+				memcpy(ms->vmesh.tris[ms->vmesh.ntris++], m->tris[t], sizeof m->tris[t]);
+	}
+	free(keep);
+}
+
+/* A gun's skin: the texels its triangles show, in one image, its atlas
+   (docs/porting-notes.md §53). At the disc's texture level high, Quake's
+   own where the screen spreads them (a triangle showing more than a pixel
+   a texel in some frame, or reaching nearer than the near plane: the
+   gun's near end), half elsewhere (its far end, where a half texel is no
+   bigger than a pixel: the 2D gun's pictures are half the screen
+   throughout); at medium, half everywhere. Until §53 the skins were half
+   everywhere, Quake's 1-texel lines spread over the near end (the rocket
+   launcher's highlight a band over its middle). The triangles sharing an
+   edge, its texels the same on both, at one resolution, make a chart; a
+   chart's box of texels, with two of the skin around them (the GPU strays
+   a texel past an edge), goes into the atlas in shelves, the width
+   leaving the least area: Quake's skins are mostly an unused fill, the
+   atlas no larger than the half skin was. A texel no triangle shows takes
+   its shown neighbours' colour (the fill is a flat blue). */
+#define ATLAS_B 2
+
+typedef struct { int div, x0, y0, w, h, ax, ay; } chart_t;
+
+static int uf_find(int *p, int i)
+{
+	while (p[i] != i)
+		i = p[i] = p[p[i]];
+	return i;
+}
+
+/* corner k of triangle t: Quake's skin coordinates (a back face's seam) */
+static void tri_stf(const mdl_t *m, int t, int k, double st[2])
+{
+	int vi = m->tris[t][k + 1];
+	st[0] = (m->stf ? m->stf[vi][0] : m->st[vi][1]) + (!m->tris[t][0] && m->st[vi][0] ? m->skinw / 2 : 0);
+	st[1] =  m->stf ? m->stf[vi][1] : m->st[vi][2];
+}
+
+static int by_chart_h(const void *a, const void *b)
+{
+	const chart_t *x = *(const chart_t *const *) a, *y = *(const chart_t *const *) b;
+	return x->h != y->h ? y->h - x->h : y->w - x->w;
+}
+
+/* the charts in shelves `width` texels wide: the height, their places */
+static int atlas_shelves(chart_t **order, int n, int width)
+{
+	int x = 0, y = 0, row = 0;
+	for (int i = 0; i < n; i++) {
+		if (x + order[i]->w > width) {
+			y += row;
+			x = row = 0;
+		}
+		order[i]->ax = x;
+		order[i]->ay = y;
+		x += order[i]->w;
+		if (order[i]->h > row)
+			row = order[i]->h;
+	}
+	return y + row;
+}
+
+static void view_atlas(model_src *ms)
+{
+	const model_spec *sp = ms->sp;
+	const mdl_t *m = &ms->vmesh;
+	int n = m->ntris, sw = m->skinw, sh = m->skinh, hw = (sw + 1) / 2, hh = (sh + 1) / 2;
+
+	/* the skin, Quake's and half, the texels shown and their spread */
+	uint8_t *cover = skin_cover(m);
+	uint8_t *full = xmalloc((size_t) sw * sh), *half = xmalloc((size_t) hw * hh);
+	skin_reduce(m, cover, 1, full);
+	skin_reduce(m, cover, 2, half);
+	free(cover);
+
+	/* each triangle's resolution: Quake's where the screen spreads it */
+	uint8_t *res = xmalloc((size_t) n);
+	for (int t = 0; t < n; t++) {
+		double st[3][2];
+		for (int k = 0; k < 3; k++)
+			tri_stf(m, t, k, st[k]);
+		double ua = fabs((st[1][0] - st[0][0]) * (st[2][1] - st[0][1]) -
+		                 (st[2][0] - st[0][0]) * (st[1][1] - st[0][1])) / 2;
+		int spread = 0;
+		for (int f = 0; f < m->nframes && !spread && gun_tex >= QL_HIGH; f++) {
+			double sx[3], sy[3];
+			for (int k = 0; k < 3; k++) {
+				double p[3];
+				vpos(m, f, m->tris[t][k + 1], p);
+				if (p[0] < VO_NEAR)
+					spread = 1;                  /* the gun's near end */
+				sx[k] = VO_CX - VO_PROJ * p[1] / (p[0] > 0.1 ? p[0] : 0.1);
+				sy[k] = VO_CY - VO_PROJ * (p[2] + VO_UP) / (p[0] > 0.1 ? p[0] : 0.1);
+			}
+			double sa = fabs((sx[1] - sx[0]) * (sy[2] - sy[0]) - (sx[2] - sx[0]) * (sy[1] - sy[0])) / 2;
+			if (sa > ua)
+				spread = 1;
+		}
+		res[t] = spread ? 1 : 2;
+	}
+
+	/* charts: triangles of one resolution sharing an edge and its texels */
+	int *parent = xmalloc((size_t) n * sizeof *parent);
+	for (int t = 0; t < n; t++)
+		parent[t] = t;
+	for (int a = 0; a < n; a++)
+		for (int b = a + 1; b < n; b++) {
+			if (res[a] != res[b] || uf_find(parent, a) == uf_find(parent, b))
+				continue;
+			int same = 0;
+			for (int i = 0; i < 3; i++)
+				for (int j = 0; j < 3; j++) {
+					if (m->tris[a][i + 1] != m->tris[b][j + 1])
+						continue;
+					double sa[2], sb[2];
+					tri_stf(m, a, i, sa);
+					tri_stf(m, b, j, sb);
+					same += fabs(sa[0] - sb[0]) < 1e-6 && fabs(sa[1] - sb[1]) < 1e-6;
+				}
+			if (same >= 2)
+				parent[uf_find(parent, a)] = uf_find(parent, b);
+		}
+	chart_t *charts = xcalloc((size_t) n, sizeof *charts);
+	int *chart_of = xmalloc((size_t) n * sizeof *chart_of), nc = 0;
+	for (int t = 0; t < n; t++)
+		chart_of[t] = -1;
+	ms->vuv = xmalloc((size_t) n * sizeof *ms->vuv);
+	for (int t = 0; t < n; t++) {
+		int r = uf_find(parent, t);
+		if (chart_of[r] < 0) {
+			chart_of[r] = nc;
+			charts[nc].div = res[t];
+			charts[nc].x0 = charts[nc].y0 = 1 << 30;
+			charts[nc].w = charts[nc].h = -(1 << 30);   /* (the max corner, until boxed) */
+			nc++;
+		}
+		chart_t *c = &charts[chart_of[r]];
+		for (int k = 0; k < 3; k++) {            /* its texel at the chart's resolution,
+			                                        a quarter down (cook_mdl's rounding) */
+			double st[2];
+			tri_stf(m, t, k, st);
+			int u = (int) floor(st[0] / c->div + 0.25), v = (int) floor(st[1] / c->div + 0.25);
+			ms->vuv[t][k][0] = u;
+			ms->vuv[t][k][1] = v;
+			if (u < c->x0) c->x0 = u;
+			if (v < c->y0) c->y0 = v;
+			if (u > c->w) c->w = u;
+			if (v > c->h) c->h = v;
+		}
+	}
+	long texels[3] = { 0, 0, 0 };
+	for (int i = 0; i < nc; i++) {               /* the boxes, the skin around them */
+		chart_t *c = &charts[i];
+		c->x0 -= ATLAS_B;
+		c->y0 -= ATLAS_B;
+		c->w = c->w + ATLAS_B - c->x0 + 1;
+		c->h = c->h + ATLAS_B - c->y0 + 1;
+		texels[c->div] += (long) c->w * c->h;
+	}
+
+	/* the shelves' width with the least area */
+	chart_t **order = xmalloc((size_t) nc * sizeof *order);
+	int wmin = 2;
+	for (int i = 0; i < nc; i++) {
+		order[i] = &charts[i];
+		if (charts[i].w > wmin) wmin = charts[i].w;
+	}
+	if (wmin > PT)
+		die("%s: a chart %d texels wide", sp->file, wmin);
+	qsort(order, (size_t) nc, sizeof *order, by_chart_h);
+	int bw = -1;
+	long barea = 1L << 40;
+	for (int w = wmin; w <= PT; w += 2) {
+		int h = atlas_shelves(order, nc, w);
+		if (h <= PT && (long) w * h < barea) {
+			barea = (long) w * h;
+			bw = w;
+		}
+	}
+	if (bw < 0)
+		die("%s: its atlas does not fit a texture page", sp->file);
+	int bh = atlas_shelves(order, nc, bw);
+
+	/* the atlas's texels and each corner's place in it */
+	ms->im = add_image(sp->file, bw, bh, 0);
+	for (int i = 0; i < nc; i++) {
+		const chart_t *c = &charts[i];
+		int cw = c->div == 1 ? sw : hw, ch = c->div == 1 ? sh : hh;
+		const uint8_t *src = c->div == 1 ? full : half;
+		for (int y = 0; y < c->h; y++)
+			for (int x = 0; x < c->w; x++) {
+				int sx = c->x0 + x, sy = c->y0 + y;
+				sx = sx < 0 ? 0 : sx >= cw ? cw - 1 : sx;
+				sy = sy < 0 ? 0 : sy >= ch ? ch - 1 : sy;
+				ms->im->px[(size_t) (c->ay + y) * bw + c->ax + x] = src[(size_t) sy * cw + sx];
+			}
+	}
+	for (int t = 0; t < n; t++) {
+		const chart_t *c = &charts[chart_of[uf_find(parent, t)]];
+		for (int k = 0; k < 3; k++) {
+			ms->vuv[t][k][0] += c->ax - c->x0;
+			ms->vuv[t][k][1] += c->ay - c->y0;
+		}
+	}
+	printf("qcook: %s skin atlas %dx%d (%ld texels; the skin %dx%d): %d charts, %ld texels of Quake's, %ld of half%s\n",
+	       sp->file, bw, bh, (long) bw * bh, sw, sh, nc, texels[1], texels[2],
+	       gun_tex >= QL_HIGH ? "" : " (textures medium)");
+	free(full);
+	free(half);
+	free(res);
+	free(parent);
+	free(charts);
+	free(chart_of);
+	free(order);
+}
+
+static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
+{
+	const model_spec *sp = ms->sp;
+	mdl_t *m = &ms->mdl;
+	const image *im = ms->im;
+	out->tex.tpage  = page_tpage(im->page);
+	out->tex.window = 0xE2000000u;
+
+	double wind = mdl_wind(m);                     /* (the records wind as the world: the
+	                                                  renderer leaves out a model's
+	                                                  triangles turned away, r_world.s) */
+	int dropped_near = 0, dropped_back = 0, full_tris = m->ntris;
+	if (sp->view) {                                /* a gun: as view_mesh made it */
+		m = &ms->vmesh;
+		dropped_near = ms->vnear;
+		dropped_back = ms->vback;
+		full_tris    = ms->vtris;
+	}
+	uint8_t *keep = xmalloc((size_t) m->ntris + 1);
+	memset(keep, 1, (size_t) m->ntris + 1);
 
 	/* the model level: the triangles kept, reduced (they all stay) */
 	mdl_t reduced;
 	int (*reduced_tris)[4] = reduce_mdl(m, sp, keep, model_level, &reduced);
-	int full_tris = m->ntris;
 	if (reduced_tris) {
 		m = &reduced;
 		free(keep);
@@ -1042,8 +1742,37 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 	uint8_t *done = xcalloc((size_t) m->ntris, 1);
 	size_t rec_start = geo->len;
 	view_records = sp->view;
+	FILE *gd = NULL;                               /* (QCOOK_GUNDUMP=<dir>: a view model's
+	                                                  triangles as drawn, for a look) */
+	if (sp->view && getenv("QCOOK_GUNDUMP")) {
+		char path[512];
+		const char *base = strrchr(sp->file, '/');
+		snprintf(path, sizeof path, "%s/%s.gun", getenv("QCOOK_GUNDUMP"), base ? base + 1 : sp->file);
+		gd = fopen(path, "w");
+		if (gd) {
+			fprintf(gd, "skin %d %d %d %d div %d full %d %d\n", im->u, im->v, im->w, im->h, sp->skin_div,
+			        m->skinw, m->skinh);
+			for (int y = 0; y < im->h; y++) {
+				fprintf(gd, "px");
+				for (int x = 0; x < im->w; x++)
+					fprintf(gd, " %d", im->px[(size_t) y * im->w + x]);
+				fprintf(gd, "\n");
+			}
+			for (int f = 0; f < m->nframes; f++)
+				for (int i = 0; i < m->nverts; i++) {
+					double p[3];
+					vpos(m, f, i, p);
+					fprintf(gd, "v %d %d %.4f %.4f %.4f %d\n", f, i, p[0], p[1], p[2], m->frames[f][i].n);
+				}
+		}
+	}
 	nslots = 0;
-	int nrec = 0, left = 0, scan = 0;
+	slot_of = xmalloc((size_t) m->nverts * sizeof *slot_of);
+	for (int i = 0; i < m->nverts; i++)
+		slot_of[i] = -1;
+	int nrec = 0, left = 0, scan = 0, order_cycles = 0;
+	double order_left = 0;
+	double *net = sp->view ? view_order(m, sp, wind, keep) : NULL;
 	for (int t = 0; t < m->ntris; t++) {
 		done[t] = !keep[t];
 		left += keep[t];
@@ -1054,18 +1783,50 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 	while (left) {
 		while (done[ord[scan].tri]) scan++;
 		int best = -1, best_shared = -1;
-		for (int o = scan, seen = 0; o < m->ntris && seen < WINDOW; o++) {
-			int t = ord[o].tri;
-			if (done[t]) continue;
-			seen++;
-			int shared = 0, newv = 0;
-			for (int k = 1; k < 4; k++)
-				if (rec_has(&r, m->tris[t][k])) shared++;
-				else newv++;
-			if (r.nv + newv > QW_MAX_VERTS) continue;
-			if (shared > best_shared) { best_shared = shared; best = t; }
-			if (!r.nt) break;             /* an empty record: take the first */
-		}
+		if (net) {
+			/* a view model: of the triangles every one in front of which is
+			   written, the one sharing the most vertices with the record (the
+			   nearest first); none (the frames' votes make a cycle): the one
+			   whose turn breaks the least say */
+			int ready = 0, cyc = -1;
+			double cyc_cost = 0;
+			for (int o = scan; o < m->ntris; o++) {
+				int t = ord[o].tri;
+				if (done[t]) continue;
+				double cost = 0;
+				for (int i = 0; i < m->ntris; i++)
+					if (!done[i])
+						cost += net[(size_t) i * m->ntris + t];
+				int shared = 0, newv = 0;
+				for (int k = 1; k < 4; k++)
+					if (rec_has(&r, m->tris[t][k])) shared++;
+					else newv++;
+				int fits = r.nv + newv <= QW_MAX_VERTS;
+				if (cost > 0) {
+					if (fits && (cyc < 0 || cost < cyc_cost)) { cyc = t; cyc_cost = cost; }
+					continue;
+				}
+				ready++;
+				if (fits && shared > best_shared) { best_shared = shared; best = t; }
+			}
+			if (best < 0 && !ready && cyc >= 0) {
+				best = cyc;
+				order_left += cyc_cost;
+				order_cycles++;
+			}
+		} else
+			for (int o = scan, seen = 0; o < m->ntris && seen < WINDOW; o++) {
+				int t = ord[o].tri;
+				if (done[t]) continue;
+				seen++;
+				int shared = 0, newv = 0;
+				for (int k = 1; k < 4; k++)
+					if (rec_has(&r, m->tris[t][k])) shared++;
+					else newv++;
+				if (r.nv + newv > QW_MAX_VERTS) continue;
+				if (shared > best_shared) { best_shared = shared; best = t; }
+				if (!r.nt) break;             /* an empty record: take the first */
+			}
 		if (best < 0 || r.nt >= REC_MAX_TRIS) {
 			mrec_flush(geo, &r, m, sp->scale, &nrec);
 			continue;
@@ -1080,20 +1841,43 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 		memset(tri, 0, sizeof *tri);
 		for (int k = 0; k < 3; k++) {
 			int vi = m->tris[t][k + 1];
-			int ss = m->st[vi][1], tt = m->st[vi][2];
+			double ss = m->stf ? m->stf[vi][0] : m->st[vi][1], tt = m->stf ? m->stf[vi][1] : m->st[vi][2];
 			if (!m->tris[t][0] && m->st[vi][0])          /* back face: onseam */
 				ss += m->skinw / 2;
-			/* the reduced skin's texel holding Quake's texel (s, t) */
-			long u = im->u + ss / sp->skin_div, v = im->v + tt / sp->skin_div;
+			/* the reduced skin's texel holding Quake's texel (s, t) (a cut's
+			   middle: the nearest, a quarter of a texel down, as the
+			   texels' own come: s / skin_div truncated) */
+			long u = im->u + (long) floor(ss / sp->skin_div + 0.25),
+			     v = im->v + (long) floor(tt / sp->skin_div + 0.25);
+			if (sp->view) {                        /* a gun: its corner in its atlas */
+				u = im->u + ms->vuv[t][k][0];
+				v = im->v + ms->vuv[t][k][1];
+			}
 			if (u < im->u) u = im->u;
 			if (u > im->u + im->w - 1) u = im->u + im->w - 1;
 			if (v < im->v) v = im->v;
 			if (v > im->v + im->h - 1) v = im->v + im->h - 1;
-			tri->idx[k] = (uint8_t) (s[k] * 4);
-			tri->uv[k]  = (uint16_t) (u | v << 8);
+			int at = wind < 0 && k ? 3 - k : k;        /* (the world's winding) */
+			tri->idx[at] = (uint8_t) (s[k] * 4);
+			tri->uv[at]  = (uint16_t) (u | v << 8);
+		}
+		if (gd) {                                  /* (in the order drawn: nearest first) */
+			fprintf(gd, "t %d %d", t, m->tris[t][0]);
+			for (int k = 0; k < 3; k++) {
+				int vi = m->tris[t][k + 1];
+				double ss = (m->stf ? m->stf[vi][0] : m->st[vi][1]) + (!m->tris[t][0] && m->st[vi][0] ? m->skinw / 2 : 0);
+				double tt = m->stf ? m->stf[vi][1] : m->st[vi][2];
+				fprintf(gd, "  %d %d %d %.2f %.2f", vi, tri->uv[k] & 0xff, tri->uv[k] >> 8, ss, tt);
+			}
+			fprintf(gd, "\n");
 		}
 	}
+	if (gd)
+		fclose(gd);
 	mrec_flush(geo, &r, m, sp->scale, &nrec);
+	free(slot_of);
+	slot_of = NULL;
+	free(net);
 	free(ord);
 	free(done);
 	out->ofs_records = (uint32_t) rec_start;
@@ -1101,31 +1885,55 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 	out->num_records = (uint16_t) nrec;
 	out->num_verts   = (uint16_t) nslots;
 
-	/* frames: the pools */
+	/* frames: the pools (a view model's Quake's own vertex words, its steps
+	   and origin before them: formats/qgame.h qg_view) */
 	galign(geo, 4);
+	if (sp->view) {
+		qg_view qv;
+		for (int k = 0; k < 3; k++) {
+			if (sp->scale[k] != 1)
+				die("%s: a view model scaled", sp->file);
+			qv.step[k]   = (int32_t) lround(m->scale[k] * QW_VSCALE / QG_VIEW_SUB * 65536.0);
+			qv.origin[k] = (int32_t) lround(m->origin[k] * QW_VSCALE * 65536.0);
+		}
+		gput(geo, &qv, sizeof qv);
+	}
 	out->ofs_frames  = (uint32_t) geo->len;
 	out->num_frames  = (uint16_t) m->nframes;
 	double rad = 0;
 	for (int f = 0; f < m->nframes; f++)
 		for (int s = 0; s < nslots; s++) {
-			qw_vert v;
 			int16_t p[3];
 			mdl_vertex(m, f, slots[s], sp->scale, p);
-			v.x = p[0]; v.y = p[1]; v.z = p[2];
 			int n = m->frames[f][slots[s]].n;
 			if (n >= QG_NORMALS) n = 0;
-			v.pad = (int16_t) n;
-			gput(geo, &v, sizeof v);
+			if (sp->view) {                      /* x | z << 8 | y << 16 | normal << 24 */
+				uint32_t w = (uint32_t) n << 24;
+				for (int k = 0; k < 3; k++) {
+					long b = lround(vstep(m, f, slots[s], k));   /* (a middle: the nearest) */
+					w |= (uint32_t) (b < 0 ? 0 : b > 255 ? 255 : b) << (k == 0 ? 0 : k == 1 ? 16 : 8);
+				}
+				gput(geo, &w, sizeof w);
+			} else {
+				qw_vert v;
+				v.x = p[0]; v.y = p[1]; v.z = p[2];
+				v.pad = (int16_t) n;
+				gput(geo, &v, sizeof v);
+			}
 			double d = sqrt((double) p[0] * p[0] + (double) p[1] * p[1] + (double) p[2] * p[2]);
 			if (d > rad) rad = d;
 		}
+	if (sp->view && nslots > QG_VIEW_VERTS)
+		die("%s: %d vertices, the engine's pool for a view model holds %d", sp->file, nslots, QG_VIEW_VERTS);
 	out->radius = (uint16_t) (rad > 65000 ? 65000 : ceil(rad));
-	out->flags  = (uint16_t) (sp->flat ? QGF_FLAT : 0);
+	out->flags  = (uint16_t) ((sp->flat ? QGF_FLAT : 0) | (sp->view ? QGF_VIEW : 0));
 	printf("qcook: %-20s %3d frames %4d tris (%d behind the eye, %d back-facing dropped) -> %3d records, %4d slots (%d verts), skin %dx%d, %u B",
 	       sp->file, m->nframes, full_tris, dropped_near, dropped_back, nrec, nslots, m->nverts, im->w, im->h,
 	       (unsigned) (geo->len - rec_start));
 	if (reduced_tris)
 		printf("; %s: %d of %d tris", level_name[model_level], decim_left, decim_tris);
+	if (sp->view)
+		printf("; order: %d cycles broken (%.0f px2 of overlap out of order)", order_cycles, order_left);
 	printf("\n");
 	free(reduced_tris);
 }
@@ -1762,6 +2570,10 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	if (shift > 7)
 		die("%s: scale too large for the compact format", q->file);
 
+	/* the records wind as the world's faces (the renderer leaves out a
+	   model's triangles turned away from the eye, r_world.s) */
+	int swap = mdl_wind(m) < 0;
+
 	/* the halves: each triangle's s within one (Quake's skins: the front
 	   on the left, the back on the right), else one image */
 	int half = m->skinw / 2, two = 1;
@@ -1887,8 +2699,9 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 				if (u < x0) u = x0;
 				if (u > x1 - 1) u = x1 - 1;
 				if (v > im->h - 1) v = im->h - 1;
-				tri->idx[k] = (uint8_t) (s[k] * 4);
-				tri->uv[k]  = (uint16_t) ((u - x0 + im->border) | (v + im->border) << 8);
+				int at = swap && k ? 3 - k : k;
+				tri->idx[at] = (uint8_t) (s[k] * 4);
+				tri->uv[at]  = (uint16_t) ((u - x0 + im->border) | (v + im->border) << 8);
 			}
 		}
 	}
@@ -2740,9 +3553,11 @@ int cmd_game(int argc, char **argv)
 	for (int i = 2; i < argc - 1; i++) {
 		if (!strcmp(argv[i], "--pak")) pak_path = argv[i + 1];
 		if (!strcmp(argv[i], "--out")) out_path = argv[i + 1];
+		if (!strcmp(argv[i], "--textures"))      /* the guns' skins (view_atlas) */
+			gun_tex = level_find(argv[i + 1], QL_TEXTURE_MASK, "textures");
 	}
 	if (!pak_path || !out_path)
-		die("usage: qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<level>.dat)");
+		die("usage: qcook game --pak <pak0.pak> [--textures medium|high] --out <prefix>   (<prefix>_<level>.dat)");
 
 	long pak_len;
 	uint8_t *pak = read_file(pak_path, &pak_len);

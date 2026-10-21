@@ -11,6 +11,7 @@
 #include "settings.h"
 
 gdata_t gdata;
+qw_vert *gd_view_pool;
 
 
 /* GAME_<level>.DAT into the level arena (a staging area), checked */
@@ -53,12 +54,19 @@ int gdata_load(int level)
 	uint32_t tables = (uint32_t) (QGM_COUNT * sizeof(qg_model) + QGP_COUNT * sizeof(qg_pic) +
 	                              QG_LIGHT_YAWS * QG_NORMALS + 256 * 4 + QGA_COUNT * sizeof(qg_aux));
 	uint32_t wtab = Q1PSX_WEAPON_2D ? QG_WEAPONS * sizeof(qg_wsprite) + h->num_wframes * sizeof(qg_wframe) : 0;
+	uint32_t view = 0;                            /* the largest view model's pool */
+	for (int i = 0; i < QGM_COUNT; i++) {
+		const qg_model *m = (const qg_model *) (f + h->ofs_models) + i;
+		if ((m->flags & QGF_VIEW) && m->num_verts > view)
+			view = m->num_verts;
+	}
 	uint8_t *t = mem_game_alloc(tables);
 	uint8_t *g = mem_game_alloc(h->len_geo);
 	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
 	uint8_t *wt = wtab ? mem_game_alloc(wtab) : 0;
 	uint8_t *fr = h->num_free ? mem_game_alloc(h->num_free * sizeof(qg_free)) : 0;
-	if (!t || !g || (h->len_finales && !fin) || (wtab && !wt) || (h->num_free && !fr)) {
+	gd_view_pool = view ? mem_game_alloc(view * sizeof(qw_vert)) : 0;
+	if (!t || !g || (h->len_finales && !fin) || (wtab && !wt) || (h->num_free && !fr) || (view && !gd_view_pool)) {
 		mem_level_release(mark);
 		return 0;
 	}

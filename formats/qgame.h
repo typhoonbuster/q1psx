@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked game data "QGM8": the models, sprites and HUD pictures the
+ * q1psx — cooked game data "QGM9": the models, sprites and HUD pictures the
  * engine needs on every map. Written by `qcook game`, one file per model
  * level (GAME_<n>.DAT on the disc, formats/qlevels.h: the models'
  * triangles differ, the pictures and skins do not), loaded at boot by
@@ -10,8 +10,10 @@
  *   (formats/qworld.h: qw_record + vertex indices + light bytes + quads /
  *   tris), so the renderer draws it with the world's own record loop, and
  *   one vertex pool per frame (qw_vert[num_verts], vertex units = world x 4,
- *   the vertex's light-normal index in the first spare byte). A record's
- *   indices point into whichever frame's pool the engine selects. The light
+ *   the vertex's light-normal index in the first spare byte; a view model,
+ *   QGF_VIEW, keeps Quake's own vertex words: qg_view). A record's indices point into
+ *   whichever frame's pool the engine selects; the records share the pool's
+ *   entries. The light
  *   bytes in the stream are placeholders the engine fills per draw (the
  *   stream must live in RAM). Record face ids are 0: the engine makes them
  *   pass its visibility stamp. Skins are in the palette, at half resolution
@@ -47,7 +49,8 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM8"   /* (QGM7 until §47: a frame's whole texels, a chain each) */
+#define QGAME_MAGIC "QGM9"   /* (QGM8 until §53: the view models in vertex units;
+                                QGM7 until §47: a frame's whole texels, a chain each) */
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
@@ -76,6 +79,25 @@ enum {
                                     section): its geometry in the map's block,
                                     its textures among the map's               */
 #define QGF_ROTATE   8           /* EF_ROTATE: the pickups turn, 100 deg / s   */
+#define QGF_VIEW    16           /* a view model: its frames Quake's own vertex
+                                    words, expanded by the engine (qg_view)    */
+
+/* A view model's frames are Quake's own vertex words (trivertx_t: x | z << 8
+   | y << 16 | the light normal << 24, the streamed models' layout,
+   formats/qstream.h; the cook's middles the nearest step), not pools: the
+   engine expands the frame it draws (engine/mdl_expand.s, x, y, z shifted
+   by 2: QG_VIEW_SUB) into a pool of its own, at most QG_VIEW_VERTS
+   vertices (docs/porting-notes.md §53). Vertex units, a quarter of a
+   world unit, are up to 18 times coarser than the guns' steps across (the
+   shotgun's 0.014 units): up to 9 px at the eye's 5 units. This header,
+   right before the frames (at ofs_frames - 24), gives what the engine
+   folds into the gun's matrix (engine/rlist.c rl_view_gun). */
+#define QG_VIEW_SUB   4
+#define QG_VIEW_VERTS 256
+typedef struct {
+	int32_t step[3];             /* vertex units per pool unit, x 65536          */
+	int32_t origin[3];           /* the pool's 0 in the model, vertex units x 65536 */
+} qg_view;
 
 typedef struct {
 	uint16_t id;                 /* QGM_* (a map's model: QIM_*)                 */

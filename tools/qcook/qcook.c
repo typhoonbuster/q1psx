@@ -6,7 +6,8 @@
  *               [--geometry high --world <out.wld>] [--sounds <out.snd>]
  *               [--models high --mdl <out.mdl>]   (tools/qcook/sound.c, items.c)
  *   qcook check <file.wld>
- *   qcook game  --pak <pak0.pak> --out <prefix>      (tools/qcook/game.c)
+ *   qcook game  --pak <pak0.pak> [--textures medium|high] --out <prefix>
+ *                                                   (tools/qcook/game.c)
  *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
  *                                                     (tools/qcook/stream.c)
  *
@@ -441,7 +442,7 @@ int main(int argc, char **argv)
 	        "            [--geometry low|high|ultra --world <out.wld>] [--sounds <out.snd>]\n"
 	        "            [--models low|medium|high --mdl <out.mdl>]\n"
 	        "  qcook check <file.wld>\n"
-	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n"
+	        "  qcook game --pak <pak0.pak> [--textures medium|high] --out <prefix>   (<prefix>_<n>.dat per model level)\n"
 	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
 	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n");

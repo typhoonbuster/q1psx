@@ -42,11 +42,13 @@
                                           the game arena gave goes to what follows
                                           the world (the stream's pool, the 2D
                                           gun's packets), not to a larger world */
-#define MEM_GAME_BYTES  (115 * 1024)   /* (the boot's tables: 114 KB, "mem: game
-                                          arena" at boot, the XA music's carousel
-                                          header included; 224 KB while it held the 2D
-                                          gun's packets, now lent by the stream's pool
-                                          when that gun is chosen) */
+#define MEM_GAME_BYTES  (100 * 1024)   /* (the boot's tables: 97 KB, "mem: game
+                                          arena" at boot; 115 KB until §53, the guns'
+                                          frames then Quake's own vertex words: 13 KB
+                                          left the arena, to the stack's gap for now;
+                                          224 KB while it held the 2D gun's packets,
+                                          now lent by the stream's pool when that gun
+                                          is chosen) */
 
 void     mem_level_reset(void);
 void    *mem_level_alloc(uint32_t bytes);      /* 16-byte aligned; NULL if full */

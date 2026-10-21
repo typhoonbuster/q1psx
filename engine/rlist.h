@@ -65,8 +65,8 @@ typedef struct {
 	uint32_t tex;        /* +44 qw_tex entry: the skin (RE_BMODEL: the map's table) */
 	uint32_t dots;       /* +48 light table (QG_NORMALS bytes) or 0: flat        */
 	uint32_t light;      /* +52 the leaf's light, 0..170 (x1.5 stays in a byte)  */
-	uint32_t flags;      /* +56 RE_VIEW: the view model: no warp subdivision (its
-	                             polygons are small), the near clip at 5 units;
+	uint32_t flags;      /* +56 RE_VIEW: the view model: no warp subdivision (the
+	                             cook cut it), the near clip at 5 units;
 	                             RE_BMODEL: a brush model: its subtree walked   */
 	int32_t  cam[3];     /* +60 RE_BMODEL: the camera in the model's space,
 	                             vertex units (the walk's plane tests)         */
@@ -99,9 +99,10 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
    way; NULL when it is not resident or the pool is full */
 r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pitch, int roll, int light);
 
-/* the view model: its x and y (screen) rows and translation x4, the
-   renderer's H / 4 (RE_VIEW: the GTE then projects down to 5 units) */
-void rl_view_model(r_ent_t *e);
+/* the view model (QGF_VIEW) at frame `frame`, the gun's angles (rl_model's
+   yaw and pitch), its origin `rel` from the camera's (world axes, vertex
+   units x 65536), lit by `light`; NULL when the pool is full */
+r_ent_t *rl_view_gun(const qg_model *m, int frame, int yaw, int pitch, const int32_t rel[3], int light);
 
 /* a brush model at `org` (1/R_POS_SUB units; its brushes are in world
    space, so a static one is at 0), unrotated; NULL when the pool is full */

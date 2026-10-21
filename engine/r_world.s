@@ -541,6 +541,83 @@
 	beqz    $a2, \q\()_tri_emit
 	addu    $t5, $t5, $t8
 	CAREFUL 0, \q\()_tri_far, \var, \q\()_tri_near
+.if \var
+# A model's triangle turned away from the eye (or edge-on) is left out, as
+# Quake's alias drawer does (d_polyse.c D_DrawNonSubdiv): the GTE's NCLIP on
+# its corners, the emit's loads and sums in its eight cycles; the cook
+# winds every model's triangles as the world's faces (tools/qcook/game.c:
+# front, MAC0 < 0; a brush model's faces, walked here, are front ones).
+# Until 2026-10-21 a model drew its back too, under or over its front by
+# the records' order alone (the super nailgun's turning barrels).
+.if \flat
+\q\()_tri_emit:                             # POLY_FT3
+	lw      $t6, SP_SXY($t3)             # xy0
+	lw      $t7, SP_SXY($t4)             # xy1
+	lw      $t9, SP_SXY($t5)             # xy2
+	mtc2    $t6, C2_SXY0
+	mtc2    $t7, C2_SXY1
+	mtc2    $t9, C2_SXY2
+	lw      $t0, SP_FT3COL($t8)          # (two instructions before the NCLIP)
+	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
+	NCLIP
+	lw      $t2, 8($a3)                  # uv2 | pad (0, see qw_tri)
+	andi    $t3, $t1, 0xffff
+	or      $t3, $t3, $v0                # uv0 | clut
+	srl     $t1, $t1, 16
+	or      $t1, $t1, $v1                # uv1 | tpage
+	lui     $t5, 0x0700
+	or      $t5, $t5, $fp                # tag: 7 words
+	mfc2    $t4, C2_MAC0
+	nop
+	bgez    $t4, \q\()_tri_next          # turned away: left out
+	sw      $t0, 4($s6)                  # (a packet not linked: harmless)
+	sw      $t6, 8($s6)
+	sw      $t3, 12($s6)
+	sw      $t7, 16($s6)
+	sw      $t1, 20($s6)
+	sw      $t9, 24($s6)
+	sw      $t2, 28($s6)
+	sw      $t5, 0($s6)
+	move    $fp, $s6
+	addiu   $s6, $s6, 32
+.else
+\q\()_tri_emit:                             # POLY_GT3
+	lw      $t6, SP_SXY($t3)             # xy0
+	lw      $t7, SP_SXY($t4)             # xy1
+	lw      $t9, SP_SXY($t5)             # xy2
+	mtc2    $t6, C2_SXY0
+	mtc2    $t7, C2_SXY1
+	mtc2    $t9, C2_SXY2
+	lw      $t0, SP_COL($t3)             # c0 (two instructions before the NCLIP)
+	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
+	NCLIP
+	lw      $t2, SP_COL($t4)             # c1
+	lw      $t5, SP_COL($t5)             # c2
+	lui     $t3, CODE_GT3 >> 16
+	or      $t0, $t0, $t3
+	andi    $t3, $t1, 0xffff
+	or      $t3, $t3, $v0                # uv0 | clut
+	srl     $t1, $t1, 16
+	mfc2    $t4, C2_MAC0
+	or      $t1, $t1, $v1                # uv1 | tpage
+	bgez    $t4, \q\()_tri_next          # turned away: left out
+	sw      $t0, 4($s6)                  # (a packet not linked: harmless)
+	lw      $t4, 8($a3)                  # uv2 | pad (0, see qw_tri)
+	sw      $t6, 8($s6)
+	sw      $t3, 12($s6)
+	sw      $t2, 16($s6)
+	sw      $t7, 20($s6)
+	sw      $t1, 24($s6)
+	sw      $t5, 28($s6)
+	sw      $t9, 32($s6)
+	sw      $t4, 36($s6)
+	lui     $t9, 0x0900
+	or      $t9, $t9, $fp                # tag: 9 words
+	sw      $t9, 0($s6)
+	move    $fp, $s6
+	addiu   $s6, $s6, 40
+.endif
+.else
 .if \flat
 \q\()_tri_emit:                             # POLY_FT3
 	lw      $t0, SP_FT3COL($t8)
@@ -595,6 +672,7 @@
 	sw      $t9, 0($s6)
 	move    $fp, $s6
 	addiu   $s6, $s6, 40
+.endif
 .endif
 \q\()_tri_next:
 	lw      $t0, POLY_SIZE($a3)          # the next one's (after the last: harmless)
@@ -785,7 +863,7 @@
 # leaving for `exit` when the block is done or the arena is full.
 # Instantiated for the world's face blocks (dr, back to the walk; var = 0:
 # the careful test's near bound is 96) and for a model's records (de,
-# draw_model; var = 1: the bound is SP_SZCLIP, the view model's 31). The
+# draw_model; var = 1: the bound is SP_SZCLIP, the view model's 124). The
 # comment above describes it. opt: the graphics options' copies, entered
 # instead while an option is on (render.c r_set_options patches the first
 # word of dr_records / de_records into a jump to dro<opt>_records /
@@ -2338,20 +2416,16 @@ dm_draw:                                 # kept for the farther world's records
 	li      $t7, -32768
 	andi    $t2, $t2, 1                  # RE_VIEW: the view model. Nothing
 	beqz    $t2, 1f                      # warps (k16 rho = -32768 rho is under
-	li      $t3, 31                      # any z - rho; T2 huge: no edge splits);
-	li      $t6, 0x7fff                  # its rear is behind the eye: the slow
-	sw      $t3, SP_SZFAST($t8)          # path clips at 5 world units (SZ 30,
-	sw      $t3, SP_SZCLIP($t8)          # Quake's ALIAS_Z_CLIP_PLANE). The GTE's
-	li      $t3, 30                      # divide holds down to SZ = H / 2: H is
-	sw      $t6, SP_T2($t8)              # 40 here, the matrix's x and y rows
-	sll     $t6, $t6, 1                  # are x4 (rlist.c), so the same screen
-	sw      $t3, SP_ZNEAR($t8)           # coordinates come out down to SZ 20
-	li      $t3, 40
-	sw      $t7, SP_K16($t8)
-	sw      $t6, SP_T4($t8)
-	ctc2    $t3, C2_H
-	li      $t3, 3
-	sw      $t3, SP_HSHIFT($t8)          # (H = 5 << 3)
+	li      $t3, 124                     # any z - rho; T2 huge: no edge splits:
+	li      $t6, 0x7fff                  # the cook cut it, tools/qcook/game.c
+	sw      $t3, SP_SZFAST($t8)          # tess_build); its rear is behind the
+	sw      $t3, SP_SZCLIP($t8)          # eye: the slow path clips at 5 world
+	li      $t3, 120                     # units (SZ 120, Quake's
+	sw      $t6, SP_T2($t8)              # ALIAS_Z_CLIP_PLANE: every row of its
+	sll     $t6, $t6, 1                  # matrix is x4, rlist.c rl_view_gun, so
+	sw      $t3, SP_ZNEAR($t8)           # the GTE's divide, which holds down
+	sw      $t7, SP_K16($t8)             # to SZ = H / 2 = 80, gives the screen
+	sw      $t6, SP_T4($t8)              # down to 3.3 units)
 1:
 .if R_PROFILE
 	lhu     $t9, TIMER2($t8)             # (the record loop's start time)
@@ -2378,10 +2452,6 @@ dm_exit_1:
 	sw      $t7, SP_SZCLIP($t8)
 	li      $t7, 48
 	sw      $t7, SP_ZNEAR($t8)
-	li      $t7, 160
-	ctc2    $t7, C2_H
-	li      $t7, 5
-	sw      $t7, SP_HSHIFT($t8)
 	sw      $t3, SP_SZFAST($t8)
 	sw      $t4, SP_K16($t8)
 	sw      $t6, SP_T2($t8)
