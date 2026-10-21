@@ -1493,3 +1493,25 @@ followed by R0-R4.
     first: 61 triangles drawn instead of 78, the same look.
   - **12 KB more for the streaming:** the code removed gave the stack
     14 KB, 12 of them back to the level arena (1249 KB).
+- **The guns' textures, case by case** (2026-10-21: faithful textures, the 2D gun as the reference). §53:
+  - **the order:** a gun's triangles drawn farthest first, as the eye
+    sees them in every frame (the nailgun's barrels no longer over its
+    blocks, the super shotgun's black notch gone, the rocket launcher's
+    muzzle hole back);
+  - **the back faces left out**, as Quake does, for every model (the
+    super nailgun's turning barrels; a monster's far side no longer shows
+    through): E1M1's busiest view 476 primitives fewer, -1.2 %;
+  - **Quake's own vertices** for the guns (they were on a quarter-unit
+    grid, up to 9 px off near the eye: the shotgun's barrel crooked);
+  - **the long triangles cut** where the PS1's flat texture mapping bent
+    the skin by over 8 px (the shotgun's barrel, the grenade launcher's
+    band);
+  - **the skins as atlases** of the texels shown: 91 K texels for the
+    eight guns instead of 100 K;
+  - the guns' geometry 47.8 KB instead of 62.3: 15 KB of RAM freed (to
+    the stack for now);
+  - a release bug found on the way: after the menu's music, New Game
+    could load START without its sounds (a CD read cut short); fixed.
+  - Left open: Quake's skin resolution near the eye needs about
+    130 K more texels of VRAM (the rocket launcher's highlight is still a
+    band).

@@ -6331,3 +6331,129 @@ lines):
     redesign);
   - every bench baseline changed (the low geometry and models, the 4-bit
     textures, T 4, the flat shading far, 1536 units).
+
+## §53 — The guns' textures, case by case (2026-10-21)
+
+- **The ask**, after the hand-made shotgun (§52): the 3D guns' textures less faithful than the 2D gun's: the shotgun's grey
+  middle part crooked, the super shotgun all wrong, the rocket launcher losing its muzzle's hole;
+  each gun to be looked at in turn, the guns staying 3D.
+- **How it was looked at:**
+  - PCSX-Redux in fast forward, the debug build (every gun given at the
+    spawn), a Lua script: START loaded, R1 through the eight guns, each
+    shot at rest; beside the cook's 2D renders (`QCOOK_WSDUMP`: the whole
+    model, Quake's skin, perspective-correct, depth-buffered), cropped and
+    magnified;
+  - `QCOOK_GUNDUMP=<dir>`: each gun's triangles as drawn (their order,
+    their corners in the atlas and in Quake's skin, their exact places in
+    every frame, the atlas's texels); a host render of them the PS1's way
+    (affine, the records' order) and with one fault taken out at a time
+    (perspective; a depth buffer; Quake's skin): which fault makes which
+    defect.
+- **The faults:**
+  - **The order.** No depth buffer: a view model's triangles go in their
+    records' order (the first written drawn last), nearest-first by their
+    centroid's distance in frame 0, then regrouped within 24 for shared
+    vertices. The nailgun's barrels came over its blocks, the super
+    shotgun's gap between the barrels over one (the black notch), the
+    rocket launcher's outside over its muzzle (the hole gone).
+  - **The back faces.** The renderer culled no model's triangle by its
+    winding (the cook dropped only a view model's never facing the eye):
+    a model's back went under or over its front by the order alone (the
+    super nailgun's turning barrels; a monster's far side through its
+    near one).
+  - **The vertices' grid.** The pools were in vertex units, a quarter of
+    a world unit; Quake's guns are much finer across (the shotgun's steps
+    0.014 units in y, 0.048 in z): up to 9 px off at the eye's 5 units
+    (0.5 to 2.2 px on average): the shotgun's barrel crooked.
+  - **The affine mapping.** The view model was drawn without the
+    subdivision (§22.3): a triangle deep along the view shows its far
+    texels too large (the shotgun's barrel bent, the grenade launcher's
+    band, the rocket launcher's rim smeared over its middle).
+  - **The half skins.** A line one of Quake's texels wide is two at half
+    resolution, then spread by the screen near the eye: the rocket
+    launcher's highlight a band over its middle. Not fixed (below). The
+    hand-made shotgun's half skin was averaged over the file's triangles'
+    texels only: its own triangles' others came from their neighbours
+    (grey smears on the receiver).
+- **The order** (tools/qcook/game.c `view_order`): in every frame, from
+  every place the eye takes (at rest; the bob's 0.4 ahead, -1.0 and +1.6
+  units; the full screen's gun 2 units lower), every two triangles whose
+  pictures overlap (clipped at 5 units) must come nearer first, by their
+  depths at the overlap's centroid; a pair's say is its overlap's area,
+  frame 0 four times, the eye at rest twice, a tenth between two turned
+  away. A triangle is written once every one in front of it is; of those,
+  the one sharing the most vertices with the record; none (the frames
+  disagree): the one whose turn breaks the least say. The super nailgun
+  breaks 219 such cycles (its barrels turn), the axe 27, the super
+  shotgun 42; the others none.
+- **The back faces** (engine/r_world.s, the model instance of `POLYS`): a
+  model's triangle is left out when the GTE's NCLIP of its corners is >=
+  0, the emit's loads and sums in the NCLIP's eight cycles, as Quake's
+  alias drawer (d_polyse.c `D_DrawNonSubdiv`). The cook winds every MDL
+  triangle as the world's faces (corners 0, 2, 1: Quake's 76 MDLs all
+  wind the other way, `mdl_wind`); the item boxes and the brush models
+  walked there are the world's already. The slow path (near or split
+  polygons) still draws a back face: the order above keeps them under.
+  E1M1's 12 views: 9 identical, 3 better (a back face showing through a
+  monster gone), 476 primitives fewer on the busiest (1970 -> 1494),
+  its frame -1.2 % (-15 k cycles; 0 to -1.2 % on the others).
+- **The vertices** (formats/qgame.h `QGF_VIEW`, `qg_view`; engine/rlist.c
+  `rl_view_gun`): a gun's frames are Quake's own vertex words (4 bytes a
+  vertex, the streamed models' layout, formats/qstream.h), expanded by
+  `mdl_expand_shift` (x4) into the game arena's pool for it when the
+  frame drawn changes; its matrix worked out in C from the camera's, the
+  products in 64 bits rounded once, its steps in the columns, every row
+  x4 (r_world.s's `RE_VIEW`: the near plane at SZ 120 and H 160, the
+  world's; until now H 40 and only x and y x4); its translation from the
+  camera directly (the bob's 0.4 ahead, the viewport's 2 units: no world
+  position rounded on the way). The records share the pool's entries
+  (one slot a vertex; until now one a record's vertex).
+- **The cut** (`tess_build`): a gun's edges halved where the affine
+  displacement at their middle, frame 0, the eye at rest, of their part
+  in front of the near plane, passes 8 px (the slow path's measure,
+  L |dz| / (2 (za + zb))), the triangles cut as the slow path cuts them,
+  their pieces again; the decision the edge's alone (no cracks); a middle
+  a vertex of its own in every frame (the ends' middle, the normal nearest
+  their normals' mean, the skin coordinates' mean; the pools' words round
+  it to Quake's step). The axe is not cut (its skin is even; at 8 px it
+  would take 461 triangles). The shotgun 61 -> 81 triangles, the super
+  shotgun 127 -> 133, the nailgun 105 -> 191, the super nailgun 166 ->
+  266, the grenade launcher 30 -> 80, the rocket launcher 65 -> 125, the
+  lightning gun 108 -> 201. (Every frame's error at 4 px instead: the
+  rocket launcher 613, the axe 2492.)
+- **The atlas** (`view_mesh`, `view_atlas`): a gun's mesh is made once,
+  before its image (the hand-made triangles, the cull, the cut), and its
+  image is an atlas of the texels it shows: the triangles sharing an edge
+  and its texels at one resolution make a chart, a chart's box with two
+  texels of the skin around it, in shelves the width of the least area.
+  Half resolution throughout: 91 K texels for the eight (the half skins
+  took 100 K, mostly Quake's unused fill); the game's pages leave the
+  stream 82 K texels (68 K before).
+- **Quake's resolution, measured, not on a disc** (`qcook game --textures
+  high`): Quake's texels where the screen spreads them, half elsewhere.
+  Even counting only the triangles showing over 4 px a texel at rest, the
+  atlases take 217 K texels, against the ~150 K the game's pages leave
+  beside the HUD and the projectiles; every frame's spread counted: 240 K
+  and more, an atlas wider than a page. It needs VRAM taken from the
+  stream's pool (pages 3-5 and the leftovers, 286 K texels at START), or
+  the drawn gun's atlas alone, read at a switch (the streaming's
+  redesign): a call left open.
+- **RAM:** the guns' geometry 47968 B (62264): the game arena 99 KB at
+  boot, 100 KB (115: 15 KB to the stack's gap for now, the release's room
+  33 KB; for the level arena, or kept: a call left open). The 2D build's
+  tables fit (100080 B).
+- **Cost** (the game bench, START, each gun fired; the base 4291417
+  built beside): the axe -1.3 %, the shotgun 0, the super shotgun +2.8 %
+  (near-clipped triangles through the slow path), the nailgun +0.1 %, the
+  super nailgun +2.0 %, the grenade launcher -0.4 %, the rocket launcher
+  +0.9 %; the lightning gun's scene diverged (its beam), not comparable.
+  The bench runs the game as frames take time: the gun's frame measured
+  differs a little between builds.
+- **The CD** (found on the way): `music_stop`'s and `stream_abort`'s cut
+  read is now followed by a waited pause (`CdControlB(CdlPause)`). With
+  `GAME_0.DAT` smaller, the release's New Game found no `START.SND` (the
+  drive's error 20h; the map's first read, the directory's, took one of
+  the menu music's refill's sectors), every time: a race the disc's layout
+  had hidden.
+- **Left:** the guns at Quake's resolution (above); the other seven guns
+  by hand.
