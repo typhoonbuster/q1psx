@@ -47,7 +47,8 @@
                                           tables; 115 KB until §53, the guns' frames
                                           then Quake's own vertex words, 100 KB until
                                           §54, their hidden triangles gone: 25 KB left
-                                          the arena, to the stack's gap for now; 224 KB
+                                          the arena, kept as the stack's margin (for
+                                          now); 224 KB
                                           while it held the 2D gun's packets, now lent
                                           by the stream's pool when that gun is
                                           chosen) */

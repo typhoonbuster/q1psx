@@ -6549,4 +6549,4 @@ lines):
   lightning gun's beam differs from one run to the other there).
 - **RAM:** the game arena at boot 87232 B (88288 with the 2D gun's
   tables): 100 -> 90 KB, the 10 KB to the stack's gap with §53's 15 (the
-  release's room 43.5 KB, left to assign).
+  release's room 43.5 KB). The 25 KB stay the stack's margin for now: the level arena stays 1249 KB.
