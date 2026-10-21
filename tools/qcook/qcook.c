@@ -339,8 +339,8 @@ static int cmd_map(int argc, char **argv)
 	const char *pak_path = arg(argc, argv, "--pak", NULL);
 	const char *map      = arg(argc, argv, "--map", NULL);
 	const char *tex_name = arg(argc, argv, "--textures", "high");
-	const char *geo_name = arg(argc, argv, "--geometry", "high");
-	const char *mdl_name = arg(argc, argv, "--models", "high");
+	const char *geo_name = arg(argc, argv, "--geometry", "low");
+	const char *mdl_name = arg(argc, argv, "--models", "low");
 	const char *out_tex  = arg(argc, argv, "--tex", NULL);
 	const char *out_tex4 = arg(argc, argv, "--tex4", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
@@ -348,8 +348,8 @@ static int cmd_map(int argc, char **argv)
 	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
 	const char *out_snd  = arg(argc, argv, "--sounds", NULL);
 	light_gain           = atof(arg(argc, argv, "--light-gain", "1.5"));
-	if (!pak_path || !map || (!out_tex && !out_wld && !out_mdl))
-		die("usage: qcook map --pak <pak> --map <name> [--textures l --tex <out> [--tex4 <out>]]"
+	if (!pak_path || !map || (!out_tex && !out_tex4 && !out_wld && !out_mdl))
+		die("usage: qcook map --pak <pak> --map <name> [--textures l [--tex <out>] [--tex4 <out>]]"
 		    " [--geometry l --world <out>] [--models l --mdl <out>] [--palette-pak <pak0>]");
 
 	int tex_level = level_find(tex_name, QL_TEXTURE_MASK, "texture");
@@ -385,7 +385,7 @@ static int cmd_map(int argc, char **argv)
 	items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, 0, &extra, &nextra);
 	tex_build(&canon, NULL, &bsp, extra, nextra, pal, QL_ULTRA, NULL, NULL, 1, 0);
 
-	if (out_tex) {
+	if (out_tex || out_tex4) {
 		printf("qcook: textures at %s\n", level_name[tex_level]);
 		/* the pages full: the models' textures squeezed level by level,
 		   then the same without the textures' animation (their frames and
@@ -431,8 +431,6 @@ int main(int argc, char **argv)
 		return cmd_bmf(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "menu"))
 		return cmd_menu(argc, argv);
-	if (argc >= 2 && !strcmp(argv[1], "carousel"))
-		return cmd_carousel(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "spumusic"))
 		return cmd_spumusic(argc, argv);
 
@@ -446,8 +444,6 @@ int main(int argc, char **argv)
 	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n"
 	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
-	        "  qcook carousel --pak <pak0.pak> [--pak1 <pak1.pak>] --pool <pool.dat> --music <dir>\n"
-	        "                 --track <n> --out <xa_nn.str> [--maps \"start e1m1 ...\"] [--needs <list.txt>]\n"
-	        "  qcook spumusic --music <dir> --track <n> --out <spu_nn.dat>\n");
+	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n");
 	return 2;
 }

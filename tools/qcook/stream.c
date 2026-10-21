@@ -141,9 +141,10 @@ static const struct { const char *file; int group; } MONSTER_SOUNDS[] = {
 #define NUM_MONSTER_SOUNDS (int) (sizeof MONSTER_SOUNDS / sizeof MONSTER_SOUNDS[0])
 #define MAX_WORLD_SOUNDS 96
 
-/* the outputs: STREAM_<level>.DAT for the three model levels, then the pool
-   of shared assets (formats/qstream.h qst_shared: the music's carousels',
-   tools/qcook/carousel.c) */
+/* the outputs: STREAM_<level>.DAT for the three model levels (the low one
+   alone written since docs/porting-notes.md §52), then the pool of shared
+   assets (formats/qstream.h qst_shared: the XA carousels' until §52,
+   written only when asked) */
 #define NOUT 4
 #define OUT_POOL 3
 
@@ -202,9 +203,9 @@ int cmd_stream(int argc, char **argv)
 		if (!strcmp(argv[i], "--out"))   out_prefix = argv[i + 1];
 		if (!strcmp(argv[i], "--pool"))  pool_path  = argv[i + 1];
 	}
-	if (!pak_path || !out_prefix || !pool_path)
-		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <prefix> --pool <pool.dat>   "
-		    "(<prefix>_<level>.dat per model level)");
+	if (!pak_path || !out_prefix)
+		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <prefix> [--pool <pool.dat>]   "
+		    "(<prefix>_0.dat: the low models, the one level of every disc since docs/porting-notes.md §52)");
 
 	long pak_len, pak1_len = 0;
 	uint8_t *pak = read_file(pak_path, &pak_len), *pak1 = pak1_path ? read_file(pak1_path, &pak1_len) : NULL;
@@ -296,13 +297,16 @@ int cmd_stream(int argc, char **argv)
 			if (ents[i].a.hash == ents[j].a.hash)
 				die("two assets with one hash (%08x)", ents[i].a.hash);
 	qsort(ents, (size_t) n, sizeof *ents, by_hash);
-	for (int o = 0; o < NOUT; o++) {
+	for (int o = 0; o < NOUT; o++) {          /* the low level's file (and the pool, asked) */
 		char path[512];
-		if (o == OUT_POOL)
+		if (o == OUT_POOL && pool_path)
 			snprintf(path, sizeof path, "%s", pool_path);
-		else
+		else if (o == QL_LOW)
 			snprintf(path, sizeof path, "%s_%d.dat", out_prefix, o);
-		write_out(path, o == OUT_POOL ? QSX_MAGIC : QSTREAM_MAGIC, ents, n, o, &data[o]);
+		else
+			path[0] = 0;
+		if (path[0])
+			write_out(path, o == OUT_POOL ? QSX_MAGIC : QSTREAM_MAGIC, ents, n, o, &data[o]);
 		free(data[o].p);
 	}
 	printf("qcook: streamed — %d assets, %d sounds (%zu KB)\n", n, nsnd, sound_bytes / 1024);
@@ -310,8 +314,8 @@ int cmd_stream(int argc, char **argv)
 	return 0;
 }
 
-/* The streamed assets a map's monsters bring (the music's carousels,
-   tools/qcook/carousel.c): each kind's group (its models, head,
+/* The streamed assets a map's monsters bring (the XA carousels' until
+   docs/porting-notes.md §52): each kind's group (its models, head,
    projectiles, sounds), the gibs and the backpack with any monster (the
    registered game's kinds are not streamed); their names */
 int stream_monster_needs(const ent_list *l, const char **list, int max)

@@ -102,28 +102,26 @@ void r_bind_world(void);
 /* Affine-warp control (docs/porting-notes.md §19.4). The subdivision's
    threshold T (px on screen) is one value per frame, so every edge's split
    decision stays the same on both sides whatever T a frame gets: no crack.
-     R_WARP_FIXED    T as chosen;
+     R_WARP_FIXED    T as chosen (the bench's);
      R_WARP_DYNAMIC  T rises for the next frames when a frame overruns its
                      NTSC frame (CPU time or a missed vblank), and falls back
-                     to the chosen T once frames have room again;
-     R_WARP_BUDGET   the same against a triangle budget per frame (Quake II
-                     PS1's idea: the screen gets a fixed number of
-                     triangles, the near walls take what the rest leaves). */
-enum { R_WARP_FIXED, R_WARP_DYNAMIC, R_WARP_BUDGET, R_WARP_MODES };
-#define R_WARP_T_MAX 32       /* px: the dynamic modes stop raising T there */
+                     to the chosen T, its floor, once frames have room again
+                     (the game's, from 4 px: engine/settings.h). */
+enum { R_WARP_FIXED, R_WARP_DYNAMIC, R_WARP_MODES };
+#define R_WARP_T_MAX 32       /* px: the dynamic mode stops raising T there */
 
 typedef struct {
 	int      mode;           /* R_WARP_*                                    */
 	int      t;              /* the chosen threshold, px                    */
-	int      budget;         /* R_WARP_BUDGET: triangles per frame          */
 	int      t_eff;          /* the threshold the next frame renders with   */
-	uint32_t tris;           /* the last frame's world triangles (estimate) */
+	uint32_t tris;           /* the last frame's world triangles (estimate:
+	                            the debug overlay's)                        */
 	int      calm;           /* frames in a row with room to spare          */
 } r_warp_t;
 
 extern r_warp_t r_warp;
 
-void r_set_warp(int mode, int t_px, int budget);
+void r_set_warp(int mode, int t_px);
 
 /* the last frame's walk ran out of packet arena (its farthest records,
    emitted last by the front-to-back walk, were not drawn) */

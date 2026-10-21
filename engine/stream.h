@@ -37,7 +37,6 @@
 
 #include "qstream.h"
 #include "qworld.h"
-#include "qxa.h"
 
 #define STREAM_PIN    0u            /* stream_want's score: always resident */
 /* A score is a tier + a distance: within a tier the nearest first, every
@@ -62,10 +61,6 @@
    the file of the model level (formats/qlevels.h: its models reduced at
    that level, tools/qcook/game.c stream_reduce) */
 void stream_init(int level);
-
-/* a map's load at another model level than the file read: that level's
-   directory (every asset back on the disc) */
-void stream_set_level(int level);
 
 /* an asset's index from its pak name ("progs/soldier.mdl") or its qs_hash,
    -1 if the disc has none; an asset's hash */
@@ -116,24 +111,14 @@ int  stream_is_sound(int a);
 
 /* The pool's end lent to a block read from the disc outside the assets
    (the 2D gun's packets, engine/game.c game_ws_sync): stream_lend asks for
-   `sectors` sectors at `lba` (given at a map's start before anything else
-   of the stream's, during the game from the pool's end, the assets wanted
-   least dropped; read in the stream's turn); stream_lent gives the block
-   once it is read (NULL before, and while the pool cannot spare it: asked
-   again at the next map's start) and the count of its reads (a new read,
-   maybe at the same place: its contents as on the disc again);
-   stream_unlend gives the room back (the GPU done with it first). The
-   block never moves. */
+   `sectors` sectors at `lba`, for every map from the next one's start (the
+   room given before anything else of the stream's, the block read with
+   the preload); stream_lent gives the block once it is read (NULL before,
+   and when the arena could not spare it) and the count of its reads (a
+   new read, maybe at the same place: its contents as on the disc again).
+   The block never moves. */
 void     stream_lend(int32_t lba, int sectors);
 uint8_t *stream_lent(uint32_t *reads);
-void     stream_unlend(void);
-
-/* The music's carousel (formats/qxa.h, engine/music.c): the playing XA
-   stream's header (0: none); its assets are captured as they pass, the
-   CD interrupt handing each data sector of the stream to
-   stream_xa_sector (i: its place in the stream) */
-void stream_carousel(const qxa_header *h);
-void stream_xa_sector(uint32_t i);
 
 /* the SPU music's (engine/music.c): the drive or the staging buffer busy
    with an asset's read; the staging buffer (STAGE_SECTORS of 2048 bytes:
@@ -156,9 +141,6 @@ typedef struct {
 	uint32_t evictions, failures;    /* assets dropped; placed nowhere     */
 	uint32_t halved;                 /* skins at their fallback (VRAM short) */
 	uint16_t resident, wanted;       /* assets, the last pass              */
-	uint16_t music_pauses;
-	uint32_t xa_captures;            /* assets taken from the music's carousel */
-	uint32_t xa_dropped;             /* its sectors the frames were too late for */
 } stream_stats_t;
 extern stream_stats_t stream_stats;
 extern int stream_log;               /* print the loads and evictions      */

@@ -63,37 +63,20 @@ static int      in_menu;        /* the map menu is up (normal build)   */
 static int      menu_sel;       /* the map highlighted in the menu      */
 static int      world_ok;
 static int      map_index;      /* into world_map_name(); R2 cycles it */
-static int      loaded[QL_AXES] = { -1, -1, -1, -1 };   /* the settings' levels of the
-                                   last load (a map too big for the arena
-                                   falls back to a lower geometry: world.level) */
 
 #ifdef Q1PSX_BENCH
 #ifndef Q1PSX_BENCH_T
-#define Q1PSX_BENCH_T    8    /* warp threshold the bench renders with, px */
-#endif
-#ifndef Q1PSX_BENCH_TEX4
-#define Q1PSX_BENCH_TEX4 0    /* 1: the 4-bit textures (TEX4=1 scripts/bench.sh) */
+#define Q1PSX_BENCH_T    SETTINGS_WARP_FLOOR   /* the warp threshold the bench renders with,
+                                                  fixed, px (T= scripts/bench.sh) */
 #endif
 #ifndef Q1PSX_BENCH_DRAWDIST
-#define Q1PSX_BENCH_DRAWDIST 0   /* the draw distance, world units (DRAWDIST=1024 scripts/bench.sh) */
+#define Q1PSX_BENCH_DRAWDIST Q1PSX_DRAWDIST    /* the draw distance (DRAWDIST= scripts/bench.sh) */
 #endif
 #ifndef Q1PSX_BENCH_FLAT
-#define Q1PSX_BENCH_FLAT 0       /* the flat shading, R_FLAT_* (FLAT=1 scripts/bench.sh) */
-#endif
-#ifndef Q1PSX_BENCH_TEXTURES
-#define Q1PSX_BENCH_TEXTURES 2   /* the levels the bench loads (formats/qlevels.h: */
-#endif
-#ifndef Q1PSX_BENCH_GEOMETRY
-#define Q1PSX_BENCH_GEOMETRY 2   /*   0 low .. 3 ultra; TEXTURES=, GEOMETRY=,      */
-#endif
-#ifndef Q1PSX_BENCH_MODELS
-#define Q1PSX_BENCH_MODELS 2     /*   MODELS=, EFFECTS= scripts/bench.sh)          */
+#define Q1PSX_BENCH_FLAT R_FLAT_FAR            /* the flat shading (FLAT= scripts/bench.sh) */
 #endif
 #ifndef Q1PSX_BENCH_EFFECTS
-#define Q1PSX_BENCH_EFFECTS 2
-#endif
-#ifndef Q1PSX_BENCH_VIEWMODEL
-#define Q1PSX_BENCH_VIEWMODEL 1  /* the gun: 0 none, 1 3D, 2 2D (VIEWMODEL=2 scripts/bench.sh) */
+#define Q1PSX_BENCH_EFFECTS QL_MEDIUM          /* the effects (EFFECTS= scripts/bench.sh) */
 #endif
 #endif
 
@@ -101,16 +84,12 @@ static int      loaded[QL_AXES] = { -1, -1, -1, -1 };   /* the settings' levels 
 static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
-	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T, 0);
+	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T);
 	vid_set_dither(1);
-	settings.tex4 = Q1PSX_BENCH_TEX4;
-	settings.level[QL_TEXTURES] = Q1PSX_BENCH_TEXTURES;
-	settings.level[QL_GEOMETRY] = Q1PSX_BENCH_GEOMETRY;
-	settings.level[QL_MODELS]   = Q1PSX_BENCH_MODELS;
-	settings.level[QL_EFFECTS]  = Q1PSX_BENCH_EFFECTS;
+	settings.level[QL_EFFECTS] = Q1PSX_BENCH_EFFECTS;
 	game_set_effects(Q1PSX_BENCH_EFFECTS);
 	r_set_options(Q1PSX_BENCH_DRAWDIST, Q1PSX_BENCH_FLAT);
-	game_draw_viewmodel = Q1PSX_BENCH_VIEWMODEL;
+	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 #else
 	settings_apply();
 #endif
@@ -367,21 +346,11 @@ static int load_level(int map)
 	music_stop();                               /* one drive: the reads need it */
 	ui_conback_forget();                        /* (the map's textures over it) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
-	gdata_set_models(settings.level[QL_MODELS]);
-	stream_set_level(settings.level[QL_MODELS]);   /* (its monsters, items at that level) */
-	int geo = settings.level[QL_GEOMETRY];
 	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
-	for (int g = geo; g >= 0 && !world_ok; g--)
-		if (settings_level_mask[QL_GEOMETRY] & 1 << g)
-			world_ok = world_load(map, settings.level[QL_TEXTURES], g, settings.level[QL_MODELS],
-			                      settings.tex4, LOAD_PROGRESS);
+	world_ok = world_load(map, settings.level[QL_TEXTURES], settings.level[QL_GEOMETRY],
+	                      settings.level[QL_MODELS], LOAD_PROGRESS);
 	mem_level_cap(MEM_LEVEL_BYTES);
-	for (int a = 0; a < QL_AXES; a++)
-		loaded[a] = settings.level[a];
 	if (world_ok) {
-		if (world.level[QL_GEOMETRY] != geo)
-			printf("level: %s does not fit at geometry %s, loaded at %s\n", world_map_name(map),
-			       level_name[geo], level_name[world.level[QL_GEOMETRY]]);
 		r_bind_world();
 		bmf_level();                            /* (the brush models' pieces: anew) */
 		ents_load();                            /* the map's entities */
@@ -406,17 +375,6 @@ static int load_level(int map)
 	}
 	printf("stack: %u bytes never reached\n", (unsigned) stack_untouched());
 	return world_ok;
-}
-
-/* the settings ask for other levels than the map was loaded at (or another
-   texture depth): its reload is due (none with no map: the next load takes
-   the settings as they are) */
-static int load_due(void)
-{
-	if (!world_ok)
-		return 0;
-	return settings.tex4 != world.tex4 || loaded[QL_TEXTURES] != settings.level[QL_TEXTURES] ||
-	       loaded[QL_GEOMETRY] != settings.level[QL_GEOMETRY] || loaded[QL_MODELS] != settings.level[QL_MODELS];
 }
 
 /* --------------------------------------------------------------- frame -- */
@@ -493,12 +451,11 @@ static void draw_overlay(void)
 #endif
 	snprintf(line + n, sizeof line - n,
 	         "%u B%s\n"
-	         "warp %s %dpx  T %d  ~%u tris%s%s\n"
+	         "warp T %d (from %d)  ~%u tris%s\n"
 	         "pos %d %d %d  sim %u  items %d\n"
 	         "pad %s type %d btn %04x%s",
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
-	         warp_mode_name[r_warp.mode], r_warp.t, r_warp.t_eff, (unsigned) r_warp.tris,
-	         world.tex4 ? "  4-bit" : "", settings.dither ? "" : "  no dither",
+	         r_warp.t_eff, r_warp.t, (unsigned) r_warp.tris, settings.dither ? "" : "  no dither",
 	         cam.pos[0] / CLIP_SUB, cam.pos[1] / CLIP_SUB, cam.pos[2] / CLIP_SUB,
 	         prof_stage[PROF_SIM], rl_num_items(),
 	         pad.connected ? "ok" : "--", pad.type, pad.held, sticks);
@@ -519,8 +476,6 @@ static void run_frame(int interactive, int dump)
 {
 	prof_frame_reset();
 	uint32_t t0 = prof_now();
-	if (world_ok && !menu_active())
-		game_ws_sync();                     /* (the 2D gun chosen or left: its packets) */
 	if (world_ok && game_active)
 		stream_frame();                     /* (between frames: the pools may move) */
 	if (interactive) {
@@ -658,15 +613,12 @@ static int opt_sel;
 static void opt_step(int d)
 {
 	settings_step(opt_sel, d);
-	apply_settings();   /* at once but the levels and the depth: at a load */
+	apply_settings();
 }
 
 static void opt_draw(void)
 {
-	static const char *const label[SET_ROWS] = {
-		"textures", "geometry", "models", "effects", "depth", "dither", "warp", "threshold", "budget",
-		"hud", "dlights", "weapon", "distance", "flat", "fps cap", "tick rate",
-	};
+	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "dlights", "fps cap", "tick rate" };
 	char line[48], val[16];
 	for (int o = 0; o < SET_ROWS; o++) {
 		settings_value(o, val, sizeof val);
@@ -684,7 +636,7 @@ static void opt_draw(void)
 
 /* One frame of the menu: d-pad picks a map, L2 / R2 an option and L1 / R1
    its value, Cross / START loads the map, Circle goes back to the loaded
-   one (reloading it if a level or the texture depth changed). */
+   one. */
 static void mapmenu_frame(void)
 {
 	hud_invalidate();                           /* (this menu draws over the whole screen) */
@@ -718,13 +670,8 @@ static void mapmenu_frame(void)
 	if (pad.pressed & PAD_R1)
 		opt_step(1);
 	if ((pad.pressed & PAD_CIRCLE) && world_ok) {
-		if (load_due())
-			load_level(map_index);               /* same map, same place */
-		if (world_ok) {
-			in_menu = 0;                         /* back to the loaded map */
-			return;
-		}
-		menu_msg = "could not reload that map";
+		in_menu = 0;                             /* back to the loaded map */
+		return;
 	}
 	if (n && (pad.pressed & (PAD_CROSS | PAD_START))) {
 		map_index = menu_sel;
@@ -1997,7 +1944,7 @@ static void bench_menu_key(uint16_t buttons, const char *dump)
 
 static void bench_menu(void)
 {
-	static const menu_hooks_t hooks = { 0, bench_yes, load_due };
+	static const menu_hooks_t hooks = { 0, bench_yes, 0 };
 	menu_init(&hooks);
 	menu_open();
 	menu_shown = 1;
@@ -2010,14 +1957,8 @@ static void bench_menu(void)
 	bench_menu_key(PAD_CROSS, "moptions");
 	bench_menu_key(PAD_UP, 0);                        /* (the greyed ones: to Graphics) */
 	bench_menu_key(PAD_CROSS, "mgraphics");
-	bench_menu_key(PAD_DOWN, 0);                      /* the map geometry */
-	bench_menu_key(PAD_RIGHT, "mgraphics_geo");       /* ultra: its hint, the next level's note */
-	bench_menu_key(PAD_LEFT, 0);                      /* (high again) */
-	for (int i = 0; i < 5; i++)
-		bench_menu_key(PAD_DOWN, 0);                  /* the warp control */
-	bench_menu_key(PAD_RIGHT, "mgraphics_dyn");       /* dynamic: the threshold a floor */
-	bench_menu_key(PAD_RIGHT, "mgraphics_budget");    /* budget: its budget live */
-	bench_menu_key(PAD_RIGHT, 0);                     /* back to fixed */
+	bench_menu_key(PAD_RIGHT, "mgraphics_fx");        /* the effects high: their hint */
+	bench_menu_key(PAD_LEFT, 0);                      /* (medium again) */
 	bench_menu_key(PAD_START, 0);                     /* out: options, main, the game */
 	bench_menu_key(PAD_START, 0);
 	bench_menu_key(PAD_START, 0);
@@ -2327,16 +2268,6 @@ static void mon_log(const char *what, const edict_t *e)
 		game_ents_cycles = game_ents_max = game_ents_ticks = 0;
 		ai_traces = 0;
 	}
-#if Q1PSX_MUSIC_XA
-	{
-		extern uint32_t music_irq_cycles, music_irq_n, stream_xa_cycles, stream_xa_frames;
-		if (music_irq_n && stream_xa_frames)
-			printf("xa cost: %u sectors' interrupts, avg %u cycles; carousel %u frames, avg %u cycles\n",
-			       (unsigned) music_irq_n, (unsigned) (music_irq_cycles / music_irq_n),
-			       (unsigned) stream_xa_frames, (unsigned) (stream_xa_cycles / stream_xa_frames));
-		music_irq_cycles = music_irq_n = stream_xa_cycles = stream_xa_frames = 0;
-	}
-#endif
 	printf("mon %s t %d state %d frame %d pos %d %d %d yaw %d ideal %d health %d enemy %d as %d "
 	       "flags %x | player health %d armor %d at %d %d %d | stream %d/%d in, %u reads, %u halved | "
 	       "model %s, want %u\n", what,
@@ -2797,7 +2728,7 @@ int main(void)
 		player_spawn();
 	run_bench();
 #elif Q1PSX_RELEASE
-	static const menu_hooks_t hooks = { release_new_game, release_started, load_due, release_no_world };
+	static const menu_hooks_t hooks = { release_new_game, release_started, release_no_world };
 	menu_init(&hooks);
 	game_active = 1;
 	release_title();                           /* (no map before New Game) */

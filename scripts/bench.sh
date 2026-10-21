@@ -3,18 +3,20 @@
 # Build the benchmark variant (CMake preset "bench" -> build-bench/) and run it
 # headless; print the "bench ..." lines.
 #
-# Usage:  [TEXTURES=0..3] [GEOMETRY=0|2|3] [MODELS=0..2] [EFFECTS=0..3] [T=px] [TEX4=0|1]
+# Usage:  [TEXTURES=high|medium] [EFFECTS=1|2] [T=px] [WEAPON=3d|2d]
 #         [VIEWS=0|1] [BENCH_MAPS=0|1] [BENCH_GAME=0|1] [PROFILE=0|1]
 #         scripts/bench.sh [max-seconds]
-#         TEXTURES, GEOMETRY, MODELS, EFFECTS pick the quality levels the
-#         bench loads and runs at (formats/qlevels.h: 0 low, 1 medium, 2 high,
-#         3 ultra; default 2, high, each).
-#         T is the affine-warp threshold, fixed (default 8 px, the game's).
-#         TEX4=1 loads the 4-bit textures.
-#         DRAWDIST=<world units> renders with that draw distance (the fog,
-#         the culling: docs/porting-notes.md §37); FLAT=1 (far) or 2 (all)
-#         with the flat shading. VIEWMODEL=0 / 2: no gun / the 2D gun (1, the
-#         3D model, by default).
+#         TEXTURES is the build's texture level (the disc's one set, 4-bit;
+#         default high); the geometry and the models are low on every disc;
+#         EFFECTS the effects' level (1 medium, the default, 2 high;
+#         formats/qlevels.h; docs/porting-notes.md §52).
+#         T is the affine-warp threshold, fixed (default 4 px: the game's
+#         dynamic control's floor).
+#         DRAWDIST=<world units> builds with that draw distance (the fog,
+#         the culling: docs/porting-notes.md §37; default 1536, the
+#         release's; 0: none); FLAT=0 (none), 1 (far, the default: the
+#         game's) or 2 (all) the flat shading. WEAPON=2d builds the 2D gun
+#         (3d by default).
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the
 #         world's BSP (engine/bmfrag.c): an A / B. NOBMFCULL=1 cuts a moved
 #         brush model again even when none of it is in view (an A / B: the
@@ -55,9 +57,8 @@
 #         from there, the view dumped every 8 ticks: a mover, a monster
 #         as the player standing there sees them); RESIDENCY=1 (with
 #         BENCH_MAPS=1 VIEWS=0) reports what the stream loads around the
-#         player at the map's items ("res" lines); MUSIC=1 puts the music on the bench disc (its
-#         streams: the XA ones with their carousels, or MUSIC_MODE=spu the
-#         SPU's; docs/porting-notes.md §46).
+#         player at the map's items ("res" lines); MUSIC=1 puts the music on the bench disc (the
+#         SPU's streams; docs/porting-notes.md §48).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
 #         by record by the C ("dlchk" lines). BMF_C=1 builds the brush
@@ -88,15 +89,12 @@ BENCH_GAME=${BENCH_GAME:-0}
 # PCSX-Redux (builds since 2026-10) runs headless at about real-time speed and
 # writes the console at ~5 KB/s: the game scenario's 15 dumps need ~6 minutes
 SECS=${1:-$([ "$BENCH_GAME" = 1 ] && echo 420 || echo 60)}
-TEXTURES=${TEXTURES:-2}
-GEOMETRY=${GEOMETRY:-2}
-MODELS=${MODELS:-2}
-EFFECTS=${EFFECTS:-2}
-T=${T:-8}
-TEX4=${TEX4:-0}
-DRAWDIST=${DRAWDIST:-0}
-FLAT=${FLAT:-0}
-VIEWMODEL=${VIEWMODEL:-1}
+TEXTURES=${TEXTURES:-high}
+EFFECTS=${EFFECTS:-1}
+T=${T:-4}
+DRAWDIST=${DRAWDIST:-1536}
+FLAT=${FLAT:-1}
+WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
 BMFCHK=${BMFCHK:-0}
@@ -110,7 +108,6 @@ BMF_C=${BMF_C:-0}
 ORDER_C=${ORDER_C:-0}
 PLAY=${PLAY:-0}
 MUSIC=${MUSIC:-0}
-MUSIC_MODE=${MUSIC_MODE:-xa}
 MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
@@ -120,15 +117,14 @@ ENTS=${ENTS:-0}
 MONSTERS=${MONSTERS:-0}
 MOVERS=${MOVERS:-0}
 SAMPLE=${SAMPLE:-0}
-cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="$GEOMETRY" \
-      -DQ1PSX_BENCH_MODELS="$MODELS" -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
+cmake --preset bench -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
+      -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
-      -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_TEX4="$TEX4" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
-      -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
+      -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
+      -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_STACK_MIN="$STACK_MIN" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
-      -DQ1PSX_MUSIC_MODE="$MUSIC_MODE" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" "$ROOT" >/dev/null
@@ -163,8 +159,8 @@ grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 # that map's textures.
 make -s -C "$ROOT/tools/pktview"
 mkdir -p "$ROOT/build-bench/views"
-TEXEXT=tex; [ "$TEX4" = 1 ] && TEXEXT=tx4
+TEXLEVEL=2; [ "$TEXTURES" = medium ] && TEXLEVEL=1
 TEXMAP=start; [ -n "$MAP" ] && TEXMAP=$(echo "$MAP" | tr 'A-Z' 'a-z')
 "$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
-	"$ROOT/cooked/id1/${TEXMAP}_t$TEXTURES.$TEXEXT" "$ROOT/build-bench/views/" \
-	"$ROOT/cooked/id1/game_$MODELS.dat" "$ROOT/cooked/id1/stream_$MODELS.dat" | sed 's/^/  /'
+	"$ROOT/cooked/id1/${TEXMAP}_t$TEXLEVEL.tx4" "$ROOT/build-bench/views/" \
+	"$ROOT/cooked/id1/game_0.dat" "$ROOT/cooked/id1/stream_0.dat" | sed 's/^/  /'

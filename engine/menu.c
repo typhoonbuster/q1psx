@@ -27,8 +27,7 @@ enum { M_NONE, M_MAIN, M_SINGLEPLAYER, M_NEWGAME, M_OPTIONS, M_GRAPHICS };
 /* Only what the PlayStation port does: the main menu's Single Player and
    Options (rows 0 and 2 of mainmenu.lmp), the single player menu's New Game
    (row 0 of sp_menu.lmp), the options the port handles; the graphics page's
-   rows (engine/settings.h SET_*: a quality level only when the disc carries
-   more than one of it) */
+   rows (engine/settings.h SET_*) */
 static const uint8_t main_rows[]  = { 0, 2 };
 static const uint8_t sp_rows[]    = { 0 };
 #define MAIN_ITEMS         (int) sizeof main_rows
@@ -158,23 +157,6 @@ static void options_draw(void)
 	draw_cursor(32 + options_cursor * 8);
 }
 
-/* the graphics page's rows: a quality level only when the disc has a choice */
-static int graphics_rows(uint8_t rows[SET_ROWS])
-{
-	int n = 0;
-	for (int g = 0; g < SET_ROWS; g++)
-		if (settings_row_shown(g))
-			rows[n++] = (uint8_t) g;
-	return n;
-}
-
-/* the budget does nothing outside the budget mode: greyed (the threshold
-   works in every mode: the fixed mode's, the others' floor) */
-static int graphics_grey(int g)
-{
-	return g == SET_BUDGET && settings.warp != R_WARP_BUDGET;
-}
-
 /* A text centred on the screen (M_Print's bronze), at a shade */
 static void m_print_centred(int y, const char *s, int shade)
 {
@@ -194,31 +176,18 @@ static void graphics_hint(int g, int y)
 static void graphics_draw(void)
 {
 	static const char *const label[SET_ROWS] = {
-		"              Textures", "          Map geometry", "                Models",
-		"               Effects", "         Texture depth", "             Dithering",
-		"          Warp control", "             Threshold", "                Budget",
-		"                   HUD", "        Dynamic lights", "           Draw weapon",
-		"         Draw distance", "          Flat shading",
-		"        Frame rate cap", "             Tick rate" };
-	uint8_t rows[SET_ROWS];
-	int n = graphics_rows(rows);
+		"               Effects", "             Dithering", "                   HUD",
+		"        Dynamic lights", "        Frame rate cap", "             Tick rate" };
 	char val[24];
 	draw_header(QGA_P_OPTION);
-	for (int i = 0; i < n; i++) {
-		int g = rows[i], shade = graphics_grey(g) ? GREY : 128, y = 32 + i * 8;
-		const char *l = label[g];
-		if (g == SET_T && settings.warp != R_WARP_FIXED)
-			l = "         Min threshold";          /* the dynamic modes' floor */
-		m_print(16, y, l, shade);
+	for (int g = 0; g < SET_ROWS; g++) {
+		int y = 32 + g * 8;
+		m_print(16, y, label[g], 128);
 		settings_value(g, val, sizeof val);
-		m_print(220, y, val, shade);
+		m_print(220, y, val, 128);
 	}
 	draw_cursor(32 + graphics_cursor * 8);
-	int y = 32 + n * 8 + HINT_GAP;
-	if (graphics_cursor < n)
-		graphics_hint(rows[graphics_cursor], y);
-	if (hooks.reload_due && hooks.reload_due())   /* (the levels, the texture depth) */
-		m_print_white((VID_W - 30 * 8) / 2, y + 16 + HINT_GAP, "Takes effect at the next level");
+	graphics_hint(graphics_cursor, 32 + SET_ROWS * 8 + HINT_GAP);
 }
 
 void menu_draw(void)
@@ -363,34 +332,25 @@ static void graphics_adjust(int g, int d)
 {
 	local_sound(S_MENU3);
 	settings_step(g, d);
-	settings_apply();                             /* the levels and the depth: at a load */
+	settings_apply();
 }
 
 static void graphics_key(int k)
 {
-	uint8_t rows[SET_ROWS];
-	int n = graphics_rows(rows);
-	if (graphics_cursor >= n)
-		graphics_cursor = n - 1;
 	switch (k) {
 	case K_ESCAPE:
 		m_state = M_OPTIONS;
 		m_entersound = 1;
 		break;
 	case K_UP:
-	case K_DOWN:                                  /* (the greyed budget skipped) */
+	case K_DOWN:
 		local_sound(S_MENU1);
-		for (int i = 0; i < n; i++) {
-			graphics_cursor = wrap(graphics_cursor, k == K_DOWN ? 1 : -1, n);
-			if (!graphics_grey(rows[graphics_cursor]))
-				break;
-		}
+		graphics_cursor = wrap(graphics_cursor, k == K_DOWN ? 1 : -1, SET_ROWS);
 		break;
 	case K_LEFT:
 	case K_RIGHT:
 	case K_ENTER:
-		if (!graphics_grey(rows[graphics_cursor]))
-			graphics_adjust(rows[graphics_cursor], k == K_LEFT ? -1 : 1);
+		graphics_adjust(graphics_cursor, k == K_LEFT ? -1 : 1);
 		break;
 	}
 }

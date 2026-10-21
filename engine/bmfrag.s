@@ -79,7 +79,7 @@
 .set QW_MAX_VERTS,  42
 .set W_PLANES,      76     # world_t
 .set W_VERTS,      100
-.set W_BMODELS,    120
+.set W_BMODELS,    116
 .set QB_ROOT,       24     # qw_bmodel (40 B)
 .set LF_CONTENTS,   26     # qw_leaf: int8 CONTENTS_*
 .set CONTENTS_SOLID, -2

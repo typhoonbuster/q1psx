@@ -124,7 +124,7 @@ _Static_assert(__builtin_offsetof(bmf_cache, nodes) == 20 && __builtin_offsetof(
                __builtin_offsetof(bmf_cache, groups_cap) == 44 && __builtin_offsetof(bmf_cache, pool_first) == 48 &&
                __builtin_offsetof(bmf_cache, pool_cap) == 52 && __builtin_offsetof(bmf_cache, pool_len) == 56,
                "bmfrag.s CA_*");
-_Static_assert(__builtin_offsetof(world_t, verts) == 100 && __builtin_offsetof(world_t, bmodels) == 120 &&
+_Static_assert(__builtin_offsetof(world_t, verts) == 100 && __builtin_offsetof(world_t, bmodels) == 116 &&
                __builtin_offsetof(qw_bmodel, root) == 24 && sizeof(qw_bmodel) == 40 &&
                __builtin_offsetof(qw_leaf, contents) == 26, "bmfrag.s W_*, QB_*, LF_*");
 
@@ -1143,7 +1143,8 @@ _Static_assert(__builtin_offsetof(bmf_cache, org) == 0 && __builtin_offsetof(bmf
                __builtin_offsetof(bmf_cache, cam) == 60 && __builtin_offsetof(bmf_node, child) == 2 &&
                __builtin_offsetof(bmf_node, end) == 14 && __builtin_offsetof(qw_bmodel, maxs) == 12 &&
                __builtin_offsetof(qw_plane, type) == 6 && __builtin_offsetof(qw_plane, dist) == 8 &&
-               __builtin_offsetof(world_t, planes) == 76, "rl_order.s CA_*, BN_*, QB_*, PL_*, W_*");
+               __builtin_offsetof(world_t, planes) == 76 && __builtin_offsetof(world_t, bmodels) == 116,
+               "rl_order.s CA_*, BN_*, QB_*, PL_*, W_*");
 
 #if defined(Q1PSX_BENCH) && Q1PSX_ORDER_C == 2
 void bmf_model_box(int model, int32_t lo[3], int32_t hi[3])

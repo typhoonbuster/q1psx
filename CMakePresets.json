@@ -18,34 +18,23 @@
 		{
 			"name":          "release",
 			"inherits":      "default",
-			"displayName":   "Release build: Quake's menu, textures and geometry low to high, no debug tools",
+			"displayName":   "Release build: Quake's menu, no debug tools; the high textures, the 3D gun, 1536 units of view",
 			"binaryDir":     "${sourceDir}/build-release",
 			"cacheVariables": {
-				"Q1PSX_PROFILE":          "OFF",
-				"Q1PSX_RELEASE":          "ON",
-				"Q1PSX_TEXTURE_LEVELS":   "low;medium;high",
-				"Q1PSX_GEOMETRY_LEVELS":  "low;high"
+				"Q1PSX_PROFILE":  "OFF",
+				"Q1PSX_RELEASE":  "ON",
+				"Q1PSX_TEXTURES": "high",
+				"Q1PSX_WEAPON":   "3d",
+				"Q1PSX_DRAWDIST": "1536"
 			}
 		},
 		{
-			"name":          "release-ultra",
-			"inherits":      "default",
-			"displayName":   "Release build with the ultra textures and geometry alone",
-			"binaryDir":     "${sourceDir}/build-release-ultra",
-			"cacheVariables": {
-				"Q1PSX_PROFILE":          "OFF",
-				"Q1PSX_RELEASE":          "ON",
-				"Q1PSX_TEXTURE_LEVELS":   "ultra",
-				"Q1PSX_GEOMETRY_LEVELS":  "ultra"
-			}
-		},
-		{
-			"name":          "release-spu",
+			"name":          "release-medium",
 			"inherits":      "release",
-			"displayName":   "Release build with the music streamed by the SPU (the XA streams' alternative)",
-			"binaryDir":     "${sourceDir}/build-release-spu",
+			"displayName":   "Release build with the medium textures",
+			"binaryDir":     "${sourceDir}/build-release-medium",
 			"cacheVariables": {
-				"Q1PSX_MUSIC_MODE":       "spu"
+				"Q1PSX_TEXTURES": "medium"
 			}
 		},
 		{

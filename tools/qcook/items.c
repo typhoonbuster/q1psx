@@ -135,7 +135,7 @@ static void need_for(const ent_list *l, const ent_rec *e, int worldtype)
 
 /* the streamed models a map's items use (formats/qstream.h's names, the
    armour's skins "progs/armor.mdl#1" and "#2": engine/items.c qim_stream),
-   for the music's carousels (tools/qcook/carousel.c) */
+   (the XA carousels' list until docs/porting-notes.md §52) */
 int items_streamed(const ent_list *l, int worldtype, const char **list, int max)
 {
 	memset(need, 0, sizeof need);

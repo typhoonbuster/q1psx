@@ -23,7 +23,7 @@
 
 #include <stdint.h>
 
-#define MEM_LEVEL_BYTES (1237 * 1024)  /* (1152 until 2026-10-19: with the monsters,
+#define MEM_LEVEL_BYTES (1249 * 1024)  /* (1152 until 2026-10-19: with the monsters,
                                           the streaming and the brush models' pieces
                                           the BSS ended past the 2 MB; the stack's
                                           16 KB checked at every link:
@@ -34,7 +34,8 @@
                                           for the music's streams' code, §48; less
                                           3 KB for the alias models' order among a
                                           leaf's pieces, the paused monsters, the
-                                          bodies' end, §50) */
+                                          bodies' end, §50; 12 KB more from the code
+                                          the clean-up removed, §52) */
 #define MEM_LEVEL_WORLD (1136 * 1024)  /* the room a map's world may take while it
                                           loads (below it, a lower geometry level):
                                           the arena's size before §45, so the room

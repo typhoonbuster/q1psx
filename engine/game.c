@@ -16,6 +16,7 @@
 #include "q_fixed.h"
 #include "render.h"
 #include "rlist.h"
+#include "settings.h"
 #include "snd.h"
 #include "stream.h"
 #include "vid.h"
@@ -2205,24 +2206,21 @@ static uint32_t ws_reads;                         /* at that read */
 
 void game_ws_invalidate(void)
 {
-	ws_shown = ~0u;
-	ws_clut = -1;
+	ws_shown = ws_clut = -1;
 }
 
-/* The 2D gun's packets (105 KB) in RAM only while it is the gun drawn: the
-   stream lends them its pool's end (at a map's start before its own
-   buffers, during the game once a read is done), and has it back when
-   another gun is chosen (docs/porting-notes.md §45). Until they are read
-   the 3D gun is drawn. Outside a frame's render list (rl_begin .. the end
-   of r_frame): the stream may compact its pool. */
+/* The 2D gun's packets (79 KB) in RAM in the 2D builds: the stream lends
+   them its pool's end at each map's start, before its own buffers
+   (docs/porting-notes.md §45, §52); until they are read the 3D gun is
+   drawn. Outside a frame's render list (rl_begin .. the end of r_frame). */
 void game_ws_sync(void)
 {
-	int want = game_draw_viewmodel == 2 && gdata.ws_sectors;
-	if (want && !ws_asked)
+	if (!Q1PSX_WEAPON_2D || !gdata.ws_sectors)
+		return;
+	if (!ws_asked) {
 		stream_lend(gdata.ws_lba, gdata.ws_sectors);
-	else if (!want && ws_asked)
-		stream_unlend();
-	ws_asked = want;
+		ws_asked = 1;
+	}
 	uint32_t reads;
 	uint8_t *b = stream_lent(&reads);
 	if (b != ws_block || reads != ws_reads) {     /* (read again: a map's start) */
@@ -2233,6 +2231,7 @@ void game_ws_sync(void)
 	}
 }
 
+#if Q1PSX_WEAPON_2D
 static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3D */
 {
 	if (!gdata.wpix)                              /* (not read yet) */
@@ -2292,6 +2291,7 @@ static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3
 	vid_link(OT_WEAPON, q);
 	return 1;
 }
+#endif
 
 void game_render(void)
 {
@@ -2348,9 +2348,12 @@ void game_render(void)
 		if (light < 24) light = 24;                   /* always some light on the gun */
 		light += dl_add_at(org, game_tick_count) * 3 / 2;   /* (x the cook's light gain) */
 		if (light > 170) light = 170;                 /* (rlist.c ent_model's bound) */
+#if Q1PSX_WEAPON_2D
 		if (game_draw_viewmodel == 2 && ws_draw(pl.weapon, pl.weaponframe, bob, light)) {
 			/* (the 2D gun) */
-		} else {
+		} else
+#endif
+		{
 			r_ent_t *e = rl_model(&gdata.models[weapon_model[pl.weapon]], pl.weaponframe, org,
 			                      pl.pm.yaw, -pl.pm.pitch, 0, light);
 			rl_view_model(e);            /* no subdivision; clipped at 5 units, like Quake */

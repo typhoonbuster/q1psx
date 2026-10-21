@@ -29,8 +29,9 @@ static uint8_t map_on_disc[NUM_QUAKE_MAPS];
 static int     level_mask[QL_AXES];   /* the levels the disc's maps come in, per axis */
 
 /* cd_list_dir's call: a "<MAP>_G<N>.WLD" marks its map present at geometry
-   level N, a "<MAP>_T<N>.TEX" and a "<MAP>_M<N>.MDL" add texture and model
-   level N (the release disc carries low to high, the ultra one ultra) */
+   level N, a "<MAP>_T<N>.TX4" and a "<MAP>_M<N>.MDL" add texture and model
+   level N (a disc carries one of each: the build's, docs/porting-notes.md
+   §52) */
 static void note_map_file(const char *name, uint32_t lba, uint32_t size)
 {
 	(void) lba;
@@ -39,7 +40,7 @@ static void note_map_file(const char *name, uint32_t lba, uint32_t size)
 	while (*s && *s != '_') s++;
 	if (s[0] != '_' || s[2] < '0' || s[2] >= '0' + QL_LEVELS || s[3] != '.')
 		return;
-	int axis = !strncmp(s + 1, "T", 1) && !strncmp(s + 3, ".TEX", 4) ? QL_TEXTURES
+	int axis = !strncmp(s + 1, "T", 1) && !strncmp(s + 3, ".TX4", 4) ? QL_TEXTURES
 	         : !strncmp(s + 1, "G", 1) && !strncmp(s + 3, ".WLD", 4) ? QL_GEOMETRY
 	         : !strncmp(s + 1, "M", 1) && !strncmp(s + 3, ".MDL", 4) ? QL_MODELS : -1;
 	if (axis < 0)
@@ -155,54 +156,34 @@ static void upload_rects(const uint8_t *f, const qtex_rect *r, uint32_t n)
 		vram_upload(f + r[i].data_ofs, &r[i]);
 }
 
-/* what the map's texture rectangles take of its pages (world_t page_rows,
+/* what the map's texture rectangles take of its 4-bit pages (world_t
    page4_rows: the streamed skins get the rest, engine/stream.c); a CLUT
    row (y >= 480) takes none */
-static void note_rects(const qtex_rect *r, uint32_t n, int four)
+static void note_rects(const qtex_rect *r, uint32_t n)
 {
 	for (uint32_t i = 0; i < n; i++) {
 		if (r[i].y >= 480 || r[i].x < QTEX_PAGE_X0)
 			continue;
-		int x = r[i].x - QTEX_PAGE_X0, p, rows;
-		if (four) {
-			p = x / 64;
-			rows = r[i].y + r[i].h;
-			if (p < QTEX_MAP_PAGES && rows > world.page4_rows[p])
-				world.page4_rows[p] = (uint16_t) rows;
-		} else {
-			p = x / 128 + QTEX_PAGE_COLS * (r[i].y / 256);
-			rows = r[i].y % 256 + r[i].h;
-			if (p < QTEX_MAP_PAGES && rows > world.page_rows[p])
-				world.page_rows[p] = (uint16_t) rows;
-		}
+		int p = (r[i].x - QTEX_PAGE_X0) / 64, rows = r[i].y + r[i].h;
+		if (p < QTEX_MAP_PAGES && rows > world.page4_rows[p])
+			world.page4_rows[p] = (uint16_t) rows;
 	}
 }
 
-/* The map's texture set into VRAM: QTX6 (8bpp, the Quake palette) or QTX7
-   (4bpp, 16 colours per texture). The file is transient but for its
+/* The map's texture set into VRAM: QTX7 (4bpp, 16 colours per texture;
+   the 8-bit sets left the disc, §52). The file is transient but for its
    tables, moved to its start: the arena's bottom (the arena was reset). */
 static int load_textures(const char *name)
 {
 	uint32_t mark = mem_level_mark(), size;
 	uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
 	uint32_t ofs_slots = 0, ofs_anims = 0, nanims = 0;
-	if (f && size >= sizeof(qtex_header) && !memcmp(f, QTEX_MAGIC, 4)) {
-		const qtex_header *h = (const qtex_header *) f;
-		RECT clut = { QTEX_CLUT_X, QTEX_CLUT_Y, 256, 1 };
-		LoadImage(&clut, (const uint32_t *) h->clut);
-		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
-		note_rects((const qtex_rect *) (f + sizeof *h), h->num_rects, 0);
-		num_slots = h->num_slots; ofs_slots = h->ofs_slots;
-		nanims    = h->num_anims; ofs_anims = h->ofs_anims;
-		world.tex4 = 0;
-		printf("world: %s — %u texture pages -> VRAM\n", name, h->num_rects);
-	} else if (f && size >= sizeof(qtex4_header) && !memcmp(f, QTEX4_MAGIC, 4)) {
+	if (f && size >= sizeof(qtex4_header) && !memcmp(f, QTEX4_MAGIC, 4)) {
 		const qtex4_header *h = (const qtex4_header *) f;
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
-		note_rects((const qtex_rect *) (f + sizeof *h), h->num_rects, 1);
+		note_rects((const qtex_rect *) (f + sizeof *h), h->num_rects);
 		num_slots = h->num_slots; ofs_slots = h->ofs_slots;
 		nanims    = h->num_anims; ofs_anims = h->ofs_anims;
-		world.tex4 = 1;
 		printf("world: %s — 4bpp, %u rects -> VRAM\n", name, h->num_rects);
 	} else {
 		printf("world: bad texture file %s\n", name);
@@ -301,7 +282,7 @@ static int load_models(const char *name)
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-int world_load(int map, int tex, int geo, int models, int tex4, world_progress_fn progress)
+int world_load(int map, int tex, int geo, int models, world_progress_fn progress)
 {
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
@@ -313,8 +294,6 @@ int world_load(int map, int tex, int geo, int models, int tex4, world_progress_f
 	char name[24], tex_name[24], mdl_name[24];
 	uint32_t tex_size = 0, wld_size = 0, mdl_size = 0;
 	snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_T%d.TX4;1", disc_maps[map], tex);
-	if (!tex4 || !cd_exists(tex_name, &tex_size))     /* (no 4-bit set: 8 bits) */
-		snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_T%d.TEX;1", disc_maps[map], tex);
 	snprintf(name, sizeof name, "\\MAPS\\%s_G%d.WLD;1", disc_maps[map], geo);
 	snprintf(mdl_name, sizeof mdl_name, "\\MAPS\\%s_M%d.MDL;1", disc_maps[map], models);
 	load_progress = progress;

@@ -72,18 +72,32 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_PROFILE=${_q1psx_profile})
 target_compile_options(q1psx PRIVATE
 	$<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_PROFILE=${_q1psx_profile}>)
 
-# The release editions (presets "release" and "release-ultra"): Quake's own
-# menu over the game (engine/menu.c), no debug overlay, no map menu, no
-# cheats; and the texture and geometry levels the disc carries
-# (formats/qlevels.h): low to high on the "release" disc, ultra alone on the
-# "release-ultra" one (the default and bench builds carry them all). Every
-# disc carries every model level (GAME_<n>.DAT, <MAP>_M<n>.MDL: small).
+# The release build (presets "release", "release-medium"): Quake's own menu
+# over the game (engine/menu.c), no debug overlay, no map menu, no cheats.
 option(Q1PSX_RELEASE "Quake's menu, no debug tools" OFF)
 if(Q1PSX_RELEASE)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_RELEASE=1)
 endif()
-set(Q1PSX_TEXTURE_LEVELS "low;medium;high;ultra" CACHE STRING "The texture levels put on the disc")
-set(Q1PSX_GEOMETRY_LEVELS "low;high;ultra" CACHE STRING "The geometry levels put on the disc")
+# The build's choices (docs/porting-notes.md §52, engine/settings.h), every
+# build's alike: the textures the disc carries (4-bit; the geometry and the
+# models are low on every disc), the gun, the draw distance.
+set(Q1PSX_TEXTURES "high" CACHE STRING "The textures on the disc: high or medium (4-bit)")
+set_property(CACHE Q1PSX_TEXTURES PROPERTY STRINGS high medium)
+if(NOT Q1PSX_TEXTURES MATCHES "^(high|medium)$")
+	message(FATAL_ERROR "Q1PSX_TEXTURES: high or medium, not ${Q1PSX_TEXTURES}")
+endif()
+set(Q1PSX_WEAPON "3d" CACHE STRING "The gun: 3d (its model) or 2d (its frames as pictures)")
+set_property(CACHE Q1PSX_WEAPON PROPERTY STRINGS 3d 2d)
+if(Q1PSX_WEAPON STREQUAL "2d")
+	target_compile_definitions(q1psx PRIVATE Q1PSX_WEAPON_2D=1)
+elseif(Q1PSX_WEAPON STREQUAL "3d")
+	target_compile_definitions(q1psx PRIVATE Q1PSX_WEAPON_2D=0)
+else()
+	message(FATAL_ERROR "Q1PSX_WEAPON: 3d or 2d, not ${Q1PSX_WEAPON}")
+endif()
+set(Q1PSX_DRAWDIST 1536 CACHE STRING "The draw distance, world units: 1536 or 1024 (the bench takes any)")
+set_property(CACHE Q1PSX_DRAWDIST PROPERTY STRINGS 1536 1024)
+target_compile_definitions(q1psx PRIVATE Q1PSX_DRAWDIST=${Q1PSX_DRAWDIST})
 # A scripted pad (engine/pad.c pad_script): the release flow checked headless
 option(Q1PSX_PADSCRIPT "Replace the pad by a scripted sequence of presses" OFF)
 if(Q1PSX_PADSCRIPT)
@@ -111,19 +125,13 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_C=${Q1PSX_DLIGHT_C})
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
 # no debug overlay. See docs/architecture.md §9.
 option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
-set(Q1PSX_BENCH_TEXTURES 2 CACHE STRING "Texture level the bench loads (0 low .. 3 ultra)")
-set(Q1PSX_BENCH_GEOMETRY 2 CACHE STRING "Geometry level the bench loads (0 low, 2 high, 3 ultra)")
-set(Q1PSX_BENCH_MODELS 2 CACHE STRING "Model level the bench loads (0 low .. 2 high)")
-set(Q1PSX_BENCH_EFFECTS 2 CACHE STRING "Effects level the bench runs at (0 low .. 3 ultra)")
+set(Q1PSX_BENCH_EFFECTS 1 CACHE STRING "Effects level the bench runs at (1 medium, 2 high)")
 set(Q1PSX_BENCH_SAMPLE 0 CACHE STRING "1: the bench samples the PC (engine/prof.c) over each view's frames")
 set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics checks only")
 set(Q1PSX_BENCH_MAPS 0 CACHE STRING "1: bench every map on the disc (spawn views) instead")
 set(Q1PSX_BENCH_GAME 0 CACHE STRING "1: bench the game instead: every weapon fired, both HUDs")
-set(Q1PSX_BENCH_T 8 CACHE STRING "Affine-warp threshold the bench renders with (px)")
-set(Q1PSX_BENCH_TEX4 0 CACHE STRING "1: the bench loads the 4-bit textures")
-set(Q1PSX_BENCH_DRAWDIST 0 CACHE STRING "The draw distance the bench renders with, world units (0: off)")
-set(Q1PSX_BENCH_FLAT 0 CACHE STRING "The flat shading the bench renders with: 0 off, 1 far, 2 all")
-set(Q1PSX_BENCH_VIEWMODEL 1 CACHE STRING "The gun the bench draws: 0 none, 1 the 3D model, 2 the 2D pictures")
+set(Q1PSX_BENCH_T 4 CACHE STRING "Affine-warp threshold the bench renders with, fixed (px; the game's floor: 4)")
+set(Q1PSX_BENCH_FLAT 1 CACHE STRING "The flat shading the bench renders with: 0 off, 1 far (the game's), 2 all")
 set(Q1PSX_BENCH_BMF 1 CACHE STRING "0: the brush models drawn whole, not cut by the world's BSP (an A / B)")
 set(Q1PSX_BENCH_BMFCULL 1 CACHE STRING "0: a moved brush model is cut again out of view too (an A / B)")
 set(Q1PSX_BENCH_BMFCHK 0 CACHE STRING "1: every mover cut at 33 places along its ways in its room (bmfchk lines)")
@@ -138,15 +146,13 @@ set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the gam
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 if(Q1PSX_BENCH)
-	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1 Q1PSX_BENCH_TEXTURES=${Q1PSX_BENCH_TEXTURES}
-		Q1PSX_BENCH_GEOMETRY=${Q1PSX_BENCH_GEOMETRY} Q1PSX_BENCH_MODELS=${Q1PSX_BENCH_MODELS}
+	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
 		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
-		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_TEX4=${Q1PSX_BENCH_TEX4}
-		Q1PSX_BENCH_DRAWDIST=${Q1PSX_BENCH_DRAWDIST} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
-		Q1PSX_BENCH_VIEWMODEL=${Q1PSX_BENCH_VIEWMODEL} Q1PSX_BENCH_BMF=${Q1PSX_BENCH_BMF}
+		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
+		Q1PSX_BENCH_BMF=${Q1PSX_BENCH_BMF}
 		Q1PSX_BENCH_BMFCULL=${Q1PSX_BENCH_BMFCULL}
 		Q1PSX_BENCH_BMFCHK=${Q1PSX_BENCH_BMFCHK}
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
@@ -190,30 +196,17 @@ else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
 endif()
 
-# The music (docs/porting-notes.md §48): Quake's CD tracks 2..11 as XA
-# streams carrying the carousels of their maps' streamed assets (xa, the
-# default: cooked/xa/xa_NN.str, mkpsxiso "mixed" files, formats/qxa.h) or
-# as ADPCM the SPU streams (spu: cooked/spu/spu_NN.dat, formats/qspu.h), in
-# \MUSIC after the streamed assets; the bench's disc has none (Q1PSX_MUSIC
-# OFF unless Q1PSX_BENCH_MUSIC). The cook makes the build's format.
+# The music (docs/porting-notes.md §48, §52): Quake's CD tracks 2..11 as
+# ADPCM the SPU streams (cooked/spu/spu_NN.dat, formats/qspu.h: 22.05 kHz,
+# the menu's theme 32 kHz), in \MUSIC after the streamed assets; the
+# bench's disc has none (Q1PSX_MUSIC OFF unless Q1PSX_BENCH_MUSIC).
 option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
-set(Q1PSX_MUSIC_MODE "xa" CACHE STRING "The music: xa (XA streams with the streamed assets' carousels) or spu (streamed by the SPU)")
-set_property(CACHE Q1PSX_MUSIC_MODE PROPERTY STRINGS xa spu)
-if(Q1PSX_MUSIC_MODE STREQUAL "spu")
-	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_SPU=1)
-	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
-elseif(Q1PSX_MUSIC_MODE STREQUAL "xa")
-	target_compile_definitions(q1psx PRIVATE Q1PSX_MUSIC_XA=1)
-	set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/xa/xa_*.str)
-else()
-	message(FATAL_ERROR "Q1PSX_MUSIC_MODE: xa or spu, not ${Q1PSX_MUSIC_MODE}")
-endif()
+set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h, qworld.h,
-# qgame.h, qlevels.h). Every cooked map ships at the edition's levels of
-# each axis: <MAP>_T<N>.TEX / .TX4 (textures, .TX4 the 4-bit ones),
-# <MAP>_G<N>.WLD (geometry), <MAP>_M<N>.MDL (its own models) with N = 0..3
-# for low/medium/high/ultra, its sound bank <MAP>.SND, plus the game data
-# GAME_<N>.DAT per model level (weapon models, projectiles, the HUD). The
+# qgame.h, qlevels.h). Every cooked map ships as <MAP>_T<N>.TX4 (its 4-bit
+# textures at the build's level: 1 medium, 2 high), <MAP>_G0.WLD (its low
+# geometry), <MAP>_M0.MDL (its own models, low), its sound bank <MAP>.SND,
+# plus the game data GAME_0.DAT (the guns, the projectiles, the HUD). The
 # cook re-runs whenever the cooker or a format header changes, so the disc
 # never carries stale data.
 if(_pak0_path AND EXISTS "${_pak0_path}")
@@ -226,7 +219,7 @@ if(_pak0_path AND EXISTS "${_pak0_path}")
 	set(_cooked_stamp ${CMAKE_BINARY_DIR}/cooked.stamp)
 	add_custom_command(
 		OUTPUT  ${_cooked_stamp}
-		COMMAND ${CMAKE_COMMAND} -E env COOK_MUSIC_MODE=${Q1PSX_MUSIC_MODE} ${PROJECT_SOURCE_DIR}/scripts/cook.sh
+		COMMAND ${PROJECT_SOURCE_DIR}/scripts/cook.sh
 		COMMAND ${CMAKE_COMMAND} -E touch ${_cooked_stamp}
 		DEPENDS ${_qcook_deps}
 		WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
@@ -240,7 +233,6 @@ endif()
 # built, after the cook: scripts/cd_image.cmake); globbed here to rebuild
 # the image when a manual cook changes them, and for the configure's note.
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
-                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.tex
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tx4
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.mdl
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.snd
@@ -248,30 +240,27 @@ file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
 if(NOT _cooked)
 	message(STATUS "q1psx: no cooked assets yet (the build cooks them: scripts/cook.sh)")
 else()
-	message(STATUS "q1psx: the disc takes the textures ${Q1PSX_TEXTURE_LEVELS}, the geometry "
-	               "${Q1PSX_GEOMETRY_LEVELS}")
+	message(STATUS "q1psx: the textures ${Q1PSX_TEXTURES}, the gun ${Q1PSX_WEAPON}, "
+	               "the draw distance ${Q1PSX_DRAWDIST}")
 endif()
 
 set(_music "")
 set(_disc_music 0)
-set(Q1PSX_BENCH_MUSIC 0 CACHE STRING "1: the bench disc carries the music too (its streams, the carousels)")
+set(Q1PSX_BENCH_MUSIC 0 CACHE STRING "1: the bench disc carries the music too")
 if(Q1PSX_MUSIC AND (NOT Q1PSX_BENCH OR Q1PSX_BENCH_MUSIC))
 	set(_disc_music 1)
 	file(GLOB _music CONFIGURE_DEPENDS ${_music_glob})
-	message(STATUS "q1psx: the music as ${Q1PSX_MUSIC_MODE}")
+	message(STATUS "q1psx: the music on the disc")
 endif()
 
 # --- CD image ---------------------------------------------------------------
 # (psn00bsdk_add_cd_image's, with the project's file list made at the build:
 # scripts/cd_image.cmake, after the cook)
-string(REPLACE ";" "," _disc_textures "${Q1PSX_TEXTURE_LEVELS}")
-string(REPLACE ";" "," _disc_geometry "${Q1PSX_GEOMETRY_LEVELS}")
 set(_cd_xml ${CMAKE_CURRENT_BINARY_DIR}/cd_image.xml)
 add_custom_command(
 	OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/q1psx.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx.cue
 	COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DOUT=${_cd_xml}
-	        -DTEXTURE_LEVELS=${_disc_textures} -DGEOMETRY_LEVELS=${_disc_geometry}
-	        -DMUSIC=${_disc_music} -DMUSIC_MODE=${Q1PSX_MUSIC_MODE} -DPAK0=${_pak0_path}
+	        -DTEXTURES=${Q1PSX_TEXTURES} -DMUSIC=${_disc_music} -DPAK0=${_pak0_path}
 	        -DSDK_VERSION=${PSN00BSDK_VERSION} -P ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake
 	COMMAND ${MKPSXISO} -y -q -o q1psx.bin -c q1psx.cue ${_cd_xml}
 	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/iso/iso.xml

@@ -8,10 +8,10 @@
 #include "world.h"
 #include "mem.h"
 #include "qtex.h"
+#include "settings.h"
 
 gdata_t gdata;
 
-static uint32_t geo_room;          /* the geometry block's size: the largest level's */
 
 /* GAME_<level>.DAT into the level arena (a staging area), checked */
 static const uint8_t *gdata_file(int level, uint32_t *size)
@@ -32,25 +32,6 @@ static const uint8_t *gdata_file(int level, uint32_t *size)
 	return f;
 }
 
-int gdata_set_models(int level)
-{
-	if (!gdata.ok || level == gdata.level)
-		return 1;
-	uint32_t mark = mem_level_mark(), size;
-	const uint8_t *f = gdata_file(level, &size);
-	const qg_header *h = (const qg_header *) f;
-	if (!f || h->len_geo > geo_room) {
-		mem_level_release(mark);
-		return 0;
-	}
-	memcpy((qg_model *) gdata.models, f + h->ofs_models, QGM_COUNT * sizeof(qg_model));
-	memcpy(gdata.geo, f + h->ofs_geo, h->len_geo);
-	gdata.level = level;
-	mem_level_release(mark);
-	printf("gdata: the models at level %d, %u B of geometry\n", level, h->len_geo);
-	return 1;
-}
-
 int gdata_load(int level)
 {
 	uint32_t mark = mem_level_mark(), size;
@@ -61,7 +42,6 @@ int gdata_load(int level)
 		return 0;
 	}
 	const qg_header *h = (const qg_header *) f;
-	geo_room = h->len_geo_max > h->len_geo ? h->len_geo_max : h->len_geo;
 
 	/* images to VRAM: the CLUT row, then the pages' used rows */
 	const qtex_rect *r = (const qtex_rect *) (f + h->ofs_rects);
@@ -72,13 +52,13 @@ int gdata_load(int level)
 	/* tables and geometry to the game arena */
 	uint32_t tables = (uint32_t) (QGM_COUNT * sizeof(qg_model) + QGP_COUNT * sizeof(qg_pic) +
 	                              QG_LIGHT_YAWS * QG_NORMALS + 256 * 4 + QGA_COUNT * sizeof(qg_aux));
-	uint32_t wtab = QG_WEAPONS * sizeof(qg_wsprite) + h->num_wframes * sizeof(qg_wframe);
+	uint32_t wtab = Q1PSX_WEAPON_2D ? QG_WEAPONS * sizeof(qg_wsprite) + h->num_wframes * sizeof(qg_wframe) : 0;
 	uint8_t *t = mem_game_alloc(tables);
-	uint8_t *g = mem_game_alloc(geo_room);       /* (room for any level's models) */
+	uint8_t *g = mem_game_alloc(h->len_geo);
 	uint8_t *fin = h->len_finales ? mem_game_alloc(h->len_finales) : 0;
-	uint8_t *wt = mem_game_alloc(wtab);
+	uint8_t *wt = wtab ? mem_game_alloc(wtab) : 0;
 	uint8_t *fr = h->num_free ? mem_game_alloc(h->num_free * sizeof(qg_free)) : 0;
-	if (!t || !g || (h->len_finales && !fin) || !wt || (h->num_free && !fr)) {
+	if (!t || !g || (h->len_finales && !fin) || (wtab && !wt) || (h->num_free && !fr)) {
 		mem_level_release(mark);
 		return 0;
 	}
@@ -94,21 +74,22 @@ int gdata_load(int level)
 		gdata.finales     = (const qg_finale *) fin;
 		gdata.num_finales = h->num_finales;
 	}
-	/* the 2D weapons: their tables; their packets (105 KB) stay on the disc
-	   until the 2D gun is chosen (game_ws_sync): where they are; the same
-	   in every model level's file */
-	memcpy(wt, f + h->ofs_wsprites, QG_WEAPONS * sizeof(qg_wsprite));
-	memcpy(wt + QG_WEAPONS * sizeof(qg_wsprite), f + h->ofs_wframes, h->num_wframes * sizeof(qg_wframe));
-	gdata.wsprites    = (const qg_wsprite *) wt;
-	gdata.wframes     = (const qg_wframe *) (wt + QG_WEAPONS * sizeof(qg_wsprite));
-	gdata.num_wframes = h->num_wframes;
-	gdata.wslot       = h->wslot;
-	if (h->len_wpix) {
+	/* the 2D builds' gun: its tables; its packets stay on the disc until a
+	   map's start (game_ws_sync): where they are */
+	if (wt) {
+		memcpy(wt, f + h->ofs_wsprites, QG_WEAPONS * sizeof(qg_wsprite));
+		memcpy(wt + QG_WEAPONS * sizeof(qg_wsprite), f + h->ofs_wframes, h->num_wframes * sizeof(qg_wframe));
+		gdata.wsprites    = (const qg_wsprite *) wt;
+		gdata.wframes     = (const qg_wframe *) (wt + QG_WEAPONS * sizeof(qg_wsprite));
+		gdata.num_wframes = h->num_wframes;
+		gdata.wslot       = h->wslot;
+	}
+	if (wt && h->len_wpix) {
 		gdata.ws_lba     = (int32_t) (cd_last_lba() + h->ofs_wpix / CD_SECTOR);
 		gdata.ws_skew    = (uint16_t) (h->ofs_wpix % CD_SECTOR);
 		gdata.ws_sectors = (uint16_t) ((gdata.ws_skew + h->len_wpix + CD_SECTOR - 1) / CD_SECTOR);
 	}
-	if (fr) {                                    /* (the same in every level's file) */
+	if (fr) {
 		memcpy(fr, f + h->ofs_free, h->num_free * sizeof(qg_free));
 		gdata.free     = (const qg_free *) fr;
 		gdata.num_free = h->num_free;

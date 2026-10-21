@@ -669,8 +669,8 @@ int sound_streamed(const char **list, int max)
 	return n;
 }
 
-/* The streamed sounds a map's entities use (the music's carousels,
-   tools/qcook/carousel.c): their spawn functions' precaches as the map's
+/* The streamed sounds a map's entities use (the XA carousels' until
+   docs/porting-notes.md §52): their spawn functions' precaches as the map's
    bank took them before the stream (the QC's defaults for `sounds`,
    item_health's by its flags, a key door's), the ambient sources'; what
    every bank has left out */

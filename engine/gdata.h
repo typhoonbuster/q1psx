@@ -1,9 +1,9 @@
 /*
  * q1psx — the game data (formats/qgame.h): weapon and projectile models, the
- * explosion sprite, the HUD pictures. Loaded at boot from GAME_<n>.DAT (n:
- * the model level): its images go to VRAM (the pages above the map's, its
- * own CLUT), its tables and geometry to the game arena; another model
- * level's models replace them before a map's load (gdata_set_models).
+ * explosion sprite, the HUD pictures. Loaded at boot from GAME_0.DAT (the
+ * one model level, low: docs/porting-notes.md §52): its images go to VRAM
+ * (the pages above the map's, its own CLUT), its tables and geometry to the
+ * game arena.
  */
 
 #ifndef Q1PSX_GDATA_H
@@ -47,10 +47,6 @@ extern gdata_t gdata;
 /* Load GAME_<level>.DAT (before any map: it uses the level arena as a
    staging area). 1 on success. */
 int gdata_load(int level);
-
-/* The models of model level `level` in place of the loaded ones (the
-   level arena stages the file: before a map's load). 1 on success. */
-int gdata_set_models(int level);
 
 /* The 2D weapons' packets just read to `block` (ws_sectors sectors from
    ws_lba): their links made absolute; where they start (block + ws_skew). */

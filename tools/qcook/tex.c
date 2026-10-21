@@ -494,7 +494,7 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 			continue;
 		a.src = a.nframes ? a.frames[0] : a.alt[0];
 		ts->anims[ts->num_anims++] = a;
-		if (out_path)
+		if (out_path || out4_path)
 			printf("qcook: animated %s: %d frames, %d alternates, %dx%d\n", mi->name + 2, a.nframes, a.nalt,
 			       mi->w, mi->h);
 	}
@@ -574,7 +574,7 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		items[nitems].h   = h;
 		nitems++;
 	}
-	if (!out_path) {                        /* the layout alone */
+	if (!out_path && !out4_path) {          /* the layout alone */
 		for (int n = 0; n < nitems; n++)
 			ts->slots[items[n].idx].present = 1;
 		free(items);
@@ -669,62 +669,65 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 	}
 	ts->pages_used = pages_used;
 
-	/* QTX6: header, one rect per used page (only the used rows), the
-	   tables, the pixels */
-	tex_words *words = xcalloc((size_t) total + 1, sizeof *words);
-	for (int i = 0; i < total; i++) {
-		words[i].clut  = ts->slots[i].clut;
-		words[i].tpage = ts->slots[i].tpage;
+	/* QTX6, the 8-bit set (no disc carries it since docs/porting-notes.md
+	   §52: written only when asked): header, one rect per used page (only
+	   the used rows), the tables, the pixels */
+	if (out_path) {
+		tex_words *words = xcalloc((size_t) total + 1, sizeof *words);
+		for (int i = 0; i < total; i++) {
+			words[i].clut  = ts->slots[i].clut;
+			words[i].tpage = ts->slots[i].tpage;
+		}
+		buf_t tables;
+		memset(&tables, 0, sizeof tables);
+		tables_build(&tables, ts, canon, b, words);
+		free(words);
+
+		FILE *f = fopen(out_path, "wb");
+		if (!f)
+			die("cannot write %s", out_path);
+
+		qtex_header h;
+		memset(&h, 0, sizeof h);
+		memcpy(h.magic, QTEX_MAGIC, 4);
+		h.num_rects = (uint32_t) ts->pages_used;
+		for (int i = 0; i < 256; i++) {
+			int r = palette[i * 3], g = palette[i * 3 + 1], bl = palette[i * 3 + 2];
+			uint16_t c = (uint16_t) ((r >> 3) | ((g >> 3) << 5) | ((bl >> 3) << 10));
+			h.clut[i] = c ? c : 0x8000;     /* 0x0000 would be transparent */
+		}
+		h.num_slots = (uint32_t) canon->num;
+		h.ofs_slots = (uint32_t) (sizeof h + (size_t) ts->pages_used * sizeof(qtex_rect));
+		h.num_anims = (uint32_t) ts->num_anims;
+		h.ofs_anims = h.ofs_slots + (uint32_t) canon->num * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
+		fwrite(&h, sizeof h, 1, f);
+
+		uint32_t ofs = h.ofs_slots + (uint32_t) tables.len;
+		ofs = (ofs + 63u) & ~63u;                            /* (64: the GPU DMA's 16-word unit) */
+		for (int p = 0; p < ts->pages_used; p++) {
+			qtex_rect r;
+			r.x = (uint16_t) (QTEX_PAGE_X0 + (p % QTEX_PAGE_COLS) * (PAGE_TEX / 2));
+			r.y = (uint16_t) ((p / QTEX_PAGE_COLS) * PAGE_TEX);
+			r.w = PAGE_TEX / 2;
+			r.h = (uint16_t) page_h[p];
+			r.data_ofs = ofs;
+			fwrite(&r, sizeof r, 1, f);
+			ofs += (uint32_t) r.w * r.h * 2;       /* 256 * h bytes: 32-multiple */
+		}
+		fwrite(tables.p, 1, tables.len, f);
+		free(tables.p);
+		long here = ftell(f);
+		static const uint8_t zero[64];
+		fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
+		for (int p = 0; p < ts->pages_used; p++)
+			fwrite(pages + (size_t) p * PAGE_TEX * PAGE_TEX, 1,
+			       (size_t) page_h[p] * PAGE_TEX, f);
+		long file_len = ftell(f);
+		fclose(f);
+
+		printf("qcook: %s — %d tiles in %d pages (%d animated textures), %u texel bytes, file %ld B\n",
+		       out_path, nitems, ts->pages_used, ts->num_anims, ts->bytes, file_len);
 	}
-	buf_t tables;
-	memset(&tables, 0, sizeof tables);
-	tables_build(&tables, ts, canon, b, words);
-	free(words);
-
-	FILE *f = fopen(out_path, "wb");
-	if (!f)
-		die("cannot write %s", out_path);
-
-	qtex_header h;
-	memset(&h, 0, sizeof h);
-	memcpy(h.magic, QTEX_MAGIC, 4);
-	h.num_rects = (uint32_t) ts->pages_used;
-	for (int i = 0; i < 256; i++) {
-		int r = palette[i * 3], g = palette[i * 3 + 1], bl = palette[i * 3 + 2];
-		uint16_t c = (uint16_t) ((r >> 3) | ((g >> 3) << 5) | ((bl >> 3) << 10));
-		h.clut[i] = c ? c : 0x8000;     /* 0x0000 would be transparent */
-	}
-	h.num_slots = (uint32_t) canon->num;
-	h.ofs_slots = (uint32_t) (sizeof h + (size_t) ts->pages_used * sizeof(qtex_rect));
-	h.num_anims = (uint32_t) ts->num_anims;
-	h.ofs_anims = h.ofs_slots + (uint32_t) canon->num * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
-	fwrite(&h, sizeof h, 1, f);
-
-	uint32_t ofs = h.ofs_slots + (uint32_t) tables.len;
-	ofs = (ofs + 63u) & ~63u;                            /* (64: the GPU DMA's 16-word unit) */
-	for (int p = 0; p < ts->pages_used; p++) {
-		qtex_rect r;
-		r.x = (uint16_t) (QTEX_PAGE_X0 + (p % QTEX_PAGE_COLS) * (PAGE_TEX / 2));
-		r.y = (uint16_t) ((p / QTEX_PAGE_COLS) * PAGE_TEX);
-		r.w = PAGE_TEX / 2;
-		r.h = (uint16_t) page_h[p];
-		r.data_ofs = ofs;
-		fwrite(&r, sizeof r, 1, f);
-		ofs += (uint32_t) r.w * r.h * 2;       /* 256 * h bytes: 32-multiple */
-	}
-	fwrite(tables.p, 1, tables.len, f);
-	free(tables.p);
-	long here = ftell(f);
-	static const uint8_t zero[64];
-	fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
-	for (int p = 0; p < ts->pages_used; p++)
-		fwrite(pages + (size_t) p * PAGE_TEX * PAGE_TEX, 1,
-		       (size_t) page_h[p] * PAGE_TEX, f);
-	long file_len = ftell(f);
-	fclose(f);
-
-	printf("qcook: %s — %d tiles in %d pages (%d animated textures), %u texel bytes, file %ld B\n",
-	       out_path, nitems, ts->pages_used, ts->num_anims, ts->bytes, file_len);
 	#undef SLOT_MIPTEX
 	#undef SLOT_EXTRA
 

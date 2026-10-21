@@ -19,9 +19,6 @@
 typedef struct {
 	void (*new_game)(void);     /* SetNewParms and "map start" */
 	int  (*in_game)(void);      /* sv.active: a game the player has begun */
-	int  (*reload_due)(void);   /* the settings ask for other files than the
-	                               level on screen was loaded from (levels,
-	                               texture depth): they wait for a load */
 	int  (*no_world)(void);     /* no map is loaded (Quake's forced console:
 	                               the menu over its background, not over
 	                               the faded game) */

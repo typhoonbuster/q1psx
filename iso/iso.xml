@@ -33,8 +33,7 @@
 			</dir>
 			<!-- what is read while the game runs, last: the streamed assets, then
 			     the music next to them (the SPU music's refills go between their
-			     reads; the XA streams, 600 MB, kept off the loads' way as the
-			     CD-DA tracks were) -->
+			     reads) -->
 			@STREAM_ENTRY@
 			<dir name="MUSIC">
 			@MUSIC_ENTRIES@

@@ -72,7 +72,7 @@
 .set PL_TYPE,        6     # qw_plane: int16 n[3], type, dist
 .set PL_DIST,        8
 .set W_PLANES,      76     # world_t
-.set W_BMODELS,    120
+.set W_BMODELS,    116
 .set RI_PIECES,   0x80     # r_item_t.type: a brush model's pieces (rlist.h)
 .set LP_PIECES,    256     # r_lists[128 + id]: the list's pieces' head (rlist.c)
 .set WAY_STEPS,    QW_MAX_BM_DEPTH + 1   # the C's way (bmfrag.c)

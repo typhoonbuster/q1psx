@@ -24,19 +24,13 @@ void anim_invalidate(void)
 		shown[i] = -1;
 }
 
-/* a tile's VRAM rectangle: the 8-bit pages' (two texels a halfword), or the
-   4-bit set's (four), the cell's whole halfwords */
+/* a tile's VRAM rectangle in the 4-bit set (four texels a halfword), the
+   cell's whole halfwords */
 static void tile_rect(const qw_anim_tile *t, RECT *r)
 {
-	if (world.tex4) {
-		r->x = (int16_t) (QTEX4_PAGE_X0 + 64 * t->page + t->u0 / 4);
-		r->y = (int16_t) t->v0;
-		r->w = (int16_t) ((t->w + 3) / 4);
-	} else {
-		r->x = (int16_t) (QTEX_PAGE_X0 + 128 * (t->page % QTEX_PAGE_COLS) + t->u0 / 2);
-		r->y = (int16_t) (256 * (t->page / QTEX_PAGE_COLS) + t->v0);
-		r->w = (int16_t) (t->w / 2);
-	}
+	r->x = (int16_t) (QTEX4_PAGE_X0 + 64 * t->page + t->u0 / 4);
+	r->y = (int16_t) t->v0;
+	r->w = (int16_t) ((t->w + 3) / 4);
 	r->h = (int16_t) t->h;
 }
 
@@ -82,10 +76,9 @@ void anim_frame(int tick)
 		tile_rect(src, &s);
 		tile_rect(&a->display, &d);
 		move(s.x, s.y, d.x, d.y, s.w, s.h);
-		if (world.tex4)                   /* its colours: one 16-entry CLUT per texture */
-			move(16 * (src->slot % QTEX4_CLUTS_PER_ROW), QTEX4_CLUT_Y + src->slot / QTEX4_CLUTS_PER_ROW,
-			     16 * (a->display.slot % QTEX4_CLUTS_PER_ROW),
-			     QTEX4_CLUT_Y + a->display.slot / QTEX4_CLUTS_PER_ROW, 16, 1);
+		move(16 * (src->slot % QTEX4_CLUTS_PER_ROW), QTEX4_CLUT_Y + src->slot / QTEX4_CLUTS_PER_ROW,
+		     16 * (a->display.slot % QTEX4_CLUTS_PER_ROW),   /* its colours: one 16-entry */
+		     QTEX4_CLUT_Y + a->display.slot / QTEX4_CLUTS_PER_ROW, 16, 1);   /* CLUT a texture */
 		shown[c] = (int16_t) key;
 		moved = 1;
 #ifdef Q1PSX_BENCH

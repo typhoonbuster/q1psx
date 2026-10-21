@@ -148,12 +148,11 @@ static void warp_apply(int t)
 	r_state.warp_k16 = warp_k16[t];
 }
 
-void r_set_warp(int mode, int t_px, int budget)
+void r_set_warp(int mode, int t_px)
 {
-	r_warp.mode   = mode;
-	r_warp.t      = t_px;
-	r_warp.budget = budget;
-	r_warp.calm   = 0;
+	r_warp.mode = mode;
+	r_warp.t    = t_px;
+	r_warp.calm = 0;
 	warp_apply(t_px);
 }
 
@@ -167,19 +166,10 @@ void r_set_warp(int mode, int t_px, int budget)
 
 void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 {
-	int over, room;
-	switch (r_warp.mode) {
-	case R_WARP_DYNAMIC:                       /* (against the frame rate cap's share) */
-		over = vbl > share || frame_cycles > WARP_HIGH * share;
-		room = vbl <= share && frame_cycles < WARP_LOW * share;
-		break;
-	case R_WARP_BUDGET:
-		over = r_warp.tris > (uint32_t) r_warp.budget;
-		room = r_warp.tris < (uint32_t) r_warp.budget * 7 / 8;
-		break;
-	default:
+	if (r_warp.mode != R_WARP_DYNAMIC)
 		return;
-	}
+	int over = vbl > share || frame_cycles > WARP_HIGH * share;   /* (against the frame */
+	int room = vbl <= share && frame_cycles < WARP_LOW * share;   /*  rate cap's share) */
 	int t = r_warp.t_eff;
 	if (over) {
 		t += t >= 4 ? t / 4 : 1;
@@ -417,13 +407,15 @@ void r_frame(void)
 			mark_cam[k] = r_state.cam[k];
 	}
 
-	/* triangles for the warp budget: fast-path quads are 26 bytes per
+#if !Q1PSX_RELEASE
+	/* the debug overlay's triangles: fast-path quads are 26 bytes per
 	   triangle (POLY_GT4, 52 B; the flat shading's POLY_FT4, 40 B: 20),
 	   the slow path's are POLY_GT3 (40 B); the few window commands go
 	   uncounted */
 	uint32_t bytes = r_state.pkt - (uint32_t) vid_frame.pkt;
 	uint32_t slowb = r_state.slow_bytes <= bytes ? r_state.slow_bytes : bytes;
 	r_warp.tris = (bytes - slowb) / (opt_flat ? 20 : 26) + slowb / 40;
+#endif
 	vid_frame.pkt = (uint8_t *) r_state.pkt;
 	r_arena_full  = r_state.pkt >= r_state.pkt_end;   /* the walk stopped short: the farthest records lost */
 
