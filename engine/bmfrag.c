@@ -1015,7 +1015,12 @@ static void draw_node(const bmf_cache *c, int k)
 	}
 }
 
-/* The order the walk gives a point among the model's pieces: at the
+#if Q1PSX_ORDER_C
+/* (The C specification of engine/rl_order.s, which does all of the below
+   for rlist.c's rl_order_c: ORDER_C=1 builds it alone, ORDER_C=2 checks
+   the asm by it.)
+
+   The order the walk gives a point among the model's pieces: at the
    deepest node on the point's way down that also holds the pieces' node
    (in its subtree, or that node itself), a point beyond it from the eye
    comes before the subtree the walk takes after it (those pieces over the
@@ -1032,8 +1037,22 @@ static struct {
 } way;
 enum { WAY_PSIDE = 1, WAY_EYE = 2, WAY_ESIDE = 4 };   /* the point's side; the eye's, once known */
 
+#if defined(Q1PSX_BENCH) && Q1PSX_ORDER_C == 2
+uint32_t bmf_order_stats[2];     /* the general planes' sides taken, those with a coordinate past 16 bits */
+#endif
+
 static __attribute__((noinline)) BMF_COLD int node_side(const bmf_cache *c, int k, const int32_t v[3])
 {
+#if defined(Q1PSX_BENCH) && Q1PSX_ORDER_C == 2
+	if (plane_of(c->nodes[k].plane3)->type >= 3) {
+		bmf_order_stats[0]++;
+		for (int i = 0; i < 3; i++)
+			if (v[i] < -32768 || v[i] > 32767) {
+				bmf_order_stats[1]++;
+				break;
+			}
+	}
+#endif
 	return cam_side(plane_of(c->nodes[k].plane3), v);
 }
 
@@ -1117,6 +1136,26 @@ BMF_COLD int bmf_node_over(int model, int k, const int32_t p[3])
 	}
 	return !(st & WAY_PSIDE) != !(st & WAY_ESIDE);   /* (the point beyond it from the eye) */
 }
+#endif /* Q1PSX_ORDER_C */
+
+/* engine/rl_order.s's offsets */
+_Static_assert(__builtin_offsetof(bmf_cache, org) == 0 && __builtin_offsetof(bmf_cache, num_nodes) == 14 &&
+               __builtin_offsetof(bmf_cache, cam) == 60 && __builtin_offsetof(bmf_node, child) == 2 &&
+               __builtin_offsetof(bmf_node, end) == 14 && __builtin_offsetof(qw_bmodel, maxs) == 12 &&
+               __builtin_offsetof(qw_plane, type) == 6 && __builtin_offsetof(qw_plane, dist) == 8 &&
+               __builtin_offsetof(world_t, planes) == 76, "rl_order.s CA_*, BN_*, QB_*, PL_*, W_*");
+
+#if defined(Q1PSX_BENCH) && Q1PSX_ORDER_C == 2
+void bmf_model_box(int model, int32_t lo[3], int32_t hi[3])
+{
+	const bmf_cache *c = bmf_models[model];
+	const qw_bmodel *bm = &world.bmodels[model];
+	for (int k = 0; k < 3; k++) {
+		lo[k] = bm->mins[k] + c->org[k];
+		hi[k] = bm->maxs[k] + c->org[k];
+	}
+}
+#endif
 
 #ifndef Q1PSX_BENCH_BMF
 #define Q1PSX_BENCH_BMF 1        /* 0: the models drawn whole (NOBMF=1 scripts/bench.sh, an A / B) */
@@ -1206,7 +1245,9 @@ int bmf_draw(edict_t *e, uint16_t vis)
 		       (unsigned) c->num_groups, (unsigned) c->recs_len, (unsigned) c->pool_len);
 #endif
 	draw_tag  = RI_PIECES | (uint32_t) e->model << 8;
+#if Q1PSX_ORDER_C
 	way.model = 0;                                /* (the eye, the models: this frame's) */
+#endif
 	draw_node(c, c->num_nodes ? 0 : -1);
 	return 1;
 }

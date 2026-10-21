@@ -56,14 +56,17 @@ int bmf_draw(edict_t *e, uint16_t vis);
    node of brush model `model`'s BSP whose pieces an rl_add_pieces item
    holds (`recs`: its records; a model bmf_draw drew this frame), and are
    that node's pieces in front of point p (1/8 units), drawn over it (1),
-   or behind it, drawn before (0)? */
+   or behind it, drawn before (0)? The C specification (ORDER_C builds,
+   rlist.c rl_order_c): engine/rl_order.s does it all itself. */
 int bmf_pieces_node(int model, const uint8_t *recs);
 int bmf_node_over(int model, int node, const int32_t p[3]);
 /* 0: the model cannot hide point p (the segment from the eye to p misses
-   its box, grown by 32 units): its pieces all under p */
+   its box): its pieces all under p */
 int bmf_may_hide(int model, const int32_t p[3]);
 
 #ifdef Q1PSX_BENCH
+/* a model's box where it was last cut (1/8 units: ORDER_C=2's made-up asks) */
+void bmf_model_box(int model, int32_t lo[3], int32_t hi[3]);
 /* this level: models with pieces, pieces made, cuts, cuts given up, the
    cuts' cycles, the dearest cut's, cuts put off (moved out of view) */
 extern uint32_t bmf_stats[7];

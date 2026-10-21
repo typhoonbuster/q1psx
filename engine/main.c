@@ -448,6 +448,10 @@ static void frame_work(void)
 #endif
 	if (game_active)
 		game_render_particles();
+#if defined(Q1PSX_BENCH) && Q1PSX_ORDER_C == 2
+	if (ents_debug)                         /* (the asm's places checked at made-up points) */
+		rl_order_probe();
+#endif
 	prof_add(PROF_ENTS, t0, prof_now());    /* (the dlights' share counted apart) */
 	r_ui_room = menu_shown && menu_active() ? R_MENU_ROOM : 0;   /* (the menu's packets, after
 	                                           the world's: a full arena left it none) */
@@ -1320,6 +1324,7 @@ static void bench_view_ticks(const char *view)
 			ents_debug = 1;
 			run_frame(0, BENCH_DUMP);
 			ents_debug = 0;
+			rl_order_print(name);
 		}
 		game_tick(&cmd);
 		bench_stream_frames();
@@ -1406,6 +1411,7 @@ static void bench_maps(void)
 			printf("ents view %s: %d models drawn of %d, %d in the PVS, %d leaves in front, items %d, lists %d\n",
 			       names[v & 3], ents_stat[0], ents_stat[3], ents_stat[1], ents_stat[2], rl_num_items(),
 			       rl_num_lists());
+			rl_order_print(names[v & 3]);
 			if (Q1PSX_BENCH_TICKS && v >= nviews)
 				bench_view_ticks(names[v & 3]);
 		}
@@ -1457,6 +1463,7 @@ static void ents_dump(const char *name)
 	ents_debug = 1;                                   /* (the models drawn, their pieces) */
 	run_frame(0, BENCH_DUMP);
 	ents_debug = 0;
+	rl_order_print(name);
 	printf("bmf %s: %u models with pieces, %u pieces made in %u cuts (%u given up), %u cycles, %u the dearest;"
 	       " items %d, lists %d\n", name, (unsigned) bmf_stats[0], (unsigned) bmf_stats[1],
 	       (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4], (unsigned) bmf_stats[5],

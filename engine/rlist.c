@@ -1,9 +1,11 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "bmfrag.h"
 #include "gdata.h"
 #include "mdl.h"
+#include "prof.h"
 #include "render.h"
 #include "rlist.h"
 #include "stream.h"
@@ -22,10 +24,19 @@ static qw_leaf *touched[RL_MAX_LISTS];
 #define rl_list_pieces (r_lists + 128)
 #define LP_CHAINED 0x8000
 
+#ifdef Q1PSX_BENCH
+static uint32_t order_calls, order_cycles;
+extern int ents_debug;
+#endif
+
 void rl_begin(void)
 {
 	n_items = n_ents = n_lists = 0;
 	mdl_new_frame();
+#ifdef Q1PSX_BENCH
+	if (ents_debug)                             /* (the debug frame's places: rl_order_print) */
+		order_calls = order_cycles = 0;
+#endif
 }
 
 int rl_num_items(void)
@@ -246,18 +257,27 @@ static inline void list_insert(int id, unsigned after, int n)
 	}
 }
 
+/* An alias model or a particle among its leaf's brush-model pieces (docs/
+   porting-notes.md §50.1, §51): engine/rl_order.s, hand-written; the C
+   below (ORDER_C=1 builds it alone, ORDER_C=2 checks the asm by it, call
+   by call) is its specification. */
+void rl_order(int id, int n, const int32_t org[3], const int32_t *box);
+
+#if Q1PSX_ORDER_C
 /* The last of list id's pieces items (in the list's order: their models'
    walks, back to front) to be drawn over point p (1/R_POS_SUB units):
    index + 1, 0 if none. A model's items over p come first (its walk's
    front): the first one under p ends that model's. At the first ask the
-   leaf's pieces items are chained (z; x -1: their node not looked for):
-   the list holds nothing else of this frame's yet (but brush models drawn
-   whole). */
+   leaf's pieces items are chained (z; x -1: their node not looked for),
+   from the first of them: the list holds nothing else of this frame's yet
+   but brush models drawn whole (one drawn after a model's pieces in its
+   leaf heads the list). */
 static RL_SMALL unsigned pieces_over(int id, const int32_t p[3])
 {
 	unsigned head = rl_list_pieces[id];
 	if (!(head & LP_CHAINED)) {
 		r_item_t *last = 0;
+		unsigned first = 0;
 		for (unsigned i = head; i; i = r_items[i - 1].next) {
 			r_item_t *it = &r_items[i - 1];
 			if (it->type != RI_PIECES)
@@ -265,12 +285,13 @@ static RL_SMALL unsigned pieces_over(int id, const int32_t p[3])
 			it->x = -1;
 			if (last)
 				last->z = (int16_t) i;
+			else
+				first = i;
 			last = it;
 		}
 		if (last)
 			last->z = 0;
-		else
-			head = 0;                           /* (brush models drawn whole only) */
+		head = first;                           /* (0: brush models drawn whole only) */
 		rl_list_pieces[id] = (uint16_t) (head | LP_CHAINED);
 	}
 	unsigned over = 0;
@@ -292,6 +313,217 @@ static RL_SMALL unsigned pieces_over(int id, const int32_t p[3])
 	}
 	return over;
 }
+
+/* item n (a model at depth x, or a particle) into list id after the pieces
+   in front of its point, then after the models nearer than it (a particle:
+   none). The point: org, or with `box` (an edict's mins then maxs) org
+   plus the box's centre. */
+RL_SMALL void rl_order_c(int id, int n, const int32_t org[3], const int32_t *box)
+{
+	int32_t c[3];
+	if (box) {
+		for (int k = 0; k < 3; k++)
+			c[k] = org[k] + (box[k] + box[k + 3]) / 2;
+		org = c;
+	}
+	unsigned after = pieces_over(id, org);
+	if (r_items[n].type == 1) {
+		int16_t z = r_items[n].x;
+		for (unsigned nx = after ? r_items[after - 1].next : r_lists[id];
+		     nx && r_items[nx - 1].type == 1 && r_items[nx - 1].x < z; nx = r_items[nx - 1].next)
+			after = nx;
+	}
+	list_insert(id, after, n);
+}
+#endif
+
+#if Q1PSX_ORDER_C == 2
+/* The asm checked by the C, ask by ask: both from the same state, the C's
+   first; the state an ask can touch is the list's head, its pieces' head,
+   and the first three words of its items and of item n (next; x; z). */
+#define ORD_KEEP 160             /* a list's items kept (a longer one goes unchecked) */
+typedef struct {
+	uint16_t head, pieces;
+	int      count;
+	uint16_t idx[ORD_KEEP];
+	uint32_t w[ORD_KEEP][3];
+} ord_state;
+static ord_state ord_keep, ord_c, ord_a;
+static uint32_t  ord_checks, ord_bad, ord_unchecked, ord_probes;
+
+static int ord_take(ord_state *s, int id, int n)
+{
+	const uint32_t *w;
+	s->head   = r_lists[id];
+	s->pieces = rl_list_pieces[id];
+	s->count  = 0;
+	for (unsigned i = s->head;; i = r_items[i - 1].next) {
+		unsigned at = i ? i : (unsigned) n + 1;   /* (the list's items, then n) */
+		if (s->count >= ORD_KEEP)
+			return 0;
+		s->idx[s->count] = (uint16_t) at;
+		w = (const uint32_t *) &r_items[at - 1];
+		s->w[s->count][0] = w[0];
+		s->w[s->count][1] = w[1];
+		s->w[s->count][2] = w[2];
+		s->count++;
+		if (!i)
+			return 1;
+	}
+}
+
+static void ord_put(const ord_state *s, int id)
+{
+	r_lists[id] = s->head;
+	rl_list_pieces[id] = s->pieces;
+	for (int k = 0; k < s->count; k++) {
+		uint32_t *w = (uint32_t *) &r_items[s->idx[k] - 1];
+		w[0] = s->w[k][0];
+		w[1] = s->w[k][1];
+		w[2] = s->w[k][2];
+	}
+}
+
+static int ord_same(const ord_state *a, const ord_state *b)
+{
+	if (a->head != b->head || a->pieces != b->pieces || a->count != b->count)
+		return 0;
+	for (int k = 0; k < a->count; k++)
+		if (a->idx[k] != b->idx[k] || a->w[k][0] != b->w[k][0] || a->w[k][1] != b->w[k][1] ||
+		    a->w[k][2] != b->w[k][2])
+			return 0;
+	return 1;
+}
+
+static void ord_print(const char *who, const ord_state *s)
+{
+	printf("ordasm %s head %u pieces %04x:", who, s->head, s->pieces);
+	for (int k = 0; k < s->count && k < 20; k++)
+		printf(" %u:%08x/%08x/%08x", s->idx[k], (unsigned) s->w[k][0], (unsigned) s->w[k][1],
+		       (unsigned) s->w[k][2]);
+	printf("\n");
+}
+
+/* `keep`: the state put back after (a probe's ask) */
+static void order_check(int id, int n, const int32_t org[3], const int32_t *box, int keep)
+{
+	if (!ord_take(&ord_keep, id, n)) {
+		ord_unchecked++;
+		if (!keep)
+			rl_order(id, n, org, box);
+		return;
+	}
+	rl_order_c(id, n, org, box);
+	ord_take(&ord_c, id, n);
+	ord_put(&ord_keep, id);
+	rl_order(id, n, org, box);
+	ord_take(&ord_a, id, n);
+	ord_checks++;
+	if (!ord_same(&ord_c, &ord_a) && ord_bad++ < 8) {
+		printf("ordasm MISMATCH list %d item %d type %d x %d at %d %d %d%s\n", id, n, r_items[n].type,
+		       r_items[n].x, (int) org[0], (int) org[1], (int) org[2], box ? " + box" : "");
+		ord_print("before", &ord_keep);
+		ord_print("C     ", &ord_c);
+		ord_print("asm   ", &ord_a);
+	}
+	if (keep)
+		ord_put(&ord_keep, id);
+}
+
+void rl_order_probe(void)
+{
+	static const int32_t box[6] = { -16 * 8 - 1, -16 * 8, -24 * 8 + 3, 16 * 8, 16 * 8 + 1, 32 * 8 };
+	if (n_items >= RL_MAX_ITEMS)
+		return;
+	int n = n_items;                            /* (a free item: never in a list once put back) */
+	int32_t eye[3];
+	for (int k = 0; k < 3; k++)
+		eye[k] = r_state.cam[k] * (R_POS_SUB / QW_VSCALE);
+	for (int id = 1; id <= n_lists; id++) {
+		if (!rl_list_pieces[id])
+			continue;
+		int model = -1;
+		for (unsigned i = r_lists[id]; i; i = r_items[i - 1].next) {
+			const r_item_t *pc = &r_items[i - 1];
+			if (pc->type != RI_PIECES || pc->colour == model)
+				continue;
+			model = pc->colour;
+			int32_t lo[3], hi[3], c[3], p[3];
+			bmf_model_box(model, lo, hi);
+			for (int k = 0; k < 3; k++)
+				c[k] = lo[k] + (hi[k] - lo[k]) / 2;
+			for (int a = 0; a < 27 + 6 + 12; a++) {
+				for (int k = 0; k < 3; k++) {
+					if (a < 27) {                   /* its corners, middles, centre, 8 units out */
+						int s = a / (k == 0 ? 1 : k == 1 ? 3 : 9) % 3;
+						p[k] = s == 0 ? lo[k] - 64 : s == 1 ? c[k] : hi[k] + 64;
+					} else if (a < 33) {             /* far beyond it from the eye, or behind */
+						static const int32_t far[6] = { 16, 64, 1024, -16, -64, -1024 };
+						p[k] = c[k] + (c[k] - eye[k]) * far[a - 27];
+					} else {                         /* far along an axis: the model's space past
+						                                16 bits, and past the axial planes'
+						                                x 4096 */
+						int b = a - 33;
+						p[k] = c[k] + (b / 2 % 3 != k ? 0 : (b & 1 ? -1 : 1) * (b < 6 ? 70000 : 1 << 21));
+					}
+				}
+				for (int t = 0; t < 3; t++) {        /* a particle, a model with its box, without */
+					r_item_t *it = &r_items[n];
+					memset(it, 0, sizeof *it);
+					it->type = (uint8_t) (t != 0);
+					it->x = (int16_t) (t ? (a * 37 + id * 11) % 300 - 60 : p[0] / 2);
+					order_check(id, n, p, t == 1 ? box : 0, 1);
+					ord_probes++;
+				}
+			}
+		}
+	}
+}
+#endif
+
+#ifdef Q1PSX_BENCH
+void rl_order_print(const char *name)
+{
+	if (order_calls)
+		printf("order %s: %u places among pieces, %u cycles\n", name, (unsigned) order_calls,
+		       (unsigned) order_cycles);
+#if Q1PSX_ORDER_C == 2
+	extern uint32_t bmf_order_stats[2];
+	printf("ordasm %s: %u checked (%u made up), %u mismatches, %u unchecked; the C's general planes %u (%u "
+	       "wide)\n", name, (unsigned) ord_checks, (unsigned) ord_probes, (unsigned) ord_bad,
+	       (unsigned) ord_unchecked, (unsigned) bmf_order_stats[0], (unsigned) bmf_order_stats[1]);
+	ord_checks = ord_probes = ord_bad = ord_unchecked = 0;
+	bmf_order_stats[0] = bmf_order_stats[1] = 0;
+#endif
+}
+#endif
+
+/* item n's place among the pieces of list id (the rare way: a list with
+   brush models' pieces): the asm's (ORDER_C=1 the C's, 2 both); the
+   bench's debug frame times them */
+#if defined(Q1PSX_BENCH) || Q1PSX_ORDER_C
+static __attribute__((noinline)) void place_by_pieces(int id, int n, const int32_t org[3], const int32_t *box)
+{
+#ifdef Q1PSX_BENCH
+	uint32_t t0 = ents_debug ? prof_now() : 0;
+#endif
+#if Q1PSX_ORDER_C == 1
+	rl_order_c(id, n, org, box);
+#elif Q1PSX_ORDER_C == 2
+	order_check(id, n, org, box, 0);
+#else
+	rl_order(id, n, org, box);
+#endif
+#ifdef Q1PSX_BENCH
+	if (ents_debug) {
+		order_calls++;
+		order_cycles += prof_cycles(t0, prof_now());
+	}
+#endif
+}
+#else
+#define place_by_pieces rl_order
+#endif
 
 void rl_add_pieces(const qw_leaf *leaf, const uint8_t *recs, uint32_t len, uint32_t tag)
 {
@@ -316,21 +548,6 @@ void rl_pieces_done(void)
 		rl_list_pieces[id] = r_lists[id];
 }
 
-/* item n (a model at depth x, or a particle) into list id after the pieces
-   in front of point p, then after the models nearer than it (a particle:
-   none); the rare way, the list holding brush models' pieces */
-static __attribute__((noinline)) RL_SMALL void place_by_pieces(int id, int n, const int32_t p[3])
-{
-	unsigned after = pieces_over(id, p);
-	if (r_items[n].type == 1) {
-		int16_t z = r_items[n].x;
-		for (unsigned nx = after ? r_items[after - 1].next : r_lists[id];
-		     nx && r_items[nx - 1].type == 1 && r_items[nx - 1].x < z; nx = r_items[nx - 1].next)
-			after = nx;
-	}
-	list_insert(id, after, n);
-}
-
 void rl_add_model(const qw_leaf *leaf, r_ent_t *e, const int32_t org[3], const int32_t *box)
 {
 	if (!leaf || !e || n_items >= RL_MAX_ITEMS)
@@ -352,13 +569,7 @@ void rl_add_model(const qw_leaf *leaf, r_ent_t *e, const int32_t org[3], const i
 	                                               (any map's in an int16) */
 	it->x = (int16_t) z;
 	if (rl_list_pieces[id]) {
-		int32_t c[3];
-		if (box) {                              /* (its place among them: from its centre) */
-			for (int k = 0; k < 3; k++)
-				c[k] = org[k] + (box[k] + box[k + 3]) / 2;
-			org = c;
-		}
-		place_by_pieces(id, n, org);
+		place_by_pieces(id, n, org, box);       /* (its place among them: from its box's centre) */
 		return;
 	}
 	/* after the nearer models (the list's head: the nearest, drawn last) */
@@ -388,7 +599,7 @@ void rl_add_particle(const qw_leaf *leaf, const int32_t pos[3], int colour)
 	it->ent = 0;
 	int n = n_items++;
 	if (rl_list_pieces[id])
-		place_by_pieces(id, n, pos);
+		place_by_pieces(id, n, pos, 0);
 	else
 		list_insert(id, 0, n);                  /* (over the models: the frame adds the
 		                                           particles last) */

@@ -35,6 +35,11 @@
 #define RL_MAX_ENTS  128
 #define RL_MAX_LISTS 127   /* leaves with a list a frame (7 bits of the leaf's vis word) */
 
+#ifndef Q1PSX_ORDER_C
+#define Q1PSX_ORDER_C 0    /* an item's place among a leaf's pieces (CMake): 0 the asm
+                              (engine/rl_order.s), 1 the C reference, 2 the asm checked by it */
+#endif
+
 /* engine/r_defs.inc mirrors both layouts (RI_*, RE_*) */
 typedef struct {
 	uint16_t next;       /* +0  next item of the leaf's list, index + 1; 0 ends  */
@@ -122,5 +127,17 @@ void rl_end(void);
 
 int rl_num_items(void);
 int rl_num_lists(void);     /* (the last frame's leaves with a list, of RL_MAX_LISTS) */
+
+#ifdef Q1PSX_BENCH
+/* the last debug frame's (ents_debug) places taken among pieces: an "order"
+   line, their count and cycles; ORDER_C=2, an "ordasm" line: the asm's
+   places checked against the C's, and the mismatches */
+void rl_order_print(const char *name);
+#if Q1PSX_ORDER_C == 2
+/* (a debug frame, its items all in) made-up places asked of every list
+   with pieces, each checked and put back: the frame unchanged */
+void rl_order_probe(void);
+#endif
+#endif
 
 #endif

@@ -98,6 +98,12 @@ set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference,
 # and compares them ("bmfasm" lines).
 set(Q1PSX_BMF_C 0 CACHE STRING "Brush models' cut: 0 the asm, 1 the C reference, 2 the asm checked by the C")
 target_compile_definitions(q1psx PRIVATE Q1PSX_BMF_C=${Q1PSX_BMF_C})
+# An alias model's or a particle's place among its leaf's brush-model pieces:
+# the asm (engine/rl_order.s) or its C specification (engine/rlist.c
+# rl_order_c, engine/bmfrag.c bmf_node_over...); 2 runs both on every ask,
+# and on made-up ones in the bench's debug frames ("ordasm" lines).
+set(Q1PSX_ORDER_C 0 CACHE STRING "Places among a leaf's pieces: 0 the asm, 1 the C reference, 2 the asm checked by the C")
+target_compile_definitions(q1psx PRIVATE Q1PSX_ORDER_C=${Q1PSX_ORDER_C})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${Q1PSX_DLIGHT_C}>)
 target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_C=${Q1PSX_DLIGHT_C})
 

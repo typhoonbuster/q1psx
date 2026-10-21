@@ -65,7 +65,14 @@
 #         (engine/bmfrag.s), BMF_C=2 the asm checked cut by cut by the C
 #         ("bmfasm" lines: the cuts checked, any mismatch); that build
 #         carries both cuts, its stack floor lowered to 10 KB (STACK_MIN;
-#         SAMPLE=1's histogram needs 2048 there).
+#         SAMPLE=1's histogram needs 2048 there). ORDER_C=1 builds an alias
+#         model's or a particle's place among its leaf's brush-model pieces
+#         in C (engine/rlist.c rl_order_c) instead of the asm (engine/
+#         rl_order.s), ORDER_C=2 the asm checked ask by ask by the C, and
+#         in each debug frame (a view's dump) at made-up places around
+#         every model with pieces ("ordasm" lines: the asks checked, any
+#         mismatch). Every bench prints an "order" line per view whose
+#         debug frame took such places: their count, their cycles.
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -100,6 +107,7 @@ PROFILE=${PROFILE:-1}
 HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
 BMF_C=${BMF_C:-0}
+ORDER_C=${ORDER_C:-0}
 PLAY=${PLAY:-0}
 MUSIC=${MUSIC:-0}
 MUSIC_MODE=${MUSIC_MODE:-xa}
@@ -119,7 +127,7 @@ cmake --preset bench -DQ1PSX_BENCH_TEXTURES="$TEXTURES" -DQ1PSX_BENCH_GEOMETRY="
       -DQ1PSX_BENCH_DRAWDIST="$DRAWDIST" -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_VIEWMODEL="$VIEWMODEL" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_STACK_MIN="$STACK_MIN" \
-      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_MUSIC_MODE="$MUSIC_MODE" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
@@ -136,6 +144,10 @@ grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' 
 grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
 grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 [ "$BMF_C" = 2 ] && { grep '^bmfasm' "$ROOT/build-bench/bench.log" | head -n 40 || true; }
+[ "$ORDER_C" = 2 ] && { grep '^ordasm' "$ROOT/build-bench/bench.log" | grep -v ' 0 mismatches, 0 unchecked;' | head -n 40 || true
+	awk '/^ordasm .*checked/ { c += $3; m += $8; u += $10; g += $16; w += substr($17, 2) }
+	     END { printf "ordasm: %d asks checked, %d mismatches, %d unchecked; the general planes %d (%d wide)\n", c, m, u, g, w }' \
+		"$ROOT/build-bench/bench.log"; }
 [ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$ROOT/build-bench/bench.log" || true; }
 [ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$ROOT/build-bench/bench.log" || true; }
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
