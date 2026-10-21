@@ -190,9 +190,14 @@ void music_play(int track)
 
 void music_stop(void)
 {
-	if (reading_n) {                             /* (a refill cut short) */
+	if (reading_n) {
+		/* a refill cut short: the drive paused, and that waited for, before
+		   the next command (without the wait, a map's first read after the
+		   menu's music took one of the refill's sectors: START.SND "not
+		   found", the drive's error 20h; docs/porting-notes.md §53) */
 		CdReadBreak();
 		CdReadSync(0, 0);
+		CdControlB(CdlPause, 0, 0);
 		reading_n = 0;
 	}
 	if (!playing)

@@ -1050,8 +1050,9 @@ static void pass(void)
 void stream_abort(void)
 {
 	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ)) {
-		CdReadBreak();
-		CdReadSync(0, 0);                     /* (the drive idle before the next command) */
+		CdReadBreak();                        /* (the drive paused, waited for, before the */
+		CdReadSync(0, 0);                     /*  next command: music.c music_stop's)       */
+		CdControlB(CdlPause, 0, 0);
 		reading = -1;
 	}
 	lend_at = 0;                              /* (asked for again at the map's start) */
