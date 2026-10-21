@@ -6117,7 +6117,7 @@ lines):
   are paused (§50.2): invisible and harmless.
 - **The order's rare way in C** (§50.1): about 550 cycles per monster and
   brush model sharing a leaf. The GTE could take the plane tests (three
-  dot products per MVMVA), in hand-written asm.
+  dot products per MVMVA), in hand-written asm. (Done: §51.)
 - **The fade** darkens a body to black. The GPU's blend modes cannot fade
   to the background. A 50 % blend step, or a body sinking into the floor,
   are other looks, left open.
@@ -6142,3 +6142,94 @@ lines):
 - **The stack's room**: release 16648 B, default 16632 B, ultra 16648 B,
   about 250 bytes over the 16 KB floor. The next code needs room (an
   arena, or less code elsewhere).
+
+## §51 — The order among a leaf's pieces in hand-written asm (2026-10-21)
+
+- **The ask** (§50.6's "Left"): §50.1's rare way, an alias model or a
+  particle placed among its leaf's brush-model pieces, was C compiled for
+  size: about 3.7 k cycles a place on E3M3.v1 (three monsters, two doors'
+  pieces in their leaf). In hand-written asm, the GTE for the general
+  planes; the C kept as its check.
+
+### 51.1 engine/rl_order.s
+
+- **One call does it all**, `rl_order(id, n, org, box)`: the box's centre
+  (moved there from `rl_add_model`), the list's chain at its first ask, the
+  test of each model's box against the segment from the eye to the point,
+  the items' nodes, the point's way down each model's BSP, then the item
+  put after the pieces over the point and after the nearer models.
+- **The same results, a different way** (the C is §50.1's):
+  - every step of the way takes the eye's side with the point's (the C
+    takes the eye's at the nodes it decides at). A step is 3 words: the
+    child on the point's side, that child's subtree's size, the point
+    beyond the plane from the eye. An item's node is under the child when
+    `node - child < size`, unsigned: one compare;
+  - one binary search over the model's nodes, keyed by their first
+    group's records' offset, gives the C's group, then node, searches
+    (the groups' offsets rise);
+  - an axial plane is one compare, `v x 4096 - dist / 2` wrapping as the
+    C's. A general plane takes the GTE: one MVMVA with the point and the
+    eye as the rotation's rows 1 and 2 gives both dot products. When one
+    of their coordinates is past 16 bits (never on id's maps: the check's
+    far points) the CPU multiplies;
+  - the way, the point and the segment's box are in the scratchpad, free
+    in the ents stage (r_render sets its own). The GTE's rotation is left
+    changed: `rl_ent_matrix` and r_render load theirs;
+  - the way has no bound: the cook keeps a model within
+    `QW_MAX_BM_DEPTH` nodes (`depth_of`), and the C's bound never acted.
+- **A bug in §50.1's C, found on the way**: the chain began at the list's
+  head as it was once the brush models were in. A brush model drawn whole
+  (too cut up, or without room), added after another's pieces in the same
+  leaf, heads the list. The walk then read it as a pieces item (model 0,
+  a NULL cache) and followed its stale `z`. Fixed in the C, which the asm
+  follows: the chain begins at the first pieces item. None of the 128
+  spawn views has such a list.
+- **The C as the specification**: rlist.c `rl_order_c` (the former
+  `pieces_over` / `place_by_pieces`) with bmfrag.c's `bmf_may_hide`,
+  `bmf_pieces_node`, `bmf_node_over`. `ORDER_C=1 scripts/bench.sh` builds
+  it alone. `ORDER_C=2` runs both on every ask, and in each debug frame
+  (a view's dump) at made-up places around every model with pieces: its
+  box's corners, middles and centre, 8 units out; far beyond it from the
+  eye and behind the eye; far along each axis, past 16 bits and past the
+  axial planes' `x 4096`. Each as a particle, a model with a box and one
+  without, the list put back after. `ordasm` lines. The default build
+  carries the asm alone.
+
+### 51.2 Measured (PCSX-Redux in fast forward)
+
+- Every bench prints an `order` line per view whose debug frame took
+  places among pieces: their count and cycles.
+- The 128 spawn views: 28 places in 14 views, 46712 cycles in C, 25776
+  in asm (-45 %). E3M3.v1 11424 -> 5624 (-51 %), E1M8.v0 7376 -> 4368,
+  E3M4.v0 3144 -> 888.
+- E3M3.v1's frames: the ents stage 35894 -> 30219 cycles, the frame
+  454833 -> 449160 (-1.2 %). E3M2.v0: the ents stage 38553 -> 37085.
+- E1M1's nailgun scenario (`VIEW=112,2352,62,0,0 TICKS=232`, the game
+  running, its particles too): 49 places in 27 dumps, 79312 -> 46968
+  cycles (-41 %).
+- **Room**: the asm is 1652 bytes, against the C's 1676 and its way's
+  216 bytes of BSS; `rl_add_model` lost the box's centre (72 bytes). The
+  stack's room: release 16648 -> 16968 B, default 16632 -> 16968 B,
+  ultra 16648 -> 16968 B; release-spu 17380 B.
+
+### 51.3 Checked
+
+- `ORDER_C=2 BENCH_MAPS=1 HASHONLY=1 scripts/bench.sh`: 32051 asks (the
+  views' and the made-up ones), 0 mismatches, 0 unchecked; 1653 general
+  planes' sides among them, 528 with a coordinate past 16 bits. The same
+  under `EMU_ARGS=-interpreter`. `tools/hazcheck` passes.
+- `BENCH_MAPS=1 HASHONLY=1 PROFILE=0 scripts/dlcheck.sh` against master
+  8d85a61: the 128 views' display lists identical; their frame cycles
+  -0.05 % in all.
+- E1M1's nailgun scenario: the 30 dumps' hashes identical to master's
+  (the soldier hidden by the wall until it slides, then in the opening;
+  t32 and t232 looked at).
+
+### 51.4 Left
+
+- **A per-run table of the coordinates x 4096** (the point's and the
+  eye's, per axis) would save 6 instructions a step for 27 a run: even at
+  E3M3.v1's 4.5 steps a run, a loss for a particle's short way. Not
+  built.
+- **Not run**: DuckStation; a hands-on play (E1M1's nailgun room, an
+  explosion by a door: each particle is a place).

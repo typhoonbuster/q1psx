@@ -1467,3 +1467,13 @@ followed by R0-R4.
     loaded after the models;
   - measured: a visible kind missing at 41 spots of 1020 (90 before),
     only on the maps with the tightest pools.
+- **The order among a leaf's pieces in hand-written asm** (§51): a
+  monster's, an item's or a particle's place among a leaf's door pieces
+  (§50.1) is now `engine/rl_order.s`, the GTE taking the general planes:
+  - 45 % cheaper on the 128 spawn views (E3M3.v1: 11.4 k -> 5.6 k
+    cycles, its frame -1.2 %), 41 % on E1M1's nailgun scenario;
+  - the C kept as its check (`ORDER_C=1|2`): 32051 asks, 0 mismatches,
+    under the interpreter too; the views' display lists identical;
+  - a bug of §50.1's C fixed on the way (a list headed by a door drawn
+    whole read a stale chain);
+  - 320 more bytes of stack room (16968 B in the release).
