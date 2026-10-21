@@ -1520,3 +1520,14 @@ followed by R0-R4.
   - Left open: Quake's skin resolution near the eye needs about
     130 K more texels of VRAM (the rocket launcher's highlight is still a
     band).
+- **The other seven guns by hand** (as the shotgun, a capture each). §54:
+  - Quake's other guns turned out lean already (prisms of two or three
+    sections); where a section was redundant (the super shotgun's stock,
+    the grenade launcher's tube, the lightning gun's box) it is gone, the
+    nailguns, the rocket launcher and the axe keep Quake's triangles;
+  - the anti-warp cut now cuts a flat quad by rings instead of its two
+    triangles in three each (dropping sections had made it put more back);
+  - the triangles a gun always hides in itself are gone (the super
+    shotgun's half);
+  - 1223 -> 810 triangles for the eight guns, the same look on the real
+    GPU; 11.6 KB less RAM.

@@ -6487,3 +6487,63 @@ lines):
     world (a look's tool only).
 - **Left:** the guns at Quake's resolution (above); the other seven guns
   by hand.
+
+## §54 — The other seven guns by hand (2026-10-21)
+
+- **The ask:** the other seven guns by hand as the shotgun, a capture each.
+- **What they are** (each gun's parts, sections by x, frame 0; the cook's
+  cull; QCOOK_GUNDUMP): Quake's other guns are already lean prisms, the
+  shotgun's 56-vertex body (§52) the exception: hexagonal tubes of two or
+  three sections with a cap (the nailguns' barrels: a chamfer and a cone at
+  their rear, seen), square tubes and boxes (the lightning gun, the
+  nailgun's plates), the rocket launcher's body and its three side tubes,
+  the axe's handle (a hexagonal prism across the near plane), its head and
+  blade; the flash, the file's. A middle section on its ends' line within
+  0.2 units, its skin following: the super shotgun's stock (two), the
+  grenade launcher's tube, the lightning gun's box (two); the others are
+  steps, chamfers or tapers.
+- **Dropping them made the guns heavier:** §53's cut put back more than it
+  saved (the grenade launcher 78 drawn triangles -> 96, the lightning gun
+  168 -> 204): it cut a long quad's two triangles into three each, the
+  diagonal's middle too, where a ring would do.
+- **The cut by rings** (tools/qcook/game.c `tess_quad`): a triangle and its
+  neighbour across its longest edge, in one plane (normals within 5.7
+  degrees), of one skin half, wound alike, make a flat quad; two opposite
+  edges cut, it becomes two quads joined at their middles, again on each;
+  else its triangles go as before. The decision stays the edge's alone (no
+  cracks); the quads' diagonals are inside them. At the same 8 px, the
+  hidden ones below gone in both: the nailgun 165 -> 117 drawn triangles,
+  the super nailgun 240 -> 198, the lightning gun 168 -> 130, the grenade
+  launcher 78 -> 62, the rocket launcher 98 -> 82.
+- **The hidden ones** (`view_hidden`): a gun's triangles a depth buffer
+  never shows, in every frame, from ten places of the eye (the bob's
+  forward reach in five steps under the status bar's viewport and the full
+  screen's), at twice the screen's resolution and past its edges, the near
+  end clipped at 5 units, go: Quake's guns hide pieces in one another (the
+  super shotgun 51 of its 109 kept, the lightning gun 36, the nailgun 22,
+  the axe 20, the shotgun 19; with §53's cut, the super shotgun 133 -> 66
+  drawn triangles, the shotgun 81 -> 57). Checked at rest and firing
+  against the 2D renders: nothing changes.
+- **By hand** (the shotgun's tables, `GUNS`, generalized: the file's
+  triangles kept among sets of vertices, a range or a list: the flash, a
+  cap, a piece left as it is): the super shotgun's stock without its two
+  middle sections, the grenade launcher's tube without its middle one, the
+  lightning gun's box without its two: 66 -> 64, 62 -> 50, 130 -> 120
+  drawn triangles. The nailguns (their barrels' chamfers and cones are
+  seen), the rocket launcher (its muzzle's pieces, §53's repaint) and the
+  axe (no section of its handle is redundant; it stays uncut: 321 drawn
+  triangles at 8 px, 197 at 16) keep the file's triangles.
+- **Results** (triangles in the records, §53's last state -> now; the
+  renderer then leaves out those turned away): the axe 146 -> 126, the
+  shotgun 81 -> 53, the super shotgun 133 -> 64, the nailgun 191 -> 117,
+  the super nailgun 266 -> 198, the grenade launcher 80 -> 50, the rocket
+  launcher 125 -> 82, the lightning gun 201 -> 120: 1223 -> 810. The
+  guns' geometry 47968 -> 36368 B (the game arena 87 KB at boot of 100).
+  On PCSX-Redux's real GPU (the debug build, START, R1 through the guns at
+  rest): each gun as before, beside the cook's 2D render.
+- **Cost** (the game bench, START, each gun fired, against §53's): the axe
+  -0.6 %, the shotgun -1.5 %, the super shotgun -6.5 %, the nailgun
+  -1.1 %, the super nailgun -2.1 %, the grenade launcher -0.7 %, the rocket
+  launcher -1.6 % (its HUD scenarios -1.9, -2.9 %), the lightning gun
+  -3.5 %; against 4291417, before §53's fixes: -0.1 to -3.9 % (the
+  lightning gun's beam differs from one run to the other there).
