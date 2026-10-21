@@ -6455,5 +6455,35 @@ lines):
   drive's error 20h; the map's first read, the directory's, took one of
   the menu music's refill's sectors), every time: a race the disc's layout
   had hidden.
+- **The rocket launcher's muzzle** (after the first round: its hole not right yet):
+  - its atlas's half texels were averaged over the texels whose corner
+    is inside a triangle: the muzzle rim's, which the triangles' edges
+    cross, were left out, the half texels there the beige of their
+    neighbours (a beige V over the hole). A gun's atlas now counts every
+    texel a triangle overlaps (`skin_cover`'s `edges`: the GPU's floor(u)
+    takes them); the other models keep the corner rule (the blue fill);
+  - the hole itself: Quake's guns pass parts through one another and let
+    its depth buffer draw their meeting line (the muzzle's cap through the
+    tube's top: the arch of the hole is that line). Counted at rest
+    (frame 0, the eye at rest, the pairs facing the eye whose depths
+    cross inside their overlap): the super shotgun 49 pairs, the nailgun
+    34, the super nailgun 27, the lightning gun 24, the rocket launcher
+    23, the axe 12, the hand-made shotgun and the grenade launcher none;
+    the pixels an order cannot show right: 140, 132, 72 (the super
+    shotgun), 76 (the rocket launcher), 44, 4. The way out chosen: the texels concerned repainted (the cut of the triangles along those lines, begun, would
+    have added triangles). `view_repaint`: at rest, at twice the screen's
+    resolution, where the order shows another triangle than a depth
+    buffer would, the texel the PS1 shows there (affine) takes Quake's
+    colour there (the visible triangle's texel, perspective-correct,
+    unlit), when that texel is seen wrong more often than right: 73
+    texels for the rocket launcher, 124 the super nailgun, 69 the
+    nailgun, 63 the super shotgun, 10 the lightning gun, 2 the axe; no
+    triangle more, no cycle. On PCSX-Redux the hole is the arch again,
+    nearly right; its rim lighter (the light's yaw: Quake's
+    own table by the gun's yaw, the 2D pictures yaw 0's) and squarer (half
+    resolution).
+  - `QCOOK_GUNDUMP`'s corners paired a triangle's vertices with its record
+    corners in the file's order: wrong since the records wind as the
+    world (a look's tool only).
 - **Left:** the guns at Quake's resolution (above); the other seven guns
   by hand.

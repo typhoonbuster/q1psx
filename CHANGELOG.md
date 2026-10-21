@@ -1512,6 +1512,11 @@ followed by R0-R4.
     the stack for now);
   - a release bug found on the way: after the menu's music, New Game
     could load START without its sounds (a CD read cut short); fixed.
+  - **the rocket launcher's muzzle hole** (not right yet): its
+    half texels now count the rim's texels the triangles' edges cross,
+    and where Quake's depth buffer drew one part through another (the
+    hole's arch), the texels the PS1 shows there are repainted with
+    Quake's colours: the arch is back, no triangle more.
   - Left open: Quake's skin resolution near the eye needs about
     130 K more texels of VRAM (the rocket launcher's highlight is still a
     band).
