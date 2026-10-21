@@ -472,10 +472,14 @@ static void view_mesh(model_src *ms);
 static void view_atlas(model_src *ms);
 static void skin_reduce(const mdl_t *m, const uint8_t *cover, int d, uint8_t *out);
 
-/* The texels a model's triangles show: whose centre is inside a triangle's
+/* The texels a model's triangles show: whose corner is inside a triangle's
    skin coordinates (a back face's onseam vertices on the right half, as
-   the renderer maps them; a cut model's middles exact), sw x sh, 1 shown */
-static uint8_t *skin_cover(const mdl_t *m)
+   the renderer maps them; a cut model's middles exact), or with `edges`
+   every one a triangle overlaps at all: the GPU's floor(u) takes one an
+   edge crosses (a gun's atlas: the corner's rule left out the rocket
+   launcher's muzzle rim, its half texels the beige of its neighbours;
+   §53). sw x sh, 1 shown */
+static uint8_t *skin_cover(const mdl_t *m, int edges)
 {
 	int sw = m->skinw, sh = m->skinh;
 	uint8_t *cover = xcalloc((size_t) sw * sh, 1);
@@ -493,12 +497,18 @@ static uint8_t *skin_cover(const mdl_t *m)
 		int y0 = (int) floor(fmin(fmin(ty[0], ty[1]), ty[2])) - 1, y1 = (int) ceil(fmax(fmax(ty[0], ty[1]), ty[2])) + 1;
 		for (int y = y0 < 0 ? 0 : y0; y <= y1 && y < sh; y++)
 			for (int x = x0 < 0 ? 0 : x0; x <= x1 && x < sw; x++) {
-				double px = x + 0.5, py = y + 0.5, in = 1;
+				/* the texel's corner (its centre against the triangle shifted
+				   by half a texel), or (edges) its square: its centre against
+				   the triangle itself, the half square's reach along each
+				   edge's normal added */
+				double px = x + (edges ? 1 : 0.5), py = y + (edges ? 1 : 0.5), in = 1;
 				for (int e = 0; e < 3 && in; e++) {           /* on the inner side of each edge */
 					int a = e, b = (e + 1) % 3;
 					double ex = tx[b] - tx[a], ey = ty[b] - ty[a], len = sqrt(ex * ex + ey * ey);
-					double dd = sgn * (ex * (py - ty[a]) - ey * (px - tx[a])) / (len > 0 ? len : 1);
-					if (dd < -0.01) in = 0;
+					if (len <= 0) len = 1;
+					double dd = sgn * (ex * (py - ty[a]) - ey * (px - tx[a])) / len;
+					if (edges ? dd + 0.5 * (fabs(ex) + fabs(ey)) / len < 0.01 : dd < -0.01)
+						in = 0;
 				}
 				if (in) cover[y * sw + x] = 1;
 			}
@@ -548,7 +558,7 @@ static void model_prepare(model_src *ms)
 	   that the reduction below would average into the edge texels: that
 	   is where blue pixels on the barrels came from. */
 	int sw = m->skinw, sh = m->skinh;
-	uint8_t *cover = skin_cover(m);
+	uint8_t *cover = skin_cover(m, 0);
 	int d = sp->skin_div;
 	ms->im = add_image(sp->file, (sw + d - 1) / d, (sh + d - 1) / d, GP_BORDER);
 	skin_reduce(m, cover, d, ms->im->px);
@@ -1541,7 +1551,7 @@ static void view_atlas(model_src *ms)
 	int n = m->ntris, sw = m->skinw, sh = m->skinh, hw = (sw + 1) / 2, hh = (sh + 1) / 2;
 
 	/* the skin, Quake's and half, the texels shown and their spread */
-	uint8_t *cover = skin_cover(m);
+	uint8_t *cover = skin_cover(m, 1);
 	uint8_t *full = xmalloc((size_t) sw * sh), *half = xmalloc((size_t) hw * hh);
 	skin_reduce(m, cover, 1, full);
 	skin_reduce(m, cover, 2, half);
@@ -1688,6 +1698,151 @@ static void view_atlas(model_src *ms)
 	free(order);
 }
 
+/* ------------------------------------------- a gun's texels repainted -- */
+
+/* Quake draws a gun with a depth buffer, so a part may pass through
+   another (the rocket launcher's muzzle cap through its tube's top: the
+   arch of its hole is their meeting line); drawn in an order, one or the
+   other shows whole (the arch a slot). Where the order shows another
+   triangle than the depth buffer would (frame 0, the eye at rest, twice
+   the screen's resolution), the texel the PS1 shows there (affine, as
+   the GPU interpolates) takes the colour Quake shows there (the visible
+   triangle's own texel, perspective-correct, unlit: the light stays the
+   drawn triangle's); a texel only seen more often wrong than right (a
+   texel is shown wherever the atlas's charts use it). The way chosen: the texels concerned repainted, no triangle more. The texels changed, their count. */
+#define RP_SS 2
+#define RP_W  (320 * RP_SS)
+#define RP_H  (192 * RP_SS)
+
+static int16_t rp_zt[RP_H][RP_W], rp_pt[RP_H][RP_W];   /* the triangle seen: depth buffer, order */
+static float   rp_iz[RP_H][RP_W];                       /* the depth buffer's 1 / z */
+static float   rp_s[RP_H][RP_W], rp_t[RP_H][RP_W];      /* its skin coordinates there (Quake's) */
+static float   rp_u[RP_H][RP_W], rp_v[RP_H][RP_W];      /* the drawn one's atlas texel there */
+
+/* triangle t's corners on the screen (x RP_SS) and their depths; 0 if any
+   is nearer than the near plane, or it faces away */
+static int rp_corners(const mdl_t *m, double wind, int t, double sx[3], double sy[3], double z[3])
+{
+	double p[3][3];
+	for (int k = 0; k < 3; k++) {
+		vpos(m, 0, m->tris[t][k + 1], p[k]);
+		p[k][2] += VO_UP;                        /* (the eye 2 units under the gun) */
+		if (p[k][0] < VO_NEAR)
+			return 0;
+		z[k]  = p[k][0];
+		sx[k] = RP_SS * (VO_CX - VO_PROJ * p[k][1] / p[k][0]);
+		sy[k] = RP_SS * (VO_CY - VO_PROJ * p[k][2] / p[k][0]);
+	}
+	double a[3], b[3], n[3];
+	for (int k = 0; k < 3; k++) { a[k] = p[1][k] - p[0][k]; b[k] = p[2][k] - p[0][k]; }
+	n[0] = a[1] * b[2] - a[2] * b[1];
+	n[1] = a[2] * b[0] - a[0] * b[2];
+	n[2] = a[0] * b[1] - a[1] * b[0];
+	double d = -(n[0] * p[0][0] + n[1] * p[0][1] + n[2] * p[0][2]);
+	if (wind < 0) d = -d;
+	return d > 0;                                /* (the renderer culls the others) */
+}
+
+/* each sample of triangle t: fn(x, y, barycentric weights) */
+#define RP_EACH(sx, sy, body)                                                                     \
+	do {                                                                                          \
+		double area_ = ((sx)[1] - (sx)[0]) * ((sy)[2] - (sy)[0]) - ((sx)[2] - (sx)[0]) * ((sy)[1] - (sy)[0]); \
+		if (fabs(area_) < 1e-9) break;                                                            \
+		int x0_ = (int) floor(fmin((sx)[0], fmin((sx)[1], (sx)[2]))), x1_ = (int) ceil(fmax((sx)[0], fmax((sx)[1], (sx)[2]))); \
+		int y0_ = (int) floor(fmin((sy)[0], fmin((sy)[1], (sy)[2]))), y1_ = (int) ceil(fmax((sy)[0], fmax((sy)[1], (sy)[2]))); \
+		if (x0_ < 0) x0_ = 0;                                                                     \
+		if (y0_ < 0) y0_ = 0;                                                                     \
+		if (x1_ > RP_W - 1) x1_ = RP_W - 1;                                                       \
+		if (y1_ > RP_H - 1) y1_ = RP_H - 1;                                                       \
+		for (int y = y0_; y <= y1_; y++)                                                          \
+			for (int x = x0_; x <= x1_; x++) {                                                    \
+				double px_ = x + 0.5, py_ = y + 0.5;                                              \
+				double w0 = (((sx)[1] - px_) * ((sy)[2] - py_) - ((sx)[2] - px_) * ((sy)[1] - py_)) / area_; \
+				double w1 = (((sx)[2] - px_) * ((sy)[0] - py_) - ((sx)[0] - px_) * ((sy)[2] - py_)) / area_; \
+				double w2 = 1 - w0 - w1;                                                          \
+				if (w0 < 0 || w1 < 0 || w2 < 0) continue;                                         \
+				body                                                                              \
+			}                                                                                     \
+	} while (0)
+
+static int view_repaint(model_src *ms, const mdl_t *m, double wind, const int *emitted, int nemit)
+{
+	image *im = ms->im;
+	const uint8_t *skin = m->skin;
+	int sw = m->skinw, sh = m->skinh;
+	for (int y = 0; y < RP_H; y++)
+		for (int x = 0; x < RP_W; x++) {
+			rp_zt[y][x] = rp_pt[y][x] = -1;
+			rp_iz[y][x] = 0;
+		}
+	for (int t = 0; t < m->ntris; t++) {         /* Quake's: the depth buffer */
+		double sx[3], sy[3], z[3], st[3][2];
+		if (!rp_corners(m, wind, t, sx, sy, z))
+			continue;
+		for (int k = 0; k < 3; k++)
+			tri_stf(m, t, k, st[k]);
+		RP_EACH(sx, sy, {
+			double iz = w0 / z[0] + w1 / z[1] + w2 / z[2];
+			if (iz > rp_iz[y][x]) {
+				rp_iz[y][x] = (float) iz;
+				rp_zt[y][x] = (int16_t) t;
+				rp_s[y][x] = (float) ((w0 * st[0][0] / z[0] + w1 * st[1][0] / z[1] + w2 * st[2][0] / z[2]) / iz);
+				rp_t[y][x] = (float) ((w0 * st[0][1] / z[0] + w1 * st[1][1] / z[1] + w2 * st[2][1] / z[2]) / iz);
+			}
+		});
+	}
+	for (int e = nemit - 1; e >= 0; e--) {       /* the PS1's: the first written drawn last */
+		int t = emitted[e];
+		double sx[3], sy[3], z[3];
+		if (!rp_corners(m, wind, t, sx, sy, z))
+			continue;
+		RP_EACH(sx, sy, {
+			rp_pt[y][x] = (int16_t) t;
+			rp_u[y][x] = (float) (w0 * ms->vuv[t][0][0] + w1 * ms->vuv[t][1][0] + w2 * ms->vuv[t][2][0]);
+			rp_v[y][x] = (float) (w0 * ms->vuv[t][0][1] + w1 * ms->vuv[t][1][1] + w2 * ms->vuv[t][2][1]);
+		});
+	}
+	/* each atlas texel: its samples right and wrong, the colours Quake shows at the wrong ones */
+	int n = im->w * im->h, changed = 0;
+	int *right = xcalloc((size_t) n, sizeof *right), *wrong = xcalloc((size_t) n, sizeof *wrong);
+	double (*sum)[3] = xcalloc((size_t) n, sizeof *sum);
+	for (int y = 0; y < RP_H; y++)
+		for (int x = 0; x < RP_W; x++) {
+			int pt = rp_pt[y][x], zt = rp_zt[y][x];
+			if (pt < 0 || zt < 0)
+				continue;
+			int u = (int) floor(rp_u[y][x]), v = (int) floor(rp_v[y][x]);
+			if (u < 0 || v < 0 || u >= im->w || v >= im->h)
+				continue;
+			int i = v * im->w + u;
+			if (pt == zt) {
+				right[i]++;
+				continue;
+			}
+			int ss = (int) floor(rp_s[y][x]), tt = (int) floor(rp_t[y][x]);
+			ss = ss < 0 ? 0 : ss >= sw ? sw - 1 : ss;
+			tt = tt < 0 ? 0 : tt >= sh ? sh - 1 : tt;
+			int c = skin[(size_t) tt * sw + ss];
+			for (int k = 0; k < 3; k++)
+				sum[i][k] += palette[c * 3 + k];
+			wrong[i]++;
+		}
+	for (int i = 0; i < n; i++)
+		if (wrong[i] > right[i]) {
+			uint8_t c = (uint8_t) nearest_colour((int) lround(sum[i][0] / wrong[i]),
+			                                     (int) lround(sum[i][1] / wrong[i]),
+			                                     (int) lround(sum[i][2] / wrong[i]));
+			if (c != im->px[i])
+				changed++;
+			im->px[i] = c;
+			gpage[im->page][im->v + i / im->w][im->u + i % im->w] = c;   /* (placed already) */
+		}
+	free(right);
+	free(wrong);
+	free(sum);
+	return changed;
+}
+
 static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 {
 	const model_spec *sp = ms->sp;
@@ -1752,12 +1907,6 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 		if (gd) {
 			fprintf(gd, "skin %d %d %d %d div %d full %d %d\n", im->u, im->v, im->w, im->h, sp->skin_div,
 			        m->skinw, m->skinh);
-			for (int y = 0; y < im->h; y++) {
-				fprintf(gd, "px");
-				for (int x = 0; x < im->w; x++)
-					fprintf(gd, " %d", im->px[(size_t) y * im->w + x]);
-				fprintf(gd, "\n");
-			}
 			for (int f = 0; f < m->nframes; f++)
 				for (int i = 0; i < m->nverts; i++) {
 					double p[3];
@@ -1770,9 +1919,10 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 	slot_of = xmalloc((size_t) m->nverts * sizeof *slot_of);
 	for (int i = 0; i < m->nverts; i++)
 		slot_of[i] = -1;
-	int nrec = 0, left = 0, scan = 0, order_cycles = 0;
+	int nrec = 0, left = 0, scan = 0, order_cycles = 0, nemit = 0;
 	double order_left = 0;
 	double *net = sp->view ? view_order(m, sp, wind, keep) : NULL;
+	int *emitted = xmalloc((size_t) m->ntris * sizeof *emitted);   /* (the order written) */
 	for (int t = 0; t < m->ntris; t++) {
 		done[t] = !keep[t];
 		left += keep[t];
@@ -1834,6 +1984,7 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 		int t = best;
 		done[t] = 1;
 		left--;
+		emitted[nemit++] = t;
 		int s[3];
 		for (int k = 0; k < 3; k++)
 			s[k] = rec_slot(&r, m->tris[t][k + 1]);
@@ -1864,16 +2015,25 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 		if (gd) {                                  /* (in the order drawn: nearest first) */
 			fprintf(gd, "t %d %d", t, m->tris[t][0]);
 			for (int k = 0; k < 3; k++) {
-				int vi = m->tris[t][k + 1];
+				int vi = m->tris[t][k + 1], at = wind < 0 && k ? 3 - k : k;   /* (its record corner) */
 				double ss = (m->stf ? m->stf[vi][0] : m->st[vi][1]) + (!m->tris[t][0] && m->st[vi][0] ? m->skinw / 2 : 0);
 				double tt = m->stf ? m->stf[vi][1] : m->st[vi][2];
-				fprintf(gd, "  %d %d %d %.2f %.2f", vi, tri->uv[k] & 0xff, tri->uv[k] >> 8, ss, tt);
+				fprintf(gd, "  %d %d %d %.2f %.2f", vi, tri->uv[at] & 0xff, tri->uv[at] >> 8, ss, tt);
 			}
 			fprintf(gd, "\n");
 		}
 	}
-	if (gd)
+	int repainted = sp->view ? view_repaint(ms, m, wind, emitted, nemit) : 0;
+	free(emitted);
+	if (gd) {                                      /* (the atlas's texels, repainted) */
+		for (int y = 0; y < im->h; y++) {
+			fprintf(gd, "px");
+			for (int x = 0; x < im->w; x++)
+				fprintf(gd, " %d", im->px[(size_t) y * im->w + x]);
+			fprintf(gd, "\n");
+		}
 		fclose(gd);
+	}
 	mrec_flush(geo, &r, m, sp->scale, &nrec);
 	free(slot_of);
 	slot_of = NULL;
@@ -1933,7 +2093,8 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 	if (reduced_tris)
 		printf("; %s: %d of %d tris", level_name[model_level], decim_left, decim_tris);
 	if (sp->view)
-		printf("; order: %d cycles broken (%.0f px2 of overlap out of order)", order_cycles, order_left);
+		printf("; order: %d cycles broken (%.0f px2 of overlap out of order), %d texels repainted",
+		       order_cycles, order_left, repainted);
 	printf("\n");
 	free(reduced_tris);
 }
