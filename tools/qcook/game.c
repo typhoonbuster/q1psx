@@ -745,6 +745,197 @@ static int (*reduce_mdl(const mdl_t *m, const model_spec *sp, const uint8_t *kee
 	return tris;
 }
 
+/* ------------------------------------------------------ the guns by hand -- */
+
+/* The guns rebuilt by hand (docs/porting-notes.md §52: the decimation broke them, so they are rebuilt):
+   a gun's triangles written here in place of the file's, between vertices
+   of the file kept as they are (their frames: the animation; their skin
+   coordinates: the skin), plus the file's own triangles among a range of
+   its vertices (the muzzle flash). A section joins two rings, a
+   cross-section's corners in the same order at both ends, by quads; each
+   quad is cut along its shorter diagonal. A triangle takes its winding
+   and its skin half (facesfront) from the file's triangle in its plane
+   that shares an edge with it, else its winding from its vertices'
+   normals (the file's convention); its skin half from its vertices off
+   the seam. The view model culling then drops what the eye never sees.
+   The vertices are the file's, Quake's own model: no level reduces a
+   gun. */
+typedef struct { const uint8_t *a, *b; int n; } gun_section;   /* ring a to ring b, n corners */
+typedef struct {
+	const char *file;
+	int keep_lo, keep_hi;            /* the file's triangles within these vertices kept */
+	const gun_section *sections;
+	int nsections;
+} gun_hand;
+
+/* v_shot.mdl: a hexagonal receiver (x -1.7 .. 5.3), its step to the
+   barrel section (x 5.9: a taper from the receiver instead stretched the
+   skin past its painted strip), the barrel section to the forearm (x
+   11.5), the forearm a hexagon (x 11.8 .. 19.3, the file's 10-gon), the
+   barrel's end beyond it (x 19.4 .. 21.3) in one piece; the flash, the
+   vertices 0 .. 11, the file's */
+static const uint8_t SHOT_R0[]  = { 13, 14, 12, 31, 45, 44 };   /* top left, top right, right, */
+static const uint8_t SHOT_R1[]  = { 52, 62, 30, 29, 43, 42 };   /* bottom right, bottom left, left */
+static const uint8_t SHOT_B0[]  = { 51, 61, 27, 26, 41, 40 };
+static const uint8_t SHOT_R2[]  = { 50, 60, 28, 25, 39, 38 };
+static const uint8_t SHOT_F0[]  = { 59, 58, 66, 23, 67, 36 };
+static const uint8_t SHOT_F1[]  = { 57, 56, 32, 21, 17, 35 };
+static const uint8_t SHOT_M0[]  = { 57, 56, 63, 48 };
+static const uint8_t SHOT_M1[]  = { 47, 53, 20, 46 };
+static const gun_section SHOT[] = {
+	{ SHOT_R0, SHOT_R1, 6 }, { SHOT_R1, SHOT_B0, 6 }, { SHOT_B0, SHOT_R2, 6 }, { SHOT_R2, SHOT_F0, 6 },
+	{ SHOT_F0, SHOT_F1, 6 }, { SHOT_M0, SHOT_M1, 4 } };
+
+static const gun_hand GUNS[] = {
+	{ "progs/v_shot.mdl", 0, 11, SHOT, (int) (sizeof SHOT / sizeof SHOT[0]) },
+};
+
+static void unit(double n[3])
+{
+	double l = sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
+	if (l > 0)
+		for (int k = 0; k < 3; k++)
+			n[k] /= l;
+}
+
+/* triangle (a, b, c)'s frame-0 unit normal (0: degenerate) */
+static int hand_normal(const mdl_t *m, const model_spec *sp, int a, int b, int c, double n[3])
+{
+	int16_t v[3][3];
+	mdl_vertex(m, 0, a, sp->scale, v[0]);
+	mdl_vertex(m, 0, b, sp->scale, v[1]);
+	mdl_vertex(m, 0, c, sp->scale, v[2]);
+	tri_normal(v, n);
+	if (n[0] == 0 && n[1] == 0 && n[2] == 0)
+		return 0;
+	unit(n);
+	return 1;
+}
+
+/* the hand triangle (a, b, c) into t: wound and given its skin half */
+static int hand_tri(const mdl_t *m, const model_spec *sp, double wind, int a, int b, int c, int t[4])
+{
+	double n[3];
+	if (a == b || b == c || a == c || !hand_normal(m, sp, a, b, c, n))
+		return 0;
+	int ff = -1, flip = 0;
+	double best = 0.5;
+	for (int i = 0; i < m->ntris; i++) {           /* the file's triangle in its plane on an edge */
+		const int *o = &m->tris[i][1];
+		int shared = 0;
+		for (int k = 0; k < 3; k++)
+			shared += o[k] == a || o[k] == b || o[k] == c;
+		double on[3];
+		if (shared < 2 || !hand_normal(m, sp, o[0], o[1], o[2], on))
+			continue;
+		double d = n[0] * on[0] + n[1] * on[1] + n[2] * on[2];
+		if (fabs(d) > best) {
+			best = fabs(d);
+			ff   = m->tris[i][0];
+			flip = d < 0;
+		}
+	}
+	if (ff < 0) {                                  /* none: its vertices' normals */
+		double vn[3] = { 0, 0, 0 };
+		const int vi[3] = { a, b, c };
+		for (int k = 0; k < 3; k++) {
+			int ni = m->frames[0][vi[k]].n;
+			if (ni >= QG_NORMALS) ni = 0;
+			for (int q = 0; q < 3; q++) vn[q] += anorms[ni][q];
+		}
+		double d = n[0] * vn[0] + n[1] * vn[1] + n[2] * vn[2];
+		flip = (d < 0) != (wind < 0);
+		ff   = 1;
+	}
+	/* the skin half: the one its vertices off the seam are on (a seam
+	   vertex goes with them), so its skin triangle never straddles the
+	   halves' gap; all on the seam: the file's triangle's above */
+	int front = 0, back = 0;
+	const int vs[3] = { a, b, c };
+	for (int k = 0; k < 3; k++)
+		if (!m->st[vs[k]][0]) {
+			if (m->st[vs[k]][1] >= m->skinw / 2) back++;
+			else front++;
+		}
+	if (front || back)
+		ff = back > front ? 0 : 1;
+	t[0] = ff;
+	t[1] = a;
+	t[2] = flip ? c : b;
+	t[3] = flip ? b : c;
+	return 1;
+}
+
+/* the gun's triangles by hand in place of the file's (m's copy in out): 1,
+   or 0 for a model with none */
+static int gun_hand_build(const mdl_t *m, const model_spec *sp, double wind, mdl_t *out)
+{
+	const gun_hand *g = NULL;
+	for (size_t i = 0; i < sizeof GUNS / sizeof GUNS[0]; i++)
+		if (!strcmp(GUNS[i].file, sp->file))
+			g = &GUNS[i];
+	if (!g || getenv("QCOOK_NOHAND"))             /* (QCOOK_NOHAND=1: the file's, an A / B) */
+		return 0;
+	int cap = m->ntris, n = 0, kept = 0;
+	for (int s = 0; s < g->nsections; s++)
+		cap += 2 * g->sections[s].n;
+	int (*tris)[4] = xmalloc((size_t) cap * sizeof *tris);
+	for (int i = 0; i < m->ntris; i++) {
+		int in = 1;
+		for (int k = 1; k < 4; k++)
+			in &= m->tris[i][k] >= g->keep_lo && m->tris[i][k] <= g->keep_hi;
+		if (in) {
+			memcpy(tris[n++], m->tris[i], sizeof tris[0]);
+			kept++;
+		}
+	}
+	for (int s = 0; s < g->nsections; s++) {
+		const gun_section *sec = &g->sections[s];
+		for (int i = 0; i < sec->n; i++) {
+			int j = (i + 1) % sec->n;
+			int a0 = sec->a[i], a1 = sec->a[j], b0 = sec->b[i], b1 = sec->b[j];
+			for (int k = 0; k < 4; k++)
+				if ((k < 2 ? (k ? a1 : a0) : (k == 2 ? b1 : b0)) >= m->nverts)
+					die("%s: a hand-made section's vertex out of range", sp->file);
+			int16_t p[4][3];                       /* the shorter diagonal */
+			mdl_vertex(m, 0, a0, sp->scale, p[0]);
+			mdl_vertex(m, 0, a1, sp->scale, p[1]);
+			mdl_vertex(m, 0, b1, sp->scale, p[2]);
+			mdl_vertex(m, 0, b0, sp->scale, p[3]);
+			double d02 = 0, d13 = 0;
+			for (int k = 0; k < 3; k++) {
+				d02 += (double) (p[0][k] - p[2][k]) * (p[0][k] - p[2][k]);
+				d13 += (double) (p[1][k] - p[3][k]) * (p[1][k] - p[3][k]);
+			}
+			if (d02 <= d13) {
+				n += hand_tri(m, sp, wind, a0, a1, b1, tris[n]);
+				n += hand_tri(m, sp, wind, a0, b1, b0, tris[n]);
+			} else {
+				n += hand_tri(m, sp, wind, a0, a1, b0, tris[n]);
+				n += hand_tri(m, sp, wind, a1, b1, b0, tris[n]);
+			}
+		}
+	}
+	*out = *m;
+	out->tris  = tris;
+	out->ntris = n;
+	printf("qcook: %s rebuilt by hand: %d triangles (%d of them the file's), the file had %d\n", sp->file, n,
+	       kept, m->ntris);
+	const char *dump = getenv("QCOOK_GUNS");      /* (the triangles, for a look: a directory) */
+	if (dump) {
+		char path[512];
+		const char *base = strrchr(sp->file, '/');
+		snprintf(path, sizeof path, "%s/%s.tris", dump, base ? base + 1 : sp->file);
+		FILE *f = fopen(path, "w");
+		if (f) {
+			for (int i = 0; i < n; i++)
+				fprintf(f, "%d %d %d %d\n", tris[i][0], tris[i][1], tris[i][2], tris[i][3]);
+			fclose(f);
+		}
+	}
+	return 1;
+}
+
 static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 {
 	const model_spec *sp = ms->sp;
@@ -783,6 +974,12 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 		double l = sqrt(c[0] * c[0] + c[1] * c[1] + c[2] * c[2]);
 		if (l > 0)
 			wind += (c[0] * n[0] + c[1] * n[1] + c[2] * n[2]) / l;
+	}
+	mdl_t hand;                                    /* a gun rebuilt by hand: its triangles */
+	if (sp->view && gun_hand_build(m, sp, wind, &hand)) {
+		m = &hand;
+		free(keep);
+		keep = xmalloc((size_t) m->ntris);
 	}
 	for (int t = 0; t < m->ntris; t++) {
 		keep[t] = 1;
