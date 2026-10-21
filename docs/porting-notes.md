@@ -6547,3 +6547,6 @@ lines):
   launcher -1.6 % (its HUD scenarios -1.9, -2.9 %), the lightning gun
   -3.5 %; against 4291417, before §53's fixes: -0.1 to -3.9 % (the
   lightning gun's beam differs from one run to the other there).
+- **RAM:** the game arena at boot 87232 B (88288 with the 2D gun's
+  tables): 100 -> 90 KB, the 10 KB to the stack's gap with §53's 15 (the
+  release's room 43.5 KB, left to assign).
