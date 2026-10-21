@@ -1545,3 +1545,17 @@ followed by R0-R4.
     monsters x1.5;
   - `ENGINE_C=1 scripts/bench.sh` builds it in build-bench-c/, and
     `scripts/dlcheck.sh` compares the asm with the C, view by view.
+- **Level chunks: the measures** (a tool to find where to cut the levels without it showing). §56:
+  - a tool outside the repo: QuakeSpasm with a scanner.
+    It floods every place the player can reach on the 32 maps and renders,
+    from 5.4 million eyes, the PSX's cooked records with their ids. That
+    gives what each place must have in RAM, under the PSX's own PVS and
+    draw-distance rules;
+  - an eye needs 20-50 KB of the map's geometry at most. The draw distance
+    (1536 or 1024) changes nothing seen;
+  - the map's skeleton (nodes, PVS, clip hulls…, 84-352 KB) stays resident.
+    Zones of 96 KB (the current one drawn, the two nearest prefetched,
+    teleporters counted as one step) free 150 KB on the worst map; seen
+    zones of 64 KB would free 250 KB;
+  - the zone tables for the cook are ready outside the repo. The
+    implementation follows on its own branch.

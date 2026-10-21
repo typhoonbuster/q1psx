@@ -6633,3 +6633,116 @@ lines):
   `build-bench-c/`, beside the asm's `build-bench/`. A C engine disc:
   `cmake --preset default -B build-c -DQ1PSX_ENGINE_C=ON .` then
   `cmake --build build-c`.
+
+## §56 — Level chunks: what each place needs, measured (2026-10-22)
+
+- **The ask:** before streaming the levels in chunks, a tool to find where to cut them without
+  it showing: the chunk the player is in and two adjacent ones loaded, the teleporters counted,
+  chunks of 64 to 128 KB, the view distance taken into account (1536 units, 1024 as a second
+  run), the tool kept out of the repo.
+- **The tool** lives outside the repo: a QuakeSpasm 0.97
+  clone in `quakespasm-q1psx`, with `chunkscan` (`Quake/chunkscan.c`)
+  and the analysis scripts (`analysis/*.py`, numpy and scipy). For each map:
+  - the server is spawned;
+  - the 16-unit voxels the player's origin can reach are flooded through the
+    world's player hull. Doors and secret doors count as open. Plats, lifts,
+    trains and pushers are ridden. Teleporters are followed. A running jump's
+    air drift is bounded;
+  - from every reachable eye (origin + 22) and from the intermission cameras,
+    the map's cooked records (this repo's `<map>_g0.wld`) are rendered on the
+    GPU into a cube of six 2048² depth buffers. A depth pass comes first; an
+    equal-depth pass then writes the id of every record a pixel shows.
+
+  The brush models are drawn against the world's depth, and the teleporters'
+  boxes too. Over the 32 maps that makes 5.4 million eyes, in about 20 minutes
+  on an RTX 5080.
+- **What an eye needs** is the records it sees that its leaf's PVS marks and
+  that the PSX's draw distance keeps. The cull is by depth: a record goes when
+  its sphere's nearest depth is past D. At a frustum corner a point's depth is
+  0.6247 × its distance (the 240-row view), so a record can stay drawn up to
+  1.6 D away, as render.c's mark_r has it. The renders find about 1.5 % more
+  records at 2048 px than at 1024 (2.5 % at 1024 over 512): the tail is
+  slivers under one PSX pixel. The PVS within D, seen or hidden, is the safe
+  bound.
+- **What each place needs** (KB; "skeleton" = what stays resident: nodes,
+  leaves, marks, PVS, clip hulls, the brush model and entity tables;
+  "geometry" = the world's records and their vertices; the resident world =
+  the skeleton + the eye's zone + its two nearest, the worst eye of the map):
+
+  | map | .wld | skeleton | geometry | need/eye max 1536 (1024) | PVS/eye max | zones PVS 96: n, biggest, 4th <320 u | resident world max: PVS 96 / seen 64 | vs the .wld |
+  |---|---|---|---|---|---|---|---|---|
+  | start | 592 | 258 | 317 | 39 (39) | 71 | 7, 81, 0.1 % | 489 / 433 | -103 / -159 |
+  | e1m1 | 600 | 258 | 326 | 34 (34) | 82 | 10, 91, 0.587 % | 531 / 446 | -69 / -154 |
+  | e1m2 | 615 | 276 | 322 | 31 (31) | 65 | 7, 90, 0.0 % | 524 / 459 | -90 / -156 |
+  | e1m3 | 600 | 279 | 288 | 32 (32) | 55 | 8, 86, 0.0 % | 499 / 442 | -101 / -157 |
+  | e1m4 | 693 | 312 | 361 | 37 (37) | 70 | 7, 84, 0.0 % | 541 / 492 | -152 / -202 |
+  | e1m5 | 555 | 247 | 288 | 33 (33) | 58 | 7, 88, 0.0 % | 506 / 417 | -49 / -138 |
+  | e1m6 | 465 | 218 | 201 | 33 (33) | 74 | 7, 86, 0.766 % | 465 / 383 | -1 / -82 |
+  | e1m7 | 183 | 84 | 89 | 34 (34) | 57 | 1, 78, 0.0 % | 162 / 162 | -21 / -21 |
+  | e1m8 | 354 | 129 | 209 | 44 (44) | 94 | 25, 96, 29.808 % | 408 / 320 | +54 / -34 |
+  | e2m1 | 649 | 277 | 351 | 31 (31) | 72 | 16, 90, 1.511 % | 545 / 457 | -104 / -192 |
+  | e2m2 | 680 | 302 | 360 | 31 (31) | 65 | 9, 91, 0.0 % | 570 / 468 | -110 / -213 |
+  | e2m3 | 662 | 294 | 345 | 29 (29) | 72 | 11, 92, 0.25 % | 552 / 473 | -110 / -188 |
+  | e2m4 | 715 | 312 | 380 | 32 (32) | 72 | 12, 91, 0.051 % | 549 / 490 | -166 / -225 |
+  | e2m5 | 627 | 255 | 347 | 30 (30) | 70 | 10, 91, 0.022 % | 522 / 430 | -105 / -197 |
+  | e2m6 | 607 | 271 | 301 | 27 (27) | 71 | 11, 88, 0.014 % | 533 / 442 | -74 / -165 |
+  | e2m7 | 690 | 310 | 361 | 32 (32) | 62 | 9, 89, 0.0 % | 568 / 489 | -123 / -201 |
+  | e3m1 | 608 | 253 | 333 | 27 (27) | 65 | 9, 91, 0.365 % | 522 / 437 | -85 / -171 |
+  | e3m2 | 401 | 181 | 177 | 29 (29) | 50 | 3, 71, 0.0 % | 388 / 338 | -13 / -63 |
+  | e3m3 | 483 | 206 | 257 | 24 (24) | 57 | 5, 76, 0.0 % | 430 / 360 | -53 / -122 |
+  | e3m4 | 719 | 325 | 351 | 31 (31) | 64 | 8, 90, 0.0 % | 556 / 503 | -163 / -216 |
+  | e3m5 | 768 | 336 | 416 | 34 (34) | 75 | 8, 91, 0.0 % | 594 / 508 | -174 / -260 |
+  | e3m6 | 746 | 323 | 400 | 38 (38) | 93 | 12, 95, 0.963 % | 595 / 509 | -150 / -237 |
+  | e3m7 | 560 | 236 | 307 | 25 (25) | 54 | 7, 88, 0.0 % | 466 / 399 | -94 / -161 |
+  | e4m1 | 630 | 280 | 331 | 38 (38) | 78 | 9, 90, 1.438 % | 535 / 464 | -95 / -166 |
+  | e4m2 | 595 | 258 | 313 | 29 (29) | 74 | 9, 91, 0.0 % | 517 / 433 | -78 / -163 |
+  | e4m3 | 559 | 270 | 265 | 29 (29) | 64 | 8, 92, 0.0 % | 535 / 451 | -24 / -108 |
+  | e4m4 | 684 | 292 | 381 | 39 (39) | 87 | 17, 90, 1.534 % | 556 / 475 | -128 / -209 |
+  | e4m5 | 618 | 276 | 307 | 34 (34) | 63 | 8, 90, 0.0 % | 534 / 457 | -85 / -161 |
+  | e4m6 | 492 | 227 | 241 | 28 (28) | 48 | 5, 78, 0.0 % | 444 / 381 | -49 / -111 |
+  | e4m7 | 763 | 352 | 388 | 27 (27) | 61 | 10, 91, 0.0 % | 618 / 518 | -145 / -245 |
+  | e4m8 | 578 | 257 | 293 | 20 (20) | 42 | 7, 86, 0.0 % | 488 / 420 | -90 / -158 |
+  | end | 240 | 101 | 133 | 50 (50) | 74 | 2, 89, 0.0 % | 208 / 291 | -32 / +51 |
+  
+  Worst over the maps: the .wld 768 KB; the resident world PVS 96 618 KB, seen 64 518 KB.
+
+- **Findings:**
+  - an eye needs little: 20-50 KB at most (the median 11-35 KB), the PVS
+    within D 42-94 KB: the occlusion halves it and more;
+  - the draw distance changes nothing that is seen: 1536, 1024 and no limit
+    give the same needs on every map. The farthest seen record (E1M8) is
+    1783 units away, its depth at the frustum corner 1067: Quake's sight
+    lines end before the PSX's cull (600 units would start to cut);
+  - the skeleton stays: 84-352 KB a map (at most nodes 127 KB, clip hulls
+    81, leaves 59, PVS 49, entities 22), as big as the geometry (89-416 KB).
+    Chunking the geometry alone frees 150 KB on the worst map (PVS zones of
+    96 KB: 618 KB resident against the 768 KB .wld) or 250 KB (seen zones of
+    64 KB: 518 KB), not more;
+  - the literal model (disjoint chunks, the current one and two
+    adjacent): grouping records by what eyes need together, 99.999 % of the
+    eyes need at most three chunks, but what one second of running brings
+    into view needs a fourth at up to 10 % of the places (E1M2) — while
+    zones (below) keep three for every map but E1M8;
+  - teleporters: 277 triggers, 73 the player can take (the others, monster
+    closets). The player can get within 208 units of one unseen (median), 9
+    are taken without having been seen: the rule "a teleporter seen, load its
+    destination" is a complement; walking distances that count a teleporter
+    as one step catch them all;
+  - small maps need no cut: E1M7 (183 KB), END (240), E1M8 (354, whose open
+    space makes 25 small zones and a short lead).
+- **The design chosen** (the implementation: §57, on its own branch):
+  - zone chunks: a zone is a set of camera leaves, its chunk every world
+    record the PSX may draw from any of its leaves (PVS within D + 32
+    units, records shared between zones duplicated: the disc takes it);
+    only the current zone is drawn, two slots hold the nearest zones,
+    prefetched by walking distance (a teleporter one step); 96 KB at most a
+    zone (the average asked for); a map whose .wld fits stays whole;
+  - the tables (zone -> records; leaf -> zone, its three nearest zones and
+    their distances) come from the tool: `quakespasm-q1psx/zones/
+    pvs_1536_96/<map>.zones` (pvs_1536_128, seen_1536_96 and seen_1536_64
+    beside it). They are derived from Quake's data: never in the repo; the
+    cook reads them from a directory local.env names, and without them
+    cooks every map whole, as before;
+  - next, the skeleton: the PVS rows per zone, the clip hulls and nodes
+    where the player can be — the RAM wanted for the streamed
+    assets is there too.
