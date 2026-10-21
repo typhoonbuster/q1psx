@@ -742,6 +742,26 @@ static void player_spawn(void)
 	player.pos[2] = (world.spawn[2] + 1) * CLIP_SUB;   /* Quake drops it to the floor */
 	player.yaw    = world.spawn_yaw * ANG_TURN / 360;
 }
+#if Q1PSX_ENGINE_C
+/* the C engine (CMake Q1PSX_ENGINE_C): its physics is the C reference, so
+   the checks compare it with itself; their lines say "c-engine" for "asm" */
+#define PHYS_ENGINE           "c-engine"
+#define clip_trace_c          clip_trace
+#define clip_contents_c       clip_contents
+#define clip_box_node0_c      clip_box_node0
+#define clip_contents_node0_c clip_contents_node0
+#define pmove_step_c          pmove_step
+static clip_mover_t clip_mover_c;             /* the mover as the checks copied it */
+
+/* the reference's trace from that copy, as the asm build's C one has its
+   own (the engine's trace before it may have changed the mover) */
+static q_fixed clip_trace_ent_c(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr)
+{
+	memcpy(&clip_mover, &clip_mover_c, sizeof clip_mover);
+	return clip_trace_ent(hull, start, end, tr);
+}
+#else
+#define PHYS_ENGINE "asm"
 q_fixed clip_trace_c(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
 q_fixed clip_trace_ent_c(int hull, const int32_t start[3], const int32_t end[3], trace_t *tr);
 int     clip_contents_c(int hull, const int32_t p[3]);
@@ -749,6 +769,7 @@ uint32_t clip_box_node0_c(const int32_t mins[3], const int32_t maxs[3]);
 int     clip_contents_node0_c(uint32_t node, const int32_t p[3]);
 extern clip_mover_t clip_mover_c;
 void    pmove_step_c(pmove_t *pm, const pmove_cmd_t *cmd);
+#endif
 
 static uint32_t rng_state = 1;
 
@@ -891,7 +912,7 @@ static void bench_clip_diff(void)
 			cbad++;
 	}
 	printf("clipdiff traces %d (%d hit, %d start in solid) mismatches %d; contents %d mismatches %d; "
-	       "cycles/trace asm %u c %u\n", N, hits, solid, bad, N, cbad,
+	       "cycles/trace " PHYS_ENGINE " %u c %u\n", N, hits, solid, bad, N, cbad,
 	       (unsigned) (cyc_asm / N), (unsigned) (cyc_c / N));
 
 	/* the hull-0 box nodes (clip_box_node0): asm against C, then the walks
@@ -1003,7 +1024,7 @@ static void bench_clip_diff(void)
 			printf("clipdiff MISMATCH sight verdict %d: whole f %d op %d wa %d, sight f %d op %d wa %d\n", i,
 			       (int) tf.fraction, tf.inopen, tf.inwater, (int) ta.fraction, ta.inopen, ta.inwater);
 	}
-	printf("clipdiff lines of sight %d (%d clear): asm/c mismatches %d, verdicts %d; cycles whole %u sight %u\n",
+	printf("clipdiff lines of sight %d (%d clear): " PHYS_ENGINE "/c mismatches %d, verdicts %d; cycles whole %u sight %u\n",
 	       N, clear, sbad, vbad, (unsigned) (cyc_full / N), (unsigned) (cyc_sight / N));
 
 	printf("clipdiff box nodes %d: %d below the root, mismatches %d, walks from them %d; "
@@ -1104,7 +1125,7 @@ static void bench_pmove_diff(void)
 			a = c;
 		}
 	}
-	printf("pmdiff ticks %d mismatches %d; cycles/tick asm %u c %u; runs started in water %d\n", TICKS,
+	printf("pmdiff ticks %d mismatches %d; cycles/tick " PHYS_ENGINE " %u c %u; runs started in water %d\n", TICKS,
 	       bad - bad_dt, (unsigned) (cyc_asm / TICKS), (unsigned) (cyc_c / TICKS), water_runs);
 	printf("pmdiff dt ticks %d (2, 3, 6, 1 / 60 s) mismatches %d\n", DT_TICKS, bad_dt);
 
@@ -1131,7 +1152,7 @@ static void bench_pmove_diff(void)
 		cyc_c   += prof_cycles(t1, t2);
 	}
 	world.clipnodes = cn;
-	printf("pmdiff without traces: cycles/tick asm %u c %u\n", (unsigned) (cyc_asm / 1000),
+	printf("pmdiff without traces: cycles/tick " PHYS_ENGINE " %u c %u\n", (unsigned) (cyc_asm / 1000),
 	       (unsigned) (cyc_c / 1000));
 }
 

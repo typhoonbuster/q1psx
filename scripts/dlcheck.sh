@@ -15,6 +15,8 @@
 #
 # References live in build-bench/dlref/<name>.{dl,bench}. Prints the frame
 # cycles of every view, the reference's next to them, and the verdict.
+# ENGINE_C=1 checks the C engine (built in build-bench-c/) against a
+# reference the asm saved: the same frames, every view's cycles asm to C.
 
 set -euo pipefail
 
@@ -22,11 +24,12 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 MODE=${1:?usage: dlcheck.sh save|check <name>}
 NAME=${2:?usage: dlcheck.sh save|check <name>}
 REF="$ROOT/build-bench/dlref"
+OUT="$ROOT/build-bench$([ "${ENGINE_C:-0}" = 1 ] && echo -c || true)"   # (bench.sh's)
 mkdir -p "$REF"
 
 "$ROOT/scripts/bench.sh" "${SECS:-500}" > /dev/null 2>&1 || {
-	echo "dlcheck: bench failed (see build-bench/bench.log)"; exit 1; }
-LOG="$ROOT/build-bench/bench.log"
+	echo "dlcheck: bench failed (see $OUT/bench.log)"; exit 1; }
+LOG="$OUT/bench.log"
 grep -E '^(P|E|D|H) ' "$LOG" > "$REF/current.dl"
 grep -E '^bench (view[0-9]+|[A-Z0-9]+\.v[0-9]) ' "$LOG" |
 	sed -E 's/^bench ([^ ]+) .* frame=([0-9]+)\/.*/\1 \2/' > "$REF/current.bench"

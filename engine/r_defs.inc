@@ -185,7 +185,9 @@
 .set SP_FT3COL,   0x3f8   # colour, its POLY_FT3's (RECLOOP opt bit 1, POLYS)
 .set SP_TSLOW,    0x3fc   # slow path: timer-2 ticks this frame (last word)
 
-.set R_SLOW_C,    0       # 1: use the C reference (engine/r_slow.c)
+.ifndef R_SLOW_C          # 1: the C version (engine/r_slow.c; CMake
+.set R_SLOW_C,    0       # Q1PSX_ENGINE_C passes --defsym R_SLOW_C=1)
+.endif
 .set R_MODEL_ROOM, 24576  # draw_model: an alias model (a monster, an item, a
                           # flame, a gib) is left out when less packet room
                           # than this is left: the walk's farther records keep

@@ -22,6 +22,26 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS engine/*.c engine/*.s)
 set(PHYS_C_REFERENCE ${PROJECT_SOURCE_DIR}/engine/clip.c ${PROJECT_SOURCE_DIR}/engine/pmove.c)
 list(REMOVE_ITEM ENGINE_SOURCES ${PHYS_C_REFERENCE})
 
+# The C engine, to measure what the hand-written asm gains: every asm part
+# that has a C version builds that in its place, each following its asm,
+# the base (docs/porting-notes.md §55): the physics (engine/clip.c,
+# pmove.c), the slow path (r_slow.c), the dynamic lights (dlight.c), the
+# brush models' cut (bmfrag.c), the places among a leaf's pieces (rlist.c
+# rl_order_c), an entity's matrices (rlist.c) and a model's frame (mdl.c).
+# The world renderer (engine/r_world.s) has no C, written in asm from the
+# start: it stays. The frames are the asm's, hash for hash (scripts/bench.sh
+# ENGINE_C=1).
+option(Q1PSX_ENGINE_C "The engine's C versions in place of its asm (the world renderer stays asm)" OFF)
+if(Q1PSX_ENGINE_C)
+	list(REMOVE_ITEM ENGINE_SOURCES
+		${PROJECT_SOURCE_DIR}/engine/clip.s ${PROJECT_SOURCE_DIR}/engine/pmove.s
+		${PROJECT_SOURCE_DIR}/engine/r_slow.s ${PROJECT_SOURCE_DIR}/engine/bmfrag.s
+		${PROJECT_SOURCE_DIR}/engine/rl_order.s ${PROJECT_SOURCE_DIR}/engine/ent_mat.s
+		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s)
+	list(APPEND ENGINE_SOURCES ${PHYS_C_REFERENCE})
+	message(STATUS "q1psx: the C engine (the world renderer asm)")
+endif()
+
 psn00bsdk_add_executable(q1psx GPREL ${ENGINE_SOURCES})
 
 # CMake does not scan `.include` in assembly sources: make every asm file
@@ -111,15 +131,28 @@ set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference,
 # C specification (engine/bmfrag.c cut_model_c); 2 runs both on every cut
 # and compares them ("bmfasm" lines).
 set(Q1PSX_BMF_C 0 CACHE STRING "Brush models' cut: 0 the asm, 1 the C reference, 2 the asm checked by the C")
-target_compile_definitions(q1psx PRIVATE Q1PSX_BMF_C=${Q1PSX_BMF_C})
 # An alias model's or a particle's place among its leaf's brush-model pieces:
 # the asm (engine/rl_order.s) or its C specification (engine/rlist.c
 # rl_order_c, engine/bmfrag.c bmf_node_over...); 2 runs both on every ask,
 # and on made-up ones in the bench's debug frames ("ordasm" lines).
 set(Q1PSX_ORDER_C 0 CACHE STRING "Places among a leaf's pieces: 0 the asm, 1 the C reference, 2 the asm checked by the C")
-target_compile_definitions(q1psx PRIVATE Q1PSX_ORDER_C=${Q1PSX_ORDER_C})
-target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${Q1PSX_DLIGHT_C}>)
-target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_C=${Q1PSX_DLIGHT_C})
+# The C engine (above): each of them the C alone, and the slow path's C
+# (engine/r_slow.c: R_SLOW_C, engine/r_defs.inc)
+if(Q1PSX_ENGINE_C)
+	set(_dlight_c 1)
+	set(_bmf_c 1)
+	set(_order_c 1)
+	set(_slow_c 1)
+else()
+	set(_dlight_c ${Q1PSX_DLIGHT_C})
+	set(_bmf_c ${Q1PSX_BMF_C})
+	set(_order_c ${Q1PSX_ORDER_C})
+	set(_slow_c 0)
+endif()
+target_compile_definitions(q1psx PRIVATE Q1PSX_ENGINE_C=$<BOOL:${Q1PSX_ENGINE_C}>
+	Q1PSX_BMF_C=${_bmf_c} Q1PSX_ORDER_C=${_order_c} Q1PSX_DLIGHT_C=${_dlight_c})
+target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${_dlight_c}>)
+target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_SLOW_C=${_slow_c}>)
 
 # Headless benchmark variant (CMake preset "bench", driven by scripts/bench.sh):
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
@@ -171,9 +204,11 @@ if(Q1PSX_BENCH)
 		endif()
 		target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH_VIEW_SET=1 "Q1PSX_BENCH_VIEWS_XY=${Q1PSX_BENCH_VIEW}")
 	endif()
-	target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
-	set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
-		"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c;clip_trace_ent=clip_trace_ent_c;clip_mover=clip_mover_c;clip_box_node0=clip_box_node0_c;clip_contents_node0=clip_contents_node0_c")
+	if(NOT Q1PSX_ENGINE_C)   # (the C engine's physics is this C: main.c checks it against itself)
+		target_sources(q1psx PRIVATE ${PHYS_C_REFERENCE})
+		set_source_files_properties(${PHYS_C_REFERENCE} PROPERTIES COMPILE_DEFINITIONS
+			"clip_trace=clip_trace_c;clip_contents=clip_contents_c;pmove_step=pmove_step_c;clip_trace_ent=clip_trace_ent_c;clip_mover=clip_mover_c;clip_box_node0=clip_box_node0_c;clip_contents_node0=clip_contents_node0_c")
+	endif()
 endif()
 
 # --- optional Quake game data on the disc ------------------------------------

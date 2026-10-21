@@ -6550,3 +6550,86 @@ lines):
 - **RAM:** the game arena at boot 87232 B (88288 with the 2D gun's
   tables): 100 -> 90 KB, the 10 KB to the stack's gap with §53's 15 (the
   release's room 43.5 KB). The 25 KB stay the stack's margin for now: the level arena stays 1249 KB.
+
+## §55 — The C engine, to compare with the asm (2026-10-21)
+
+- **The ask:** a CMake option to build the engine's C in place of its asm, to compare the
+  performance. Then, on the way: the asm stays the base, never changed to fit the C (the C may
+  follow the asm, not the reverse), and the C is not to be optimized: it is there to compare.
+- **The option:** CMake `Q1PSX_ENGINE_C` (off by default). Every
+  hand-written asm part that has a C version builds that in its place:
+  - the physics: engine/clip.c, pmove.c (for clip.s, pmove.s);
+  - the slow path: r_slow.c (for r_slow.s; R_SLOW_C = 1);
+  - the dynamic lights: dlight.c's descent, record hook and restore (for
+    r_world.s's; DLIGHT_C = 1);
+  - the brush models' cut: bmfrag.c cut_model_c (for bmfrag.s; BMF_C = 1);
+  - the places among a leaf's pieces: rlist.c rl_order_c (for
+    rl_order.s; ORDER_C = 1);
+  - an entity's matrices: rlist.c rl_ent_matrix (for ent_mat.s);
+  - a model's frame: mdl.c mdl_expand (for mdl_expand.s).
+  The world renderer (engine/r_world.s: the walk, the records, the models'
+  records) has no C: it was written in asm from the start (R3.1) and stays
+  in both.
+- **The asm untouched:** the default and release builds are byte-identical
+  to 6375501's (`q1psx.exe` compared). The one asm-side line: r_defs.inc's
+  `R_SLOW_C` under `.ifndef`, set by CMake as R_DLIGHT_C is; no
+  instruction changed.
+- **The C made to follow the asm** (for the same frames; nothing
+  optimized):
+  - r_slow.c, the asm's specification until the models came, read the
+    world's constants where the asm reads the words r_world.s sets for
+    what it draws: the clip bound, the near plane and T2 (the view model's
+    124, 120 and no split), H, the viewport's centre, the vertex pool,
+    the texture's CLUT and page, each vertex's colour. It also took the
+    view's matrix where the asm's MVMVA takes the one loaded (an
+    entity's), and it never saw the arena full. It now reads those
+    words, transforms by the GTE as the asm does (`gte_rtv0tr`), keeps the
+    pool's 16-bit screen coordinates, and sets SP_FULL then gives the
+    polygon up. Its algorithm stays the spec's: the vertices copied on its
+    stack, a shared edge's midpoint computed again where the asm keeps it
+    in a table.
+  - rl_ent_matrix and mdl_expand, asm only until now, written in C from
+    the asm, its way (MVMVA through the GTE macros; two masked words a
+    vertex).
+  - The bench's physics checks: the C engine's physics is the reference,
+    so they compare it with itself (their lines say `c-engine` for
+    `asm`). The reference's entity trace starts from the mover the check
+    copied, as the asm build's own copy does.
+- **The same frames:** display lists identical for start's 12 views and
+  for the 128 spawn views of the 32 maps (scripts/dlcheck.sh: saved by the
+  asm, checked with ENGINE_C=1). The monsters' 8 dumps and the movers' hash
+  (E3M4's door) are identical too. The game bench matches on 22 of its 23
+  hashes. The 23rd is the Graphics menu after the effects' change, drawn
+  under the game's dynamic warp threshold, which rises with the C's slower
+  frames (render.c `r_warp_feedback`): the asm cuts one edge that the C
+  leaves whole. The walks run in real time and diverge for the same
+  reason.
+- **What the asm gains** (PCSX-Redux's CPU timings in cycles; per frame
+  unless stated):
+
+  | | asm | C | C / asm |
+  |---|---|---|---|
+  | start's 12 views | 6.22 M | 11.68 M | +88 % (1.58 -> 2.25 vbl) |
+  | the 128 spawn views | 45.6 M | 88.6 M | +94 % (+22 to +147 % a view, median +101 %; 1.20 -> 1.77 vbl) |
+  | of which the slow path | 25.0 M | 67.8 M | x2.71 |
+  | the walk and the records (asm in both) | 17.35 M | 17.47 M | +0.7 % |
+  | the entities' stage | 2.27 M | 2.32 M | +2 % |
+  | START's ten weapon and HUD views | 10.8 M | 16.4 M | +52 % (one vblank more each) |
+  | a hull trace | 2671 | 4771 | x1.79 |
+  | a player tick (pmove and its traces) | 9791 | 15498 | x1.58 (pmove alone 2515 -> 2644) |
+  | a line of sight | 6427 | 10314 | x1.60 |
+  | a game tick on START (walking, firing, idle) | 28.3 k, 47.3 k, 28.8 k | 39.4 k, 67.0 k, 39.3 k | x1.36 to x1.42 |
+  | the monsters' crowd on E1M1 (21 awake), a tick | 143 k | 212 k | x1.48 |
+  | E3M4's door re-cut, a frame with one | 215 k | 322 k | x1.50 |
+
+- **RAM:** the C engine leaves 55.2 KB of stack instead of 42.8 KB in the
+  default build, and 55.9 KB instead of 43.5 KB in the release. The asm slow
+  path's pool and midpoint table (17.6 KB) go; the C's code is a little
+  larger.
+- **To compare:** `scripts/dlcheck.sh save asm`, then `ENGINE_C=1
+  scripts/dlcheck.sh check asm`. This prints every view's cycles, asm then
+  C, and the verdict on the frames; add `BENCH_MAPS=1 HASHONLY=1 SECS=3000`
+  for the 128 views. `ENGINE_C=1 scripts/bench.sh` builds in
+  `build-bench-c/`, beside the asm's `build-bench/`. A C engine disc:
+  `cmake --preset default -B build-c -DQ1PSX_ENGINE_C=ON .` then
+  `cmake --build build-c`.

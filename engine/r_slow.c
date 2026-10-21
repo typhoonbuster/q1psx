@@ -1,6 +1,11 @@
 /*
- * q1psx — renderer subdivision paths. C reference version (R_SLOW_C = 1 in
- * engine/r_defs.inc): the specification the asm port follows.
+ * q1psx — renderer subdivision paths in C: engine/r_slow.s's C version
+ * (R_SLOW_C = 1 in engine/r_defs.inc; the C engine, CMake Q1PSX_ENGINE_C).
+ * It was the asm's specification; the asm is the base now, and this follows
+ * it (docs/porting-notes.md §55): the same decisions in the same order, the
+ * same packets, from the scratchpad words the asm reads, the world's or a
+ * model's (its bounds, its vertex pool, its texture, the GTE's matrix as
+ * r_world.s loaded it).
  *
  * engine/r_world.s calls r_slow() for a polygon of a face record that the
  * fast path cannot simply emit: the record's bounding sphere says one of its
@@ -9,8 +14,8 @@
  * the threshold (docs/porting-notes.md §19, §19.4). Per polygon:
  *
  *   - a vertex nearer than SZ_CLIP, or projected beyond the GTE's range:
- *     the clip path. Transform to view space, clip against the near plane
- *     and the frustum (with guard bands), project the new vertices;
+ *     the clip path. Transform to view space, clip against the near plane,
+ *     project the new vertices;
  *   - otherwise: straight from the record's vertex cache (the fast path's
  *     RTPT results: SXY, SZ, light).
  *
@@ -29,14 +34,18 @@
  */
 
 #include <stdint.h>
+#include <psxgte.h>
+#include <inline_c.h>
 
 #include "prof.h"
 #include "qworld.h"
 #include "render.h"
 
 #define VU       6            /* view units per world unit                  */
-#define ZNEAR    (8 * VU)     /* near clip plane                            */
-#define SZ_CLIP  96           /* SZ below this: the GTE's projection is off */
+#define ZNEAR    (8 * VU)     /* the near clip plane, the world's and the
+                                 models' (SP_ZNEAR: the view model's 120)   */
+#define SZ_CLIP  96           /* SZ below this: the GTE's projection is off
+                                 (SP_SZCLIP: the view model's 124)          */
 #define SPAN     500          /* split edges with |dx| + |dy| above this: a
                                  triangle's bbox then fits the GPU's 1023 x
                                  511 limit                                  */
@@ -48,32 +57,48 @@
                                  splitting when its 512-entry vertex pool is
                                  nearly full; no bench view comes close)    */
 
-/* the record's vertex cache in the scratchpad (engine/r_defs.inc) */
-#define SPAD     0x1F800000u
-#define SP_SXY   0x100
-#define SP_SZ    0x1a8
+/* the scratchpad's words the asm reads (engine/r_defs.inc): the record's
+   vertex cache, what r_world.s set for the records it draws */
+#define SPAD        0x1F800000u
+#define SP_SXY      0x100     /* projected XY per record vertex             */
+#define SP_SZ       0x1a8     /* SZ per record vertex                       */
+#define SP_COL      0x250     /* light per record vertex, 0x00cccccc        */
+#define SP_FULL     0x33c     /* non-zero once the packet arena is full     */
+#define SP_OFY      0x3a8     /* the viewport's vertical centre             */
+#define SP_SZCLIP   0x3b0     /* SZ_CLIP, or the view model's               */
+#define SP_ZNEAR    0x3b4     /* ZNEAR, or the view model's                 */
+#define SP_HSHIFT   0x3b8     /* H = 5 << it                                */
+#define SP_VERTPOOL 0x3c0     /* the vertex pool: the map's, a model's      */
+#define SP_CLUT16   0x3d4     /* the record's texture: its clut << 16       */
+#define SP_TPAGE16  0x3d8     /* its tpage << 16                            */
+#define SP_T2       0x3e4     /* T2 (the view model's 0x7fff: no split)     */
+#define SPW(o)      (*(uint32_t *) (SPAD + (o)))
 
 typedef struct {
-	int32_t x, y, z;          /* view space (clip path)                      */
-	int32_t u, v;             /* texels x256 (page-relative)                 */
-	int32_t c;                /* light 0..255                                */
-	int32_t sx, sy;           /* projected                                   */
-	int32_t cached;           /* sx, sy, z are the cache's (do not project)  */
+	int32_t  x, y, z;         /* view space (clip path)                      */
+	int32_t  u, v;            /* texels x256 (page-relative)                 */
+	int32_t  c;               /* light 0..255                                */
+	uint32_t gc;              /* its colour word: a corner's the cache's, the
+	                             others' grey c                              */
+	int32_t  sx, sy;          /* projected, 16 bits (the asm's pool's)       */
+	int32_t  cached;          /* sx, sy, z are the cache's (do not project)  */
 } sv_t;
 
 typedef struct { sv_t v[3]; int depth; } tri_t;
 
 static tri_t    stack[3 * MAXD + 2];         /* depth-first, <= 3 left per level */
 static uint32_t clut16, tpage16;
+static int32_t  t2, h, ofy, znear;           /* the call's: T2, H, the centre, the plane */
 
 /* ------------------------------------------------------------- projection */
 
 static void project(sv_t *p)
 {
 	/* past the near plane only: x, y may be far off screen, so divide each
-	   (|x| H < 2^31); subdivision culls or splits what lies outside */
-	p->sx = 160 + p->x * R_SCREEN_H / p->z;
-	p->sy = r_state.ofy + p->y * R_SCREEN_H / p->z;
+	   (x H as the asm's 5 x << shift); subdivision culls or splits what lies
+	   outside */
+	p->sx = (int16_t) (160 + p->x * h / p->z);
+	p->sy = (int16_t) (ofy + p->y * h / p->z);
 }
 
 /* Clip-path vertex order: crossings are always interpolated from the same
@@ -85,18 +110,25 @@ static int before(const sv_t *a, const sv_t *b)
 	return a->y < b->y;
 }
 
+/* light 0..255 -> GPU colour 0x00cccccc */
+static uint32_t grey(int32_t c)
+{
+	return (uint32_t) c * 0x010101u;
+}
+
 static void lerp(const sv_t *a, const sv_t *b, int32_t num, int32_t den, sv_t *o)
 {
 	/* one division per edge. Within one polygon (a texture repetition, at
 	   most 256 world units) plane distances stay < 2^16 and deltas < 2^16,
 	   so a 14-bit factor keeps every product below 2^31. */
 	int32_t t = (num << 14) / den;
-	o->x = a->x + (((b->x - a->x) * t) >> 14);
-	o->y = a->y + (((b->y - a->y) * t) >> 14);
-	o->z = a->z + (((b->z - a->z) * t) >> 14);
-	o->u = a->u + (((b->u - a->u) * t) >> 14);
-	o->v = a->v + (((b->v - a->v) * t) >> 14);
-	o->c = a->c + (((b->c - a->c) * t) >> 14);
+	o->x  = a->x + (((b->x - a->x) * t) >> 14);
+	o->y  = a->y + (((b->y - a->y) * t) >> 14);
+	o->z  = a->z + (((b->z - a->z) * t) >> 14);
+	o->u  = a->u + (((b->u - a->u) * t) >> 14);
+	o->v  = a->v + (((b->v - a->v) * t) >> 14);
+	o->c  = a->c + (((b->c - a->c) * t) >> 14);
+	o->gc = grey(o->c);
 	o->cached = 0;
 }
 
@@ -109,7 +141,7 @@ static int clip_near(const sv_t *in, int n, sv_t *out)
 	int m = 0;
 	for (int i = 0; i < n; i++) {
 		const sv_t *a = &in[i], *b = &in[(i + 1) % n];
-		int32_t da = a->z - ZNEAR, db = b->z - ZNEAR;
+		int32_t da = a->z - znear, db = b->z - znear;
 		if (da >= 0)
 			out[m++] = *a;
 		if ((da >= 0) != (db >= 0)) {
@@ -124,20 +156,10 @@ static int clip_near(const sv_t *in, int n, sv_t *out)
 
 /* ---------------------------------------------------------------- packets */
 
+/* the rounded texels, as the asm's: a corner's, its record's uv halfword */
 static uint32_t uvword(const sv_t *p)
 {
-	int32_t u = (p->u + 128) >> 8, v = (p->v + 128) >> 8;
-	if (u < 0) u = 0;
-	if (u > 255) u = 255;
-	if (v < 0) v = 0;
-	if (v > 255) v = 255;
-	return (uint32_t) (u | (v << 8));
-}
-
-/* light 0..255 -> GPU colour 0x00cccccc */
-static uint32_t grey(int32_t c)
-{
-	return (uint32_t) c * 0x010101u;
+	return (uint32_t) (p->u + 128) >> 8 | ((uint32_t) (p->v + 128) & 0xff00);
 }
 
 static uint32_t sxy(const sv_t *p)
@@ -145,25 +167,28 @@ static uint32_t sxy(const sv_t *p)
 	return ((uint32_t) p->sx & 0xffff) | ((uint32_t) p->sy << 16);
 }
 
-static void emit3(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
+/* one POLY_GT3, prepended to the world bucket; 0: the arena was full (the
+   asm's packet pointer past its bound: SP_FULL set, the polygon given up) */
+static int emit3(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 {
-	if (s->pkt + 40 > s->pkt_end) {
-		s->stat_skipped++;
-		return;
+	if ((s->pkt & 0x1fffffff) > (s->pkt_end & 0x1fffffff)) {
+		SPW(SP_FULL) = 1;
+		return 0;
 	}
 	uint32_t *p = (uint32_t *) s->pkt;
 	p[0] = (9u << 24) | s->ot_head;
-	p[1] = 0x34000000u | grey(a->c);           /* POLY_GT3: texture x light */
+	p[1] = 0x34000000u | a->gc;                /* POLY_GT3: texture x light */
 	p[2] = sxy(a);
 	p[3] = uvword(a) | clut16;
-	p[4] = grey(b->c);
+	p[4] = b->gc;
 	p[5] = sxy(b);
 	p[6] = uvword(b) | tpage16;
-	p[7] = grey(c->c);
+	p[7] = c->gc;
 	p[8] = sxy(c);
 	p[9] = uvword(c);
 	s->ot_head = (uint32_t) p & 0xffffff;
 	s->pkt += 40;
+	return 1;
 }
 
 /* ------------------------------------------------------------ subdivision */
@@ -173,13 +198,14 @@ static int32_t iabs(int32_t v)
 	return v < 0 ? -v : v;
 }
 
-/* Split decision for one edge, from that edge alone (see the header). */
-static int split_edge(const r_state_t *s, const sv_t *p, const sv_t *q)
+/* Split decision for one edge, from that edge alone (see the header); the
+   products wrap and compare unsigned, as the asm's */
+static int split_edge(const sv_t *p, const sv_t *q)
 {
 	int32_t l = iabs(p->sx - q->sx) + iabs(p->sy - q->sy);
 	if (l > SPAN)
 		return 1;
-	return l * iabs(p->z - q->z) > (int32_t) s->warp_t2 * (p->z + q->z);
+	return (uint32_t) (l * iabs(p->z - q->z)) > (uint32_t) t2 * (uint32_t) p->z + (uint32_t) t2 * (uint32_t) q->z;
 }
 
 /* round(n / d) half up, d > 0: n + KOFS d >= 0 for every n here (|s| <
@@ -193,12 +219,13 @@ static void midpoint(const sv_t *p, const sv_t *q, sv_t *m)
 {
 	/* symmetric in p, q: both neighbours compute the same point */
 	int32_t zs = p->z + q->z;
-	m->sx = rdiv(p->sx * p->z + q->sx * q->z, zs);
-	m->sy = rdiv(p->sy * p->z + q->sy * q->z, zs);
+	m->sx = (int16_t) rdiv(p->sx * p->z + q->sx * q->z, zs);
+	m->sy = (int16_t) rdiv(p->sy * p->z + q->sy * q->z, zs);
 	m->z  = zs >> 1;
 	m->u  = (p->u + q->u) >> 1;
 	m->v  = (p->v + q->v) >> 1;
 	m->c  = (p->c + q->c) >> 1;
+	m->gc = grey(m->c);
 	m->cached = 1;
 }
 
@@ -211,7 +238,8 @@ static void push(int *sp, const sv_t *a, const sv_t *b, const sv_t *c, int depth
 	t->depth = depth;
 }
 
-static void subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
+/* 0: the arena got full (the polygon given up) */
+static int subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 {
 	int sp = 0;
 	push(&sp, a, b, c, 0);
@@ -232,16 +260,16 @@ static void subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 
 		int s01 = 0, s12 = 0, s20 = 0;
 		if (t.depth < MAXD) {
-			s01 = split_edge(s, p0, p1);
-			s12 = split_edge(s, p1, p2);
-			s20 = split_edge(s, p2, p0);
+			s01 = split_edge(p0, p1);
+			s12 = split_edge(p1, p2);
+			s20 = split_edge(p2, p0);
 		}
 		int nsplit = s01 + s12 + s20;
 		if (!nsplit) {
-			if (maxx - minx <= 1023 && maxy - miny <= 511)
-				emit3(s, p0, p1, p2);
-			else
-				s->stat_skipped++;
+			/* (unsplit edges are within SPAN: only a leaf at the depth
+			   limit can be too big for the GPU, and it is dropped) */
+			if (maxx - minx <= 1023 && maxy - miny <= 511 && !emit3(s, p0, p1, p2))
+				return 0;
 			continue;
 		}
 
@@ -271,33 +299,32 @@ static void subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 			else          { push(&sp, p2, &m20, p1, d); push(&sp, &m20, p0, p1, d); }
 		}
 	}
+	return 1;
 }
 
 /* -------------------------------------------------------------- the entry */
-
-/* A cache value the GTE could not project well: too near, or saturated. */
-static int off_range(uint32_t sxy_w, uint32_t sz)
-{
-	int32_t x = (int16_t) (sxy_w & 0xffff), y = (int16_t) (sxy_w >> 16);
-	return sz < SZ_CLIP || x <= -1024 || x >= 1023 || y <= -1024 || y >= 1023;
-}
 
 /* Called from asm (draw_records): rec = face record, poly = its quad / tri,
    nv = 4 or 3. Uses r_state.pkt / ot_head, which the asm syncs around the
    call. */
 void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 {
-	const qw_record *r     = (const qw_record *) rec;
-	const uint8_t   *light = rec + r->polys - ((r->num_verts + 3) & ~3);
-	const uint16_t  *uvs   = (const uint16_t *) (poly + 4);
-	const uint32_t  *c_sxy = (const uint32_t *) (SPAD + SP_SXY);
-	const uint32_t  *c_sz  = (const uint32_t *) (SPAD + SP_SZ);
+	const uint16_t *uvs   = (const uint16_t *) (poly + 4);
+	const uint32_t *c_sxy = (const uint32_t *) (SPAD + SP_SXY);
+	const uint32_t *c_sz  = (const uint32_t *) (SPAD + SP_SZ);
+	const uint32_t *c_col = (const uint32_t *) (SPAD + SP_COL);
+	int32_t szclip = (int32_t) SPW(SP_SZCLIP);
 
-	const qw_tex *tex = (const qw_tex *) r_state.textures + r->tex;
-	clut16  = (uint32_t) tex->clut << 16;
-	tpage16 = (uint32_t) tex->tpage << 16;
+	clut16  = SPW(SP_CLUT16);
+	tpage16 = SPW(SP_TPAGE16);
+	t2      = (int32_t) SPW(SP_T2);
+	h       = 5 << SPW(SP_HSHIFT);
+	ofy     = (int32_t) SPW(SP_OFY);
+	znear   = (int32_t) SPW(SP_ZNEAR);
 
-	/* the corners, in PS1 order, from the cache */
+	/* the corners, in PS1 order, from the cache; one the GTE could not
+	   project well (too near, or saturated) sends the polygon to the clip
+	   path */
 	sv_t q[4];
 	int clip = 0;
 	for (int j = 0; j < nv; j++) {
@@ -307,9 +334,10 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		o->sy = (int16_t) (c_sxy[slot] >> 16);
 		o->z  = (int32_t) (c_sz[slot] & 0xffff);
 		o->u  = (int32_t) (uvs[j] & 0xff) << 8;
-		o->v  = (int32_t) (uvs[j] >> 8) << 8;
-		o->c  = light[slot];
-		o->cached = !off_range(c_sxy[slot], c_sz[slot]);
+		o->v  = (int32_t) (uvs[j] & 0xff00);
+		o->gc = c_col[slot];
+		o->c  = (int32_t) (o->gc & 0xff);
+		o->cached = !(o->z < szclip || o->sx <= -1024 || o->sx >= 1023 || o->sy <= -1024 || o->sy >= 1023);
 		clip |= !o->cached;
 	}
 
@@ -317,28 +345,29 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		/* subdivision straight from the cache: a quad as the GPU's two
 		   halves (draw_records' test is close to exact: a quad none of
 		   whose edges splits rarely gets here) */
-		subdivide(s, &q[0], &q[1], &q[2]);
-		if (nv == 4)
+		if (subdivide(s, &q[0], &q[1], &q[2]) && nv == 4)
 			subdivide(s, &q[1], &q[3], &q[2]);
 		return;
 	}
 
-	/* the clip path: view space (only clipping needs it) */
+	/* the clip path: view space (only clipping needs it), through the
+	   GTE's matrix as the asm left it, the view's or the entity's */
 	const uint16_t *vidx = (const uint16_t *) (rec + sizeof(qw_record));   /* into the pool */
-	const qw_vert  *pool = (const qw_vert *) s->vertpool;
+	const qw_vert  *pool = (const qw_vert *) SPW(SP_VERTPOOL);
 	static const int quad_ring[4] = { 0, 1, 3, 2 };   /* PS1 order -> ring */
 	sv_t in[4];
-	const int16_t *m = s->rot;
 	for (int k = 0; k < nv; k++) {
 		int j = nv == 4 ? quad_ring[k] : k;
-		const qw_vert *p = &pool[vidx[poly[j] >> 2]];
+		int32_t mac[3];
+		gte_ldv0(&pool[vidx[poly[j] >> 2]]);
+		gte_rtv0tr();                              /* MAC = (TR << 12 + R V) >> 12 */
+		gte_stlvnl(mac);
 		sv_t *o = &in[k];
 		*o = q[j];
-		/* as the GTE's MVMVA (sf = 1): (TR << 12 + R V) >> 12 */
-		o->x = (int32_t) ((((int64_t) s->tr[0] << 12) + m[0] * p->x + m[1] * p->y + m[2] * p->z) >> 12);
-		o->y = (int32_t) ((((int64_t) s->tr[1] << 12) + m[3] * p->x + m[4] * p->y + m[5] * p->z) >> 12);
+		o->x = mac[0];
+		o->y = mac[1];
 		if (!o->cached)
-			o->z = (int32_t) ((((int64_t) s->tr[2] << 12) + m[6] * p->x + m[7] * p->y + m[8] * p->z) >> 12);
+			o->z = mac[2];
 	}
 
 	/* clip against the near plane (when a vertex is behind it) */
@@ -346,7 +375,7 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	int n = nv, behind = 0;
 	for (int k = 0; k < nv; k++) {
 		buf[0][k] = in[k];
-		behind += in[k].z < ZNEAR;
+		behind += in[k].z < znear;
 	}
 	if (behind == nv)
 		return;
@@ -358,10 +387,11 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	for (int i = 0; i < n; i++) {
 		if (out[i].cached)
 			continue;                              /* the cache's own values */
-		if (out[i].z < ZNEAR)
-			out[i].z = ZNEAR;                      /* rounding of the lerp */
+		if (out[i].z < znear)
+			out[i].z = znear;                      /* rounding of the lerp */
 		project(&out[i]);
 	}
 	for (int i = 1; i + 1 < n; i++)
-		subdivide(s, &out[0], &out[i], &out[i + 1]);
+		if (!subdivide(s, &out[0], &out[i], &out[i + 1]))
+			return;
 }

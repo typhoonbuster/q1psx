@@ -101,3 +101,29 @@ const qw_vert *mdl_frame(int a, const qst_model *m, int frame)
 	mdl_stat_expanded++;
 	return dst;
 }
+
+#if Q1PSX_ENGINE_C
+/* engine/mdl_expand.s in C (the C engine, CMake Q1PSX_ENGINE_C), the asm's
+   way: word w gives x | y << 16 = w & 0x00ff00ff and z | normal << 16 =
+   (w >> 8) & 0x00ff00ff, two stores a vertex */
+void mdl_expand(qw_vert *dst, const uint32_t *src, int n)
+{
+	uint32_t *d = (uint32_t *) dst;
+	for (int i = 0; i < n; i++) {
+		uint32_t w = src[i];
+		d[2 * i]     = w & 0x00ff00ff;
+		d[2 * i + 1] = w >> 8 & 0x00ff00ff;
+	}
+}
+
+/* x, y and z shifted left (each in its half), the normal kept */
+void mdl_expand_shift(qw_vert *dst, const uint32_t *src, int n, int shift)
+{
+	uint32_t *d = (uint32_t *) dst;
+	for (int i = 0; i < n; i++) {
+		uint32_t w = src[i];
+		d[2 * i]     = (w & 0x00ff00ff) << shift;
+		d[2 * i + 1] = (w >> 8 & 0xff) << shift | (w >> 8 & 0x00ff0000);
+	}
+}
+#endif

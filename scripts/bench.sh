@@ -74,6 +74,11 @@
 #         every model with pieces ("ordasm" lines: the asks checked, any
 #         mismatch). Every bench prints an "order" line per view whose
 #         debug frame took such places: their count, their cycles.
+#         ENGINE_C=1 builds the C engine (CMake Q1PSX_ENGINE_C: every asm
+#         part's C version but the world renderer's, docs/porting-notes.md
+#         §55) in build-bench-c/, beside the asm's: its frames must be the
+#         asm's, hash for hash (scripts/dlcheck.sh: save a reference with
+#         the asm, check it with ENGINE_C=1: every view's cycles, asm to C).
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>
@@ -106,6 +111,8 @@ HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
 BMF_C=${BMF_C:-0}
 ORDER_C=${ORDER_C:-0}
+ENGINE_C=${ENGINE_C:-0}
+OUT="$ROOT/build-bench$([ "$ENGINE_C" = 1 ] && echo -c || true)"   # (the C engine's beside the asm's)
 PLAY=${PLAY:-0}
 MUSIC=${MUSIC:-0}
 MAP=${MAP:-}
@@ -117,7 +124,7 @@ ENTS=${ENTS:-0}
 MONSTERS=${MONSTERS:-0}
 MOVERS=${MOVERS:-0}
 SAMPLE=${SAMPLE:-0}
-cmake --preset bench -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
+cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
@@ -128,26 +135,26 @@ cmake --preset bench -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1P
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" "$ROOT" >/dev/null
-cmake --build "$ROOT/build-bench" > "$ROOT/build-bench/build.log" 2>&1 \
-	|| { echo "bench: build failed (see build-bench/build.log)"; tail -n 20 "$ROOT/build-bench/build.log"; exit 1; }
+cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
+	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }
 
-LOG="$ROOT/build-bench/bench.log" \
-	"$ROOT/scripts/headless.sh" "$ROOT/build-bench/q1psx.bin" "$SECS" '^bench done' >/dev/null \
-	|| { status=$?; tail -n 30 "$ROOT/build-bench/bench.log"; exit $status; }
+LOG="$OUT/bench.log" \
+	"$ROOT/scripts/headless.sh" "$OUT/q1psx.bin" "$SECS" '^bench done' >/dev/null \
+	|| { status=$?; tail -n 30 "$OUT/bench.log"; exit $status; }
 
-grep '^bench ' "$ROOT/build-bench/bench.log" | grep -v '^bench \(start\|done\)' || true
-[ "$RESIDENCY" = 1 ] && { grep '^res' "$ROOT/build-bench/bench.log" || true; }
-grep '^\(clipdiff\|pmdiff\|pmove\)' "$ROOT/build-bench/bench.log" | grep -v MISMATCH || true
-grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
-[ "$BMF_C" = 2 ] && { grep '^bmfasm' "$ROOT/build-bench/bench.log" | head -n 40 || true; }
-[ "$ORDER_C" = 2 ] && { grep '^ordasm' "$ROOT/build-bench/bench.log" | grep -v ' 0 mismatches, 0 unchecked;' | head -n 40 || true
+grep '^bench ' "$OUT/bench.log" | grep -v '^bench \(start\|done\)' || true
+[ "$RESIDENCY" = 1 ] && { grep '^res' "$OUT/bench.log" || true; }
+grep '^\(clipdiff\|pmdiff\|pmove\)' "$OUT/bench.log" | grep -v MISMATCH || true
+grep -A2 'MISMATCH' "$OUT/bench.log" | head -n 30 || true
+[ "$BMF_C" = 2 ] && { grep '^bmfasm' "$OUT/bench.log" | head -n 40 || true; }
+[ "$ORDER_C" = 2 ] && { grep '^ordasm' "$OUT/bench.log" | grep -v ' 0 mismatches, 0 unchecked;' | head -n 40 || true
 	awk '/^ordasm .*checked/ { c += $3; m += $8; u += $10; g += $16; w += substr($17, 2) }
 	     END { printf "ordasm: %d asks checked, %d mismatches, %d unchecked; the general planes %d (%d wide)\n", c, m, u, g, w }' \
-		"$ROOT/build-bench/bench.log"; }
-[ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$ROOT/build-bench/bench.log" || true; }
-[ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$ROOT/build-bench/bench.log" || true; }
+		"$OUT/bench.log"; }
+[ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$OUT/bench.log" || true; }
+[ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$OUT/bench.log" || true; }
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
-[ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$ROOT/build-bench/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
+[ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$OUT/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
 [ "$MONSTERS" = 2 ] && exit 0
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0
 [ "$ENTS" = 1 ] && MAP=E1M1          # (its dumps: e1m1's textures, the first map)
@@ -158,9 +165,9 @@ grep -A2 'MISMATCH' "$ROOT/build-bench/bench.log" | head -n 30 || true
 # images too: the models level's file); a single map's bench (MAP=...) with
 # that map's textures.
 make -s -C "$ROOT/tools/pktview"
-mkdir -p "$ROOT/build-bench/views"
+mkdir -p "$OUT/views"
 TEXLEVEL=2; [ "$TEXTURES" = medium ] && TEXLEVEL=1
 TEXMAP=start; [ -n "$MAP" ] && TEXMAP=$(echo "$MAP" | tr 'A-Z' 'a-z')
-"$ROOT/tools/pktview/pktview" "$ROOT/build-bench/bench.log" \
-	"$ROOT/cooked/id1/${TEXMAP}_t$TEXLEVEL.tx4" "$ROOT/build-bench/views/" \
+"$ROOT/tools/pktview/pktview" "$OUT/bench.log" \
+	"$ROOT/cooked/id1/${TEXMAP}_t$TEXLEVEL.tx4" "$OUT/views/" \
 	"$ROOT/cooked/id1/game_0.dat" "$ROOT/cooked/id1/stream_0.dat" | sed 's/^/  /'

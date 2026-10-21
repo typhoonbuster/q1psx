@@ -1,6 +1,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <psxgte.h>
+#include <inline_c.h>
 
 #include "bmfrag.h"
 #include "gdata.h"
@@ -73,6 +75,34 @@ static void angle_vectors(int pitch, int yaw, int roll, int32_t f[3], int32_t r[
    negated: entity pitches are backward): the model-to-world matrix's
    columns */
 void rl_ent_matrix(r_ent_t *e, const int16_t cols[3][4], const int16_t o[4]);
+
+#if Q1PSX_ENGINE_C
+/* engine/ent_mat.s in C (the C engine, CMake Q1PSX_ENGINE_C), the asm's
+   way: the view's rotation and translation into the GTE (r_render loads
+   them again), rot x each column by MVMVA (IR = the sum >> 12, no
+   translation; the entries are within 4096 x 3: no saturation), then
+   MAC = (tr x 4096 + rot . o) >> 12, which is tr + (rot . o >> 12) */
+void rl_ent_matrix(r_ent_t *e, const int16_t cols[3][4], const int16_t o[4])
+{
+	gte_SetRotMatrix(r_state.rot);
+	gte_ldtr(r_state.tr[0], r_state.tr[1], r_state.tr[2]);
+	if (cols) {
+		for (int j = 0; j < 3; j++) {
+			int16_t ir[3];
+			gte_ldv0(cols[j]);
+			gte_rtv0();                        /* IR = rot x column j >> 12 */
+			gte_stsv(ir);
+			e->rot[j]     = ir[0];
+			e->rot[3 + j] = ir[1];
+			e->rot[6 + j] = ir[2];
+		}
+		e->rot[9] = 0;
+	}
+	gte_ldv0(o);
+	gte_rtv0tr();                              /* MAC = (TR x 4096 + rot . o) >> 12 */
+	gte_stlvnl(e->tr);
+}
+#endif
 
 static void ent_rotation(r_ent_t *e, int yaw, int pitch, int roll, const int16_t o[4])
 {

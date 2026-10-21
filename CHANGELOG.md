@@ -1531,3 +1531,17 @@ followed by R0-R4.
     shotgun's half);
   - 1223 -> 810 triangles for the eight guns, the same look on the real
     GPU; 11.6 KB less RAM.
+- **The C engine, to compare with the asm** (to compare the performance). §55:
+  - CMake `Q1PSX_ENGINE_C` builds each asm part's C version in its place:
+    the physics, the slow path, the dynamic lights, the brush models' cut,
+    the order among a leaf's pieces, the entity matrices and the model
+    frames. The world renderer stays asm: it never had a C version;
+  - the asm builds are unchanged byte for byte. Only the C was fixed, to
+    follow the asm (the slow path's C had fallen behind the models and the
+    gun), and none of it was optimized;
+  - the frames are the same (start's views, the 128 map views, the
+    weapons). The C engine takes +88 % on start's views and +94 % on the
+    maps' (its slow path x2.7); the physics takes x1.6 to x1.8, the
+    monsters x1.5;
+  - `ENGINE_C=1 scripts/bench.sh` builds it in build-bench-c/, and
+    `scripts/dlcheck.sh` compares the asm with the C, view by view.
