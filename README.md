@@ -70,23 +70,27 @@ cmake --preset default .      # configure (toolchain = $PSN00BSDK_LIBS/cmake/sdk
 cmake --build ./build         # -> build/q1psx.bin + build/q1psx.cue
 ```
 
-Three editions:
+Three presets:
 
 | Preset | Directory | What it is |
 |---|---|---|
-| `default` | `build/` | The development build: a map menu (SELECT + START), the debug overlay (START), every quality level on the disc |
-| `release` | `build-release/` | Quake's own menu (START), no debug tools; textures low to high, map geometry low and high |
-| `release-ultra` | `build-release-ultra/` | The same with the ultra textures and geometry alone |
+| `default` | `build/` | The development build: a map menu (SELECT + START), the debug overlay (START) |
+| `release` | `build-release/` | Quake's own menu (START), no debug tools; the high textures, the 3D gun, 1536 units of view |
+| `release-medium` | `build-release-medium/` | The same with the medium textures |
 
-Four quality settings, chosen in Graphics (`docs/porting-notes.md` §39):
-textures (their resolution), map geometry (crack repair, the light grid),
-models (the items', torches' and rocket's triangles; the guns stay
-Quake's) and effects (the particles). Every model and effects level is on
-every disc.
+The build's choices (`docs/porting-notes.md` §52), CMake variables every
+preset takes: `Q1PSX_TEXTURES` (`high` or `medium`, 4-bit: the disc's one
+texture set), `Q1PSX_WEAPON` (`3d` or `2d`), `Q1PSX_DRAWDIST` (`1536` or
+`1024` world units, the walls past 512 units flat-shaded). The map
+geometry and the models are low on every disc; the guns are Quake's
+rebuilt by hand (`tools/qcook/game.c`). In Graphics: the effects (medium or
+high), the dithering, the HUD, the dynamic lights, the frame rate cap (60,
+45, 30) and the tick rate (60, 30). The music is Quake's CD tracks streamed
+by the SPU (22.05 kHz, the menu's theme 32 kHz).
 
 ```bash
 cmake --preset release && cmake --build ./build-release
-cmake --preset release-ultra && cmake --build ./build-release-ultra
+cmake --preset release -B build-release-2d -DQ1PSX_WEAPON=2d && cmake --build ./build-release-2d
 ```
 
 Run the resulting image:

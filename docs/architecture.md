@@ -103,11 +103,11 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 |---|---|---|
 | BIOS / kernel | 64 KB | `0x80000000-0x8000FFFF`, untouchable |
 | Code + rodata + data/bss | ~300 KB | release 2026-10-19: 275 KB of code, 23 KB of rodata; the renderer asm is small, the game's C (monsters, streaming) is not |
-| Stack | 16 KB | from 0x801FFFF0 down to the BSS's end; the build fails under 16 KB (`scripts/ramcheck.sh`, porting-notes §42; 20.0 KB in the release of §46). The SDK's heap shares this gap: nothing in the engine mallocs (cd.c reads the disc's directories itself) |
+| Stack | 16 KB | from 0x801FFFF0 down to the BSS's end; the build fails under 16 KB (`scripts/ramcheck.sh`, porting-notes §42; 18.7 KB in the release of §52). The SDK's heap shares this gap: nothing in the engine mallocs (cd.c reads the disc's directories itself) |
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes); an alias model is left out when under 24 KB of room is left (`R_MODEL_ROOM`), and the menu keeps 12 KB while it is up (`R_MENU_ROOM`, porting-notes §43) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
-| Level arena | 1242 KB | world render data + clip hulls + PVS (the biggest map 696 KB; the world may take 1136 KB while it loads, `MEM_LEVEL_WORLD`) + the brush models' pieces (§41: 12-112 KB, the room the cook measured, §44, §46) + the streamed assets' RAM pool (the rest: 160-897 KB) and, with the 2D gun, its packets (78 KB at the pool's end, §45, §47); 1152 KB until 2026-10-19, then 1136 (§42, §43) |
-| Game arena | 116 KB | the game data every map needs (`GAME_<n>.DAT`, n the model level: weapon and projectile models, 63 KB at high, the block sized for the largest level so another level's models replace them in place before a map's load; the 2D weapons' tables, their packets lent by the stream only while that gun is drawn, §45), filled at boot (111.5 KB: `mem: game arena` in the boot log), plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (17 KB); 224 KB until §45 |
+| Level arena | 1249 KB | world render data + clip hulls + PVS (the biggest map 696 KB; the world may take 1136 KB while it loads, `MEM_LEVEL_WORLD`) + the brush models' pieces (§41: 12-112 KB, the room the cook measured, §44, §46) + the streamed assets' RAM pool (the rest: 160-897 KB) and, with the 2D gun, its packets (78 KB at the pool's end, §45, §47); 1152 KB until 2026-10-19, then 1136 (§42, §43), 1242 (§45), 1237 (§48, §50), 1249 (§52: the code the clean-up removed) |
+| Game arena | 115 KB | the game data every map needs (`GAME_0.DAT`, the one model level: the guns, rebuilt by hand from Quake's own, §52, the projectiles' models, the HUD's pictures; in a 2D build the 2D gun's tables, its packets lent by the stream at each map's start, §45), filled at boot (112 KB: `mem: game arena` in the boot log), plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (24 KB); 224 KB until §45 |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
 The level arena is a bump allocator that is reset on map load. There is no
@@ -118,10 +118,9 @@ general-purpose heap at runtime.
 The first 4 KB are the hardware's capture buffers; from 0x1010 up, the
 map's sound bank (`MAPS/<MAP>.SND`, formats/qsound.h): every sound the map
 can play as SPU ADPCM, 400-492 KB, uploaded by DMA at map load. No reverb
-work area (reverb off). The music never touches it in the default build:
-its XA streams go to the SPU's CD input (`docs/porting-notes.md` §48); the
-SPU music build (`release-spu`) keeps a 48 KB ring at its top, two voices
-playing it.
+work area (reverb off). The music keeps a 48 KB ring at its top, two
+voices playing it (the CD tracks streamed by the SPU: `docs/porting-notes.md`
+§48, §52).
 
 ### Scratchpad (1 KB) — owned by the renderer during `r_frame`
 

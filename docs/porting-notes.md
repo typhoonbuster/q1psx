@@ -6233,3 +6233,101 @@ lines):
   built.
 - **Not run**: DuckStation; a hands-on play (E1M1's nailgun room, an
   explosion by a door: each particle is a place).
+
+## §52 — The clean-up: the options kept, the build's choices, the SPU music alone, the guns by hand (2026-10-21)
+
+- **The ask**, the list of what stays:
+  - the textures high and medium, low gone, a build parameter (high in
+    the release), 4-bit only, the dithering an option;
+  - the effects medium and high (medium in the release);
+  - the map geometry low, the models low but the guns, rebuilt from
+    Quake's own by hand (the decimation broke them), their skins kept;
+  - the tick rate 60 or 30 (60), the frame rate cap 60, 45 or 30 (60);
+  - the menu's music at 32 kHz, the other tracks at 22 kHz;
+  - the warp control dynamic from 4 px; both HUDs; the dynamic lights on,
+    in the menu;
+  - the gun 3D or 2D, a build parameter (3D in the release); the flat
+    shading past 512 units always; the draw distance 1536 or 1024, a build
+    parameter (1536 in the release).
+
+  Asked which music stays: the SPU alone; the XA streams and their carousels go. No long tests
+  for the parameters: the
+  links checked; the guns on one emulator in fast forward.
+- **A disc carries** each map's 4-bit textures at the build's level
+  (`<MAP>_T1.TX4` or `_T2.TX4`), its low geometry (`_G0.WLD`), its low
+  models (`_M0.MDL`), its bank; `GAME_0.DAT`, `STREAM_0.DAT`; the SPU
+  music (`MUSIC\SPU_NN.DAT`). The cook (7 s for 32 maps) makes the medium
+  and high texture sets (`qcook map --tex4` alone: a first run wrote no
+  texture at all, `tex_build` taking a missing 8-bit path for "the layout
+  alone"), the low geometry and models, the low streamed assets (no
+  pool), the music (`qcook spumusic --rate`: 32000 for track 2).
+- **The build's choices** (CMakeLists.txt, engine/settings.h):
+  `Q1PSX_TEXTURES` (`high` / `medium`: the disc's one set),
+  `Q1PSX_WEAPON` (`3d` / `2d`: `Q1PSX_WEAPON_2D`), `Q1PSX_DRAWDIST`
+  (`1536` / `1024`). Presets: `default`, `release`, `release-medium`,
+  `bench`; `release-ultra` and `release-spu` are gone. bench.sh's
+  `TEXTURES=high|medium`, `WEAPON=3d|2d`, `DRAWDIST=`, `FLAT=` (1, far, by
+  default), `T=` (4 px: the game's floor), `EFFECTS=` (1).
+- **The engine:**
+  - Graphics: six rows (effects, dithering, HUD, dynamic lights, frame
+    rate cap, tick rate), all at once; the levels' reload (`load_due`,
+    "Takes effect at the next level") gone with them;
+  - the warp `R_WARP_DYNAMIC` from `SETTINGS_WARP_FLOOR` (4 px); the budget
+    mode gone (render.c); the bench keeps the fixed one;
+  - the 8-bit texture sets' loading gone (world.c, anim.c, the stream's
+    VRAM regions); `world_t.tex4` gone, so `world_t.bmodels` is at 116
+    (bmfrag.s, rl_order.s: the static asserts caught it);
+  - the model levels' swap at a load gone (`gdata_set_models`,
+    `stream_set_level`);
+  - a 2D build lends the gun its packets at each map's start (§45; the
+    in-game lend gone: the gun no longer changes); a 3D build compiles no
+    2D gun code and loads no 2D tables.
+- **The music:** music.c is the SPU player alone (§48), each track at its
+  rate: the voices' pitch rate × 4096 / 44100, a sample 393216 / pitch of
+  root counter 2's ticks (192 at 22.05 kHz, 132.3 at the theme's 32 kHz:
+  a chunk's ticks rounded, a tick in 0.2 s). Gone: the XA streams, the
+  carousel (stream.c's captures, the CD interrupt's sectors),
+  `music_suspend` / `music_resume`, the CD input's fade, formats/qxa.h,
+  tools/qcook/carousel.c; the ADPCM encoder moved to
+  tools/qcook/spumusic.c. The maps' asset lists (`stream_monster_needs`,
+  `items_streamed`, `sound_map_streamed`) stay in the cook for the
+  streaming's redesign.
+- **The guns by hand** (tools/qcook/game.c, "the guns by hand"):
+  - a gun's triangles written in place of the file's, between the file's
+    vertices (Quake's `v_*.mdl`: their frames, the animation; their skin
+    coordinates, the skin), the muzzle flash the file's own;
+  - a section joins two rings (a cross-section's corners, the same order
+    at both ends) by quads, cut along the shorter diagonal;
+  - a triangle's winding from the file's triangle in its plane on an
+    edge, else from its vertices' normals; its skin half from its
+    vertices off the seam (a first rule taking it from the neighbours put
+    two junction faces on the back half: the skin's blue fill on screen);
+  - the view model cull (§22) then drops what the eye never sees;
+  - `QCOOK_NOHAND=1` cooks the file's triangles (an A / B),
+    `QCOOK_GUNS=<dir>` writes the hand-made ones (a look).
+
+  The shotgun first, to be looked at: the receiver (x -1.7 .. 5.3),
+  its step to the barrel section (x 5.9: a taper from the receiver
+  stretched the skin past its painted strip), the barrel section, the
+  forearm a hexagon (the file's 10-gon), the barrel's end in one piece.
+  88 triangles (20 the flash's), 61 drawn after the eye cull (the file's
+  78), 3904 B (4880). On PCSX-Redux's real GPU (the release, a Lua
+  script: New Game, the gun at rest, then fired): the file's and the hand
+  one side by side, the same at a glance.
+  - The guns' geometry was Quake's own at every level, never reduced. Their
+    skins are at half resolution since the 3D guns (§22: the shotgun's 100
+    × 97 of 200 × 194). The eight at full resolution take about 400 K
+    texels, against the game's 256 K of VRAM pages, and five are wider than
+    a 256-texel page.
+- **The links:**
+  - stack room: default 18528 B, release 19184 B (16968 before), with the
+    level arena at 1249 KB (12 KB of the code removed given back);
+  - the game arena: 112032 of 117760 B;
+  - the bench: 69928 B; `BENCH_GAME=1`'s 19120 B, over the 16 KB floor
+    again; the 2D bench 69128 B.
+- **Left:**
+  - the other seven guns by hand, once the shotgun is checked;
+  - the guns' full skins (the drawn gun's alone in VRAM: the streaming's
+    redesign);
+  - every bench baseline changed (the low geometry and models, the 4-bit
+    textures, T 4, the flat shading far, 1536 units).

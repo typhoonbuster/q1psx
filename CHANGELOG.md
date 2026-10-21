@@ -1477,3 +1477,19 @@ followed by R0-R4.
   - a bug of §50.1's C fixed on the way (a list headed by a door drawn
     whole read a stale chain);
   - 320 more bytes of stack room (16968 B in the release).
+- **The clean-up** (2026-10-21: what stays). §52:
+  - **The build's choices:** the textures high or medium (4-bit only,
+    `Q1PSX_TEXTURES`), the gun 3D or 2D (`Q1PSX_WEAPON`), the draw
+    distance 1536 or 1024 (`Q1PSX_DRAWDIST`); the geometry and the models
+    low on every disc; presets `release` (high, 3D, 1536) and
+    `release-medium`.
+  - **Graphics:** the effects (medium by default, or high), the dithering,
+    the HUD, the dynamic lights, the frame rate cap (60, 45, 30), the tick
+    rate (60, 30); the warp control dynamic from 4 px and the far walls
+    flat, always.
+  - **The music:** the SPU's alone (the XA streams and their carousels
+    gone), the menu's theme at 32 kHz.
+  - **The guns rebuilt by hand** from Quake's own models, the shotgun
+    first: 61 triangles drawn instead of 78, the same look.
+  - **12 KB more for the streaming:** the code removed gave the stack
+    14 KB, 12 of them back to the level arena (1249 KB).
