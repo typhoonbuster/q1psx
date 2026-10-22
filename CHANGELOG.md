@@ -1648,6 +1648,6 @@ followed by R0-R4.
     old 194 / 103);
   - compared Reference / Before / After on 8 sides of 8 frames: the After
     matches Quake where the Before broke;
-  - the cost: 23 KB more in the stream's pool. On the tightest maps with
-    Ogres, a visible monster lacks its model at a few more spots (E3M4: 5
-    of 29).
+  - the cost: 23 KB more in the stream's pool. On master as it is now, a
+    visible monster lacks its model at 3 spots of every map's against 2 (one
+    more on E2M7).

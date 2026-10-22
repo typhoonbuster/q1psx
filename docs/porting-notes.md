@@ -7936,17 +7936,15 @@ Quake's data goes in the repo.
     (140 vertices x 147 frames x 4 B); its group (the model, its head, its
     sounds) 136 -> 158 KB; an Ogre draws 266 triangles instead of 194;
   - the residency report (`BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`) was run on
-    the 32 maps with both cooks. The maps whose pool has room do not
-    change. On the tight ones with Ogres, a monster in the player's PVS
-    lacks its model at more spots:
-    - E3M4 (pool 218 KB): 5 of 29 spots, 0 before;
-    - E3M6 (221 KB): 1, 0 before;
-    - E2M3 (324 KB): 1, 0 before;
-    - E2M7 (260 KB): 2, 1 before;
-    - over every map, 11 against 3.
+    the 32 maps with both cooks. It counts the spots where a monster in the
+    player's PVS lacks its model:
+    - on master as it is (§57-§61 in, the maps whole: the tightest pools
+      E4M7 209 KB, E3M6 249, E3M4 262, E3M5 268): 3 spots against 2, the
+      one more on E2M7 (pool 294 KB);
+    - on the master of before §57-§61 (pools of 171-242 KB on those maps):
+      11 against 3, E3M4 alone 5 of 29 (pool 218 KB).
 
-    The zones' branch (§57, not merged) gives the tight maps' pools more
-    room; until then the faithful Ogre costs these spots.
+    The room §58-§60 gave the pools absorbs the faithful Ogre.
 - **Left as it was, seen on both:** the PS1 draws a model's triangles
   without a depth test, in the cook's order. Where a part passes behind
   another (the chainsaw behind the legs, seen from the left), it can show
