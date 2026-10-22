@@ -8343,6 +8343,7 @@ Quake's data goes in the repo.
   - the release built (a scratch directory: the stack 58488 B).
 - **Left:** a play on DuckStation (the crash's save state was
   the old code's: it cannot resume on the new).
+
 ## §66 — The models' triangles: the corners' xy through the GTE (2026-10-22)
 
 - **The ask** (§63's follow-up): give the
