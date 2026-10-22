@@ -54,10 +54,16 @@ Q_COLD void monsters_map_start(void)
 		}
 		if (KINDS[k]->map_start)
 			KINDS[k]->map_start();
-		for (int s = 0; s < KINDS[k]->num_states; s++)   /* (a table's rows miscounted: caught here) */
+		for (int s = 0; s < KINDS[k]->num_states; s++) {   /* (a table's rows miscounted: caught here) */
 			if (KINDS[k]->states[s].next >= KINDS[k]->num_states ||
 			    (KINDS[k]->states[s].act == A_CUSTOM && !KINDS[k]->custom))
 				printf("monsters: %s state %d is wrong\n", KINDS[k]->classname, s);
+#ifdef Q1PSX_BENCH
+			if (kind_asset[k][0] >= 0 && !stream_frame_stored(kind_asset[k][0], KINDS[k]->states[s].frame))
+				printf("monsters: %s state %d plays frame %d, not in its model (tools/qcook/game.c "
+				       "MOB_FRAMES)\n", KINDS[k]->classname, s, KINDS[k]->states[s].frame);
+#endif
+		}
 	}
 	for (int i = 0; i < 4; i++)
 		gib_asset[i] = (int16_t) stream_find(gibs[i]);

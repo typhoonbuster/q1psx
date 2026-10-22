@@ -12,7 +12,7 @@
 
 typedef struct {
 	int16_t  asset;          /* -1: free                                      */
-	uint16_t frame;
+	uint16_t frame;          /* the frame stored (qst_frame_index)            */
 	uint32_t ofs, len;       /* in the ring                                   */
 	uint32_t stamp;          /* the rendered frame that last drew it          */
 } entry_t;
@@ -47,9 +47,10 @@ void mdl_new_frame(void)
 
 const qw_vert *mdl_frame(int a, const qst_model *m, int frame)
 {
+	uint32_t f = qst_frame_index(m, frame);
 	for (int i = 0; i < ENTRIES; i++) {
 		entry_t *e = &entries[i];
-		if (e->asset == a && e->frame == frame) {
+		if (e->asset == a && e->frame == f) {
 			e->stamp = stamp;
 			return (const qw_vert *) (ring + e->ofs);
 		}
@@ -87,13 +88,13 @@ const qw_vert *mdl_frame(int a, const qst_model *m, int frame)
 	}
 	entry_t *e = &entries[slot];
 	e->asset = (int16_t) a;
-	e->frame = (uint16_t) frame;
+	e->frame = (uint16_t) f;
 	e->ofs   = head;
 	e->len   = need;
 	e->stamp = stamp;
 	head += need;
 	qw_vert *dst = (qw_vert *) (ring + e->ofs);
-	const uint32_t *src = (const uint32_t *) ((const uint8_t *) m + m->ofs_frames) + (uint32_t) frame * m->num_verts;
+	const uint32_t *src = (const uint32_t *) ((const uint8_t *) m + m->ofs_frames) + f * m->num_verts;
 	if (m->shift)
 		mdl_expand_shift(dst, src, m->num_verts, m->shift);
 	else

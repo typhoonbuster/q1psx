@@ -2759,6 +2759,7 @@ struct qc_mdl {
 	uint8_t   *bordered;            /* the skin with its border            */
 	int        bw, bh;
 	int        sort;                /* a monster's body: QSTM_SORT         */
+	const struct frame_plan *fplan; /* its frames stored (QSTM_FMAP), NULL: all */
 };
 
 void qc_set_palette(const uint8_t *pal)
@@ -3079,6 +3080,88 @@ static const mob_hand MOBS[] = {
 	{ "progs/boss.mdl",     BOSS_CUTS,     GUN_N(BOSS_CUTS),     BOSS_DROP,   GUN_N(BOSS_DROP) },
 };
 
+/* The frames a body's QC never plays (Quake's frame numbers: the state
+   tables of engine/m_*.c play every other one; the bench checks it at a
+   map's start, engine/monsters.c): left out of its asset, with every frame
+   equal to an earlier one (formats/qstream.h QSTM_FMAP, docs/porting-notes.md
+   §67). QCOOK_NOFMAP=1 cooks every frame (an A / B). */
+typedef struct {
+	const char *file;
+	uint8_t     unplayed[2][2];    /* first, count */
+} mob_frames;
+
+static const mob_frames MOB_FRAMES[] = {
+	{ "progs/soldier.mdl",  { { 29, 11 } } },               /* load1-11 */
+	{ "progs/ogre.mdl",     { { 136, 11 } } },              /* pull1-11 */
+	{ "progs/knight.mdl",   { { 43, 1 }, { 72, 4 } } },     /* attackb1's second, standing2-5 */
+	{ "progs/zombie.mdl",   { { 78, 1 } } },                /* attb14 (zombie_attb14 shows attb13) */
+	{ "progs/wizard.mdl",   { { 8, 7 }, { 35, 7 } } },      /* hover9-15, magatt7-13 */
+	{ "progs/shambler.mdl", { { 71, 2 } } },                /* magic7-8 */
+};
+
+typedef struct frame_plan {
+	int       nframes, nstored;
+	uint16_t *map;                 /* [nframes]: the frame's place among those
+	                                  stored, QST_NOFRAME: never played      */
+	int      *src;                 /* [nstored]: the frame each one is      */
+} frame_plan;
+
+/* a body's frames stored: those played, each once (its vertices' words, in
+   the shared numbering `order`, the nv the high level keeps: equal there,
+   equal at every level); 0 when every frame would be stored */
+static int frame_plan_make(const mdl_t *m, const char *file, const int *order, int nv, frame_plan *fp)
+{
+	if (getenv("QCOOK_NOFMAP"))
+		return 0;
+	uint8_t *played = xmalloc((size_t) m->nframes);
+	memset(played, 1, (size_t) m->nframes);
+	for (size_t i = 0; i < sizeof MOB_FRAMES / sizeof MOB_FRAMES[0]; i++)
+		if (!strcmp(MOB_FRAMES[i].file, file))
+			for (int r = 0; r < 2; r++)
+				for (int k = 0; k < MOB_FRAMES[i].unplayed[r][1]; k++) {
+					int f = MOB_FRAMES[i].unplayed[r][0] + k;
+					if (f >= m->nframes)
+						die("%s: frame %d never played, of %d", file, f, m->nframes);
+					played[f] = 0;
+				}
+	fp->nframes = m->nframes;
+	fp->nstored = 0;
+	fp->map     = xmalloc((size_t) m->nframes * sizeof *fp->map);
+	fp->src     = xmalloc((size_t) m->nframes * sizeof *fp->src);
+	int dropped = 0, shared = 0;
+	for (int f = 0; f < m->nframes; f++) {
+		fp->map[f] = QST_NOFRAME;
+		if (!played[f]) {
+			dropped++;
+			continue;
+		}
+		int same = -1;
+		for (int i = 0; i < fp->nstored && same < 0; i++) {
+			int g = fp->src[i], j = 0;
+			while (j < nv && mdl_word(&m->frames[f][order[j]]) == mdl_word(&m->frames[g][order[j]]))
+				j++;
+			if (j == nv)
+				same = i;
+		}
+		if (same >= 0) {
+			fp->map[f] = (uint16_t) same;
+			shared++;
+		} else {
+			fp->map[f] = (uint16_t) fp->nstored;
+			fp->src[fp->nstored++] = f;
+		}
+	}
+	free(played);
+	if (fp->nstored == m->nframes) {
+		free(fp->map);
+		free(fp->src);
+		return 0;
+	}
+	printf("qcook: %-22s %d of %d frames stored (%d never played, %d equal to an earlier one)\n", file,
+	       fp->nstored, m->nframes, dropped, shared);
+	return 1;
+}
+
 static const mob_hand *mob_hand_find(const char *file)
 {
 	if (getenv("QCOOK_NOHAND"))                   /* (the decimated one: an A / B) */
@@ -3313,15 +3396,21 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	int fx1q = two ? (half + 2 * div - 1) / (2 * div) : im2->w, bx0q = two ? half / (2 * div) : 0;
 	if (fx1q > im2->w) fx1q = im2->w;
 
-	/* the asset: header, frames, records, images */
+	/* the asset: header, the frame map (QSTM_FMAP), the frames (those
+	   stored), records, images */
+	const frame_plan *fp = q->fplan;
+	if (fp && fp->nframes != m->nframes)
+		die("%s: a frame plan of %d frames for %d", q->file, fp->nframes, m->nframes);
+	int nstored = fp ? fp->nstored : m->nframes;
 	qst_model h;
 	memset(&h, 0, sizeof h);
 	h.num_frames  = (uint16_t) m->nframes;
 	h.num_verts   = (uint16_t) m->nverts;
 	h.num_records = (uint16_t) nrec;
-	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (q->sort ? QSTM_SORT : 0) | (m->flags & 0xff) << 8);
-	h.ofs_frames  = sizeof h;
-	h.ofs_records = h.ofs_frames + (uint32_t) m->nframes * (uint32_t) m->nverts * 4;
+	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (q->sort ? QSTM_SORT : 0) | (fp ? QSTM_FMAP : 0) |
+	                            (m->flags & 0xff) << 8);
+	h.ofs_frames  = sizeof h + qst_map_bytes(h.flags, (uint32_t) m->nframes);
+	h.ofs_records = h.ofs_frames + (uint32_t) nstored * (uint32_t) m->nverts * 4;
 	h.len_records = (uint32_t) recs.len;
 	h.shift       = (uint8_t) shift;
 	h.num_images  = (uint8_t) (two ? 2 : 1);
@@ -3360,11 +3449,18 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 		die("%s: a skin border of %d, the engine's is %d", q->file, im->border, QST_BORDER);
 	size_t start = out->len;
 	buf_put(out, &h, sizeof h);
-	for (int f = 0; f < m->nframes; f++)
+	if (fp) {
+		static const uint8_t zero[4];
+		buf_put(out, fp->map, (size_t) m->nframes * 2);
+		buf_put(out, zero, qst_map_bytes(h.flags, (uint32_t) m->nframes) - (size_t) m->nframes * 2);
+	}
+	for (int i = 0; i < nstored; i++) {
+		int f = fp ? fp->src[i] : i;
 		for (int v = 0; v < m->nverts; v++) {
 			uint32_t w = mdl_word(&m->frames[f][v]);
 			buf_put(out, &w, 4);
 		}
+	}
 	buf_put(out, recs.p, recs.len);
 	buf_put(out, pix.p, pix.len);
 	free(recs.p);
@@ -3373,7 +3469,7 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	       "shift %d: %6zu B (%zu B of frames)\n", q->file, m->nframes, m->nverts, m->ntris, nrec,
 	       two ? "halves" : "whole", h.images[0].w, h.images[0].h, two ? " + " : "", two ? h.images[1].w : 0,
 	       two ? h.images[1].h : 0, h.small[0].w, h.small[0].h, shift, out->len - start,
-	       (size_t) m->nframes * m->nverts * 4);
+	       (size_t) nstored * m->nverts * 4);
 }
 
 /* The three model levels of a streamed model (formats/qstream.h
@@ -3418,6 +3514,8 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 			die("%s: the model levels' vertices are not nested (level %d: %d of %d)", q->file, l, nv[l],
 			    prefix[l]);
 	}
+	frame_plan plan;                              /* a body's frames stored (QSTM_FMAP) */
+	q->fplan = body && frame_plan_make(m, q->file, order, nv[2], &plan) ? &plan : NULL;
 	for (int l = 0; l < 3; l++) {
 		mdl_t lv = red[l];
 		lv.nverts = nv[l];
@@ -3472,8 +3570,13 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 	}
 	buf_t sb = { 0 };
 	buf_put(&sb, &sh, sizeof sh);
+	if (q->fplan) {                               /* the frame map: every level's */
+		sh.ofs_map    = (uint32_t) sb.len;
+		sh.num_stored = (uint16_t) q->fplan->nstored;
+		buf_put(&sb, out[2].p + sizeof(qst_model), qst_map_bytes(sh.flags, sh.num_frames));
+	}
 	sh.ofs_frames = (uint32_t) sb.len;
-	buf_put(&sb, out[2].p + h[2]->ofs_frames, (size_t) h[2]->num_frames * h[2]->num_verts * 4);
+	buf_put(&sb, out[2].p + h[2]->ofs_frames, (size_t) qst_stored_frames(h[2]) * h[2]->num_verts * 4);
 	for (int l = 0; l < 3; l++) {
 		const uint8_t *r = out[l].p + h[l]->ofs_records;
 		int same = -1;
@@ -3516,6 +3619,11 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 		free(a);
 	}
 	*shared = sb;
+	if (q->fplan) {
+		free(plan.map);
+		free(plan.src);
+		q->fplan = NULL;
+	}
 	for (int l = 0; l < 3; l++) {
 		if (reduced[l])
 			stream_reduce_free(&red[l]);

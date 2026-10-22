@@ -211,12 +211,62 @@ static int load_directory(int level)
 	return 1;
 }
 
+#ifdef Q1PSX_BENCH
+/* The bench's look at every model's header, its first sector read at boot:
+   the RAM it keeps once its images are in VRAM (trims(): its header, frame
+   map, frames and records), the residency report's measure; its frames,
+   the monsters' check of their state tables (stream_frame_stored) */
+#define BENCH_ASSETS 512
+#define BENCH_FMAP   2048
+static uint32_t bench_keep[BENCH_ASSETS];
+static uint16_t bench_nframes[BENCH_ASSETS], bench_fmap_at[BENCH_ASSETS], bench_fmap[BENCH_FMAP];
+
+static void bench_scan(void)
+{
+	uint32_t mark = mem_level_mark(), used = 0;
+	uint8_t *b = mem_level_alloc(QST_SECTOR);
+	for (int a = 0; a < num_assets && a < BENCH_ASSETS; a++) {
+		const asset_t *as = &assets[a];
+		bench_keep[a] = ALIGN16(as->d.size);
+		bench_nframes[a] = 0;
+		bench_fmap_at[a] = 0xffff;
+		if (as->d.kind != QSTK_MODEL || !b || !read_sectors(base_lba + (int32_t) as->d.sector, 1, b))
+			continue;
+		const qst_model *m = (const qst_model *) b;
+		bench_keep[a]    = ALIGN16(m->images[0].ofs);
+		bench_nframes[a] = m->num_frames;
+		if ((m->flags & QSTM_FMAP) && sizeof *m + m->num_frames * 2u <= QST_SECTOR &&
+		    used + m->num_frames <= BENCH_FMAP) {
+			memcpy(&bench_fmap[used], m + 1, m->num_frames * 2u);
+			bench_fmap_at[a] = (uint16_t) used;
+			used += m->num_frames;
+		}
+	}
+	mem_level_release(mark);
+}
+
+int stream_frame_stored(int a, int frame)
+{
+	if (a < 0 || a >= num_assets || a >= BENCH_ASSETS || frame < 0 || frame >= bench_nframes[a])
+		return 0;
+	return bench_fmap_at[a] == 0xffff || bench_fmap[bench_fmap_at[a] + frame] != QST_NOFRAME;
+}
+
+uint32_t stream_kept(int a)
+{
+	return a >= 0 && a < num_assets && a < BENCH_ASSETS ? bench_keep[a] : 0;
+}
+#endif
+
 Q_COLD void stream_init(int level)
 {
 	num_assets = 0;
 	for (int i = 0; i < MAX_RES; i++)
 		res[i].asset = -1;
 	load_directory(level);
+#ifdef Q1PSX_BENCH
+	bench_scan();
+#endif
 }
 
 int stream_find(const char *name)
@@ -471,8 +521,9 @@ static void set_stuck(int a)
 }
 
 /* the resident asset wanted least, if it is wanted less than `score` (and
-   is not pinned): -1 if none; `need`: one holding RAM, VRAM or SPU RAM */
-enum { NEED_RAM, NEED_VRAM, NEED_SPU };
+   is not pinned): -1 if none; `need`: one holding RAM, VRAM or SPU RAM, or
+   any (its slot of res[]) */
+enum { NEED_RAM, NEED_VRAM, NEED_SPU, NEED_SLOT };
 
 static int least_wanted(uint32_t score, int need)
 {
@@ -482,7 +533,8 @@ static int least_wanted(uint32_t score, int need)
 		int a = res[i].asset;
 		if (a < 0 || assets[a].state != A_RES)
 			continue;
-		if (need == NEED_RAM ? !res[i].ram_size : need == NEED_VRAM ? !res[i].nimg : !res[i].spu_size)
+		if (need == NEED_RAM ? !res[i].ram_size : need == NEED_VRAM ? !res[i].nimg :
+		    need == NEED_SPU ? !res[i].spu_size : 0)
 			continue;
 		uint32_t l = assets[a].last;
 		if (l == STREAM_PIN || l <= score)
@@ -501,6 +553,23 @@ static int free_slot(void)
 		if (res[i].asset < 0)
 			return i;
 	return -1;
+}
+
+/* a slot for an asset wanted at `score`: a free one, else the one of the
+   resident asset wanted least, dropped if it is wanted less (the sounds and
+   the models share the MAX_RES slots: a map's own sounds could hold them
+   all against a monster in sight, E2M4's shambler: docs/porting-notes.md
+   §67); -1 if none */
+static int slot_for(uint32_t score)
+{
+	int slot;
+	while ((slot = free_slot()) < 0) {
+		int v = least_wanted(score, NEED_SLOT);
+		if (v < 0)
+			return -1;
+		evict(v);
+	}
+	return slot;
 }
 
 /* the images of one resolution placed in VRAM (room made by dropping
@@ -524,6 +593,23 @@ static int place_images(res_t *r, const qst_image *img, int nimg, uint32_t score
 	return 1;
 }
 
+/* a model's frames within its `size` bytes: those stored, and its frame
+   map's entries among them (formats/qstream.h QSTM_FMAP) */
+Q_COLD static int frames_ok(const qst_model *m, uint32_t size)
+{
+	uint32_t stored = qst_stored_frames(m);
+	if (!stored || sizeof *m + qst_map_bytes(m->flags, m->num_frames) > m->ofs_frames ||
+	    m->ofs_frames + stored * m->num_verts * 4 > size)
+		return 0;
+	if (m->flags & QSTM_FMAP)
+		for (int f = 0; f < m->num_frames; f++) {
+			uint32_t i = ((const uint16_t *) (m + 1))[f];
+			if (i >= stored && i != QST_NOFRAME)
+				return 0;
+		}
+	return 1;
+}
+
 /* a model asset just read: its images to VRAM (at the skin's resolution,
    or its fallback at half when no room is left for that; an image may go
    transposed), their UVs into its records, its texture words. 1 done, 0
@@ -536,7 +622,7 @@ static int install_model(int a)
 	uint32_t size = as->d.size;
 	const qst_model *m = (const qst_model *) r->ram;
 	if (m->num_images < 1 || m->num_images > 2 || m->ofs_records + m->len_records > size ||
-	    m->ofs_frames + (uint32_t) m->num_frames * m->num_verts * 4 > size) {
+	    !frames_ok(m, size)) {
 		printf("stream: asset %08x is not a model this engine reads\n", (unsigned) as->d.hash);
 		return -1;
 	}
@@ -722,8 +808,10 @@ static int spu_victim(uint32_t n, uint32_t score)
 static int sound_room(int a)
 {
 	asset_t *as = &assets[a];
-	int slot = free_slot();
-	if (slot < 0 || !stage || as->d.size <= sizeof(qst_sound))
+	if (!stage || as->d.size <= sizeof(qst_sound))
+		return 0;
+	int slot = slot_for(as->last);
+	if (slot < 0)
 		return 0;
 	uint32_t n = ALIGN64(as->d.size - sizeof(qst_sound)), at = 0;
 	while (!spu_place(n, &at)) {
@@ -928,7 +1016,7 @@ static void read_done(int a, int ok)
 static int reserve(int a)
 {
 	asset_t *as = &assets[a];
-	int slot = free_slot();
+	int slot = slot_for(as->last);
 	if (slot < 0)
 		return -1;
 	uint32_t bytes = (as->d.size + QST_SECTOR - 1) / QST_SECTOR * QST_SECTOR;
@@ -1223,12 +1311,16 @@ void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uin
 		if (best < 0)
 			break;
 		sim_in[best] = 2;                         /* (looked at) */
-		uint32_t n = assets[best].d.kind == QSTK_SOUND ? ALIGN64(assets[best].d.size - sizeof(qst_sound))
-		                                              : ALIGN16(assets[best].d.size);
-		uint32_t *pool_left = assets[best].d.kind == QSTK_SOUND ? &spu : &ram;
+		/* a sound: its samples; a model: read whole (its sectors), then
+		   what it keeps once its images are in VRAM (trims()) */
+		int sound = assets[best].d.kind == QSTK_SOUND;
+		uint32_t n = sound ? ALIGN64(assets[best].d.size - sizeof(qst_sound))
+		                   : (assets[best].d.size + QST_SECTOR - 1) / QST_SECTOR * QST_SECTOR;
+		uint32_t keep = sound ? n : best < BENCH_ASSETS ? bench_keep[best] : ALIGN16(assets[best].d.size);
+		uint32_t *pool_left = sound ? &spu : &ram;
 		if (n > *pool_left)
 			continue;                             /* (no room: the next ones may fit) */
-		*pool_left -= n;
+		*pool_left -= keep;
 		sim_in[best] = 1;
 		(*in)++;
 		*in_bytes += assets[best].d.size;

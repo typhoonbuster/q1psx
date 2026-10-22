@@ -22,9 +22,10 @@
  * The manager then loads, nearest first, what is wanted within its kind's
  * reach and not resident, one CD read at a time while the game runs,
  * making room by dropping what is wanted least (never a pinned asset, nor
- * one wanted more than the one it makes room for). A CD read during the
- * game pauses the CD-DA music (engine/music.c), which plays on from where
- * it was once the reads are done.
+ * one wanted more than the one it makes room for): room in a pool, or one
+ * of the resident assets' slots (models and sounds share them). A CD read
+ * during the game pauses the CD-DA music (engine/music.c), which plays on
+ * from where it was once the reads are done.
  *
  * Nothing here runs between rl_begin() and the end of r_frame(): the
  * render list holds pointers into the RAM pool, which compaction moves.
@@ -152,14 +153,20 @@ void stream_preload_at(const int32_t org[3]);   /* stream_preload's reads from t
 uint32_t stream_score(int a);                   /* asset a's want, the last pass's */
 /* the residency bench: a pass from `org`, then the map start's reads
    simulated (nearest first, each within its reach, the models into the
-   RAM pool, the sounds into the SPU pool, while they fit): the assets
-   wanted within reach and their bytes, those that would be in and theirs;
-   stream_sim_in(a): asset a would be in */
+   RAM pool, the sounds into the SPU pool, while they fit; a model needs
+   its sectors' room for its read, then keeps what stream_kept says): the
+   assets wanted within reach and their bytes, those that would be in and
+   theirs; stream_sim_in(a): asset a would be in */
 void stream_simulate(const int32_t org[3], uint32_t reach, uint32_t *wanted, uint32_t *wanted_bytes,
                      uint32_t *in, uint32_t *in_bytes);
 
 int  stream_sim_in(int a);
 uint32_t stream_size(int a);                    /* asset a's bytes on the disc */
+uint32_t stream_kept(int a);                    /* the RAM a model keeps once its images are
+                                                   in VRAM: its header, frame map, frames and
+                                                   records (a sound: its bytes) */
+int  stream_frame_stored(int a, int frame);     /* model a holds Quake's frame `frame` (its
+                                                   frame map's: formats/qstream.h QSTM_FMAP) */
 #endif
 
 #endif
