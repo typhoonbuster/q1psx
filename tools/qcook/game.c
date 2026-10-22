@@ -2960,16 +2960,18 @@ static int reduce_finish(const mdl_t *m, int (*tris)[4], int left, mdl_t *out, i
 	return 1;
 }
 
-/* ------------------------------------------- the monsters by hand (§62) -- */
+/* ---------------------------------------- the monsters by hand (§62, §64) -- */
 
 /* A monster's body rebuilt by hand from Quake's own model (2026-10-22: simplified by hand from Quake's own models, the guns' way): half-edge
    collapses u -> v (u's triangles take v, the edge's own two go), in the
    table's order, each chosen one at a time against every frame of the
    model (the moved corner within 3 units of the new surface, its skin
-   within 4 texels: docs/porting-notes.md §62), the parts that carry the
-   look kept whole (the head, the hands, the feet, a weapon); the triangles
-   no view of any frame shows dropped. The same model at every level (no
-   decimation). */
+   within 4 texels: docs/porting-notes.md §62; the boss 13 units, his
+   vertices' grid four times coarser: §64), the parts that carry the look
+   kept whole (the head, the hands, the feet, a weapon); the triangles no
+   view of any frame shows dropped (from outside the model, zoomed till
+   the triangle spans 24 pixels: never 3 of them seen, §64). The same
+   model at every level (no decimation). */
 typedef struct {
 	const char     *file;
 	const uint16_t (*cuts)[2];
@@ -2988,13 +2990,101 @@ static const uint16_t OGRE_CUTS[][2] = {
 };
 static const uint16_t OGRE_DROP[] = { 110, 294 };
 
+/* progs/soldier.mdl: 328 -> 270 triangles, 170 -> 141 vertices; the gun
+   (9-24) and its muzzle flash (0-8: inside the body but in the shot), the
+   head, the hands on the gun and the feet whole */
+static const uint16_t SOLDIER_CUTS[][2] = {
+	{ 141, 43 }, { 67, 132 }, { 150, 149 }, { 104, 155 }, { 138, 142 }, { 86, 87 }, { 83, 82 },
+	{ 106, 45 }, { 140, 30 }, { 31, 76 }, { 98, 36 }, { 130, 128 }, { 105, 168 }, { 91, 90 },
+	{ 161, 63 }, { 96, 33 }, { 78, 77 }, { 129, 128 }, { 162, 168 }, { 73, 74 }, { 100, 99 },
+	{ 45, 44 }, { 160, 144 }, { 132, 131 }, { 79, 59 }, { 49, 107 }, { 39, 38 }, { 61, 62 },
+	{ 133, 116 },
+};
+
+/* progs/dog.mdl: 426 -> 377 triangles, 236 -> 216 vertices; the teeth, the
+   eyes and the tongue (0-61), the head and the paws whole */
+static const uint16_t DOG_CUTS[][2] = {
+	{ 91, 102 }, { 93, 92 }, { 106, 117 }, { 175, 90 }, { 139, 77 }, { 92, 117 }, { 118, 90 },
+	{ 159, 86 }, { 176, 172 }, { 162, 168 }, { 155, 132 }, { 153, 127 }, { 163, 168 }, { 143, 144 },
+	{ 131, 89 }, { 146, 147 }, { 158, 160 }, { 102, 82 }, { 77, 90 }, { 104, 191 },
+};
+static const uint16_t DOG_DROP[] = { 8, 15, 16, 17, 22, 76, 77, 99, 116 };
+
+/* progs/knight.mdl: 213 -> 189 triangles, 108 -> 96 vertices; the sword,
+   the hand on its hilt, the free hand, the head and the feet whole */
+static const uint16_t KNIGHT_CUTS[][2] = {
+	{ 18, 19 }, { 76, 102 }, { 8, 42 }, { 6, 2 }, { 39, 47 }, { 102, 75 }, { 24, 25 }, { 25, 53 },
+	{ 73, 55 }, { 13, 14 }, { 48, 57 }, { 12, 43 },
+};
+
+/* progs/zombie.mdl: 347 -> 240 triangles, 177 -> 124 vertices; the flesh in
+   its hand (0-11), the head, the hands and the feet whole */
+static const uint16_t ZOMBIE_CUTS[][2] = {
+	{ 45, 44 }, { 163, 112 }, { 168, 142 }, { 105, 106 }, { 75, 74 }, { 117, 110 }, { 116, 109 },
+	{ 157, 90 }, { 113, 35 }, { 32, 97 }, { 107, 124 }, { 30, 148 }, { 176, 160 }, { 33, 65 },
+	{ 156, 21 }, { 141, 73 }, { 160, 120 }, { 118, 119 }, { 154, 140 }, { 172, 53 }, { 86, 87 },
+	{ 123, 115 }, { 155, 90 }, { 122, 112 }, { 153, 28 }, { 149, 158 }, { 148, 147 }, { 31, 29 },
+	{ 24, 36 }, { 71, 138 }, { 28, 158 }, { 136, 137 }, { 108, 126 }, { 18, 66 }, { 110, 109 },
+	{ 26, 25 }, { 46, 44 }, { 171, 170 }, { 51, 50 }, { 83, 82 }, { 68, 72 }, { 88, 89 },
+	{ 161, 164 }, { 111, 50 }, { 48, 70 }, { 162, 53 }, { 65, 63 }, { 35, 73 }, { 142, 112 },
+	{ 42, 44 }, { 120, 164 }, { 114, 119 }, { 15, 131 },
+};
+static const uint16_t ZOMBIE_DROP[] = { 108 };
+
+/* progs/wizard.mdl: 157 -> 140 triangles, 80 -> 72 vertices; the head, the
+   arms' spikes and the tail's tip whole */
+static const uint16_t WIZARD_CUTS[][2] = {
+	{ 22, 23 }, { 34, 27 }, { 70, 8 }, { 39, 40 }, { 13, 3 }, { 67, 66 }, { 69, 68 }, { 65, 72 },
+};
+static const uint16_t WIZARD_DROP[] = { 79 };
+
+/* progs/demon.mdl: 275 -> 267 triangles, 143 -> 140 vertices; the horns
+   (0-9), the head, the claws, the feet and the tail's tip whole */
+static const uint16_t DEMON_CUTS[][2] = {
+	{ 106, 98 }, { 35, 34 }, { 110, 120 },
+};
+static const uint16_t DEMON_DROP[] = { 10, 11 };
+
+/* progs/shambler.mdl: 284 -> 278 triangles, 144 -> 141 vertices; the head,
+   the claws and the feet whole */
+static const uint16_t SHAMBLER_CUTS[][2] = {
+	{ 112, 136 }, { 103, 97 }, { 138, 140 },
+};
+
+/* progs/boss.mdl: 555 -> 439 triangles, 325 -> 281 vertices; the head, the
+   horns and the spikes (0-170) and the hands whole */
+static const uint16_t BOSS_CUTS[][2] = {
+	{ 324, 269 }, { 318, 222 }, { 228, 227 }, { 205, 186 }, { 250, 223 }, { 266, 247 }, { 291, 290 },
+	{ 295, 275 }, { 229, 233 }, { 246, 247 }, { 322, 323 }, { 245, 315 }, { 259, 234 }, { 317, 306 },
+	{ 222, 323 }, { 223, 248 }, { 279, 278 }, { 251, 252 }, { 227, 320 }, { 307, 276 }, { 207, 177 },
+	{ 254, 313 }, { 313, 255 }, { 225, 306 }, { 192, 191 }, { 179, 178 }, { 303, 267 }, { 233, 278 },
+	{ 184, 206 }, { 224, 314 }, { 310, 239 }, { 311, 235 }, { 171, 176 }, { 260, 320 }, { 238, 309 },
+	{ 304, 242 }, { 316, 306 }, { 323, 221 }, { 234, 244 }, { 320, 232 }, { 273, 244 }, { 249, 315 },
+	{ 321, 231 }, { 230, 231 },
+};
+static const uint16_t BOSS_DROP[] = {
+	1, 4, 7, 10, 26, 27, 56, 57, 85, 88, 91, 94, 103, 106, 115, 118, 121, 133, 136, 139, 142, 145,
+	148, 157, 160, 175, 178, 341,
+};
+
 static const mob_hand MOBS[] = {
-	{ "progs/ogre.mdl", OGRE_CUTS, GUN_N(OGRE_CUTS), OGRE_DROP, GUN_N(OGRE_DROP) },
+	{ "progs/ogre.mdl",     OGRE_CUTS,     GUN_N(OGRE_CUTS),     OGRE_DROP,   GUN_N(OGRE_DROP) },
+	{ "progs/soldier.mdl",  SOLDIER_CUTS,  GUN_N(SOLDIER_CUTS),  NULL,        0 },
+	{ "progs/dog.mdl",      DOG_CUTS,      GUN_N(DOG_CUTS),      DOG_DROP,    GUN_N(DOG_DROP) },
+	{ "progs/knight.mdl",   KNIGHT_CUTS,   GUN_N(KNIGHT_CUTS),   NULL,        0 },
+	{ "progs/zombie.mdl",   ZOMBIE_CUTS,   GUN_N(ZOMBIE_CUTS),   ZOMBIE_DROP, GUN_N(ZOMBIE_DROP) },
+	{ "progs/wizard.mdl",   WIZARD_CUTS,   GUN_N(WIZARD_CUTS),   WIZARD_DROP, GUN_N(WIZARD_DROP) },
+	{ "progs/demon.mdl",    DEMON_CUTS,    GUN_N(DEMON_CUTS),    DEMON_DROP,  GUN_N(DEMON_DROP) },
+	{ "progs/shambler.mdl", SHAMBLER_CUTS, GUN_N(SHAMBLER_CUTS), NULL,        0 },
+	{ "progs/boss.mdl",     BOSS_CUTS,     GUN_N(BOSS_CUTS),     BOSS_DROP,   GUN_N(BOSS_DROP) },
 };
 
 static const mob_hand *mob_hand_find(const char *file)
 {
 	if (getenv("QCOOK_NOHAND"))                   /* (the decimated one: an A / B) */
+		return NULL;
+	const char *only = getenv("QCOOK_HAND");      /* (these tables only: "progs/ogre.mdl,...") */
+	if (only && !strstr(only, file))
 		return NULL;
 	for (int i = 0; i < GUN_N(MOBS); i++)
 		if (!strcmp(MOBS[i].file, file))
