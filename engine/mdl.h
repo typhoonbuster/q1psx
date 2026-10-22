@@ -2,9 +2,10 @@
  * q1psx — the streamed models' frames for the renderer (formats/qstream.h):
  * a frame is kept compact (Quake's own vertex words) and expanded into the
  * renderer's 8-byte qw_vert pool when it is drawn, the expansions kept in a
- * small cache by (asset, frame): a monster holds a frame for a tenth of a
- * second (six frames at 60), and the same frame serves every monster of the
- * kind that shows it.
+ * small cache by (asset, frame stored): a monster holds a frame for a tenth
+ * of a second (six frames at 60), and the same frame serves every monster
+ * of the kind that shows it (and a body's frames equal to it: its frame
+ * map's, formats/qstream.h QSTM_FMAP).
  */
 
 #ifndef Q1PSX_MDL_H

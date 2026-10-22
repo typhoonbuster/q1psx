@@ -1200,9 +1200,13 @@ static void bench_stream_frames(void);
 
 /* What the stream loads around the player (§50): the player put at the
    map's items in turn (they lie along his way), a map start's reads
-   simulated there (stream_simulate); the pool, what is wanted within
-   reach, what would be in; the living monsters by distance, in the PVS of
-   the player's leaf or not, their model in or not. "res" lines. */
+   simulated there (stream_simulate: a model takes the RAM it keeps once
+   its images are in VRAM, §67); the pool, what is wanted within reach,
+   what would be in; the living monsters by distance, in the PVS of the
+   player's leaf or not, their model in or not; then the stream's own
+   reads there (stream_preload_at: the CD, the pools, what it drops, the
+   last spot's assets still in) and the PVS's monsters whose model they
+   left out. "res" lines. */
 static void bench_residency(const char *map)
 {
 	int idx[64], n = 0;
@@ -1211,7 +1215,7 @@ static void bench_residency(const char *map)
 			idx[n++] = i;                         /* (an item: its model; FL_ITEM comes with
 			                                         PlaceItem's think) */
 	int step = n > 24 ? n / 24 : 1;
-	uint32_t tot[12] = { 0 };
+	uint32_t tot[13] = { 0 };
 	int spots = 0;
 	for (int s = 0; s < n; s += step) {
 		const edict_t *it = &edicts[idx[s]];
@@ -1223,8 +1227,9 @@ static void bench_residency(const char *map)
 		run_frame(0, 0);                          /* (the PVS from the player's leaf) */
 		uint32_t w, wb, r, rb;
 		stream_simulate(pl.pm.pos, STREAM_REACH, &w, &wb, &r, &rb);
+		stream_preload_at(pl.pm.pos);             /* (the stream's own reads there) */
 		uint16_t vis = (uint16_t) r_state.visframe;
-		int near1 = 0, near2 = 0, pvs = 0, pvs_in = 0;
+		int near1 = 0, near2 = 0, pvs = 0, pvs_in = 0, pvs_read = 0;
 		uint32_t knear = 0, kpvs = 0, kin = 0, kpvs_in = 0, models_kb = 0;
 		for (int i = 2; i < num_edicts; i++) {
 			edict_t *e = &edicts[i];
@@ -1242,6 +1247,7 @@ static void bench_residency(const char *map)
 			near2 += d <= STREAM_REACH;
 			pvs += seen;
 			pvs_in += seen && in;
+			pvs_read += seen && stream_model(e->masset);
 			if (d <= STREAM_REACH) knear |= kb;
 			if (seen) kpvs |= kb;
 			if (in) kin |= kb;
@@ -1249,12 +1255,12 @@ static void bench_residency(const char *map)
 		kpvs_in = kpvs & kin;
 		for (int k = 0; k < MK_COUNT; k++)
 			if (kin & 1u << k)
-				models_kb += stream_size(monsters_kind_asset(k, 0)) / 1024;
+				models_kb += stream_kept(monsters_kind_asset(k, 0)) / 1024;
 		printf("res %s @%d,%d,%d: pool %u KB, wanted %u (%u KB), in %u (%u KB) | monsters <=1000 %d, <=2500 %d, "
-		       "PVS %d (in %d) | kinds <=2500 %d, PVS %d (in %d), in %d (%u KB of models)\n", map,
+		       "PVS %d (in %d, read %d) | kinds <=2500 %d, PVS %d (in %d), in %d (%u KB of models)\n", map,
 		       (int) (pl.pm.pos[0] / CLIP_SUB), (int) (pl.pm.pos[1] / CLIP_SUB), (int) (pl.pm.pos[2] / CLIP_SUB),
 		       (unsigned) (stream_stats.ram_size / 1024), (unsigned) w, (unsigned) (wb / 1024), (unsigned) r,
-		       (unsigned) (rb / 1024), near1, near2, pvs, pvs_in, __builtin_popcount(knear),
+		       (unsigned) (rb / 1024), near1, near2, pvs, pvs_in, pvs_read, __builtin_popcount(knear),
 		       __builtin_popcount(kpvs), __builtin_popcount(kpvs_in), __builtin_popcount(kin),
 		       (unsigned) models_kb);
 		tot[0] += (uint32_t) near1; tot[1] += (uint32_t) near2; tot[2] += (uint32_t) pvs;
@@ -1263,15 +1269,17 @@ static void bench_residency(const char *map)
 		tot[7] += (uint32_t) __builtin_popcount(kin); tot[8] += models_kb;
 		tot[9] += stream_stats.ram_size / 1024; tot[10] += wb / 1024;
 		tot[11] += (uint32_t) (pvs > pvs_in);
+		tot[12] += (uint32_t) (pvs > pvs_read);
 		spots++;
 	}
 #define AVG(x) (unsigned) ((x) / spots), (unsigned) ((x) * 10 / spots % 10)
 	if (spots)
 		printf("res %s: %d spots | pool %u KB, wanted %u KB | monsters <=1000 %u.%u, <=2500 %u.%u, PVS %u.%u "
 		       "(in %u.%u) | kinds <=2500 %u.%u, PVS %u.%u (in %u.%u), in %u.%u (%u KB) | spots with a monster "
-		       "in the PVS not in: %u\n", map, spots, (unsigned) (tot[9] / spots), (unsigned) (tot[10] / spots),
-		       AVG(tot[0]), AVG(tot[1]), AVG(tot[2]), AVG(tot[3]), AVG(tot[4]), AVG(tot[5]), AVG(tot[6]),
-		       AVG(tot[7]), (unsigned) (tot[8] / spots), (unsigned) tot[11]);
+		       "in the PVS not in: %u (the stream's reads: %u)\n", map, spots, (unsigned) (tot[9] / spots),
+		       (unsigned) (tot[10] / spots), AVG(tot[0]), AVG(tot[1]), AVG(tot[2]), AVG(tot[3]), AVG(tot[4]),
+		       AVG(tot[5]), AVG(tot[6]), AVG(tot[7]), (unsigned) (tot[8] / spots), (unsigned) tot[11],
+		       (unsigned) tot[12]);
 #undef AVG
 }
 

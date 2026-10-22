@@ -1719,3 +1719,22 @@ followed by R0-R4.
     game bench, the monsters', the movers'; the C engine, the
     interpreter);
   - the 128 views -0.12 %, the game bench with the 3D gun -0.16..-0.30 %.
+- **The monsters' residency: the report, the slots, the frames**
+  (2026-10-22). §67:
+  - measured: §64's loss (20 / 11 spots of 1020 against 3 / 2) was the
+    residency report's: its simulation charged each model its skin, which
+    the engine drops once in VRAM. Charged as the engine holds them, and
+    loaded at each spot by the stream's own code, §64's monsters are at
+    the counts of before;
+  - A: the report charges a model what it keeps (its header, read at the
+    bench's boot) and counts the stream's own reads at each spot;
+  - B: when the stream's 48 slots (models and sounds) are taken, the
+    asset wanted least gives its slot to one wanted more (E2M4's
+    shambler, kept out at 2 spots);
+  - C: a monster's body keeps only the frames its QC plays, each one once
+    (a frame map, formats/qstream.h `QSTM_FMAP`; `QCOOK_NOFMAP=1` the A /
+    B): 1.5-9.5 KB a body, 0-21 KB a map, the frames drawn the same;
+  - the residency: 2 spots of 1020, whole and zoned (E1M7's Chthon, out
+    of reach as before). The views and the game bench identical. The
+    monsters' bench draws E1M8's dead shambler, which master's frame
+    cache refused; the cache's flaw itself is left for apart.

@@ -8405,3 +8405,150 @@ Quake's data goes in the repo.
     `cooked/` while the other lists it for its disc, and that disc came
     out with no map, no GAME_0.DAT, no STREAM_0.DAT (`world: 0 maps on
     the disc`). Build them one after the other, or run the cook first.
+
+## §67 — The monsters' residency: the report, the slots, the frames (2026-10-22)
+
+- **The ask**: §64's residency loss (3 -> 20 spots of 1020 with the maps
+  whole, 2 -> 11 zoned): find ways back to the counts of before §64 without
+  touching the monsters' look, measure them, report. Then, from the report: A, B and C to be done.
+- **What the measures showed** (the session's instrumentation, not
+  committed):
+  - the report's simulation (`stream_simulate`) charged each model its
+    whole asset. That includes its skin's pixels, 12.5-20.5 KB a body,
+    which the engine drops once they are in VRAM (`trims()`);
+  - a model charged as the engine holds it, and each spot also loaded by
+    the stream's own code (`stream_preload_at`: the CD, VRAM, the
+    evictions, the last spot's assets still in). The spots with a
+    monster in the PVS not in, of 1020:
+
+    | Bodies | Whole: report / kept bytes / the stream's reads | Zoned: the same |
+    |---|---|---|
+    | before §64 | 3 / 2 / 2 | 2 / 2 / 2 |
+    | §64 | 20 / 2 / 4 | 11 / 2 / 2 |
+    | §64's 3 heaviest at 5 units, 6 texels | 15 / 2 / 4 | 5 / 2 / 2 |
+    | the same at 8 units, 8 texels | 5 / 2 / 4 | 3 / 2 / 2 |
+
+    The 2 left everywhere are E1M7's: Chthon in the PVS past the 2500
+    units' reach, as before §64;
+  - the stream's reads found an engine limit: the 48 slots of `res[]`
+    (`MAX_RES`) hold the models and the sounds, and `reserve()` and
+    `sound_room()` gave up when none was free, with no eviction. On E2M4
+    (whole) that kept the shambler out at 2 spots, RAM enough;
+  - on E2-E4 the lighter cuts change only the zombie (no soldier, no dog
+    there): -16 / -24 KB a map;
+  - E3M4's level arena, zoned (whole), KB (on 0c4aee9: §65's edicts, 4
+    bytes more each, took 1 KB of the pool since):
+
+    | The skeleton | The zones' slots | Edicts | Brush models' rooms | MDL cache + staging | The stream's pool | Others |
+    |---|---|---|---|---|---|---|
+    | 322 (the world 670) | 342: 3 x 114 | 149 | 97 | 24 + 16 | 269 (263) | 16 |
+
+    - The zones free 7 KB there. One zone's chunk is 113 KB (the others 93,
+      86, 59, 55, 11, 8, 4), and every slot is sized for it.
+    - The skeleton: nodes 127, clip hulls 61, leaves 32, PVS 32, the
+      brush models' records 43, marks 12.
+    - The edicts: 280 entities + 98.
+    - The rooms: 63 movers drawn, the most of any map.
+    - The levers measured, left open:
+      - the seen_1536_96 tables +60 KB, seen_1536_64 +150 (§57.8's
+        decision);
+      - slots sized zone by zone, up to +74 (the biggest set of three
+        chunks 268 KB);
+      - the entities single player never spawns +3.4;
+  - the frames (4 bytes a vertex a frame), lossless:
+    - the frames no state plays, plus the frames equal to an earlier one:
+      6-20 KB a map, no cycle;
+    - deltas within an animation: 52-115 KB a map (the frames -34..-55 %),
+      a decoder's cycles at each frame change;
+    - streamed by animation: rejected. The zombie's pains are 101 of its
+      198 frames, and a CD read (100-300 ms) would freeze a monster at its
+      first pain or death.
+- **A, the report** (`engine/main.c` `bench_residency`, `engine/stream.c`):
+  - the simulation gives a model the room of its sectors for its read,
+    then charges what it keeps: `stream_kept`, read at boot from each
+    model's header by the bench (`bench_scan`);
+  - the stream's own reads at each spot: `read N` on a spot's line, `(the
+    stream's reads: N)` after the map's count.
+- **B, the slots** (`engine/stream.c` `slot_for`): a free slot, else the
+  one of the resident asset wanted least (a sound or a model), dropped if
+  it is wanted less than the asset coming in. `reserve()` and
+  `sound_room()` take theirs through it. The rule is RAM's: a pinned
+  asset or one wanted as much stays.
+- **C, the frames** (formats/qstream.h `QSTM_FMAP`):
+  - a body's asset holds a frame map after its header: Quake's frame
+    numbers -> the frames stored, `QST_NOFRAME` for one no state plays.
+  - The frames stored follow it, in Quake's order. A frame equal to an
+    earlier one (every vertex's word) is stored once.
+  - The radius is still the one over every frame, so the depth sort and
+    the culling do not change.
+  - The cook (`tools/qcook/game.c` `MOB_FRAMES`) lists the frames each
+    body's QC never plays, by Quake's numbers, from `engine/m_*.c`'s state
+    tables:
+    - the soldier's load1-11 and the Ogre's pull1-11;
+    - the knight's second attackb1 and standing2-5;
+    - the scrag's hover9-15 and magatt7-13;
+    - the shambler's magic7-8 and the zombie's attb14.
+  - `QCOOK_NOFMAP=1` cooks every frame (an A / B). The shared asset
+    (`qst_shared`, the cook's check) carries the map.
+  - The engine: `mdl_frame` takes the frame stored (`qst_frame_index`) and
+    keys its cache by it, so two equal frames expand once. `install_model`
+    checks the map (`frames_ok`).
+  - At a map's start the bench checks every kind's states against its
+    model's frames: `monsters: <kind> state N plays frame F, not in its
+    model` (`stream_frame_stored`).
+
+  | Body | Frames | Stored | Never played | Equal | KB kept: before -> after |
+  |---|---|---|---|---|---|
+  | soldier | 114 | 102 | 11 | 1 | 67.2 -> 60.9 |
+  | dog | 86 | 78 | 0 | 8 | 79.2 -> 72.6 |
+  | Ogre | 147 | 129 | 11 | 7 | 84.5 -> 75.0 |
+  | knight | 97 | 92 | 5 | 0 | 39.5 -> 37.8 |
+  | zombie | 198 | 194 | 1 | 3 | 99.9 -> 98.3 |
+  | scrag | 54 | 40 | 14 | 0 | 17.4 -> 13.6 |
+  | fiend | 69 | 69 | 0 | 0 | 42.1 (no map) |
+  | shambler | 94 | 87 | 2 | 5 | 56.2 -> 52.5 |
+  | Chthon | 106 | 104 | 0 | 2 | 123.4 -> 121.4 |
+
+  - Per map, one body of each kind: 0-21 KB (E3M4 18.6, E2M6 18.6, E2M2
+    16.5, E2M7 14.9, E3M5 17.0, E3M6 13.4, E4M7 5.2).
+  - STREAM_0.DAT: 2365440 -> 2330624 B.
+- **Checked** (master c1f8bd1's benches run first, the same commands):
+  - `QCOOK_NOFMAP=1`: master's STREAM_0.DAT byte for byte; with
+    `QCOOK_HAND=progs/ogre.mdl`: the stream of before §64 byte for byte;
+  - every frame the states play, read through the map: the same words as
+    before. A host script outside the repo read the frames from
+    `engine/m_*.c`'s tables. The other 166 assets are unchanged byte for
+    byte;
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`): 128 of 128
+    `H` lines identical; the game bench (`BENCH_GAME=1 HASHONLY=1`): 23 of
+    23;
+  - `MONSTERS=1 MAP=E1M8 HASHONLY=1`: 10 of 12 identical, the game lines
+    all identical:
+    - the other two (`mE1M8_7_c`, `_d`) draw the dead shambler, which
+      master left out (149 triangles more, nothing else; the pictures side
+      by side);
+    - master's frame cache refused its expansion, 2 a frame
+      (`mdl_stat_refused`). With the map it refuses none: the equal frames
+      share an expansion, 3 fewer by then;
+    - this engine with master's stream file gives master's 12 hashes;
+  - the frames' check: silent on every bench. A stream with the zombie's
+    walk6 left out prints `monsters: monster_zombie state 26 plays frame
+    20, not in its model`;
+  - the residency (`BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`, whole and zoned):
+    2 and 2, the stream's reads 2 and 2, E1M7's alone (E2M4's 2, whole,
+    gone with B: the measure's build without it had them);
+  - the links' `ramcheck`: release 58552 B (+32), default 45976 B (-64);
+    the C engine built (its release 70800 B).
+- **Found on the way, left as it was:**
+  - the frame cache's ring (`engine/mdl.c`) takes a new expansion only at
+    its head. When the bytes there hold an expansion this frame draws, it
+    refuses, and the model is not drawn, even with room elsewhere in the
+    ring;
+  - a model drawn at every frame near the ring's start can then block
+    each new expansion after a wrap. The E1M8 shambler above shows it.
+    The map makes it rarer, not impossible: proposed apart.
+- **Left:**
+  - the options not chosen: E3M4's levers, the deltas, the lighter cuts;
+  - the outside tools: `quakespasm-q1psx/mobs/mview.py` reads
+    the frame map;
+  - a play on the tight maps (E3M4, E2M2-E2M7).

@@ -68,8 +68,11 @@
 #         from there, the view dumped every 8 ticks: a mover, a monster
 #         as the player standing there sees them); RESIDENCY=1 (with
 #         BENCH_MAPS=1 VIEWS=0) reports what the stream loads around the
-#         player at the map's items ("res" lines); MUSIC=1 puts the music on the bench disc (the
-#         SPU's streams; docs/porting-notes.md §48).
+#         player at the map's items ("res" lines: a simulation charging a
+#         model what it keeps once its skin is in VRAM, then the stream's
+#         own reads there; docs/porting-notes.md §67); MUSIC=1 puts the
+#         music on the bench disc (the SPU's streams; docs/porting-notes.md
+#         §48).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
 #         by record by the C ("dlchk" lines). BMF_C=1 builds the brush
