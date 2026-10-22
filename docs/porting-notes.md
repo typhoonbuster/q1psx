@@ -8390,7 +8390,10 @@ Quake's data goes in the repo.
     (-0.16..-0.30 %); its walks within the noise (-536, +1724);
   - the movers' frames -315..-819.
 - **RAM:** the code 24 bytes shorter (3 instructions in de and deo1): the
-  release's stack room 58504 -> 58536 B, the default's 46024 -> 46040.
+  release's stack room +32 B (58488 -> 58520 with §65's edicts; 58504 ->
+  58536 before), the default's +16 (46024 -> 46040).
+- **After §65's merge** (its edicts 4 bytes longer): START's 12 views and
+  the game bench's 23 dumps still master 0c4aee9's, hash for hash.
 - **On the way:**
   - the base's first `BENCH_MAPS=1` run froze after E1M4.v3, while E1M5
     loaded (the log's last line a stream read, `stream: in 81f862e5`).
