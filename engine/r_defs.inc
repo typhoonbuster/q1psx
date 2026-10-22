@@ -80,8 +80,14 @@
 .set RE_DOTS,    48     # light table (162 bytes) or 0: flat
 .set RE_LIGHT,   52
 .set RE_FLAGS,   56     # 1 (RE_VIEW): no warp bound, the near clip at 5 units;
-                        # 2 (RE_BMODEL): a brush model, its subtree walked (draw_bmodel)
+                        # 2 (RE_BMODEL): a brush model, its subtree walked (draw_bmodel);
+                        # 4 (RE_SORT): a monster, its triangles sorted far to near
 .set RE_CAM,     60     # RE_BMODEL: the camera in the model's space, vertex units
+.set RE_ZSF,     72     # RE_SORT: ZSF3 for its triangles' buckets (rlist.c ent_sort)
+.set RE_ZNEAR,   76     # RE_SORT: its nearest bucket x 4
+.set RE_VIEW,    1
+.set RE_SORT,    4
+.set R_SORT_N,   32     # a sorted model's table: its buckets (rlist.h R_SORT_N)
 
 # ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4
@@ -165,6 +171,8 @@
                           # matrix's rows all x4: rlist.c rl_view_gun)
 .set SP_HSHIFT,   0x3b8   # the GTE's H as a shift of 5x: 5 (H = 160; until
                           # §53 the view model's 3, H = 40)
+.set SP_SORTHEAD, 0x3bc   # draw_model, a sorted model: its farthest bucket's
+                          # node, where its packets' chain starts
 .set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
 .set SP_SPILLS,   0x3c4   # walk: 64-word stack blocks spilled to r_walk_spill
 .set SP_TEXBASE,  0x3c8   # qw_tex table

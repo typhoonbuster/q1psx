@@ -294,7 +294,11 @@ void vid_flip(void)
 }
 
 /* Print this frame's display list (draw order) to stdout for tools/pktview:
-   one "P <hex words...>" line per packet, then "E". Bench builds only. */
+   one "P <hex words...>" line per packet, then "E". Bench builds only. The
+   "H" line: the payloads' hash, in order; the "Q" line: the packets as a
+   set (each one's hash summed), the texture-window commands left out, and
+   their count: a change of order alone keeps it (docs/porting-notes.md
+   §63). */
 uint32_t vid_dump_hash;
 
 void vid_dump(int hash_only)
@@ -308,6 +312,7 @@ void vid_dump(int hash_only)
 		printf("V %d\n", viewport_rows);
 	uint32_t at = (uint32_t) &ot[VID_OT_LEN - 1];
 	uint32_t hash = 2166136261u, words = 0;   /* FNV-1a over the payloads */
+	uint32_t set = 0, windows = 0;
 
 	while ((at & 0xffffff) != 0xffffff) {
 		const uint32_t *p = (const uint32_t *) (0x80000000u | (at & 0xffffff));
@@ -315,19 +320,25 @@ void vid_dump(int hash_only)
 		if (n) {
 			if (!hash_only)
 				printf("P");
+			uint32_t one = 2166136261u;
 			for (uint32_t i = 1; i <= n; i++) {
 				if (!hash_only)
 					printf(" %08x", (unsigned) p[i]);
 				hash = (hash ^ p[i]) * 16777619u;
+				one = (one ^ p[i]) * 16777619u;
 			}
 			if (!hash_only)
 				printf("\n");
 			words += n;
+			if (n == 1 && p[1] >> 24 == 0xe2)
+				windows++;
+			else
+				set += one;
 		}
 		at = p[0];
 	}
 	/* the hash survives a console that drops or doubles characters (the
 	   emulator's interpreter does on long dumps) */
-	printf("E\nH %08x %u\n", (unsigned) hash, (unsigned) words);
+	printf("E\nH %08x %u\nQ %08x %u\n", (unsigned) hash, (unsigned) words, (unsigned) set, (unsigned) windows);
 	vid_dump_hash = hash;
 }

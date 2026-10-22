@@ -78,6 +78,10 @@ typedef struct {
 
 /* a model asset's header */
 #define QSTM_FLAT 1          /* no directional light (QGF_FLAT)              */
+#define QSTM_SORT 2          /* a monster's body: its triangles drawn sorted
+                                by depth (engine/r_world.s draw_model, the
+                                per-model ordering table; triangles only),
+                                its radius the table's range              */
 #define QSTM_EF(flags) ((flags) >> 8)   /* the MDL's own flags (its EF_*: the client's
                                            rotation, trails and light) */
 #define QSTM_EF_ROCKET   1   /* the fire trail and a light (lavaball.mdl)         */

@@ -1572,7 +1572,9 @@ static void ents_dump(const char *name)
 	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 	for (int i = 0; i < 2; i++)
 		run_frame(0, 0);
-	printf("mon dump %s: %d streamed models drawn\n", name, monsters_drawn);
+	printf("mon dump %s: %d streamed models drawn; frame %u cycles (block %u, slow %u, ents %u)\n", name,
+	       monsters_drawn, (unsigned) prof_stage[PROF_FRAME], (unsigned) prof_stage[PROF_R_BLOCK],
+	       (unsigned) prof_stage[PROF_R_SLOW], (unsigned) prof_stage[PROF_ENTS]);
 	printf("D %s\n", name);
 	ents_debug = 1;                                   /* (the models drawn, their pieces) */
 	run_frame(0, BENCH_DUMP);
@@ -2683,6 +2685,7 @@ static void bench_monsters(void)
 		game_give_weapon(W_RLAUNCHER);
 		cmd.fire = 1;
 		int peak = 0;
+		uint32_t fsum = 0, fdrawn = 0;               /* (the frames' cycles, the monsters drawn) */
 		for (int t = 0; t < 3600; t++) {
 			pl.health = 100;
 			pl.dead = 0;
@@ -2707,6 +2710,8 @@ static void bench_monsters(void)
 			game_tick(&cmd);
 			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 			run_frame(0, 0);
+			fsum += prof_stage[PROF_FRAME];
+			fdrawn += (uint32_t) monsters_drawn;
 			int max, used = ents_in_use(&max);
 			if (used > peak)
 				peak = used;
@@ -2715,9 +2720,11 @@ static void bench_monsters(void)
 				for (int i = 2; i < num_edicts; i++)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
-				       "level arena %u KB, items %d, vbl %u\n", t + 1, alive, used, peak, max,
-				       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024), rl_num_items(),
-				       (unsigned) vid_stats.vbl);
+				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn\n",
+				       t + 1, alive, used, peak, max, (unsigned) stack_untouched(),
+				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) vid_stats.vbl,
+				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10));
+				fsum = fdrawn = 0;
 			}
 		}
 		cmd.fire = 0;

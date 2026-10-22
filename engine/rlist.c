@@ -172,10 +172,39 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
 	return e;
 }
 
+/* A monster's ordering table (QSTM_SORT; r_world.s draw_model, RE_SORT):
+   a triangle goes into bucket OTZ / 4 (mod R_SORT_N) of AVSZ3, ZSF3 times
+   its corners' SZ summed, >> 12. ZSF3 puts the depths its triangles can
+   take, its origin's +- rho (its radius times the view's 1.5, and a margin
+   for the roundings; summed over three corners, 6 rho), on R_SORT_N - 2
+   buckets, so that the range, starting anywhere on the ring, never meets
+   itself; at most 1365, OTZ within 16 bits down to SZ 65535. znear: the
+   range's nearest bucket, x 4. The origin's depth by the GTE, which
+   rl_ent_matrix left with the view's rotation and translation. */
+#define R_SORT_MARGIN 8                      /* SZ units */
+
+static void ent_sort(r_ent_t *e, int radius, const int16_t ov[4])
+{
+	int32_t rho = (radius * 3 >> 1) + R_SORT_MARGIN;
+	int32_t zsf = 16384 * (R_SORT_N - 2) / (6 * rho);
+	if (zsf > 1365)
+		zsf = 1365;
+	int32_t z;
+	gte_ldv0(ov);
+	gte_rtv0tr();                              /* MAC3: the origin's depth */
+	gte_stlvnl2(&z);
+	z -= rho;
+	if (z < 0)
+		z = 0;                                 /* (SZ: 0 behind the eye) */
+	e->zsf   = (uint32_t) zsf;
+	e->znear = ((uint32_t) (zsf * 3 * z) >> 14 & (R_SORT_N - 1)) << 2;
+	e->flags = RE_SORT;
+}
+
 /* A streamed model (formats/qstream.h): its frame expanded (engine/mdl.c),
    its matrix the model-to-world columns scaled by its steps (Quake's
    R_AliasSetUpTransform folds the scale in the same way), the origin moved
-   by its own origin turned with it. */
+   by its own origin turned with it; a monster's ordering table. */
 r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pitch, int roll, int light)
 {
 	const qst_model *m = stream_model(a);
@@ -198,17 +227,20 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 	e->flags = 0;
 	int32_t f[3], r[3], u[3];
 	angle_vectors(-pitch, yaw, roll, f, r, u);
-	int16_t cols[3][4], o[4];
+	int16_t cols[3][4], o[4], ov[4];
 	for (int i = 0; i < 3; i++) {
 		cols[0][i] = (int16_t) ((f[i] * m->scale[0] + 32768) >> 16);
 		cols[1][i] = (int16_t) ((-r[i] * m->scale[1] + 32768) >> 16);
 		cols[2][i] = (int16_t) ((u[i] * m->scale[2] + 32768) >> 16);
 		int32_t mo = f[i] * m->origin[0] - r[i] * m->origin[1] + u[i] * m->origin[2];   /* x 4096 x 16 */
-		o[i] = (int16_t) (org[i] * QW_VSCALE / R_POS_SUB + ((mo + 32768) >> 16));
+		ov[i] = (int16_t) (org[i] * QW_VSCALE / R_POS_SUB);
+		o[i] = (int16_t) (ov[i] + ((mo + 32768) >> 16));
 	}
 	cols[0][3] = cols[1][3] = cols[2][3] = 0;
-	o[3] = 0;
+	o[3] = ov[3] = 0;
 	rl_ent_matrix(e, (const int16_t (*)[4]) cols, o);
+	if (m->flags & QSTM_SORT)
+		ent_sort(e, m->radius, ov);
 	if (!(m->flags & QSTM_FLAT))
 		e->dots = (uint32_t) (gdata.dots + ((yaw * QG_LIGHT_YAWS / ANG_TURN) & (QG_LIGHT_YAWS - 1)) * QG_NORMALS);
 	return e;

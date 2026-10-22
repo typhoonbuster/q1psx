@@ -2364,11 +2364,12 @@ lr_done:
 
 # -----------------------------------------------------------------------------
 # draw_model: a0 = an r_ent_t (rlist.h). Its records go through the record
-# loop (RECLOOP de) with its own GTE matrix, vertex pool, skin and light;
-# the texture run in progress is closed before, the model's own after, and
-# the view matrix and the world's pointers are back on return. Needs the
-# walk's s4, s6 / s7 / fp, t8 and SP_RSTATE; clobbers at, v0, v1, a0-a3,
-# t0-t7, t9.
+# loop (RECLOOP de; a monster's, RE_SORT, through ds_records: dm_sort)
+# with its own GTE matrix, vertex pool, skin and light; the texture run in
+# progress is closed before, the model's own after, and the view matrix
+# and the world's pointers are back on return. Needs the walk's s4, s6 /
+# s7 / fp, t8 and SP_RSTATE; clobbers at, v0, v1, a0-a3, t0-t7, t9 (a
+# sorted model also s1, s2 and gp: the walk's dead ones at a leaf).
 draw_model:
 	sw      $ra, SP_DMRA($t8)
 dm_body:                                 # (ei_model: its ra and SP_DMRA set)
@@ -2414,9 +2415,13 @@ dm_draw:                                 # kept for the farther world's records
 	jal     light_recs
 	move    $t4, $t5
 	li      $t7, -32768
-	andi    $t2, $t2, 1                  # RE_VIEW: the view model. Nothing
-	beqz    $t2, 1f                      # warps (k16 rho = -32768 rho is under
-	li      $t3, 124                     # any z - rho; T2 huge: no edge splits:
+	andi    $t3, $t2, RE_VIEW | RE_SORT
+	beqz    $t3, 1f                      # an alias model: on
+	andi    $t2, $t2, RE_SORT
+	bnez    $t2, dm_sort                 # a monster: its triangles sorted (below)
+	li      $t3, 124                     # RE_VIEW: the view model. Nothing
+	                                     # warps (k16 rho = -32768 rho is under
+	                                     # any z - rho; T2 huge: no edge splits:
 	li      $t6, 0x7fff                  # the cook cut it, tools/qcook/game.c
 	sw      $t3, SP_SZFAST($t8)          # tess_build); its rear is behind the
 	sw      $t3, SP_SZCLIP($t8)          # eye: the slow path clips at 5 world
@@ -2488,6 +2493,422 @@ dm_skip:                                 # (nothing of the view's state touched)
 	nop
 	jr      $ra
 	nop
+
+# -----------------------------------------------------------------------------
+# dm_sort: a monster (RE_SORT, formats/qstream.h QSTM_SORT), its matrix,
+# pool, skin and light set: its triangles drawn far to near, as Quake's
+# z-buffer shows them, through an ordering table of its own: R_SORT_N
+# nodes (0-word tags) taken at the packet pointer, a ring, node j linked
+# to node j - 1. A triangle goes at the head of its bucket's chain, the
+# bucket being its corners' SZ summed times ZSF3 >> 14 (AVSZ3's OTZ / 4,
+# mod R_SORT_N); rlist.c ent_sort scales the depths the model can take
+# onto R_SORT_N - 2 buckets, so that its range, starting anywhere on the
+# ring (RE_ZNEAR, its nearest bucket), never meets itself. That bucket's
+# node takes the world's chain as it stands (fp); the model's chain starts
+# at its predecessor, the farthest bucket (SP_SORTHEAD: fp at ds_exit),
+# and the table is drawn whole there, among the world's faces and the
+# leaf's items where the model always was. gp holds the table; s1, s2, ra
+# are the sorted loop's temporaries (the walk's dead ones at a leaf;
+# SP_DMRA keeps ra). Then dm_exit_1, as for any model.
+dm_sort:
+	lw      $t0, RE_ZSF($a0)
+	lw      $t1, RE_ZNEAR($a0)
+	move    $gp, $s6                     # the table
+	ctc2    $t0, C2_ZSF3
+	addiu   $t3, $s6, -4                 # (node 0's: set again below)
+	move    $t4, $s6
+	addiu   $t5, $s6, 4 * R_SORT_N
+1:	sw      $t3, 0($t4)                  # node j -> node j - 1, four at a time
+	sw      $t4, 4($t4)
+	addiu   $t3, $t4, 4
+	sw      $t3, 8($t4)
+	addiu   $t3, $t4, 8
+	sw      $t3, 12($t4)
+	addiu   $t4, $t4, 16
+	bne     $t4, $t5, 1b
+	addiu   $t3, $t4, -4
+	addiu   $t3, $t5, -4
+	sw      $t3, 0($gp)                  # node 0 -> node N - 1: the ring
+	addiu   $t3, $t1, -4                 # the farthest bucket: the nearest's
+	andi    $t3, $t3, 4 * R_SORT_N - 1   # predecessor
+	addu    $t3, $t3, $gp
+	sw      $t3, SP_SORTHEAD($t8)
+	addu    $t1, $t1, $gp
+	sw      $fp, 0($t1)                  # the nearest's node -> the world's chain
+	move    $s6, $t5
+.if R_PROFILE
+	lhu     $t9, TIMER2($t8)             # (the record loop's start time)
+.endif
+	lw      $t0, SP_FULL($t8)
+	lw      $a1, RE_RECS_END($a0)
+	b       ds_records
+	lw      $a0, RE_RECS($a0)
+
+# The sorted model's record loop: RECLOOP de's with the draw distance
+# (deo1's cull and fog, their thresholds patched the same way: ds_o_dcull,
+# ds_o_fogz; render.c sets both to their most when the distance is off),
+# for a model of triangles only (the cook's, QSTM_SORT), each emitted into
+# its bucket (the GTE's AVSZ3 of its corners' SZ: every vertex's SZ goes
+# to the cache), the slow path's pieces into the bucket of the triangle
+# they cut. Its records' face ids are not looked at (a model's are 0, the
+# stamp); a texture change closes no run (a streamed model's two images
+# share their window, none: stream.c), dm_exit_1 giving the table its one
+# window command, drawn before it.
+	.globl  ds_records
+ds_records:
+.if R_PROFILE
+	sw      $t9, SP_T0($t8)
+.endif
+	bnez    $t0, ds_exit                 # packet arena full: nothing more
+	move    $t2, $zero
+ds_cull:
+	addu    $a0, $a0, $t2                # a culled record (t2 = its size): the next
+	lhu     $t2, R_SIZE($a0)             # (at the end: a harmless read)
+ds_rec:
+.if R_PROFILE
+	beq     $a0, $a1, ds_done
+.else
+	beq     $a0, $a1, ds_exit
+.endif
+	lh      $t9, R_SC+4($a0)             # its bounding sphere (as RECLOOP's)
+	lwc2    C2_VXY0, R_SC+0($a0)
+	lhu     $t3, R_SR($a0)
+	mtc2    $t9, C2_VZ0
+	addu    $t0, $a0, $t2
+	lw      $t9, SP_K16($t8)
+	sw      $t0, SP_NEXTREC($t8)         # the next record
+	MVMVA   1, 0, 0, 0, 0                # IR = rot * centre + TR
+	srl     $t7, $t3, 1                  # (while the GTE works; t2 keeps the
+	addu    $t7, $t7, $t3                #  record's size for ds_cull) rho = 1.5 r
+	mult    $t9, $t7                     # k16 rho, for a2 bit 2 below
+	lhu     $a3, R_TEX($a0)
+	lw      $at, SP_LASTTEX($t8)
+	mfc2    $t0, C2_IR1                  # x
+	mfc2    $t1, C2_IR2                  # y
+	mfc2    $t4, C2_IR3                  # z
+	sll     $t5, $t3, 1
+	srl     $t6, $t3, 3
+	addu    $t5, $t5, $t6                # 2.125 r
+	subu    $t6, $t4, $t0                # right: z - x
+	addu    $t6, $t6, $t5
+	bltz    $t6, ds_cull
+	addu    $t6, $t4, $t0                # left: z + x
+	addu    $t6, $t6, $t5
+	bltz    $t6, ds_cull
+	sll     $t5, $t3, 3                  # 8 r
+	sll     $t6, $t4, 1
+	addu    $t6, $t6, $t4                # 3z
+	sll     $t0, $t1, 2                  # 4y
+.if R_YSLOPE == 5
+	addu    $t5, $t5, $t3                # 9 r
+	addu    $t0, $t0, $t1                # 5y
+.endif
+	subu    $t9, $t6, $t0                # bottom: 3z - 4y
+	addu    $t9, $t9, $t5
+	bltz    $t9, ds_cull
+	addu    $t9, $t6, $t0                # top: 3z + 4y
+	addu    $t9, $t9, $t5
+	bltz    $t9, ds_cull
+	sll     $t5, $t3, 1                  # delay: 2r
+	subu    $t6, $t4, $t7                # nearest depth z - rho
+	addu    $t3, $t4, $t7                # farthest depth z + rho
+	.globl  ds_o_dcull
+ds_o_dcull:
+	slti    $t0, $t6, 0                  # nearer than the draw distance?
+	beqz    $t0, ds_cull                 # (wholly beyond it: culled)
+	lw      $t7, SP_SZFAST($t8)
+	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
+	slt     $a2, $t5, $t7                # a2 bit 0: may come too near
+	sltu    $t0, $s7, $s6                # room for the whole record?
+	bnez    $t0, ds_full
+	sll     $t6, $t6, 4
+	mflo    $t9                          # a2 bit 2: (z - rho) x 16 < k16 x rho,
+	slt     $t9, $t6, $t9                # an affine error over the threshold
+	sll     $t9, $t9, 2                  # possible (RECLOOP's)
+	or      $a2, $a2, $t9
+	lbu     $t2, R_NVERTS($a0)
+	beq     $at, $a3, ds_tex_done        # the last record's texture
+	lhu     $t0, R_POLYS($a0)            # (the light bytes' offset, below)
+	lw      $t5, SP_TEXBASE($t8)         # its words (8 B entry)
+	sll     $t6, $a3, 3
+	sw      $a3, SP_LASTTEX($t8)
+	addu    $t6, $t6, $t5
+	lw      $t9, 4($t6)                  # its texture-window command
+	lw      $v0, 0($t6)                  # clut | tpage << 16
+	sw      $t9, SP_TWIN($t8)            # (dm_exit_1's window command)
+	lui     $t5, 0xffff
+	and     $v1, $v0, $t5                # tpage << 16, ORed into uv1
+	sll     $v0, $v0, 16                 # clut  << 16, ORed into uv0
+	sw      $v0, SP_CLUT16($t8)          # (the slow path's copies)
+	sw      $v1, SP_TPAGE16($t8)
+ds_tex_done:
+.if R_PROFILE
+	lw      $t1, SP_RECORDS($t8)
+	lw      $t9, SP_VERTS($t8)
+	addiu   $t1, $t1, 1
+	addu    $t9, $t9, $t2
+	sw      $t1, SP_RECORDS($t8)
+	sw      $t9, SP_VERTS($t8)
+.endif
+	addiu   $t1, $t2, 3                  # light bytes: polys - ((nv + 3) & ~3)
+	andi    $t1, $t1, 0xfc
+	addu    $t0, $t0, $a0
+	subu    $at, $t0, $t1
+	.globl  ds_o_fogz
+ds_o_fogz:
+	slti    $t0, $t3, 0                  # farthest depth before the fog?
+	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
+	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
+	addiu   $t5, $t2, -2                 # (vertices left - 2: RTPT while 3+)
+	beqz    $t0, ds_fog                  # reaching into the fog: the fogged
+	move    $t4, $t8                     #  transform (cache cursor)
+	XFORM   1, ds_xf, ds_one, ds_xf_done
+ds_xf_done:
+	beqz    $a2, ds_polys                # nothing near nor warping: no careful test
+	andi    $t0, $a2, 4
+	bnez    $t0, ds_polys                # big or warping: careful regardless
+	move    $t4, $t8
+	move    $t5, $t2
+	move    $a2, $zero                   # exact check: any real vertex near?
+ds_nz:
+	lw      $t0, SP_SZ($t4)
+	addiu   $t5, $t5, -1
+	sltu    $t0, $t0, $t7
+	or      $a2, $a2, $t0
+	bgtz    $t5, ds_nz
+	addiu   $t4, $t4, 4
+
+	# its triangles (a sorted model has no quads), each, turned toward the
+	# eye (NCLIP, as POLYS), at the head of its bucket's chain
+ds_polys:
+	lhu     $t0, R_POLYS($a0)
+	lbu     $at, R_NTRIS($a0)
+.if R_PROFILE
+	lw      $t1, SP_POLYS($t8)
+	addu    $a3, $a0, $t0                # the first triangle
+	addu    $t1, $t1, $at
+	sw      $t1, SP_POLYS($t8)
+.else
+	addu    $a3, $a0, $t0                # the first triangle
+.endif
+	lw      $t0, 0($a3)                  # (none: a harmless read)
+	beqz    $at, ds_next
+ds_tri:                                  # t0 = the triangle's 3 vertex offsets
+	addiu   $at, $at, -1                 # (count down; the delay slot above)
+	andi    $t3, $t0, 0xff
+	srl     $t4, $t0, 8
+	andi    $t4, $t4, 0xff
+	srl     $t5, $t0, 16
+	andi    $t5, $t5, 0xff
+	addu    $t3, $t3, $t8
+	addu    $t4, $t4, $t8
+	beqz    $a2, ds_tri_emit
+	addu    $t5, $t5, $t8
+	CAREFUL 0, ds_tri_far, 1, ds_tri_near
+ds_tri_emit:                             # POLY_GT3 (t3..t5 kept for its bucket)
+	lwc2    C2_SXY0, SP_SXY($t3)         # the corners' xy: into the GTE for the
+	lwc2    C2_SXY1, SP_SXY($t4)         # NCLIP, from there to the packet (no
+	lwc2    C2_SXY2, SP_SXY($t5)         # copy in the CPU's registers)
+	lw      $t0, SP_COL($t3)             # c0 (two instructions before the NCLIP)
+	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
+	NCLIP
+	lw      $t2, SP_COL($t4)             # c1
+	lw      $s1, SP_COL($t5)             # c2
+	lui     $s2, CODE_GT3 >> 16
+	or      $t0, $t0, $s2
+	andi    $s2, $t1, 0xffff
+	or      $s2, $s2, $v0                # uv0 | clut
+	srl     $t1, $t1, 16
+	mfc2    $ra, C2_MAC0
+	or      $t1, $t1, $v1                # uv1 | tpage
+	bgez    $ra, ds_tri_next             # turned away: left out
+	sw      $t0, 4($s6)                  # (a packet not linked: harmless)
+	lwc2    C2_SZ1, SP_SZ($t3)           # its bucket: AVSZ3, ZSF3 x the
+	lwc2    C2_SZ2, SP_SZ($t4)           # corners' SZ summed >> 12, / 4
+	lwc2    C2_SZ3, SP_SZ($t5)
+	swc2    C2_SXY0, 8($s6)              # xy0 (before the AVSZ3: no GTE read
+	swc2    C2_SXY1, 20($s6)             # xy1  while it runs)
+	swc2    C2_SXY2, 32($s6)             # xy2
+	AVSZ3
+	lw      $t4, 8($a3)                  # uv2 | pad (0, see qw_tri)
+	sw      $s2, 12($s6)
+	sw      $t2, 16($s6)
+	sw      $t1, 24($s6)
+	mfc2    $t3, C2_OTZ
+	sw      $s1, 28($s6)
+	andi    $t3, $t3, (R_SORT_N - 1) << 2
+	addu    $t3, $t3, $gp                # the bucket's node
+	lw      $t0, 0($t3)                  # its chain's head
+	sw      $t4, 36($s6)
+	lui     $t9, 0x0900
+	or      $t9, $t9, $t0                # tag: 9 words, linked to that head
+	sw      $t9, 0($s6)
+	sw      $s6, 0($t3)                  # the chain's new head
+	addiu   $s6, $s6, 40
+ds_tri_next:
+	lw      $t0, POLY_SIZE($a3)          # the next one's (after the last: harmless)
+ds_tri_next_1:
+	bgtz    $at, ds_tri
+	addiu   $a3, $a3, POLY_SIZE
+ds_next:
+	lw      $a0, SP_NEXTREC($t8)
+	b       ds_rec
+	lhu     $t2, R_SIZE($a0)             # (ds_cull's second)
+
+	# CAREFUL's exits, as POLYS's: a corner nearer than its bound (t1 =
+	# the farthest corner's SZ): all behind the near plane, nothing to
+	# draw; else the slow path
+ds_tri_near:
+	lw      $t0, SP_ZNEAR($t8)
+	lw      $v0, SP_CLUT16($t8)          # (CAREFUL used v0, v1)
+	slt     $t0, $t1, $t0
+	beqz    $t0, ds_tri_skip
+	lw      $v1, SP_TPAGE16($t8)
+	b       ds_tri_next
+	nop
+	# too big or warping: wholly off one side of the screen, left out;
+	# else the slow path
+ds_tri_far:
+	lw      $t0, SP_SXY($t3)
+	lw      $t1, SP_SXY($t4)
+	lw      $t2, SP_SXY($t5)
+	lui     $v0, 240
+	and     $t9, $t0, $t1
+	and     $t9, $t9, $t2
+	bltz    $t9, ds_tri_off              # all y < 0
+	andi    $t9, $t9, 0x8000
+	bnez    $t9, ds_tri_off              # all x < 0
+	subu    $t9, $t0, $v0
+	subu    $v1, $t1, $v0
+	or      $t9, $t9, $v1
+	subu    $v1, $t2, $v0
+	or      $t9, $t9, $v1
+	bgez    $t9, ds_tri_off              # all y >= 240
+	lui     $v0, 320
+	sll     $t0, $t0, 16
+	sll     $t1, $t1, 16
+	sll     $t2, $t2, 16
+	subu    $t0, $t0, $v0
+	subu    $t1, $t1, $v0
+	or      $t0, $t0, $t1
+	subu    $t2, $t2, $v0
+	or      $t0, $t0, $t2
+	bltz    $t0, ds_tri_skip             # not all x >= 320: the slow path
+	nop
+ds_tri_off:
+	lw      $v0, SP_CLUT16($t8)
+	b       ds_tri_next
+	lw      $v1, SP_TPAGE16($t8)
+
+	# the slow path (engine/r_slow.c: the near clip, the subdivision), its
+	# pieces into the triangle's bucket: fp, the link it prepends to, is
+	# that chain's head before and after (s1 keeps the node: the slow path
+	# keeps s0-s7)
+ds_tri_skip:
+	lwc2    C2_SZ1, SP_SZ($t3)           # (t3..t5: the corners, CAREFUL's)
+	lwc2    C2_SZ2, SP_SZ($t4)
+	lwc2    C2_SZ3, SP_SZ($t5)
+	sw      $at, SP_SAVE+0($t8)
+	sw      $a0, SP_SAVE+4($t8)
+	AVSZ3
+	sw      $a1, SP_SAVE+8($t8)
+	sw      $a2, SP_SAVE+12($t8)
+	sw      $a3, SP_SAVE+16($t8)
+	mfc2    $s1, C2_OTZ
+	sw      $s6, SP_SAVE+20($t8)         # (the slow path's bytes, below)
+.if R_PROFILE
+	lw      $t1, SP_SKIPPED($t8)         # polygons sent to the slow path
+	lhu     $t2, TIMER2($t8)
+	addiu   $t1, $t1, 1
+	sw      $t1, SP_SKIPPED($t8)
+	sw      $t2, SP_SAVE+36($t8)         # slow-path start time
+.endif
+	andi    $s1, $s1, (R_SORT_N - 1) << 2
+	addu    $s1, $s1, $gp                # its bucket's node
+	lw      $fp, 0($s1)
+.if R_SLOW_C
+	lw      $t9, SP_RSTATE($t8)          # (s0 holds the plane table)
+	move    $a1, $a0                     # record
+	sw      $s6, RS_PKT($t9)             # the C side emits through r_state
+	sw      $fp, RS_OT_HEAD($t9)
+	move    $a2, $a3                     # polygon
+	li      $a3, 3
+	move    $a0, $t9                     # r_state
+	addiu   $sp, $sp, -32                # o32 argument area, gp (the table)
+	sw      $gp, 16($sp)                 # and the real one
+	lui     $gp, %hi(r_gp_saved)
+	jal     r_slow
+	lw      $gp, %lo(r_gp_saved)($gp)
+	lw      $gp, 16($sp)
+	addiu   $sp, $sp, 32
+	lui     $t8, 0x1f80
+	lw      $t9, SP_RSTATE($t8)
+	nop
+	lw      $fp, RS_OT_HEAD($t9)
+	lw      $s6, RS_PKT($t9)
+.else
+	move    $a1, $a3                     # polygon
+	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 3
+	li      $a2, 3
+.endif
+	sw      $fp, 0($s1)                  # the chain's head after its pieces
+.if R_PROFILE
+	lhu     $t0, TIMER2($t8)
+	lw      $t1, SP_SAVE+36($t8)
+	lw      $t2, SP_TSLOW($t8)
+	subu    $t0, $t0, $t1
+	andi    $t0, $t0, 0xffff
+	addu    $t2, $t2, $t0
+	sw      $t2, SP_TSLOW($t8)
+.endif
+	lw      $t1, SP_SAVE+20($t8)         # bytes it wrote, for the warp
+	lw      $t2, SP_SLOWB($t8)           # control's triangle count
+	lw      $at, SP_SAVE+0($t8)
+	subu    $t1, $s6, $t1
+	addu    $t2, $t2, $t1
+	sw      $t2, SP_SLOWB($t8)
+	lw      $a0, SP_SAVE+4($t8)
+	lw      $a1, SP_SAVE+8($t8)
+	lw      $a2, SP_SAVE+12($t8)
+	lw      $a3, SP_SAVE+16($t8)
+	lw      $v0, SP_CLUT16($t8)          # (the careful test used them)
+	lw      $v1, SP_TPAGE16($t8)
+	b       ds_tri_next_1
+	lw      $t0, POLY_SIZE($a3)          # (ds_tri_next's first)
+
+	# a record reaching into the fog: each light times its vertex's
+	# factor (XFORM fog, t2 = r_fogtab), then on as the others
+ds_fog:
+	lui     $t2, %hi(r_fogtab)
+	addiu   $t2, $t2, %lo(r_fogtab)
+	XFORM   1, ds_xfg, ds_oneg, ds_xfg_done, 1, 1
+ds_xfg_done:
+	lbu     $t2, R_NVERTS($a0)           # (the vertex count and SZ_FAST back:
+	b       ds_xf_done                   #  the table and the fog's temporary
+	lw      $t7, SP_SZFAST($t8)          #  had their registers)
+
+ds_full:
+	li      $t0, 1
+.if R_PROFILE
+	sw      $t0, SP_FULL($t8)
+	lw      $t0, SP_SKIPPED($t8)
+	nop
+	addiu   $t0, $t0, 1
+	sw      $t0, SP_SKIPPED($t8)
+ds_done:
+	lhu     $t0, TIMER2($t8)
+	lw      $t9, SP_T0($t8)
+	lw      $t1, SP_TBLOCK($t8)
+	subu    $t0, $t0, $t9
+	andi    $t0, $t0, 0xffff
+	addu    $t1, $t1, $t0
+	sw      $t1, SP_TBLOCK($t8)
+.else
+	sw      $t0, SP_FULL($t8)
+.endif
+ds_exit:
+	b       dm_exit_1                    # (its window command, drawn first)
+	lw      $fp, SP_SORTHEAD($t8)        # the model's chain: its farthest bucket on
 
 # -----------------------------------------------------------------------------
 # draw_bmodel: a0 = an r_ent_t with RE_BMODEL: a brush model, from

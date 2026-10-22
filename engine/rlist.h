@@ -70,16 +70,24 @@ typedef struct {
 	                             RE_BMODEL: a brush model: its subtree walked   */
 	int32_t  cam[3];     /* +60 RE_BMODEL: the camera in the model's space,
 	                             vertex units (the walk's plane tests)         */
-	uint32_t pad[2];
+	uint32_t zsf;        /* +72 RE_SORT: the GTE's ZSF3 for its triangles'
+	                             buckets (AVSZ3's OTZ / 4: its depth range on
+	                             R_SORT_N - 2 of them)                          */
+	uint32_t znear;      /* +76 RE_SORT: its nearest bucket x 4 (the table is
+	                             a ring: the range starts anywhere on it)       */
 } r_ent_t;               /* 80 bytes */
 
 #define RI_PIECES 0x80
 
 #define RE_VIEW   1
 #define RE_BMODEL 2
+#define RE_SORT   4      /* a monster (QSTM_SORT): its triangles drawn far to near
+                            through its own ordering table (r_world.s draw_model) */
+#define R_SORT_N  32     /* that table's buckets (r_defs.inc R_SORT_N): a power of two */
 
 _Static_assert(sizeof(r_item_t) == 16, "r_defs.inc RI_*");
-_Static_assert(sizeof(r_ent_t) == 80 && __builtin_offsetof(r_ent_t, cam) == 60, "r_defs.inc RE_*");
+_Static_assert(sizeof(r_ent_t) == 80 && __builtin_offsetof(r_ent_t, cam) == 60 &&
+               __builtin_offsetof(r_ent_t, zsf) == 72, "r_defs.inc RE_*");
 
 extern r_item_t r_items[RL_MAX_ITEMS];
 extern uint16_t r_lists[256];           /* list id -> first item + 1; the upper

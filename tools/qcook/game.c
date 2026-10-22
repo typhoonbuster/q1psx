@@ -2758,6 +2758,7 @@ struct qc_mdl {
 	char       file[64];
 	uint8_t   *bordered;            /* the skin with its border            */
 	int        bw, bh;
+	int        sort;                /* a monster's body: QSTM_SORT         */
 };
 
 void qc_set_palette(const uint8_t *pal)
@@ -3228,7 +3229,7 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	h.num_frames  = (uint16_t) m->nframes;
 	h.num_verts   = (uint16_t) m->nverts;
 	h.num_records = (uint16_t) nrec;
-	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (m->flags & 0xff) << 8);
+	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (q->sort ? QSTM_SORT : 0) | (m->flags & 0xff) << 8);
 	h.ofs_frames  = sizeof h;
 	h.ofs_records = h.ofs_frames + (uint32_t) m->nframes * (uint32_t) m->nverts * 4;
 	h.len_records = (uint32_t) recs.len;
@@ -3299,6 +3300,7 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 	mdl_t red[3];
 	int *orig[3], nv[3], reduced[3];
 	const mob_hand *hand = body ? mob_hand_find(q->file) : NULL;
+	q->sort = body;                               /* (its triangles drawn by depth: QSTM_SORT) */
 	for (int l = 0; l < 3; l++) {
 		orig[l] = xmalloc((size_t) m->nverts * sizeof *orig[l]);
 		reduced[l] = hand ? mob_hand_reduce(m, hand, &red[l], orig[l]) : stream_reduce(m, l, body, &red[l], orig[l]);

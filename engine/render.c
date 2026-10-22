@@ -211,6 +211,8 @@ extern uint32_t dro1_lit_ret[], dro2_lit_back[], dro3_lit_ret[];   /* (the draw 
                     copies: a stub first, their far depth lost to the light) */
 extern uint32_t dro1_o_dcull[], dro1_o_fogz[], dro1_o_fogc[], dro2_o_flatz[];
 extern uint32_t dro3_o_dcull[], dro3_o_fogz[], dro3_o_fogc[], dro3_o_flatz[], deo1_o_dcull[], deo1_o_fogz[];
+extern uint32_t ds_o_dcull[], ds_o_fogz[];   /* the monsters' sorted loop: the draw distance's
+                                                tests always (r_world.s dm_sort) */
 extern uint32_t mark_pvs_far[];
 
 enum { S_DR, S_DE, S_RET0, S_RET1, S_RET2, S_MARK, S_ENTRIES };
@@ -274,6 +276,8 @@ void r_set_options(int dist, int flat)
 	}
 	for (unsigned i = 0; i < sizeof fogc / sizeof fogc[0]; i++)
 		*fogc[i] = SLTI(*fogc[i], fz);       /* the centre: in it (drawn flat) */
+	*ds_o_dcull = SLTI(*ds_o_dcull, dist ? dz : 0x7fff);   /* none: at their most (a record */
+	*ds_o_fogz  = SLTI(*ds_o_fogz, dist ? fz : 0x7fff);    /* nearer than 5461 units drawn, unfogged) */
 	for (int i = 0; i < 2; i++)                  /* everywhere: li 0 (never nearer) */
 		*flatz[i] = flat == R_FLAT_ALL ? LI(orig_flatz[i], 0) : SLTI(orig_flatz[i], R_FLAT_FAR_UNITS * 6);
 	int v = (dist ? 1 : 0) | (flat ? 2 : 0);
