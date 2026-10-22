@@ -1766,9 +1766,10 @@ followed by R0-R4.
   - the streamed models' frame cache (`engine/mdl.c`) took a new
     expansion only at its ring's head, and refused it when the bytes there
     held one the frame draws, room elsewhere or not. Master's minute of
-    fight on E1M3 left out 129 models; with every frame cooked
-    (`QCOOK_NOFMAP=1`), E1M8's monsters' dumps left out a Scrag and an
-    Ogre (§67 read the Scrag as the dead shambler);
+    fight on E1M3 left out 129 models; E1M8's monsters' dumps left out two
+    Scrags, blocked by an Ogre after the ring's wrap (before §68's cook,
+    with every frame cooked: a Scrag and an Ogre; §67 read that Scrag as
+    the dead shambler);
   - the ring now takes the place past the frame's own expansions in the
     way, else from its start: a refusal means no gap big enough between
     them, or all 32 entries drawn in the frame. One scan checks a place
@@ -1776,9 +1777,9 @@ followed by R0-R4.
     saves no register;
   - the bench prints the refusals: the `mon dump` and `mon fight` lines,
     and a `bench frame cache` line at the game bench's end;
-  - 0 refusals in those runs. The views, the game bench and the monsters'
-    bench are identical to master's; with every frame cooked, E1M8's two
-    dumps now draw both models;
+  - 0 refusals in those runs. The views and the game bench are identical
+    to master's, the monsters' bench too but E1M8's two dumps, which now
+    draw the two Scrags;
   - mdl_frame in the fight: a hit 378 -> 321 cycles, a miss's own work
     2808 -> 1710 (the expansion apart), 882 -> 727 cycles a frame. The
-    code +100 B (the release's stack room 58440 B).
+    code +100 B (the release's stack room 58664 -> 58552 B).

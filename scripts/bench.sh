@@ -54,7 +54,7 @@
 #         dumps m<map>_<kind>_<step>, each with its frame's cycles and the
 #         frame cache's refusals (engine/mdl.c: a streamed model whose
 #         frame it could not expand, not drawn; docs/porting-notes.md
-#         §68); then the crowd: every monster of the map awake, the
+#         §69); then the crowd: every monster of the map awake, the
 #         entities' cost a second); MONSTERS=2 the crowd alone (SAMPLE=1:
 #         its PC samples, "samples crowd"); MONSTERS=3 the crowd, then a
 #         minute of fight drawn (the player fires rockets turning round):

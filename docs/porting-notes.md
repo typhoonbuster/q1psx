@@ -8786,25 +8786,28 @@ pools`), KB:
   room. It must refuse only when no place keeps every expansion the frame
   draws. The bench prints the refusals, and the frames stay master's but
   for models now drawn.
-- **The flaw** (master a200736):
+- **The flaw:**
   - `mdl_frame` put a new expansion at the ring's head only. When the
     bytes there held one the frame draws (its stamp), it returned NULL,
     and `rl_model_stream` drew nothing for that model;
   - a model drawn at every frame just past the head then blocks each new
     expansion of the frame, room elsewhere or not.
-- **Measured on master** (its code with this change's prints, run first):
-  - `MONSTERS=3 MAP=E1M3`, the minute of fight: 129 models left out (7,
-    17, 82 and 23 in four of the twelve 300-frame windows); 138 with
-    every frame cooked (`QCOOK_NOFMAP=1`);
-  - `QCOOK_NOFMAP=1 MONSTERS=1 MAP=E1M8`: `mE1M8_7_c` and `_d` refuse 2
-    a frame, a Scrag (wizard.mdl, frame 32, 576 B) and an Ogre (ogre.mdl,
-    frame 18, 1120 B). The head was at 2376; a Scrag's spike (w_spike.mdl,
-    drawn that frame) held 2816..3168 of the ring's 24576 B;
+- **Measured on master** (its code with this change's prints, run first;
+  a200736, then cf4a7b4 with §68's cook):
+  - `MONSTERS=3 MAP=E1M3`, the minute of fight, on both: 129 models left
+    out (7, 17, 82 and 23 in four of the twelve 300-frame windows); 138
+    with every frame cooked (`QCOOK_NOFMAP=1`);
+  - `MONSTERS=1 MAP=E1M8` on cf4a7b4: `mE1M8_7_c` and `_d` refuse 2 a
+    frame, two Scrags (wizard.mdl, 576 B each). The ring had just
+    wrapped: the head was at 0, where an Ogre drawn that frame held
+    0..1120 of the ring's 24576 B. This is the case §67 foresaw;
+  - the same dumps on a200736 refused only with every frame cooked: a
+    Scrag (frame 32) and an Ogre (frame 18) at head 2376, where a Scrag's
+    spike (w_spike.mdl, drawn that frame) held 2816..3168;
   - §67 read that picture as E1M8's dead shambler: it is the Scrag. The
     Ogre shows no pixel in that view (a build that refuses it alone gives
     the same picture as both drawn);
-  - with the frame map (the default cook): E1M8's dumps 0, the game bench
-    0 (23 expansions).
+  - the game bench: 0 refusals (23 expansions).
 - **The fix** (`engine/mdl.c`):
   - the place: the head; when expansions the frame draws are in the way,
     just past the furthest of them, again until the bytes are free; past
@@ -8829,23 +8832,30 @@ pools`), KB:
   - each `mon fight` line: over its 300 frames;
   - at the game bench's end: `bench frame cache: N expansions, M
     refused`.
-- **Checked** against master's runs (the same commands, PCSX-Redux in fast
-  forward):
+- **Checked** against master cf4a7b4's runs (the same commands,
+  PCSX-Redux in fast forward), and before the merge against a200736's:
   - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`): 128 of 128
     `H` lines identical; the game bench (`BENCH_GAME=1 HASHONLY=1`): 23
-    of 23, 0 refused; `MONSTERS=1 MAP=E1M8 HASHONLY=1`: 12 of 12, 0
-    refused;
+    of 23, 0 refused (both masters);
+  - `MONSTERS=1 MAP=E1M8 HASHONLY=1`: 0 refusals. On cf4a7b4, 10 of 12
+    identical; the 2 others (`mE1M8_7_c`, `_d`) gain the two Scrags
+    (render items 42 -> 44). In pktview's pictures, 10 are identical and
+    the two others differ by 122 pixels, a far Scrag (the other one
+    hidden). With every frame cooked: 12 of 12 (master refuses none
+    there);
+  - on a200736: 12 of 12 with the frame map. With every frame cooked, 0
+    refusals and the frame map's 12 hashes: `mE1M8_7_c` and `_d` gain
+    the Scrag and the Ogre (items 119 -> 121; 2618 pixels, all in the
+    Scrag's box);
   - `MONSTERS=3 MAP=E1M3`: 0 refusals in the twelve windows, with both
     cooks;
-  - `QCOOK_NOFMAP=1 MONSTERS=1 MAP=E1M8`: 0 refusals, and the 12 hashes
-    are the frame map's. `mE1M8_7_c` and `_d` gain the two models (render
-    items 119 -> 121). In pktview's pictures, 10 are identical and the two
-    others differ by 2618 pixels, all in the Scrag's box;
-  - the C engine (`ENGINE_C=1 MONSTERS=1 MAP=E1M8`): its game drifts from
-    the asm's (10 of 12 dumps differ, on master too). Against master's C
-    engine, 9 are identical. The 3 others are where master's refused (5,
-    1 and 1 a frame, with the frame map): render items 111 -> 116 and
-    63 -> 64, pixels only on the models now drawn (251, 3, 3);
+  - the C engine (`ENGINE_C=1 MONSTERS=1 MAP=E1M8 HASHONLY=1`): its game
+    drifts from the asm's (3 of 12 dumps on cf4a7b4, 10 on a200736, on
+    master too). Against master's C engine on cf4a7b4: 12 of 12, no
+    refusal either way. On a200736: 9 of 12; the 3 others are where
+    master's refused (5, 1 and 1 a frame, with the frame map), render
+    items 111 -> 116 and 63 -> 64, pixels only on the models now drawn
+    (251, 3, 3);
   - a host harness (outside the repo) ran random frames of draws. An
     oracle checked every refusal (no gap between the frame's expansions,
     or every entry the frame's), and every pool returned had to be intact
@@ -8853,7 +8863,8 @@ pools`), KB:
     of 90054 in one). The new ring never did, and never overwrote one of
     its frame's.
 - **The cost** (PCSX-Redux; a measure build timed each call on root
-  counter 2, not committed):
+  counter 2, not committed; on a200736, the fight's refusals the same on
+  7903159):
   - the fight on E1M3 (3600 frames, 6165 calls):
     - a hit 378 -> 321 cycles: the leaf -10, and the entries hit sit
       lower in the table (their index 15.9 -> 13.1);
@@ -8862,17 +8873,19 @@ pools`), KB:
     - mdl_frame 882 -> 727 cycles a frame, the 129 models drawn included;
   - E1M8's monsters' bench (312 calls): a hit 283 -> 261, a miss's own
     work 2868 -> 1746;
-  - the frames:
-    - the 128 views -0.004 % (-131..+24 a view);
-    - the game bench -61..-95 a frame;
-    - E1M8's dumps -0.012 %;
-    - the fight's windows where master refused cost more now, the models
-      drawn (+0.22..+2.26 %); the others -0.04..0 %;
+  - the frames, against cf4a7b4:
+    - the 128 views -0.0045 % (-178..+82 a view);
+    - the game bench -430..+65 a frame, its walks -9 and -29;
+    - E1M8's dumps -32..-152; the two with the Scrags +73.0 k, the
+      models drawn;
+    - the fight's windows where master refused +0.21..+2.41 %, the models
+      drawn; the others -0.05..+0.02 %;
   - each place past a frame's expansion costs one scan more (~600
     cycles). At worst, two passes over the ring, one scan per expansion
     jumped (never seen in the benches).
 - **RAM:** the code +100 B (+68 the fix, +32 the miss apart): the
-  release's stack room 58552 -> 58440 B, the default's 45976 -> 45880.
+  release's stack room 58664 -> 58552 B, the default's 46088 -> 45992
+  (7903159).
 - **Left:**
   - the lookup: 32 entries at 15 cycles each in PCSX's cost model (`lh`,
     two `nop`s, the loop's branch and counter). An (asset, frame) key word
