@@ -462,8 +462,14 @@ static uint16_t page_tpage(int p)   /* 8bpp, no semi-transparency (game.c's) */
 
 /* --------------------------------------------------------------- assets -- */
 
+/* next_wanted found nothing to read and nothing it reads changed since:
+   not asked again every idle frame (a pass, a slot freed, an asset in or
+   stuck clear it) */
+static uint8_t none_wanted;
+
 static void slot_free(res_t *r)
 {
+	none_wanted = 0;
 	r->asset = -1;
 	r->ram   = r->tmp = 0;
 	r->ram_size = r->tmp_size = 0;
@@ -511,11 +517,66 @@ static void held_by_more(uint32_t score, uint32_t *ram, uint32_t *vram, uint32_t
 	*spu  = sb;
 }
 
+/* The resident assets sorted by their score (the most wanted first), with
+   running totals of what they hold: what the assets wanted at least as
+   much as a score hold is then a binary search. next_wanted asks it of
+   every asset stuck for room, every idle frame: walking the slots and
+   their images each time was quadratic (E1M3's crowd: 29 % of its ticks,
+   porting-notes §72). Made once a next_wanted that meets a stuck asset. */
+static struct { uint32_t last, ram, vram, spu; } held[MAX_RES];
+static int num_held;
+
+static void held_sort(void)
+{
+	num_held = 0;
+	for (int i = 0; i < MAX_RES; i++) {
+		const res_t *r = &res[i];
+		if (r->asset < 0 || assets[r->asset].state != A_RES)
+			continue;
+		uint32_t vt = 0;
+		for (int k = 0; k < r->nimg; k++)
+			vt += (uint32_t) (r->img[k].w * r->img[k].h);
+		uint32_t last = assets[r->asset].last;
+		int j = num_held++;
+		while (j > 0 && held[j - 1].last > last) {     /* (insertion: 48 at most) */
+			held[j] = held[j - 1];
+			j--;
+		}
+		held[j].last = last;
+		held[j].ram  = r->ram_size + r->tmp_size;
+		held[j].vram = vt;
+		held[j].spu  = r->spu_size;
+	}
+	for (int j = 1; j < num_held; j++) {
+		held[j].ram  += held[j - 1].ram;
+		held[j].vram += held[j - 1].vram;
+		held[j].spu  += held[j - 1].spu;
+	}
+}
+
+/* held_by_more's sums from the sorted table (held_sort's): the assets whose
+   score is at most `score` */
+static void held_upto(uint32_t score, uint32_t *ram, uint32_t *vram, uint32_t *spu)
+{
+	int lo = 0, hi = num_held;
+	while (lo < hi) {
+		int m = (lo + hi) >> 1;
+		if (held[m].last <= score)
+			lo = m + 1;
+		else
+			hi = m;
+	}
+	*ram  = lo ? held[lo - 1].ram : 0;
+	*vram = lo ? held[lo - 1].vram : 0;
+	*spu  = lo ? held[lo - 1].spu : 0;
+}
+
 /* asset a found no room: not tried again until the assets wanted as much
    hold less */
 static void set_stuck(int a)
 {
 	asset_t *as = &assets[a];
+	none_wanted = 0;
 	as->stuck = ST_ROOM;
 	held_by_more(as->last, &as->stuck_ram, &as->stuck_vram, &as->stuck_spu);
 }
@@ -895,6 +956,7 @@ static int sound_upload_piece(void)
 static void sound_in(int a, int ok, int broken)
 {
 	asset_t *as = &assets[a];
+	none_wanted = 0;
 	if (ok) {
 		as->state = A_RES;
 		stream_stats.reads++;
@@ -986,6 +1048,7 @@ static void model_in(int a, int ok)
 {
 	asset_t *as = &assets[a];
 	int in = !ok ? 0 : as->d.kind == QSTK_MODEL ? install_model(a) : -1;
+	none_wanted = 0;
 	if (in > 0) {
 		as->state = A_RES;
 		stream_stats.reads++;
@@ -1055,7 +1118,9 @@ static void start_read(int a)
    ones break it up), -1 if none */
 static int next_wanted(void)
 {
-	int best = -1;
+	if (none_wanted)
+		return -1;
+	int best = -1, sorted = 0;
 	for (int a = 0; a < num_assets; a++) {
 		asset_t *as = &assets[a];
 		if (as->state != A_DISC || as->backoff || as->stuck == ST_BROKEN)
@@ -1065,7 +1130,11 @@ static int next_wanted(void)
 			continue;
 		if (as->stuck == ST_ROOM) {
 			uint32_t ram, vram, spu;
-			held_by_more(as->last, &ram, &vram, &spu);
+			if (!sorted) {
+				held_sort();
+				sorted = 1;
+			}
+			held_upto(as->last, &ram, &vram, &spu);
 			if (ram >= as->stuck_ram && vram >= as->stuck_vram && spu >= as->stuck_spu)
 				continue;                     /* (no more room than when it failed) */
 			as->stuck = ST_NONE;
@@ -1074,6 +1143,7 @@ static int next_wanted(void)
 		    (as->last == assets[best].last && as->d.size > assets[best].d.size))
 			best = a;
 	}
+	none_wanted = best < 0;
 	return best;
 }
 
@@ -1105,6 +1175,7 @@ static int32_t pass_origin[3];             /* stream_origin at the last pass */
 
 static void pass(void)
 {
+	none_wanted = 0;
 	memcpy(pass_origin, stream_origin, sizeof pass_origin);
 	for (int a = 0; a < num_assets; a++)
 		assets[a].score = ~0u;
