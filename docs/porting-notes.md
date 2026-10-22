@@ -7953,3 +7953,129 @@ Quake's data goes in the repo.
   another (the chainsaw behind the legs, seen from the left), it can show
   over it. A depth sort of a model's triangles (an ordering table per
   model, the GTE's AVSZ3) would fix it for every monster: proposed apart.
+
+## §64 — The monsters by hand: the other eight (2026-10-22)
+
+- **The ask**, after §62's Ogre: the other monsters by hand the same way, with the Reference /
+  Before / After sheets.
+- **The same way as §62.** The tools stay outside the repo
+  (`quakespasm-q1psx/mobs`): `mobcut.py` drives `handcut.py`,
+  `vhid.py` checks the dropped triangles, `sheets.py` draws the sheets.
+  - What carries each monster's look is kept whole. It is picked in the
+    rest frame and checked on a render (the kept vertices in red, five
+    sides):
+    - the soldier: the gun and its muzzle flash, the head, the hands on
+      the gun, the feet;
+    - the dog: its 11 small parts (the teeth, the eyes, the tongue), the
+      head, the paws;
+    - the knight: the sword (its strip of the skin), the hand on the hilt,
+      the free hand, the head, the feet;
+    - the zombie: the flesh it throws (a small part folded in its chest,
+      in its hand when it throws), the head, the hands, the feet;
+    - the scrag: the head, the arms' spikes, the tail's tip;
+    - the fiend: the horns, the head, the claws, the feet, the tail's tip;
+    - the shambler: the head, the claws, the feet;
+    - Chthon: the head, the horns, the 20 spikes, the hands.
+  - The collapses go cheapest first, each within 3 units and 4 texels in
+    every frame.
+  - Chthon's bound is 13 units. His vertices sit on a grid of 2.1-2.6
+    units a step (the Ogre's 0.4-0.6), so 3 units allow no collapse at all.
+- **Two flaws of §62's method, found on the way:**
+  - **The hidden triangles.** §62 looked at every 4th frame (26
+    directions, two distances, 320x320). The soldier's muzzle flash, 14
+    triangles folded inside its body, shows only in `shoot5`, so the check
+    had it as never seen. The new check:
+    - every frame, from 64 directions;
+    - then each candidate is looked at from outside the model (an eye on a
+      sphere 1.1 times the frame's radius), zoomed till it spans 24 pixels,
+      from the 96 directions in front of it, in every frame;
+    - it goes only if no view shows 3 pixels of it. One or two pixels leak
+      where two parts meet.
+
+    The Ogre's 2 (§62) pass: 1 pixel at most, under the launcher in the
+    hand. The zoom kept back the dog's triangle 23 (3 pixels, `leap5`) and
+    Chthon's 100 and 130 (5 and 3 pixels).
+  - **A collapse that leaves nothing to measure.** When u's only
+    triangles are the edge's own (after the hidden ones went), the measure
+    gave the collapse no cost, whatever it took away. Two tables had one:
+    - the soldier's 163 -> 142, 2.5 units off in fact;
+    - Chthon's 312 -> 221, a tab of his open bottom edge in the lava, 19.5
+      units off.
+
+    Such a collapse is now refused.
+  - **The true error**, each cut vertex against what is left in every
+    frame: 2.1 to 2.9 units for the seven bounded at 3 (the bound is per
+    collapse, and the errors add up little), Chthon 12.5.
+- **The result** (`tools/qcook/game.c` `MOBS`; triangles / vertices; the
+  asset in the stream file):
+
+  | Monster | Frames | Quake | Old cook | By hand | Cuts | Dropped | Kept whole | Asset |
+  |---|---|---|---|---|---|---|---|---|
+  | soldier | 114 | 328 / 170 | 156 / 84 | 270 / 141 | 29 | 0 | 82 | 60.5 -> 87.8 KB |
+  | dog | 86 | 426 / 236 | 210 / 128 | 377 / 216 | 20 | 9 | 144 | 65.4 -> 97.9 KB |
+  | knight | 97 | 213 / 108 | 123 / 63 | 189 / 96 | 12 | 0 | 57 | 44.4 -> 58.0 KB |
+  | zombie | 198 | 347 / 177 | 135 / 71 | 240 / 124 | 53 | 1 | 81 | 69.6 -> 112.4 KB |
+  | scrag | 54 | 157 / 80 | 75 / 39 | 140 / 72 | 8 | 1 | 42 | 24.5 -> 32.4 KB |
+  | fiend | 69 | 275 / 143 | 177 / 94 | 267 / 140 | 3 | 2 | 70 | 47.9 -> 61.8 KB |
+  | shambler | 94 | 284 / 144 | 202 / 103 | 278 / 141 | 3 | 0 | 91 | 53.9 -> 69.1 KB |
+  | Chthon | 106 | 555 / 325 | 471 / 283 | 439 / 281 | 44 | 28 | 210 | 145.2 -> 143.9 KB |
+
+  The fiend and the shambler change little: Quake's models are lean there,
+  and only 3 collapses each fit the bound.
+- **The comparison:** 64 sheets, Reference / Before / After, 8 frames of
+  each monster seen from 8 sides. The frames: stand, walk, run, the
+  attacks, a pain, the deaths, and the zombie's crucified frame. What the
+  Before broke and the After keeps:
+  - the heads, a spike in profile (the soldier, the knight, the zombie);
+  - the soldier's muzzle flash, a needle;
+  - the knight's sword, a needle with gaps;
+  - the dog's legs and the zombie's feet.
+- **`QCOOK_HAND=<files>`** applies only these tables (comma-separated).
+  `QCOOK_HAND=progs/ogre.mdl` cooks the stream of before §64 byte for byte.
+- **What it costs** (before: `QCOOK_HAND=progs/ogre.mdl`, master as it was;
+  after: every table):
+  - the eight assets go from 511 to 663 KB in the stream file (+152 KB).
+    The frames are most of it: vertices × frames × 4 B, and the zombie
+    has 198 frames;
+  - the residency report (`BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`, 32 maps)
+    counts the spots where a monster in the PVS lacks its model:
+
+    | Maps | Before | After | Where |
+    |---|---|---|---|
+    | whole | 3 | 20 of 1020 | E3M4 5 (pool 262 KB), E2M7 1 -> 5, E2M2 3, E2M6 3, E2M3 1, E3M5 1 |
+    | zones (pvs_1536_96) | 2 | 11 of 1020 | E3M4 5 (pool 268 KB), E2M6 3, E2M7 1 |
+
+    E1M7's 2 spots were there before and are unchanged. The maps that lose
+    hold four or five of the streamed kinds. One body of each kind takes
+    229-319 KB before and 266-404 KB after, in pools of 262-354 KB (their
+    heads and sounds come on top).
+  - the 128 spawn views (`BENCH_MAPS=1 PROFILE=0 HASHONLY=1`):
+    - all the views' cycles +1.6 %; START.v0 +9.1 % (its nine crucified
+      zombies), at most +17.8 % (E4M3.v3, still one vblank);
+    - 24 views over one vblank before and after, none crossing it. E1M8.v0
+      goes from 2 to 3 vblanks: 1.108 M -> 1.138 M cycles, against 1.13 M
+      for two;
+    - the packet arena never full: 61 KB of its 94 at most, as before;
+  - the crowd (`MONSTERS=3 MAP=E1M3`: 47 monsters awake, then a minute of
+    fight drawn): the same game (the same monsters alive at each line), the
+    same frames' vblanks at the 12 lines (5 to 7), the entities' tick
+    unchanged (253 k cycles on average).
+- **A lighter cut, measured, not taken.** The same parts kept whole, with
+  wider bounds (vertices):
+
+  | Bounds | soldier | dog | knight | zombie | scrag | fiend | shambler |
+  |---|---|---|---|---|---|---|---|
+  | 3 units, 4 texels (taken) | 141 | 216 | 96 | 124 | 72 | 140 | 141 |
+  | 5 units, 6 texels | 123 | 192 | 87 | 104 | 62 | 120 | 133 |
+  | 8 units, 8 texels | 112 | 177 | 80 | 94 | 54 | 107 | 120 |
+  | old cook | 84 | 128 | 63 | 71 | 39 | 94 | 103 |
+
+  8 units would get about half the RAM back, but still not the old cook's.
+  The parts kept whole are much of each model (the soldier's 82 vertices
+  of 170). The faithful cut was kept.
+- **Left:**
+  - the residency on the tight maps (E3M4, E2M2, E2M6, E2M7). The options
+    are a lighter cut, room in the pools, or frames streamed by
+    animation: a call left open;
+  - the PS1 draws a model's triangles in the cook's order (§63's depth
+    sort).
