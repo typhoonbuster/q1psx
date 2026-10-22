@@ -348,4 +348,109 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
    renderer's 3-at-a-time vertex loads never run off the end. */
 #define QW_STREAM_TAIL 16
 
+/* ------------------------------------------------------------ zones --------
+ * A zoned world (docs/porting-notes.md §57): the cook (`qcook zones`,
+ * tools/qcook/zones.c) splits the world's face records into zone chunks
+ * from the tables of the level-chunks analysis. A zone is a set of camera
+ * leaves; its chunk holds every world record the PSX may draw from any of
+ * them (records shared between zones are in each one's chunk). The level
+ * arena keeps the skeleton and a few chunk slots: the camera leaf's zone,
+ * the one drawn, and the zones nearest to it by walking distance,
+ * prefetched (engine/zone.c).
+ *
+ *   <MAP>_G<n>.WLD  the skeleton, "QWVZ": a QWVE file's header and
+ *                   sections, a qw_zone_header right after the header, the
+ *                   face stream and the vertex pool holding the brush
+ *                   models' records only (their UVs mapped by the loader,
+ *                   as a QWVE's);
+ *   <MAP>_Z<t>.ZON  the chunks at texture level t (formats/qlevels.h): a
+ *                   qz_file header in sector 0, then each zone's qw_chunk
+ *                   from a sector of its own (qw_chunk_dir). A chunk's
+ *                   records come as the loader would leave them: face ids
+ *                   doubled, the average light in the flags, the UVs on
+ *                   the texture set's tiles, the vertex indices into the
+ *                   chunk's own pool.
+ *
+ * The skeleton's node array: the world's nodes holding records in some
+ * chunk first (world_nodes of them), then a node no walk reaches whose
+ * faces[0] ends the current chunk's last block, then the world's nodes no
+ * chunk gives a record (their blocks empty for good, never patched), then
+ * the brush models' nodes, then the sentinel. The walk follows children
+ * pointers, so the order changes nothing it draws. When a chunk becomes
+ * current, its patch list sets faces[] of the first world_nodes + 1 nodes
+ * (engine/zone.s zone_patch); before any, every world block is empty.
+ *
+ * The chunks live in the level arena's chunk arena (engine/zone.c): any
+ * camera leaf's set (its zone and the two nearest) fits it, and so do the
+ * two biggest chunks (the zone drawn while the camera's loads).
+ */
+#define QWORLD_ZONED_MAGIC "QWVZ"
+#define QZONES_MAGIC       "QZN1"
+#define QZ_NONE            0xffu    /* a qw_zone_set's empty entry; a leaf in no set */
+
+typedef struct {
+	uint32_t num_zones;
+	uint32_t arena_bytes;    /* the chunk arena: whole sectors                  */
+	uint32_t max_chunk;      /* the biggest chunk's bytes                       */
+	uint32_t world_nodes;    /* the nodes the patch lists set, the end node next */
+	uint32_t num_sets;
+	uint32_t ofs_chunks;     /* qw_chunk_dir[num_zones]                         */
+	uint32_t ofs_leaf_set;   /* uint8_t[num_leaves]: the leaf's set, QZ_NONE for
+	                            leaf 0 (the camera in solid keeps its zone)     */
+	uint32_t ofs_sets;       /* qw_zone_set[num_sets]                            */
+	uint32_t reach;          /* world units: the tables hold every record the
+	                            PVS lets the PSX draw within this depth (the
+	                            draw distance + a margin)                       */
+	uint32_t stamp;          /* the chunks' file carries the same               */
+	uint32_t whole_records;  /* statistics: the world's records, its .wld's    */
+	uint32_t whole_bytes;    /*   bytes (what a whole load took)               */
+} qw_zone_header;            /* 48 bytes, at sizeof(qw_header) in a QWVZ file  */
+
+typedef struct {
+	uint32_t sector;         /* the chunk's first sector in the .ZON file       */
+	uint32_t bytes;          /* its bytes (read in whole sectors)               */
+} qw_chunk_dir;
+
+/* the zones a camera leaf wants: its own (drawn), then the nearest others
+   by walking distance (a teleporter one step), QZ_NONE past the last */
+typedef struct {
+	uint8_t zone;
+	uint8_t near[3];
+} qw_zone_set;
+
+typedef struct {
+	char     magic[4];       /* "QZN1"                                          */
+	uint32_t stamp;          /* the skeleton's                                  */
+	uint32_t num_zones;
+	uint32_t tex_level;      /* the texture set its UVs are mapped onto         */
+} qz_file;
+
+typedef struct {
+	uint16_t zone;
+	uint16_t num_patch;      /* patch words, the last one the end node's        */
+	uint32_t stamp;
+	uint32_t ofs_records;    /* from the chunk's start: the blocks, the patched
+	                            nodes' in their order (front, back), then
+	                            QW_STREAM_TAIL bytes                            */
+	uint32_t len_records;
+	uint32_t ofs_verts;      /* qw_vert[num_verts]: the chunk's vertex pool      */
+	uint32_t num_verts;
+	uint32_t num_records;
+	uint32_t pad;
+} qw_chunk;                  /* 32 bytes, then the patch words */
+
+/* A patch word: a patched node and the patched nodes before it that hold
+   no record in the chunk (their blocks empty at the running pointer):
+   skip << 24 | front block's words << 12 | back block's words. A longer run
+   of empty nodes takes words of skip 255 and blocks of none (256 nodes
+   each). */
+#define QZP_SKIP(w)   ((w) >> 24)
+#define QZP_FRONT(w)  (((w) >> 10) & 0x3ffcu)    /* bytes */
+#define QZP_BACK(w)   (((w) << 2) & 0x3ffcu)     /* bytes */
+#define QZP_MAX_SKIP  255u
+#define QZP_MAX_WORDS 4095u
+
+_Static_assert(sizeof(qw_zone_header) == 48 && sizeof(qw_chunk) == 32 && sizeof(qz_file) == 16,
+               "qworld.h: the zones' tables");
+
 #endif

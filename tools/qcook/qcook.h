@@ -11,6 +11,7 @@
  *             sound bank and the player start
  *   sound.c   the map's sound bank -> QSND (formats/qsound.h)
  *   bmf.c     the brush models' room for their cut pieces (engine/bmfrag.c)
+ *   zones.c   a world split into its skeleton and zone chunks (QWVZ, QZN1)
  *
  * See docs/architecture.md §6-§7, formats/qworld.h / qtex.h / qlevels.h.
  */
@@ -315,5 +316,9 @@ int  world_check(const char *path);
 void bmf_rooms(uint8_t *f, size_t len);
 /* `qcook bmf <file.wld> [-v]`: measured again, against the file's */
 int  cmd_bmf(int argc, char **argv);
+
+/* `qcook zones`: a cooked world split into its skeleton and its zone chunks
+   from the level-chunks analysis' tables (zones.c, formats/qworld.h) */
+int  cmd_zones(int argc, char **argv);
 
 #endif

@@ -2,7 +2,10 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <psxapi.h>
 #include <psxcd.h>
+#include <psxgpu.h>
+#include <hwregs_c.h>
 
 #include "cd.h"
 #include "mem.h"
@@ -34,13 +37,79 @@ static uint32_t le32(const uint8_t *p)
 	return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t) p[3] << 24;
 }
 
-static int read_sectors(uint32_t lba, uint32_t n, void *dst)
+/* (engine/cd.h: the drive's commands and its interrupt) */
+#define CD_SETTLE 2                       /* vblanks idle before a command */
+static int32_t busy_vbl;                  /* the last vblank the drive was busy */
+
+void cd_busy(void)
+{
+	busy_vbl = VSync(-1);
+}
+
+int cd_ready(void)
+{
+	if (CdReadSync(1, 0) > 0 || CdSync(1, 0) == CdlNoIntr) {   /* (a read, a Pause in progress) */
+		cd_busy();
+		return 0;
+	}
+	return VSync(-1) - busy_vbl >= CD_SETTLE;
+}
+
+int cd_poll(void)
+{
+	int left = CdReadSync(1, 0);              /* (also runs CdReadRetry's retries) */
+	if (left > 0 || CdSync(1, 0) == CdlNoIntr)
+		cd_busy();
+	return left;
+}
+
+int cd_read_sync(void)
+{
+	int r = CdReadSync(0, 0);
+	cd_busy();                                /* (it just ended: settling from now) */
+	return r;
+}
+
+/* the drive's interrupts back as CdInit leaves them: every pending one
+   acknowledged, all enabled, bank 0 */
+static void cd_repair(void)
+{
+	FastEnterCriticalSection();
+	CD_REG(0) = 1;
+	CD_REG(3) = 0x1f;
+	CD_REG(2) = 0x1f;
+	CD_REG(0) = 0;
+	FastExitCriticalSection();
+}
+
+int cd_seek(int32_t lba)
 {
 	CdlLOC loc;
-	CdIntToPos((int) lba, &loc);
-	if (!CdControl(CdlSetloc, &loc, 0) || !CdReadRetry((int) n, (uint32_t *) dst, CdlModeSpeed, 3))
+	CdIntToPos(lba, &loc);
+	for (int tries = 0; tries < 4; tries++) {
+		CdSync(0, 0);                         /* (a blocking command done: a read's Pause) */
+		while (!cd_ready())                   /* (settled: its stragglers in) */
+			;
+		int ok = CdControl(CdlSetloc, &loc, 0);
+		cd_busy();
+		if (ok && CdSync(1, 0) != CdlDiskError)
+			return 1;                         /* (acknowledged, not refused) */
+		printf("cd: the drive refused a seek to %d: its interrupts enabled again\n", (int) lba);
+		cd_repair();
+	}
+	return 0;
+}
+
+int cd_read_now(int32_t lba, uint32_t sectors, void *dst)
+{
+	if (!cd_seek(lba) || !CdReadRetry((int) sectors, (uint32_t *) dst, CdlModeSpeed, 3))
 		return 0;
-	return CdReadSync(0, 0) >= 0;
+	return cd_read_sync() >= 0;
+}
+
+static int read_sectors(uint32_t lba, uint32_t n, void *dst)
+{
+	return cd_read_now((int32_t) lba, n, dst);
 }
 
 /* a directory's records into the level arena (the caller releases *mark),
@@ -253,19 +322,17 @@ void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll)
 	if (!buf)
 		return NULL;
 
-	CdlLOC loc;
-	CdIntToPos((int) lba, &loc);
-	CdControl(CdlSetloc, &loc, NULL);
 	int left = -1;
-	if (CdReadRetry((int) sectors, buf, CdlModeSpeed, 3)) {
+	if (cd_seek((int32_t) lba) && CdReadRetry((int) sectors, buf, CdlModeSpeed, 3)) {
 		if (poll) {
 			/* CdReadSync(1) returns the sectors still to come, and must be
 			   called regularly for CdReadRetry to retry a failed read */
-			while ((left = CdReadSync(1, NULL)) > 0)
+			while ((left = cd_poll()) > 0)
 				poll((sectors - (uint32_t) left) * SECTOR);
-		} else {
-			left = CdReadSync(0, NULL);
 		}
+		int done = cd_read_sync();           /* (the Pause after it too) */
+		if (!poll)
+			left = done;
 	}
 	if (left < 0) {
 		printf("cd: read error on %s\n", name);

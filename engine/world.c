@@ -7,6 +7,7 @@
 #include "mem.h"
 #include "qtex.h"
 #include "world.h"
+#include "zone.h"
 
 world_t world;
 
@@ -284,6 +285,7 @@ static int load_models(const char *name)
 
 int world_load(int map, int tex, int geo, int models, world_progress_fn progress)
 {
+	zone_abort();                        /* (a chunk read stopped before the arena goes) */
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
 	for (int i = 0; i < QIM_COUNT; i++)
@@ -311,7 +313,8 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 	load_step(tex_size);                 /* the pages are in VRAM */
 	uint32_t size;
 	uint8_t *f = cd_load(name, &size, progress ? load_poll : NULL);
-	if (!f || size < sizeof(qw_header) || memcmp(f, QWORLD_MAGIC, 4)) {
+	int zoned = f && size >= sizeof(qw_header) + sizeof(qw_zone_header) && !memcmp(f, QWORLD_ZONED_MAGIC, 4);
+	if (!f || size < sizeof(qw_header) || (memcmp(f, QWORLD_MAGIC, 4) && !zoned)) {
 		printf("world: bad world file %s\n", name);
 		return 0;
 	}
@@ -430,6 +433,11 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 	load_step(tex_size + wld_size);
 	if (!load_models(mdl_name))
 		return 0;
+	/* a zoned world (formats/qworld.h "zones"): the skeleton read, its
+	   world blocks empty until zone_preload makes a chunk current; the
+	   chunk arena last, under the world's cap */
+	if (zoned && !zone_map_start(f, disc_maps[map], tex))
+		return 0;
 	world.level[QL_TEXTURES] = (int8_t) tex;
 	world.level[QL_GEOMETRY] = (int8_t) geo;
 	world.level[QL_MODELS]   = (int8_t) models;
@@ -437,7 +445,8 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 
 	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, %u brush models, "
 	       "%u entities, %u models, arena %u KB\n",
-	       name, h->num_nodes, h->num_leaves, h->num_records, h->num_pieces,
+	       name, h->num_nodes, h->num_leaves,
+	       zoned ? ((const qw_zone_header *) (f + sizeof *h))->whole_records : h->num_records, h->num_pieces,
 	       h->num_bmodels ? h->num_bmodels - 1 : 0, h->num_ents, world.num_models, mem_level_used() / 1024);
 	load_step(load_total);
 	return 1;

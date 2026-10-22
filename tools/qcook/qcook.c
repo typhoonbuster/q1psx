@@ -10,6 +10,9 @@
  *                                                   (tools/qcook/game.c)
  *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
  *                                                     (tools/qcook/stream.c)
+ *   qcook zones --world <map>_g0.wld --tables <map>.zones --skeleton <out.skl>
+ *               [--resident n] [--tex4 <map>_t<N>.tx4 --chunks <out.zon>]...
+ *                                                     (tools/qcook/zones.c)
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
  * writes the files the engine loads for that map: a texture set per
@@ -434,6 +437,8 @@ int main(int argc, char **argv)
 		return cmd_menu(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "spumusic"))
 		return cmd_spumusic(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "zones"))
+		return cmd_zones(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"
@@ -445,6 +450,8 @@ int main(int argc, char **argv)
 	        "  qcook game --pak <pak0.pak> [--textures medium|high] --out <prefix>   (<prefix>_<n>.dat per model level)\n"
 	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
-	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n");
+	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n"
+	        "  qcook zones --world <wld> --tables <map.zones> --skeleton <out.skl> [--resident n]\n"
+	        "              [--tex4 <tx4> --chunks <out.zon>]...\n");
 	return 2;
 }

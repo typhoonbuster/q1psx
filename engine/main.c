@@ -44,6 +44,7 @@
 #include "ui.h"
 #include "vid.h"
 #include "world.h"
+#include "zone.h"
 
 #ifndef Q1PSX_RELEASE
 #define Q1PSX_RELEASE 0       /* 1: Quake's menu (engine/menu.c), no debug overlay,
@@ -343,6 +344,7 @@ static int load_level(int map)
 	world_ok = 0;
 	load_map = map;
 	stream_abort();                             /* (the arena is reset, the drive taken) */
+	zone_abort();
 	music_stop();                               /* one drive: the reads need it */
 	ui_conback_forget();                        /* (the map's textures over it) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
@@ -367,6 +369,14 @@ static int load_level(int map)
 		                                           voices; until then they are the file's,
 		                                           20 bytes each: a garbage reach of 0 on
 		                                           E2M7 divided by zero) */
+		if (zone_on()) {                        /* a zoned world: the spawn's zone and its
+		                                           nearest read, that zone made current */
+			int32_t eye[3];
+			for (int k = 0; k < 3; k++)
+				eye[k] = (world.has_spawn ? world.spawn[k] : 0) * CLIP_SUB;
+			eye[2] += 22 * CLIP_SUB;             /* (the view's height) */
+			zone_preload(eye);
+		}
 		stream_preload();                       /* what the spawn's surroundings want */
 		game_ws_sync();                         /* (the 2D gun's packets, read: linked) */
 		anim_reset();
@@ -474,10 +484,18 @@ static int play_trace;                     /* the play bench: the first frames' 
 
 static void run_frame(int interactive, int dump)
 {
+#ifdef Q1PSX_BENCH
+	if (world_ok)
+		zone_bench_frame(cam.pos);          /* (the bench: the view's zone read at once,
+		                                       before the frame, its cycles and the
+		                                       stream's turn) */
+#endif
 	prof_frame_reset();
 	uint32_t t0 = prof_now();
-	if (world_ok && game_active)
+	if (world_ok && game_active) {
+		zone_frame();                       /* (the world's chunks first: the drive) */
 		stream_frame();                     /* (between frames: the pools may move) */
+	}
 	if (interactive) {
 		PLAY_STEP("pad");
 		pad_t ticks[PAD_MAX_TICKS];
@@ -1300,6 +1318,137 @@ static void bench_view_ticks(const char *view)
 	game_active = 0;
 }
 
+/* the level arena's room the world takes, a zoned one's measure (§57):
+   the skeleton and the chunk arena, the stream's pool after them (the
+   world's load in all: its "world: ... arena" line) */
+static void bench_zone_ram(const char *map)
+{
+	if (zone_on())
+		printf("bench zone %s: %d zones, the skeleton %u KB + the chunk arena %u KB, the stream's pool %u KB\n",
+		       map, zone_count(), (unsigned) zone_skeleton_bytes() / 1024, (unsigned) zone_arena_bytes() / 1024,
+		       (unsigned) stream_stats.ram_size / 1024);
+	else
+		printf("bench zone %s: whole, the stream's pool %u KB\n", map, (unsigned) stream_stats.ram_size / 1024);
+}
+
+#ifndef Q1PSX_BENCH_ZONES
+#define Q1PSX_BENCH_ZONES 0   /* 1: the zones' walk (ZONES=1 scripts/bench.sh) */
+#endif
+
+/* The zones' walk (ZONES=1 scripts/bench.sh, docs/porting-notes.md §57):
+   on each zoned map (MAP=: that one), the eye taken from the player's
+   start through the map's items and monsters in their entity order at
+   running speed (320 units a second, a frame a 60th), the stream and the
+   zones' reads going on as in play (no read at once); a leg whose eye line
+   a wall cuts is jumped instead (a teleport no prefetch saw coming: its
+   late frames apart). Per map: the zone switches and the patch's cycles
+   (every patch checked against the C one), the chunk reads (their bytes,
+   the frames each took), the late events and frames (the camera in a
+   zone not in yet, drawn with the old one), the longest run of them, the
+   compactions; the frames' cycles, the switching ones' apart. */
+#define ZW_WAYPOINTS 32
+#define ZW_FRAMES    3600     /* a minute of walking a map at most */
+static void bench_zones(void)
+{
+	stream_log = 0;
+	for (int m = 0; m < world_num_maps(); m++) {
+		if (Q1PSX_BENCH_MAP[0] && strcmp(world_map_name(m), Q1PSX_BENCH_MAP))
+			continue;
+		if (!load_level(m)) {
+			printf("bench map %s FAILED to load\n", world_map_name(m));
+			continue;
+		}
+		bench_zone_ram(world_map_name(m));
+		if (!zone_on())
+			continue;
+		game_spawn();
+		game_active = 1;
+		zone_sync = 0;
+		/* the waypoints: the start, then the items and the monsters */
+		static int32_t wp[ZW_WAYPOINTS][3];
+		int nwp = 0, n = 0;
+		memcpy(wp[nwp++], pl.pm.pos, sizeof wp[0]);
+		for (int i = 2; i < num_edicts; i++)
+			n += edicts[i].inuse && (edicts[i].item_model >= 0 || edicts[i].masset >= 0);
+		int step = n > ZW_WAYPOINTS - 1 ? (n + ZW_WAYPOINTS - 2) / (ZW_WAYPOINTS - 1) : 1, k = 0;
+		for (int i = 2; i < num_edicts && nwp < ZW_WAYPOINTS; i++)
+			if (edicts[i].inuse && (edicts[i].item_model >= 0 || edicts[i].masset >= 0) && k++ % step == 0) {
+				memcpy(wp[nwp], edicts[i].origin, sizeof wp[0]);
+				wp[nwp++][2] += 24 * CLIP_SUB;      /* (on the floor: a standing player's origin) */
+			}
+		int32_t at[3];
+		memcpy(at, wp[0], sizeof at);
+		uint32_t frames = 0, units = 0, jumps = 0, late = 0, late_jump = 0, run = 0, worst = 0, bad = 0;
+		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_jump = 1u << 30;
+		const int32_t speed = 320 * CLIP_SUB / 60;
+		uint32_t reads0 = stream_stats.reads;
+		for (int w = 1; w < nwp && frames < ZW_FRAMES; w++) {
+			int32_t d[3], e0[3], e1[3];
+			for (int c = 0; c < 3; c++) {
+				d[c]  = wp[w][c] - at[c];
+				e0[c] = at[c];
+				e1[c] = wp[w][c];
+			}
+			e0[2] += 22 * CLIP_SUB;
+			e1[2] += 22 * CLIP_SUB;
+			uint32_t len = q_isqrt64((uint64_t) ((int64_t) d[0] * d[0] + (int64_t) d[1] * d[1] +
+			                                     (int64_t) d[2] * d[2]));
+			trace_t tr;
+			int nf = 1;
+			if (clip_trace(0, e0, e1, &tr) < Q_FIX_ONE) {
+				jumps++;                              /* (the eye line cut: jumped) */
+				since_jump = 0;
+			} else {
+				nf = (int) (len / (uint32_t) speed) + 1;
+				units += len / CLIP_SUB;
+			}
+			int yaw = r_atan2(d[1], d[0]);
+			for (int f = 1; f <= nf && frames < ZW_FRAMES; f++) {
+				for (int c = 0; c < 3; c++)
+					pl.pm.pos[c] = at[c] + (int32_t) ((int64_t) d[c] * f / nf);
+				memcpy(cam.pos, pl.pm.pos, sizeof cam.pos);
+				cam.pos[2] += 22 * CLIP_SUB;
+				cam.yaw = yaw;
+				cam.pitch = cam.roll = 0;
+				uint32_t sw0 = zone_stats.switches;
+				run_frame(0, 0);
+				frames++;
+				since_jump++;
+				uint32_t fc = prof_stage[PROF_FRAME];
+				fsum += fc;
+				if (fc > fmax) fmax = fc;
+				if (zone_stats.switches != sw0) {
+					swf++;
+					swsum += fc;
+					if (fc > swmax) swmax = fc;
+					bad += (uint32_t) zone_check_patch();
+				}
+				if (zone_of_leaf(zone_bench_leaf(cam.pos)) != zone_current() &&
+				    zone_of_leaf(zone_bench_leaf(cam.pos)) != (int) QZ_NONE) {
+					late++;
+					late_jump += since_jump < 120;    /* (2 s after a jump: the jump's) */
+					if (++run > worst) worst = run;
+				} else {
+					run = 0;
+				}
+			}
+			memcpy(at, wp[w], sizeof at);
+		}
+		const zone_stats_t *z = &zone_stats;
+		printf("bench zones %s: %u frames, %u units walked, %u jumps; %u switches (patch %u cycles avg, %u max; "
+		       "%u patches checked bad), %u reads (%u KB, %u frames each), %u waits for the drive; late: %u events, "
+		       "%u frames (%u after a jump), the longest run %u; %u compactions (%u KB, %u cycles); %u evictions, "
+		       "%u read errors; frames %u cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u\n",
+		       world_map_name(m), frames, units, jumps, z->switches,
+		       z->switches ? z->switch_cycles / z->switches : 0, z->switch_max, bad, z->loads, z->load_bytes / 1024,
+		       z->loads ? z->load_frames / z->loads : 0, z->waits, z->late_events, late, late_jump, worst,
+		       z->compactions, z->compact_bytes / 1024, z->compact_cycles, z->evictions, z->read_errors,
+		       frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax, stream_stats.reads - reads0);
+		game_active = 0;
+		zone_sync = 1;
+	}
+}
+
 static void bench_maps(void)
 {
 	static char names[4][16];
@@ -1313,6 +1462,7 @@ static void bench_maps(void)
 		}
 		printf("bench map %s geometry %s arena %u KB\n", world_map_name(m), level_name[world.level[QL_GEOMETRY]],
 		       mem_level_used() / 1024);
+		bench_zone_ram(world_map_name(m));
 		if (Q1PSX_BENCH_RESIDENCY) {
 			stream_log = 0;
 			bench_residency(world_map_name(m));
@@ -2535,6 +2685,13 @@ static void run_bench(void)
 	static char names[16][8];
 
 	printf("bench start\n");
+	zone_sync = 1;                              /* (a view's zone read before its frame) */
+	if (Q1PSX_BENCH_ZONES) {
+		bench_zones();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
 	if (Q1PSX_BENCH_MONSTERS) {
 		bench_monsters();
 		printf("bench done\n");

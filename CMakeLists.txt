@@ -143,16 +143,19 @@ if(Q1PSX_ENGINE_C)
 	set(_bmf_c 1)
 	set(_order_c 1)
 	set(_slow_c 1)
+	set(_zone_c 1)
 else()
 	set(_dlight_c ${Q1PSX_DLIGHT_C})
 	set(_bmf_c ${Q1PSX_BMF_C})
 	set(_order_c ${Q1PSX_ORDER_C})
 	set(_slow_c 0)
+	set(_zone_c 0)
 endif()
 target_compile_definitions(q1psx PRIVATE Q1PSX_ENGINE_C=$<BOOL:${Q1PSX_ENGINE_C}>
 	Q1PSX_BMF_C=${_bmf_c} Q1PSX_ORDER_C=${_order_c} Q1PSX_DLIGHT_C=${_dlight_c})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${_dlight_c}>)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_SLOW_C=${_slow_c}>)
+target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ZONE_C=${_zone_c}>)   # (engine/zone.s)
 
 # Headless benchmark variant (CMake preset "bench", driven by scripts/bench.sh):
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
@@ -178,6 +181,7 @@ set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map
 set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the game run this many ticks, a picture every 8")
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
+set(Q1PSX_BENCH_ZONES 0 CACHE STRING "1: the zones' walk: every zoned map walked through its items, the chunk reads, switches and late frames (bench zones lines)")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
 		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
@@ -192,7 +196,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS} Q1PSX_BENCH_MONSTERS=${Q1PSX_BENCH_MONSTERS}
 		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
-		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS})
+		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS} Q1PSX_BENCH_ZONES=${Q1PSX_BENCH_ZONES})
 	if(Q1PSX_BENCH_VIEW)
 		# groups of five numbers, one definition with no spaces (a quoted string
 		# with spaces does not survive the generator's command line)
@@ -229,6 +233,23 @@ if(_pak0_path AND EXISTS "${_pak0_path}")
 	set(PAK0_ENTRY "<file name=\"PAK0.PAK\" type=\"data\" source=\"${_pak0_path}\" />")
 else()
 	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
+endif()
+
+# The world's zones (docs/porting-notes.md §57): a map the cook split
+# (cooked/id1/<map>_g0.skl and <map>_z<N>.zon, scripts/cook.sh with
+# Q1PSX_ZONE_TABLES in local.env) goes on the disc as its skeleton
+# (<MAP>_G0.WLD) and its chunks at the build's texture level
+# (<MAP>_Z<N>.ZON); OFF, or a map left whole, its whole world. The tables
+# hold every record the PSX may draw within 1536 units (+ a margin): a
+# draw distance past it (or none) takes the whole worlds.
+option(Q1PSX_ZONES "The zoned maps' skeletons and chunks on the disc (the whole worlds when OFF)" ON)
+if(Q1PSX_DRAWDIST EQUAL 0 OR Q1PSX_DRAWDIST GREATER 1536)
+	set(_disc_zones 0)
+	message(STATUS "q1psx: the draw distance ${Q1PSX_DRAWDIST}: the whole worlds on the disc (the zones hold 1536)")
+elseif(Q1PSX_ZONES)
+	set(_disc_zones 1)
+else()
+	set(_disc_zones 0)
 endif()
 
 # The music (docs/porting-notes.md §48, §52): Quake's CD tracks 2..11 as
@@ -268,6 +289,8 @@ endif()
 # built, after the cook: scripts/cd_image.cmake); globbed here to rebuild
 # the image when a manual cook changes them, and for the configure's note.
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
+                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.skl
+                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*.zon
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tx4
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.mdl
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.snd
@@ -295,7 +318,7 @@ set(_cd_xml ${CMAKE_CURRENT_BINARY_DIR}/cd_image.xml)
 add_custom_command(
 	OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/q1psx.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx.cue
 	COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DOUT=${_cd_xml}
-	        -DTEXTURES=${Q1PSX_TEXTURES} -DMUSIC=${_disc_music} -DPAK0=${_pak0_path}
+	        -DTEXTURES=${Q1PSX_TEXTURES} -DMUSIC=${_disc_music} -DZONES=${_disc_zones} -DPAK0=${_pak0_path}
 	        -DSDK_VERSION=${PSN00BSDK_VERSION} -P ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake
 	COMMAND ${MKPSXISO} -y -q -o q1psx.bin -c q1psx.cue ${_cd_xml}
 	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/iso/iso.xml

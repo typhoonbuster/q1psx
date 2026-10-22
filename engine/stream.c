@@ -23,6 +23,7 @@
 #include "snd.h"
 #include "stream.h"
 #include "world.h"
+#include "zone.h"
 
 stream_stats_t stream_stats;
 int            stream_log;
@@ -141,12 +142,7 @@ static uint32_t frame_no;
 /* a synchronous read of whole sectors (boot, the loading screen) */
 static int read_sectors(int32_t lba, int n, void *dst)
 {
-	CdlLOC loc;
-	CdIntToPos(lba, &loc);
-	CdControl(CdlSetloc, &loc, 0);
-	if (!CdReadRetry(n, (uint32_t *) dst, CdlModeSpeed, 3))
-		return 0;
-	return CdReadSync(0, 0) >= 0;
+	return cd_read_now(lba, (uint32_t) n, dst);
 }
 
 static int stream_level = -1;   /* the model level whose STREAM_<n>.DAT is read */
@@ -770,10 +766,8 @@ static int sound_read_piece(void)
 		n = STAGE_SECTORS;
 	sread.sectors = (uint16_t) n;
 	sread.step    = SR_READ;
-	CdlLOC loc;
-	CdIntToPos(base_lba + (int32_t) as->d.sector + sread.sector, &loc);
-	CdControl(CdlSetloc, &loc, 0);
-	return CdReadRetry(n, (uint32_t *) stage, CdlModeSpeed, 3);
+	return cd_seek(base_lba + (int32_t) as->d.sector + sread.sector) &&
+	       CdReadRetry(n, (uint32_t *) stage, CdlModeSpeed, 3);
 }
 
 /* the piece read: its samples to their place (the SPU's DMA: whole 64-byte
@@ -845,7 +839,7 @@ static int sound_step(void)
 	if (sread.step == SR_WAIT)
 		return 0;
 	if (sread.step == SR_READ) {
-		int left = CdReadSync(1, 0);          /* (also runs CdReadRetry's retries) */
+		int left = cd_poll();          /* (also runs CdReadRetry's retries) */
 		if (left > 0)
 			return 0;
 		if (left < 0) {
@@ -864,8 +858,9 @@ static int sound_step(void)
 		sound_done(1, 0);
 		return 1;
 	}
-	if (!music_read_ok(STAGE_SECTORS))       /* (the SPU music's refill first) */
-		return 0;
+	if (!music_read_ok(STAGE_SECTORS) || zone_drive_wanted() || !cd_ready())   /* (the SPU
+		return 0;                            music's refill first, a world chunk's read:
+		                                     engine/zone.c; the last read's Pause done) */
 	if (!sound_read_piece()) {
 		sound_done(0, 0);
 		return 1;
@@ -957,11 +952,8 @@ static void start_read(int a)
 {
 	asset_t *as = &assets[a];
 	res_t *r = &res[as->res];
-	CdlLOC loc;
-	CdIntToPos(base_lba + (int32_t) as->d.sector, &loc);
-	CdControl(CdlSetloc, &loc, 0);
 	int n = (int) ((as->d.size + QST_SECTOR - 1) / QST_SECTOR);
-	if (!CdReadRetry(n, (uint32_t *) r->ram, CdlModeSpeed, 3)) {
+	if (!cd_seek(base_lba + (int32_t) as->d.sector) || !CdReadRetry(n, (uint32_t *) r->ram, CdlModeSpeed, 3)) {
 		read_done(a, 0);
 		return;
 	}
@@ -1001,7 +993,8 @@ static int next_wanted(void)
 int stream_reading(void)
 {
 	return reading >= 0 || (sread.a >= 0 && (sread.step == SR_READ ||
-	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK))));
+	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK)))) ||
+	       zone_reading();                   /* (a world chunk's read: the drive's too) */
 }
 
 uint8_t *stream_stage(void)
@@ -1051,8 +1044,9 @@ void stream_abort(void)
 {
 	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ)) {
 		CdReadBreak();                        /* (the drive paused, waited for, before the */
-		CdReadSync(0, 0);                     /*  next command: music.c music_stop's)       */
+		cd_read_sync();                       /*  next command: music.c music_stop's)       */
 		CdControlB(CdlPause, 0, 0);
+		cd_busy();
 		reading = -1;
 	}
 	lend_at = 0;                              /* (asked for again at the map's start) */
@@ -1148,12 +1142,14 @@ void stream_frame(void)
 	if (frame_no % PASS_FRAMES == 0 || jump)
 		pass();
 	if (reading >= 0) {                       /* a model's read */
-		int left = CdReadSync(1, 0);          /* (also runs CdReadRetry's retries) */
+		int left = cd_poll();          /* (also runs CdReadRetry's retries) */
 		if (left > 0)
 			return;
 		read_done(reading, left == 0);
 	}
 	if (sread.a >= 0 && sread.step != SR_WAIT && !sound_step())   /* a sound's, piece by piece */
+		return;
+	if (zone_drive_wanted())                 /* (a world chunk's read goes first: engine/zone.c) */
 		return;
 	if (waiting < 0) {
 		int a = next_wanted();
@@ -1166,8 +1162,9 @@ void stream_frame(void)
 		waiting = a;
 	}
 	if (!music_read_ok(assets[waiting].d.kind == QSTK_SOUND ? STAGE_SECTORS
-	                   : (int) ((assets[waiting].d.size + QST_SECTOR - 1) / QST_SECTOR)))
-		return;                               /* (the music's ring too low: its refill first) */
+	                   : (int) ((assets[waiting].d.size + QST_SECTOR - 1) / QST_SECTOR)) || !cd_ready())
+		return;                               /* (the music's ring too low: its refill first;
+		                                         the last read's Pause not done: cd.h) */
 	int a = waiting;
 	waiting = -1;
 	if (assets[a].d.kind != QSTK_SOUND)

@@ -18,12 +18,21 @@
 #                <Quake>/rerelease/id1/music); default: next to pak0. ffmpeg
 #                resamples them for the SPU music.
 #   COOK_MUSIC   0 skips the music (default 1 when the directory exists)
+#   Q1PSX_ZONE_TABLES  optional — the level-chunks analysis' zone tables
+#                (<dir>/<map>.zones, e.g. .../zones/pvs_1536_96: derived
+#                from Quake's data, never in the repo): each map split into
+#                its skeleton and zone chunks (docs/porting-notes.md §57),
+#                or left whole where that saves no RAM. Unset: every map
+#                whole, as before
 #
 # Output, per map (formats/qlevels.h: 0 low, 1 medium, 2 high):
 #   cooked/id1/<map>_t<N>.tx4   QTX7 4-bit textures (1, 2)        -> disc <MAP>_T<N>.TX4
 #   cooked/id1/<map>_g0.wld     QWVE world, low geometry          -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_m0.mdl     QMM1 its own models, low          -> disc <MAP>_M0.MDL
 #   cooked/id1/<map>.snd        QSB2 its sound bank               -> disc <MAP>.SND
+# and with Q1PSX_ZONE_TABLES, a map split into zones (formats/qworld.h):
+#   cooked/id1/<map>_g0.skl     QWVZ its skeleton                 -> disc <MAP>_G0.WLD
+#   cooked/id1/<map>_z<N>.zon   QZN1 its chunks, textures N (1, 2) -> disc <MAP>_Z<N>.ZON
 # the game data (the guns, the projectiles, the HUD; formats/qgame.h):
 #   cooked/id1/game_0.dat       QGM8, low                         -> disc GAME_0.DAT
 # the release menu's (formats/qsound.h, formats/qmenu.h):
@@ -66,6 +75,7 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
+      cooked/id1/*.skl cooked/id1/*.zon \
       cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat
 rm -rf cooked/xa                    # (the XA streams and their carousels: none since §52)
 LOGS=$(mktemp -d)
@@ -106,6 +116,23 @@ for m in $MAPS; do
 done | xargs -P "$(nproc)" -n 3 bash -c 'cook_one "$0" "$1" "$2"'
 
 echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures medium and high, the geometry and the models low -> $ROOT/cooked/"
+
+# the world's zones (docs/porting-notes.md §57): each map with a table split
+# into its skeleton and its chunks at both texture levels (their UVs on that
+# set's tiles: after the textures' jobs), or left whole where that saves no
+# RAM (the cook says which)
+if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
+	export Q1PSX_ZONE_TABLES
+	for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c \
+	    't="$Q1PSX_ZONE_TABLES/{}.zones"; [ -f "$t" ] || exit 0
+	     tools/qcook/qcook zones --world cooked/id1/{}_g0.wld --tables "$t" --skeleton cooked/id1/{}_g0.skl \
+	         --tex4 cooked/id1/{}_t1.tx4 --chunks cooked/id1/{}_z1.zon \
+	         --tex4 cooked/id1/{}_t2.tx4 --chunks cooked/id1/{}_z2.zon > "$LOGS/{}_z.log" 2>&1 \
+	     || { echo "cook FAILED: zones {}"; cat "$LOGS/{}_z.log"; exit 1; }'
+	echo "zones: $(ls cooked/id1/*_g0.skl 2>/dev/null | wc -l) of $(echo $MAPS | wc -w) maps split ($Q1PSX_ZONE_TABLES)"
+else
+	echo "zones: none, every map whole (Q1PSX_ZONE_TABLES in local.env names the tables)"
+fi
 
 # the music: Quake's CD tracks 2..11 (worldspawn "sounds"), from the
 # rerelease's tracks, resampled once by ffmpeg (22.05 kHz; the menu's theme,
