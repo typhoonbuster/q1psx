@@ -7952,7 +7952,202 @@ Quake's data goes in the repo.
   without a depth test, in the cook's order. Where a part passes behind
   another (the chainsaw behind the legs, seen from the left), it can show
   over it. A depth sort of a model's triangles (an ordering table per
-  model, the GTE's AVSZ3) would fix it for every monster: proposed apart.
+  model, the GTE's AVSZ3) would fix it for every monster: proposed apart
+  (done: §63).
+
+## §63 — The monsters' triangles sorted by depth (2026-10-22)
+
+- **The ask** (§62's proposal, taken up the same day): §62's comparisons
+  left one fault the hand model cannot fix. The PS1 has no depth buffer,
+  and a model's triangles went out in the cook's record order (each
+  prepended to the world's bucket: the last emitted drawn first). Where a
+  part passes behind another, it shows over it: the Ogre's vest over its
+  near arm, the chainsaw's motor over its body. Quake draws its models
+  z-buffered. The fix asked: sort each model's triangles by depth the
+  PS1's way, in hand-written asm, with a small ordering table per model;
+  the painter's order between the model and the world around it as it
+  was; the view model (ordered by the cook, §53) and the brush models
+  (their BSP walk) as they were.
+
+### 63.1 The ordering table
+
+- **One per monster drawn:** R_SORT_N = 32 nodes, 0-word tags, taken
+  at the packet pointer (128 bytes), linked as a ring (node j -> node
+  j - 1).
+- **A triangle's bucket:** AVSZ3 of its corners' SZ, the vertex cache's
+  (`OTZ = ZSF3 x (SZ1 + SZ2 + SZ3) >> 12`); OTZ / 4 mod 32 picks the
+  node (`andi` with `31 << 2`: the node's byte offset). The triangle is
+  prepended to its node's chain, so within a bucket the last emitted is
+  drawn first.
+- **The scale** (rlist.c `ent_sort`, per entity):
+  - the depths a monster's vertices can take: its origin's depth +-
+    rho, with rho = 1.5 x its cooked radius (about the origin, over every
+    frame, vertex units; 1.5 is the view matrix's scale) + 8 for the
+    roundings;
+  - ZSF3 = 16384 x 30 / (6 rho) puts that range, summed over three
+    corners, on 30 buckets; at most 1365, so that OTZ stays within 16 bits
+    with all three corners at SZ 65535;
+  - the range starts anywhere on the ring: RE_ZNEAR is the bucket of its
+    near end (3 x max(0, depth - rho)). 30 buckets plus the roundings' 2
+    keep the range from meeting itself;
+  - the origin's depth by the GTE (one MVMVA): rl_ent_matrix leaves the
+    view's rotation and translation in it. One division a monster a frame
+    (ZSF3).
+- **The splice:** the nearest bucket's node takes the world's chain as
+  it stood when the model began (fp); the model's chain starts at the
+  farthest bucket's node (the nearest's predecessor on the ring). The
+  table is drawn whole there, among the world's faces and the leaf's
+  items where the model always was.
+- **The slow path** (near or big triangles: the clip, the subdivision):
+  its pieces go into the bucket of the triangle they cut. fp, the link it
+  prepends to, is that bucket's head before the call and is taken back
+  after it, in the asm and in the C engine's `r_slow` (RS_OT_HEAD).
+- **The texture window:** a streamed model's two images (the skin's
+  halves, §40) both use "no window" (stream.c). The sorted loop's texture
+  changes close no run (de's did, a window command each). dm_exit_1 gives
+  the table its one window command, drawn first. That is one window
+  command fewer per monster (two runs: two commands before, one now).
+- **Every vertex's SZ** goes to the cache. de stored it only for the
+  careful test.
+
+### 63.2 Which models
+
+- The cook flags each monster's body: QSTM_SORT in `qst_model.flags`
+  (formats/qstream.h), set for the `body` the cook already passes to the
+  hand cut (§62). These are the nine kinds' bodies, dead ones too (the
+  same model). They are triangles only, which the sorted loop relies on.
+- Heads, gibs, items, flames, projectiles, the view model and the brush
+  models are drawn as before. The flag can go on any streamed model.
+
+### 63.3 The asm (engine/r_world.s)
+
+- **draw_model:** RE_SORT (rlist.h; set by `ent_sort`) branches to
+  dm_sort, tested together with RE_VIEW. An unsorted alias model's path
+  has the same instruction count as before.
+- **dm_sort:** ZSF3 (ctc2; nothing else uses AVSZ), the ring's 32 words
+  in 8 rounds of 4 stores, node 0 closed onto node 31, the nearest node
+  onto fp, the chain's start kept in the scratchpad (SP_SORTHEAD,
+  0x3bc). Then ds_records, and dm_exit_1 as for any model.
+- **ds_records:** RECLOOP de's loop with deo1's draw distance (its cull
+  and fog; their thresholds `ds_o_dcull` / `ds_o_fogz`, patched by
+  render.c with deo1's). It differs from de in these ways:
+  - no face-stamp test (a model's records are always stamped);
+  - no run closed at a texture change;
+  - SZ always stored;
+  - triangles only.
+- **The emit:** the corners' xy go into the GTE by lwc2 for the NCLIP,
+  then from there into the packet by swc2. de takes them through the
+  CPU's registers (lw, mtc2, sw): this costs 4.8 cycles less a triangle,
+  culled or not. For the triangles turned toward the eye: lwc2 of the
+  three SZ, AVSZ3 (after the xy's swc2, so that no GTE register is read
+  while it runs), andi, addu, the node's load and store.
+- **Registers:** gp holds the table; s1, s2 and ra are temporaries. These
+  are the walk's dead ones at a leaf (pop_1 reloads s1 and s2, every
+  block sets gp, SP_DMRA keeps ra). The slow path keeps s1 (the node
+  across the call) and gp; the C engine's call saves gp as before.
+- **The distance off** (DRAWDIST=0, a bench A/B): render.c sets the
+  sorted loop's tests at their most (0x7fff). A record nearer than 32767
+  view units (5461 world units) is drawn; past that it gets the fogged
+  transform with every factor at 128, its colours unchanged.
+- **The first version** took the xy through the CPU, as de does. It gave
+  the same frames (the 128 views' and the game bench's hashes the same)
+  and cost about three times as much: the 28 views +73 k cycles in all
+  against +21 k (before §64), the game bench +4.0..4.7 k a frame against
+  +0.8..1.3 k.
+
+### 63.4 Checked
+
+- tools/hazcheck at every link (clean).
+- START's 12 views against the base (b14c05a built beside, before §64
+  was merged; the engine is the same since):
+  - 8 are identical;
+  - 4 changed (the crucified zombies): the same packets in another order,
+    and one window command fewer a zombie;
+  - pktview's pictures: 0, 0, 1 and 1 pixels differ.
+- **The 128 spawn views** (`BENCH_MAPS=1 HASHONLY=1`, against master
+  c4063b4 built beside, §64's nine hand-made monsters in both):
+  - 100 are identical, wherever no monster is in view;
+  - 28 changed. A new "Q" line per dump (vid.c: the packets' hashes
+    summed, the window commands left out and counted) shows every one of
+    the 28 holds the same packets as a set, with 1-4 window commands
+    fewer;
+  - the views that changed: START.v0, E1M2.v0, E1M4.v0, E1M5.v0 v3,
+    E1M6.v0, E1M8.v0 v1 v3, E2M2.v0, E2M6.v0, E2M7.v0, E3M2.v0, E3M3.v0
+    v1, E3M4.v0 v2, E3M6.v0 v1, E3M7.v2 v3, E4M3.v0 v1 v3, E4M4.v0,
+    E4M5.v0, E4M6.v3, E4M8.v0.
+- **The game bench:** 15 of its 23 dumps are reordered (START's zombies),
+  the same packet sets; the 8 others are identical.
+- **`MONSTERS=1 MAP=E1M8`** (before §64): its 12 dumps are reordered, the
+  same packet sets. Its Ogre is far there: 0-16 pixels change.
+- **Eight views around E1M8's Ogre** at 90 units (`MAP=E1M8 BENCH_MAPS=1
+  VIEW=1306,488,46,180,0,...`, the Ogre at 1216 488 24, facing 270; the
+  same results before and after §64's merge):
+  - pktview's pictures: from both sides, the near arm is now over the vest
+    and the far arm where they had shown over it;
+  - 15 of the 20 views reordered with the same packet sets, 4 identical
+    (no monster in view);
+  - one (v13, its back left: 10 monsters in view, the arena near its
+    limit) lost a far small model of 3 records, 4 triangles shown, the
+    pixels unchanged. R_MODEL_ROOM (§43) left it out sooner because the
+    rings' 120 bytes a monster had taken the room.
+- **The sheets** (quakespasm-q1psx/mobs, outside the repo:
+  `mview.draw_psx(..., sort=N)` reproduces the engine's table, ZSF3,
+  ring and order; `sheets.py --sorted=16,32,64`):
+  - Reference / the records' order / sorted, eight sides of eight frames
+    (stand1, walk5, run3, swing6, smash9, shoot3, pain3, death14);
+  - the sorted columns match the Reference where the records' order
+    showed the far parts;
+  - against 64 buckets, summed over the 64 views: the records' order
+    differs by 150862 pixels (330 x 330 cells), 16 buckets by 25669, 32 by
+    5905. 32 kept.
+- **The C engine** (`ENGINE_C=1`, r_world.s asm in both; before §64): the
+  128 views' hashes are the asm's.
+- **The interpreter** (`EMU_ARGS=-interpreter`, before §64): the twenty
+  E1M8 views (with the Ogre's eight) give the dynarec's hashes.
+
+### 63.5 What it costs
+
+- **Cycles** (PCSX-Redux, the views' 16-frame averages, against master
+  c4063b4):
+  - the 28 spawn views with monsters: +16.8 k cycles in all, -0.08..+0.23
+    % a view; all 128 views +0.04 %. A monster drawn costs -279..+880
+    cycles, most 200-600 at the spawn views' distances. Where it is less
+    than before, the xy through the GTE saved more on the triangles
+    turned away than the sort cost on the others;
+  - the Ogre alone at 90 units (E1M8.v16, its right side): +594 (+0.18 %);
+    eight monsters close (v12): +4436 (+0.31 %);
+  - the 100 views with none: within the noise (-464..+463);
+  - the game bench (START's zombies in view): +0.65..+0.98 k a frame
+    (+0.06..+0.09 %), its walks +0.02 %;
+  - `MONSTERS=3`'s minute of fight on E1M1 (before §64, 0.9 monsters drawn
+    a frame on average in its first 300 ticks, then none): +482 a frame
+    there, the rest within the noise;
+  - `MONSTERS=2`'s crowd draws no frame (the entities' tick alone): not
+    concerned.
+- **RAM:**
+  - code and data: the release's stack room 60776 -> 58504 B (-2272),
+    the default build's 48424 -> 46024;
+  - the packet arena: 128 bytes a monster drawn, less the window command
+    saved (8): 120;
+  - the scratchpad's word 0x3bc;
+  - r_ent_t's two pad words (zsf, znear).
+
+### 63.6 Left
+
+- **The ring's room in the arena:** 120 bytes a monster. In a view near
+  the arena's end, R_MODEL_ROOM leaves a far model out sooner (one case
+  in the 148 views measured). A ring sized by the model's distance, with
+  fewer buckets far away, would also cost fewer cycles; it needs the mask
+  in a register.
+- **The same xy trick for de's triangles** (every other alias model, the
+  gun, the brush models): identical frames, about 4.8 cycles a triangle.
+  Proposed apart.
+- **A finer range:** the radius is over every frame (the death poses
+  too). A radius per frame from the cook would give finer buckets for the
+  same 32, but 32 and 64 already differ little on the sheets.
+- **Parts that cut through each other:** a triangle sort cannot split
+  them, where Quake's z-buffer decides per pixel. The sheets show few
+  such places on the Ogre.
 
 ## §64 — The monsters by hand: the other eight (2026-10-22)
 

@@ -1674,3 +1674,28 @@ followed by R0-R4.
     - the spawn views +1.6 % (E1M8.v0 from 2 to 3 vblanks, none crossing
       one);
     - the crowd's frames unchanged.
+- **The monsters' triangles sorted by depth** (§62's proposal). §63:
+  - the PS1 drew a model's triangles in the cook's order with no depth
+    test, so a far part showed over a near one (the Ogre's vest over its
+    near arm, from either side);
+  - each monster drawn now has its own ordering table: 32 nodes in the
+    packet arena, a ring. Each triangle goes into the bucket of its
+    corners' mean depth (the GTE's AVSZ3, its scale from the model's
+    radius). The table is spliced whole into the world's bucket where the
+    model always was;
+  - hand-written asm in r_world.s: dm_sort and ds_records, deo1's loop for
+    triangles only. The corners' xy go through the GTE (lwc2 for the
+    NCLIP, swc2 to the packet), which pays for most of the sort;
+  - the cook flags the nine kinds' bodies (QSTM_SORT). Heads, items,
+    projectiles, the view model and the brush models are drawn as before;
+  - checked:
+    - 100 of the 128 spawn views identical; the 28 with monsters hold the
+      same packets reordered (the dumps' new set hash, the "Q" line);
+    - the C engine's frames are the asm's;
+    - the Ogre's sheets and E1M8's close views show the near parts over
+      the far ones;
+  - the cost:
+    - -279..+880 cycles a monster drawn (the 28 views +0.04 % over all
+      128), +594 for the Ogre alone at 90 units;
+    - 120 bytes of the packet arena a monster;
+    - 2.3 KB of code.
