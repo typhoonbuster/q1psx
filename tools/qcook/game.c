@@ -2884,6 +2884,8 @@ static void cut_image(const image *im, int x0, int x1, buf_t *pix, uint16_t *w, 
    any more leave the frames (the RAM pool's bytes, the expansion's work).
    Returns 1 with *out filled (its own arrays), 0: the model as it is;
    orig (m->nverts entries) receives each kept vertex's index in m. */
+static int reduce_finish(const mdl_t *m, int (*tris)[4], int left, mdl_t *out, int *orig);
+
 static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out, int *orig)
 {
 	double keep, err;
@@ -2917,6 +2919,13 @@ static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out, 
 	free(pos);
 	free(uv);
 	free(seam);
+	return reduce_finish(m, tris, left, out, orig);
+}
+
+/* a reduced model from its triangles: the vertices they still use, renumbered
+   in order, the others out of the frames; orig[] each one's index in m */
+static int reduce_finish(const mdl_t *m, int (*tris)[4], int left, mdl_t *out, int *orig)
+{
 	int *map = xmalloc((size_t) m->nverts * sizeof *map), nv = 0;
 	for (int v = 0; v < m->nverts; v++)
 		map[v] = -1;
@@ -2948,6 +2957,92 @@ static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out, 
 	}
 	free(map);
 	return 1;
+}
+
+/* ------------------------------------------- the monsters by hand (§62) -- */
+
+/* A monster's body rebuilt by hand from Quake's own model (2026-10-22: simplified by hand from Quake's own models, the guns' way): half-edge
+   collapses u -> v (u's triangles take v, the edge's own two go), in the
+   table's order, each chosen one at a time against every frame of the
+   model (the moved corner within 3 units of the new surface, its skin
+   within 4 texels: docs/porting-notes.md §62), the parts that carry the
+   look kept whole (the head, the hands, the feet, a weapon); the triangles
+   no view of any frame shows dropped. The same model at every level (no
+   decimation). */
+typedef struct {
+	const char     *file;
+	const uint16_t (*cuts)[2];
+	int             ncuts;
+	const uint16_t *drop;          /* the file's triangles no view shows */
+	int             ndrop;
+} mob_hand;
+
+/* progs/ogre.mdl: 326 -> 266 triangles, 169 -> 140 vertices; the grenade
+   launcher (0-19), the head, the hands and the feet's soles whole */
+static const uint16_t OGRE_CUTS[][2] = {
+	{ 140, 153 }, { 154, 153 }, { 38, 42 }, { 157, 67 }, { 45, 41 }, { 32, 49 }, { 23, 51 }, { 74, 73 },
+	{ 33, 35 }, { 104, 105 }, { 103, 114 }, { 113, 106 }, { 60, 117 }, { 137, 136 }, { 65, 66 }, { 64, 109 },
+	{ 85, 110 }, { 123, 122 }, { 41, 40 }, { 148, 168 }, { 59, 129 }, { 69, 68 }, { 57, 56 }, { 161, 101 },
+	{ 135, 102 }, { 70, 71 }, { 20, 50 }, { 67, 139 }, { 163, 68 },
+};
+static const uint16_t OGRE_DROP[] = { 110, 294 };
+
+static const mob_hand MOBS[] = {
+	{ "progs/ogre.mdl", OGRE_CUTS, GUN_N(OGRE_CUTS), OGRE_DROP, GUN_N(OGRE_DROP) },
+};
+
+static const mob_hand *mob_hand_find(const char *file)
+{
+	if (getenv("QCOOK_NOHAND"))                   /* (the decimated one: an A / B) */
+		return NULL;
+	for (int i = 0; i < GUN_N(MOBS); i++)
+		if (!strcmp(MOBS[i].file, file))
+			return &MOBS[i];
+	return NULL;
+}
+
+/* the model a hand table makes, as stream_reduce gives one */
+static int mob_hand_reduce(const mdl_t *m, const mob_hand *h, mdl_t *out, int *orig)
+{
+	int (*tris)[4] = xmalloc((size_t) m->ntris * sizeof *tris);
+	uint8_t *alive = xmalloc((size_t) m->ntris);
+	memcpy(tris, m->tris, (size_t) m->ntris * sizeof *tris);
+	memset(alive, 1, (size_t) m->ntris);
+	for (int i = 0; i < h->ndrop; i++) {
+		if (h->drop[i] >= m->ntris)
+			die("%s: the hand table drops triangle %d of %d", h->file, h->drop[i], m->ntris);
+		alive[h->drop[i]] = 0;
+	}
+	for (int i = 0; i < h->ncuts; i++) {
+		int u = h->cuts[i][0], v = h->cuts[i][1], edge = 0;
+		if (u >= m->nverts || v >= m->nverts)
+			die("%s: the hand table's cut %d -> %d past its %d vertices", h->file, u, v, m->nverts);
+		for (int t = 0; t < m->ntris; t++) {
+			if (!alive[t])
+				continue;
+			int hu = 0, hv = 0;
+			for (int k = 1; k < 4; k++) {
+				hu |= tris[t][k] == u;
+				hv |= tris[t][k] == v;
+			}
+			if (hu && hv) {
+				alive[t] = 0;                     /* the edge's own */
+				edge = 1;
+			} else if (hu) {
+				for (int k = 1; k < 4; k++)
+					if (tris[t][k] == u)
+						tris[t][k] = v;
+			}
+		}
+		if (!edge)
+			die("%s: the hand table's cut %d -> %d is not an edge there", h->file, u, v);
+	}
+	int left = 0;
+	for (int t = 0; t < m->ntris; t++)
+		if (alive[t])
+			memmove(tris[left++], tris[t], sizeof tris[0]);
+	free(alive);
+	return reduce_finish(m, tris, left, out, orig);
 }
 
 static void stream_reduce_free(mdl_t *r)
@@ -3203,9 +3298,10 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 	const mdl_t *m = &q->src.mdl;
 	mdl_t red[3];
 	int *orig[3], nv[3], reduced[3];
+	const mob_hand *hand = body ? mob_hand_find(q->file) : NULL;
 	for (int l = 0; l < 3; l++) {
 		orig[l] = xmalloc((size_t) m->nverts * sizeof *orig[l]);
-		reduced[l] = stream_reduce(m, l, body, &red[l], orig[l]);
+		reduced[l] = hand ? mob_hand_reduce(m, hand, &red[l], orig[l]) : stream_reduce(m, l, body, &red[l], orig[l]);
 		if (!reduced[l]) {                        /* the model as it is */
 			red[l] = *m;
 			for (int v = 0; v < m->nverts; v++)
@@ -3252,8 +3348,8 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 		memset(&out[l], 0, sizeof out[l]);
 		cook_compact(q, &lv, &out[l]);
 		if (reduced[l])
-			printf("qcook: %-22s %s: %d of %d tris, %d of %d verts\n", q->file, level_name[l], lv.ntris,
-			       m->ntris, lv.nverts, m->nverts);
+			printf("qcook: %-22s %s: %d of %d tris, %d of %d verts%s\n", q->file, level_name[l], lv.ntris,
+			       m->ntris, lv.nverts, m->nverts, hand ? " (by hand)" : "");
 		free(lv.st);
 		free(lv.tris);
 		free(tv);

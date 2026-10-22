@@ -6746,3 +6746,72 @@ lines):
   - next, the skeleton: the PVS rows per zone, the clip hulls and nodes
     where the player can be — the RAM wanted for the streamed
     assets is there too.
+
+## §62 — The monsters by hand: the Ogre first (2026-10-22)
+
+- **The ask:** the cooked monsters not good enough: every monster rebuilt by hand from Quake's
+  own model, as the guns were, the grenade thrower first, each shown on Reference (Quake at full
+  resolution), Before (the cooked model) and After (the rebuilt one) sheets. The grenade thrower
+  is taken to be the Ogre (`progs/ogre.mdl`: its grenade launcher, its
+  chainsaw).
+- **What the cook did:** a streamed monster's body was decimated
+  automatically (`stream_reduce`: keep a quarter, error bound 128). The
+  Ogre came out at 194 of its 326 triangles and 103 of its 169 vertices.
+  The collapses fell on what carries the look: the back of the skull went
+  to a spike in profile, the grenade launcher in the left hand to a flat
+  shard (half its vertices gone), the hands and the feet thinner.
+- **What the original holds** (every frame counted, 147 of them):
+  - only 2 of its triangles are never seen (z-buffered renders from 26
+    directions at two distances, every 4th frame);
+  - no vertex can go without moving the surface by at least 0.8 unit in
+    some frame. 22 can go within 2 units, 72 within 3. Quake's model is
+    lean already: unlike the guns (§54) there are no redundant sections to
+    drop for free.
+- **The hand cut** (`tools/qcook/game.c` `MOBS`, `OGRE_CUTS`, `OGRE_DROP`):
+  - half-edge collapses u -> v, chosen one at a time. A collapse's cost is
+    its worst frame: the moved corner's distance to the new surface, and
+    the skin's shift where the corner was (frame 0's texel against what the
+    new triangles give there);
+  - the cheapest went first, each within 3 units and 4 texels, none
+    flipping a triangle in any frame;
+  - the parts that carry the look are kept whole: the grenade launcher
+    (vertices 0-19), the head, both hands, the feet's soles;
+  - the cuts stop when the next would pass the bounds: 29 collapses, plus
+    the 2 unseen triangles;
+  - the result: **266 triangles, 140 vertices**, the same at every model
+    level (no decimation). `QCOOK_NOHAND=1` cooks the decimated model again
+    (an A / B).
+- **The comparison** (the scratchpad's renderer, not in the repo):
+  - Reference: Quake's model with its full skin (ultra), perspective-
+    correct, z-buffered, at 640x480;
+  - Before and After: the cooked streamed assets drawn the PS1's way at
+    320x240: affine texels, the records' order (each primitive prepended,
+    the last emitted drawn first), NCLIP's back faces left out, no depth
+    buffer, the skin halves at the build's resolution (high);
+  - eight sides of eight frames (stand, walk, run, the chainsaw's swing and
+    smash, the grenade, a pain, the death). The After matches the Reference
+    where the Before broke: the skull, the launcher, the hands, the feet,
+    the dead body.
+- **In the engine:** `MONSTERS=1 MAP=E1M8` with both cooks. Same monster
+  states, the Ogre's dumps differ (its model), no stream error.
+- **What it costs** (the stream's RAM; the triangles drawn):
+  - the Ogre's asset goes 82.7 -> 105.5 KB, its frames 60.6 -> 82.3 KB
+    (140 vertices x 147 frames x 4 B); its group (the model, its head, its
+    sounds) 136 -> 158 KB; an Ogre draws 266 triangles instead of 194;
+  - the residency report (`BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`) was run on
+    the 32 maps with both cooks. The maps whose pool has room do not
+    change. On the tight ones with Ogres, a monster in the player's PVS
+    lacks its model at more spots:
+    - E3M4 (pool 218 KB): 5 of 29 spots, 0 before;
+    - E3M6 (221 KB): 1, 0 before;
+    - E2M3 (324 KB): 1, 0 before;
+    - E2M7 (260 KB): 2, 1 before;
+    - over every map, 11 against 3.
+
+    The zones' branch (§57, not merged) gives the tight maps' pools more
+    room; until then the faithful Ogre costs these spots.
+- **Left as it was, seen on both:** the PS1 draws a model's triangles
+  without a depth test, in the cook's order. Where a part passes behind
+  another (the chainsaw behind the legs, seen from the left), it can show
+  over it. A depth sort of a model's triangles (an ordering table per
+  model, the GTE's AVSZ3) would fix it for every monster: proposed apart.

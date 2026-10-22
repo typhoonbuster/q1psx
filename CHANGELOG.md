@@ -1559,3 +1559,16 @@ followed by R0-R4.
     zones of 64 KB would free 250 KB;
   - the zone tables for the cook are ready outside the repo. The
     implementation follows on its own branch.
+- **The monsters by hand: the Ogre first** (the monsters rebuilt by hand from Quake's own models, the Ogre first). §62:
+  - the cook's automatic decimation had turned the Ogre's skull into a
+    spike in profile and its grenade launcher into a flat shard;
+  - rebuilt from Quake's own model: 29 collapses picked one at a time
+    against every frame (each under 3 units and 4 texels), the head, the
+    hands, the launcher and the feet kept whole, the 2 never-seen
+    triangles gone: 266 triangles, 140 vertices (Quake's 326 / 169, the
+    old 194 / 103);
+  - compared Reference / Before / After on 8 sides of 8 frames: the After
+    matches Quake where the Before broke;
+  - the cost: 23 KB more in the stream's pool. On the tightest maps with
+    Ogres, a visible monster lacks its model at a few more spots (E3M4: 5
+    of 29).
