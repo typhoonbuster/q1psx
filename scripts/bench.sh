@@ -51,7 +51,11 @@
 #         alone (SAMPLE=1: its PC samples, "samples crowd"); MONSTERS=3
 #         the crowd, then a minute of fight drawn (the player fires
 #         rockets turning round): "mon fight" lines (the stack's
-#         high-water mark, the edicts).
+#         high-water mark, the edicts); MONSTERS=4 the map cleared
+#         (MAP=, default E1M3: each monster in turn, the player on a spot
+#         in its sight, rockets, frames drawn): "clear" lines; MONSTERS=5
+#         from MAP (E1M1) each map cleared, then its exit taken to the next
+#         map as a player's, to the episode's end.
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds

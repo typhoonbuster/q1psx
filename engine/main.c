@@ -2724,6 +2724,296 @@ static void bench_monsters(void)
 	}
 }
 
+/* MONSTERS=4: the map cleared, as a player would: each living monster in
+   turn, the player put on a free spot in its sight (the scenarios' search,
+   any kind), rockets until it dies (10 s at most), a frame drawn every
+   tick; then the bodies' and gibs' time. "clear" lines: what was killed,
+   the stack meter, the edicts, the arena. */
+static void clear_map(void)
+{
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	ents_ticks(60, &cmd);
+	pl.items |= IT_ROCKET_LAUNCHER;
+	game_give_weapon(W_RLAUNCHER);
+	int killed = 0, peak = 0, skipped = 0;
+	static uint8_t tried[1024];
+	memset(tried, 0, sizeof tried);
+	for (;;) {
+		edict_t *e = 0;
+		int32_t spot[3];
+		trace_t tr;
+		for (int i = 2; i < num_edicts && i < 1024 && !e; i++) {
+			edict_t *c = &edicts[i];
+			if (!c->inuse || !c->mdef || c->health <= 0 || tried[i])
+				continue;
+			static const int turns[8] = { 0, 45, -45, 90, -90, 135, -135, 180 };
+			for (int a = 0; a < 8 && !e; a++)
+				for (int d = 450; d >= 100 && !e; d -= 25) {
+					int yaw = (c->ang[1] >> 4) + turns[a] * ANG_TURN / 360;
+					spot[0] = c->origin[0] + d * CLIP_SUB * r_cos(yaw) / 4096;
+					spot[1] = c->origin[1] + d * CLIP_SUB * r_sin(yaw) / 4096;
+					spot[2] = c->origin[2];
+					clip_trace(1, spot, spot, &tr);
+					if (tr.startsolid || tr.allsolid)
+						continue;
+					int32_t down[3] = { spot[0], spot[1], spot[2] - 64 * CLIP_SUB };
+					clip_trace(1, spot, down, &tr);
+					if (tr.startsolid || tr.fraction >= Q_FIX_ONE)
+						continue;
+					memcpy(spot, tr.endpos, sizeof spot);
+					int32_t feet[3] = { spot[0], spot[1], spot[2] - 23 * CLIP_SUB };
+					if (clip_contents(0, feet) != QW_CONTENTS_EMPTY)
+						continue;
+					int32_t ea[3] = { spot[0], spot[1], spot[2] + 22 * CLIP_SUB }, eb[3];
+					ai_view_org(c, eb);
+					if (ai_traceline(ea, eb, 1, c) >= Q_FIX_ONE)
+						e = c;
+				}
+			if (!e) {
+				tried[i] = 1;
+				skipped++;
+			}
+		}
+		if (!e)
+			break;
+		tried[e - edicts] = 1;
+		memcpy(pl.pm.pos, spot, sizeof pl.pm.pos);
+		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+		int kind = e->mdef->kind, t = 0;
+		cmd.fire = 1;
+		for (; t < 600 && e->inuse && e->health > 0; t++) {
+			pl.health = 100;
+			pl.dead = 0;
+			pl.ammo[AMMO_ROCKETS] = 100;
+			ents_look_at(e->origin);
+			game_tick(&cmd);
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			run_frame(0, 0);
+		}
+		cmd.fire = 0;
+		for (int u = 0; u < 60; u++) {            /* its death, its gibs */
+			pl.health = 100;
+			pl.dead = 0;
+			game_tick(&cmd);
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			run_frame(0, 0);
+		}
+		int max, used = ents_in_use(&max);
+		if (used > peak)
+			peak = used;
+		killed += e->health <= 0 || !e->inuse;
+		printf("clear %d: kind %d %s in %d ticks, edicts %d (peak %d) of %d, stack %u never reached, "
+		       "level arena %u KB, vbl %u\n", (int) (e - edicts), kind,
+		       e->health <= 0 || !e->inuse ? "dead" : "ALIVE", t, used, peak, max,
+		       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024), (unsigned) vid_stats.vbl);
+	}
+	for (int u = 0; u < 1800; u++) {              /* the bodies' and gibs' time, 30 s */
+		pl.health = 100;
+		pl.dead = 0;
+		game_tick(&cmd);
+		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+		run_frame(0, 0);
+	}
+	int max, used = ents_in_use(&max);
+	int alive = 0;
+	for (int i = 2; i < num_edicts; i++)
+		alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+	printf("clear done %s: %d killed, %d alive (%d with no spot), edicts %d (peak %d) of %d, stack %u never "
+	       "reached, level arena %u KB\n", world.map_name, killed, alive, skipped, used, peak, max,
+	       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024));
+}
+
+/* MONSTERS=4: MAP (E1M3) loaded and cleared. MONSTERS=5: from MAP (E1M1),
+   each map cleared, then its exit taken as a player's (the intermission,
+   the parms, the next map's load and spawn), to the episode's end. */
+static void bench_clear(void)
+{
+	const char *mapname = Q1PSX_BENCH_MAP[0] ? Q1PSX_BENCH_MAP : Q1PSX_BENCH_MONSTERS == 5 ? "E1M1" : "E1M3";
+	int m = world_find_map(mapname);
+	if (m < 0 || !load_level(m)) {
+		printf("clear: no %s\n", mapname);
+		return;
+	}
+	map_index = m;
+	game_active = 1;
+	game_spawn();
+	for (int n = 0; n < 12; n++) {
+		clear_map();
+		if (Q1PSX_BENCH_MONSTERS != 5)
+			return;
+		game_cmd_t cmd;
+		memset(&cmd, 0, sizeof cmd);
+		cmd.weapon_group = -1;
+		edict_t *cl = ents_first(QE_TRIGGER_CHANGELEVEL, 0);
+		if (!cl) {
+			printf("clear: %s has no exit\n", world.map_name);
+			return;
+		}
+		ents_place(cl->absmin, cl->absmax, 0);
+		ents_ticks(12, &cmd);
+		ents_ticks(150, &cmd);                    /* the intermission */
+		cmd.fire = 1;
+		ents_ticks(2, &cmd);
+		cmd.fire = 0;
+		char next[16];
+		if (!level_change_wanted(next)) {
+			printf("clear: %s's exit wants no map\n", world.map_name);
+			return;
+		}
+		int nm = world_find_map(next);
+		printf("clear: next map %s (disc %d)\n", next, nm);
+		if (nm < 0)
+			return;
+		game_save_parms();
+		map_index = nm;
+		if (!load_level(nm)) {
+			printf("clear: %s failed to load\n", next);
+			return;
+		}
+		game_spawn_level();
+		pl.items |= IT_ROCKET_LAUNCHER;
+	}
+}
+
+/* the floor under (x, y) from z down 512 units, the player's origin on it
+   (24 units up: 0 if none) */
+static int floor_at(int32_t x, int32_t y, int32_t z, int32_t out[3])
+{
+	trace_t tr;
+	int32_t a[3] = { x, y, z }, b[3] = { x, y, z - 512 * CLIP_SUB };
+	clip_trace(1, a, a, &tr);
+	if (tr.startsolid || tr.allsolid)
+		return 0;
+	clip_trace(1, a, b, &tr);
+	if (tr.fraction >= Q_FIX_ONE)
+		return 0;
+	memcpy(out, tr.endpos, sizeof tr.endpos);
+	return 1;
+}
+
+/* a phase of MONSTERS=6: `ticks` ticks walking along `yaw` (binary
+   degrees) or, with a monster in sight, firing at the nearest one; a frame
+   drawn each tick */
+static void key_phase(const char *what, int ticks, int yaw)
+{
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	for (int t = 0; t < ticks; t++) {
+		pl.health = 100;
+		pl.dead = 0;
+		pl.ammo[AMMO_ROCKETS] = 100;
+		edict_t *aim = 0;
+		int32_t best = 0;
+		for (int i = 2; i < num_edicts; i++) {
+			edict_t *c = &edicts[i];
+			if (!c->inuse || !c->mdef || c->health <= 0 || !ai_visible(ent_player, c))
+				continue;
+			int32_t dx = (c->origin[0] - pl.pm.pos[0]) >> 3, dy = (c->origin[1] - pl.pm.pos[1]) >> 3;
+			int32_t d2 = dx * dx + dy * dy;
+			if (!aim || d2 < best) {
+				aim = c;
+				best = d2;
+			}
+		}
+		if (aim && best < 600 * 600) {
+			ents_look_at(aim->origin);
+			cmd.fire = 1;
+			cmd.fwd = 0;
+		} else {
+			pl.pm.yaw = yaw;
+			cmd.fire = 0;
+			cmd.fwd = PM_AXIS;
+		}
+		game_tick(&cmd);
+		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+		run_frame(0, 0);
+	}
+	int max, used = ents_in_use(&max), alive = 0;
+	for (int i = 2; i < num_edicts; i++)
+		alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+	const edict_t *d21 = 0;
+	for (int i = 2; i < num_edicts; i++)
+		if (edicts[i].inuse && edicts[i].model == 21)
+			d21 = &edicts[i];
+	printf("key %s: at %d %d %d, keys %x, door *21 at %d %d %d, %d alive, edicts %d of %d, stack %u never "
+	       "reached, vbl %u\n", what, (int) (pl.pm.pos[0] / CLIP_SUB), (int) (pl.pm.pos[1] / CLIP_SUB),
+	       (int) (pl.pm.pos[2] / CLIP_SUB), (unsigned) (pl.items & (IT_KEY1 | IT_KEY2)),
+	       d21 ? (int) (d21->origin[0] / CLIP_SUB) : 0, d21 ? (int) (d21->origin[1] / CLIP_SUB) : 0,
+	       d21 ? (int) (d21->origin[2] / CLIP_SUB) : 0, alive, used, max, (unsigned) stack_untouched(),
+	       (unsigned) vid_stats.vbl);
+}
+
+/* MONSTERS=6: E1M3's gold key (the crash reported 2026-10-22, usually on the way back from the key): the monsters within
+   1200 units of the key awake and after the player; the key picked up
+   among them; then the gold doors (*21, *22, x -496) from their east and
+   west sides in turn, walked into, through and back, four times */
+static void bench_key(void)
+{
+	int m = world_find_map("E1M3");
+	if (m < 0 || !load_level(m)) {
+		printf("key: no E1M3\n");
+		return;
+	}
+	map_index = m;
+	game_active = 1;
+	game_spawn();
+	pl.items &= ~(IT_KEY1 | IT_KEY2);
+	pl.items |= IT_ROCKET_LAUNCHER;
+	game_give_weapon(W_RLAUNCHER);
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	ents_ticks(60, &cmd);
+	edict_t *key = ents_first(QE_ITEM_KEY2, 0);
+	if (!key) {
+		printf("key: no gold key\n");
+		return;
+	}
+	int awake = 0;
+	for (int i = 2; i < num_edicts; i++) {
+		edict_t *c = &edicts[i];
+		if (!c->inuse || !c->mdef || c->health <= 0 || c->takedamage == DAMAGE_NO)
+			continue;
+		int32_t dx = (c->origin[0] - key->origin[0]) >> 3, dy = (c->origin[1] - key->origin[1]) >> 3;
+		if (dx * dx + dy * dy > 1200 * 1200)
+			continue;
+		c->enemy = ent_player;
+		ai_found_target(c);
+		awake++;
+	}
+	printf("key: %d monsters awake around the key\n", awake);
+	int32_t at[3];
+	if (!floor_at(key->origin[0], key->origin[1], key->origin[2] + 32 * CLIP_SUB, at)) {
+		printf("key: no floor at the key\n");
+		return;
+	}
+	memcpy(pl.pm.pos, at, sizeof pl.pm.pos);
+	memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+	key_phase("picked", 300, 0);
+	int32_t west[3], east[3];
+	int ok_w = floor_at(-560 * CLIP_SUB, -160 * CLIP_SUB, 0, west), ok_e = floor_at(-430 * CLIP_SUB, -160 * CLIP_SUB, 0, east);
+	printf("key: the door's sides: west %d, east %d\n", ok_w, ok_e);
+	for (int n = 0; n < 4; n++) {
+		if (ok_w) {
+			memcpy(pl.pm.pos, west, sizeof pl.pm.pos);
+			memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+			key_phase("west to east", 300, 0);                   /* yaw 0: +x */
+		}
+		if (ok_e) {
+			memcpy(pl.pm.pos, east, sizeof pl.pm.pos);
+			memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+			key_phase("east to west", 300, ANG_TURN / 2);       /* -x */
+		}
+		memcpy(pl.pm.pos, at, sizeof pl.pm.pos);              /* back at the key's place */
+		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+		key_phase("at the key again", 200, 0);
+	}
+	printf("key done\n");
+}
+
 static void run_bench(void)
 {
 	static char names[16][8];
@@ -2732,6 +3022,18 @@ static void run_bench(void)
 	zone_sync = 1;                              /* (a view's zone read before its frame) */
 	if (Q1PSX_BENCH_ZONES) {
 		bench_zones();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
+	if (Q1PSX_BENCH_MONSTERS == 6) {
+		bench_key();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
+	if (Q1PSX_BENCH_MONSTERS >= 4) {
+		bench_clear();
 		printf("bench done\n");
 		for (;;)
 			run_frame(0, 0);

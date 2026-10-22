@@ -7865,7 +7865,21 @@ Quake's data goes in the repo.
   vblanks (8-12 fps), the entities' ticks up to 1.9 M cycles (the
   crowd's thinks); 4 ticks a frame at most (pad.h `PAD_MAX_TICKS`), so
   the game slows down rather than freezing.
-- **Left:** the crash itself, not reproduced by this scenario (3
-  monsters killed in it: deaths, gibs, a zombie's rising, the level's
-  end barely seen): what is seen (a freeze, a black screen, the
-  emulator's message), which emulator, where and when.
+- **Then, a playthrough** (DuckStation, from START to E1M3, the crash usually on the way back from the key): three more
+  scenarios, run on PCSX-Redux at 10x and on DuckStation's interpreter
+  (the mode in use) with the music on the disc:
+  - `MONSTERS=4` (MAP, E1M3 by default): the map cleared, each monster in
+    turn, the player on a spot in its sight, rockets, a frame each tick;
+  - `MONSTERS=5`: from MAP (E1M1) each map cleared, then its exit taken
+    as a player's (the intermission, the parms, the next map's spawn), to
+    E1M7: 129 monsters killed, no crash;
+  - `MONSTERS=6`: E1M3's gold key among its 17 monsters (zombies,
+    scrags, ogres, shamblers) awake, picked up, then the gold doors (*21,
+    *22) opened and crossed both ways four times, back at the key's place
+    between: no crash, the stack 4.3 KB at most, the edicts 320 of 462 at
+    most, DuckStation clean.
+- **Left:** the crash itself, not reproduced: what is seen (a
+  freeze, a black screen, DuckStation's own message or its exit), the
+  release's Graphics settings in that game, DuckStation's log (its
+  logging is off in the settings in use, and the release prints nothing
+  since §60).
