@@ -7,6 +7,7 @@
 #include "mem.h"
 #include "qtex.h"
 #include "world.h"
+#include "zone.h"
 
 world_t world;
 
@@ -61,7 +62,7 @@ int world_level_mask(int axis)
 	return level_mask[axis] ? level_mask[axis] : all[axis];
 }
 
-int world_scan_maps(void)
+Q_COLD int world_scan_maps(void)
 {
 	num_disc_maps = 0;
 	memset(level_mask, 0, sizeof level_mask);
@@ -282,8 +283,9 @@ static int load_models(const char *name)
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-int world_load(int map, int tex, int geo, int models, world_progress_fn progress)
+Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn progress)
 {
+	zone_abort();                        /* (a chunk read stopped before the arena goes) */
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
 	for (int i = 0; i < QIM_COUNT; i++)
@@ -311,7 +313,8 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 	load_step(tex_size);                 /* the pages are in VRAM */
 	uint32_t size;
 	uint8_t *f = cd_load(name, &size, progress ? load_poll : NULL);
-	if (!f || size < sizeof(qw_header) || memcmp(f, QWORLD_MAGIC, 4)) {
+	int zoned = f && size >= sizeof(qw_header) + sizeof(qw_zone_header) && !memcmp(f, QWORLD_ZONED_MAGIC, 4);
+	if (!f || size < sizeof(qw_header) || (memcmp(f, QWORLD_MAGIC, 4) && !zoned)) {
 		printf("world: bad world file %s\n", name);
 		return 0;
 	}
@@ -394,7 +397,8 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 		                      ? (uint32_t) &world.leaves[r & 0x7fffffffu] | 1u
 		                      : (uint32_t) &world.nodes[r]) & 0x00ffffffu;
 	}
-	world.ents         = (const qw_ent *) (f + h->ofs_ents);
+	world.ent_names    = (const uint16_t *) (f + h->ofs_ents);
+	world.ents         = (const uint8_t *) (world.ent_names + QE_COUNT);
 	world.num_ents     = h->num_ents;
 	world.strings      = (const char *) (f + h->ofs_strings);
 	world.worldtype    = h->worldtype;
@@ -430,6 +434,11 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 	load_step(tex_size + wld_size);
 	if (!load_models(mdl_name))
 		return 0;
+	/* a zoned world (formats/qworld.h "zones"): the skeleton read, its
+	   world blocks empty until zone_preload makes a chunk current; the
+	   slots last, under the world's cap */
+	if (zoned && !zone_map_start(f, disc_maps[map], tex))
+		return 0;
 	world.level[QL_TEXTURES] = (int8_t) tex;
 	world.level[QL_GEOMETRY] = (int8_t) geo;
 	world.level[QL_MODELS]   = (int8_t) models;
@@ -437,7 +446,8 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 
 	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, %u brush models, "
 	       "%u entities, %u models, arena %u KB\n",
-	       name, h->num_nodes, h->num_leaves, h->num_records, h->num_pieces,
+	       name, h->num_nodes, h->num_leaves,
+	       zoned ? ((const qw_zone_header *) (f + sizeof *h))->whole_records : h->num_records, h->num_pieces,
 	       h->num_bmodels ? h->num_bmodels - 1 : 0, h->num_ents, world.num_models, mem_level_used() / 1024);
 	load_step(load_total);
 	return 1;

@@ -121,8 +121,9 @@ void     stream_lend(int32_t lba, int sectors);
 uint8_t *stream_lent(uint32_t *reads);
 
 /* the SPU music's (engine/music.c): the drive or the staging buffer busy
-   with an asset's read; the staging buffer (STAGE_SECTORS of 2048 bytes:
-   the music's refills between the reads), 0 before any map */
+   with an asset's read (or the drive with a world chunk's: engine/zone.c);
+   the staging buffer (STAGE_SECTORS of 2048 bytes: the music's refills
+   between the reads), 0 before any map */
 int      stream_reading(void);
 uint8_t *stream_stage(void);
 

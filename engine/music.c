@@ -117,10 +117,8 @@ static int refill_start(uint32_t n)
 	uint32_t k = filled % chunks;
 	if (n > chunks - k)
 		n = chunks - k;
-	CdlLOC loc;
-	CdIntToPos((int) (file_lba + k * QSPU_CHUNK_SECTORS), &loc);
-	CdControl(CdlSetloc, &loc, 0);
-	if (!CdReadRetry((int) (n * QSPU_CHUNK_SECTORS), (uint32_t *) buf, CdlModeSpeed, 3))
+	if (!cd_seek((int32_t) (file_lba + k * QSPU_CHUNK_SECTORS)) ||
+	    !CdReadRetry((int) (n * QSPU_CHUNK_SECTORS), (uint32_t *) buf, CdlModeSpeed, 3))
 		return 0;
 	reading_n = (int) n;
 	return 1;
@@ -144,11 +142,8 @@ void music_play(int track)
 		buf = mem_level_alloc(READ_CHUNKS * 2 * QSPU_CHUNK);   /* (no map: the menu's) */
 	if (!buf)
 		return;
-	CdlLOC loc;
-	CdIntToPos((int) track_lba[track], &loc);
-	CdControl(CdlSetloc, &loc, 0);
 	const qspu_header *h = (const qspu_header *) buf;
-	if (!CdReadRetry(1, (uint32_t *) buf, CdlModeSpeed, 3) || CdReadSync(0, 0) < 0 ||
+	if (!cd_read_now((int32_t) track_lba[track], 1, buf) ||
 	    memcmp(h->magic, QSPU_MAGIC, 4) || h->track != track || h->rate < 8000 || h->rate > 44100 ||
 	    !h->chunks) {
 		printf("music: SPU_%02d.DAT unreadable or of another version\n", track);
@@ -163,7 +158,7 @@ void music_play(int track)
 	/* the ring full first (the drive's: a map's load, a track change) */
 	while (filled < RING_CHUNKS) {
 		uint32_t n = RING_CHUNKS - filled < READ_CHUNKS ? RING_CHUNKS - filled : READ_CHUNKS;
-		if (!refill_start(n) || CdReadSync(0, 0) < 0) {
+		if (!refill_start(n) || cd_read_sync() < 0) {
 			reading_n = 0;
 			printf("music: SPU_%02d.DAT unreadable\n", track);
 			return;
@@ -196,8 +191,9 @@ void music_stop(void)
 		   menu's music took one of the refill's sectors: START.SND "not
 		   found", the drive's error 20h; docs/porting-notes.md §53) */
 		CdReadBreak();
-		CdReadSync(0, 0);
+		cd_read_sync();
 		CdControlB(CdlPause, 0, 0);
+		cd_busy();
 		reading_n = 0;
 	}
 	if (!playing)
@@ -219,7 +215,7 @@ void music_tick(void)
 	if (!playing)
 		return;
 	if (reading_n) {
-		int left = CdReadSync(1, 0);             /* (also runs CdReadRetry's retries) */
+		int left = cd_poll();                    /* (also runs CdReadRetry's retries) */
 		if (left > 0)
 			return;
 		if (left < 0)
@@ -235,8 +231,9 @@ void music_tick(void)
 		filled = p + 1;
 	}
 	uint32_t room = p + RING_CHUNKS - filled;    /* the slots the voices are through */
-	if (room && (room >= READ_CHUNKS || filled - p < 3) && !stream_reading())
-		refill_start(room < READ_CHUNKS ? room : READ_CHUNKS);
+	if (room && (room >= READ_CHUNKS || filled - p < 3) && !stream_reading() && cd_ready())
+		refill_start(room < READ_CHUNKS ? room : READ_CHUNKS);   /* (cd_ready: the last read's
+		                                                    Pause done, engine/cd.h) */
 }
 
 /* a read of `sectors` may start: the music not reading, and what the ring

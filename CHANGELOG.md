@@ -1559,6 +1559,85 @@ followed by R0-R4.
     zones of 64 KB would free 250 KB;
   - the zone tables for the cook are ready outside the repo. The
     implementation follows on its own branch.
+- **Level streaming by zones** (the levels streamed in chunks, for much more room for the streaming). §57:
+  - `qcook zones` splits a world into its skeleton (QWVZ: nodes, leaves,
+    PVS, clip hulls, the brush models, the entities) and a chunk per zone
+    (QZN1, per texture level: the records a zone's leaves may draw, as the
+    loader would leave them), from §56's tables (`Q1PSX_ZONE_TABLES` in
+    local.env; never in the repo; without them every map stays whole);
+  - the engine keeps the skeleton and three slots: the camera leaf's zone,
+    drawn, and its two nearest by walking distance (a teleporter one step),
+    read between frames while the player moves. The switch hangs on the
+    renderer's camera-leaf call through a hand-written asm hook
+    (`engine/zone.s`), r_world.s unchanged; a late chunk leaves the old
+    zone drawn, counted;
+  - the frames are the parent's, hash for hash: start's 12 views, the 128
+    spawn views (under the interpreter too), the game bench; the C engine
+    too. And 0.5 % cheaper (the chunks' blocks carry fewer records to
+    skip);
+  - the RAM: 20 maps zoned, 12 kept whole; 2-102 KB freed on a zoned map,
+    the smallest stream pool 171 -> 215 KB. Below §56's estimate: the
+    skeleton holds the brush models' geometry, and the frame-identical
+    tables plus fixed slots cost more than the analysis' best case. The
+    tighter "seen" tables would give 363 KB (the pictures identical on the
+    views checked, 22 of 128 display lists not): left open;
+  - the CD: a race between psxcd's command writes and the drive's
+    interrupt lost Setlocs (another file's sectors read: the parent's
+    corrupted sound) and could silence the drive; every read now waits for
+    the drive to settle (`engine/cd.c`);
+  - `ZONES=1 scripts/bench.sh`: the zones' walk (switches, reads, late
+    frames, on PCSX-Redux and DuckStation with the music); DuckStation
+    runs again headless from its extracted AppImage.
+- **The skeleton's RAM** (§57.9: a zoned map's skeleton, 276-378 KB, is
+  now the bulk of the world's RAM). §58:
+  - measured on the 32 maps: what the skeleton holds; the PVS of every
+    place the player reaches covers 78-100 % of the leaves and the nodes
+    above it 83-99 %, so pruning the tree or the clip hulls to where the
+    player can be frees next to nothing (the game's traces and point
+    queries walk the same trees anywhere monsters are);
+  - two repeats shared in the cook, the frames the tip's hash for hash
+    (start's 12 views, the 128 spawn views, the game bench; the C engine
+    too) and no engine change: the brush models' leaves (210-953 a map,
+    read for their contents only) are one shared leaf, the clip hulls'
+    identical subtrees one clipnode (69-87 % of the clipnodes left). 9.5-38
+    KB freed a map, 22 on average, on all 32 maps; the smallest stream
+    pool 215 -> 235 KB, the worst world load 763 -> 743 KB;
+  - the next options measured: a compact entity table (4-14
+    KB a map), the PVS rows as deltas (1-12 KB, `mark_pvs` by hand), the
+    PVS rows per zone (1-31 KB on the zoned maps, a change while a zone is
+    late), the edicts the skill never uses (up to 38 KB, the runtime
+    headroom to measure), 16-bit node children (3-14 KB, the hottest
+    asm).
+- **The entities in a compact table** (§58.2's option C). §59:
+  - the world file (QWVF; zoned skeletons QWZF) holds each class's
+    classname once, then per entity a 32-bit head (the class, a bit per
+    field present) and the fields that are not zero: the origin in whole
+    world units in 2 bytes (1/8 units in 4 if needed), the model and each
+    spawnflags byte in a byte, the fields ordered by how often the id1
+    maps give them. `qw_ent_decode` (formats/qworld.h) gives the 56-byte
+    `qw_ent` back; `ents_spawn` decodes each entity on its stack, and the
+    cook checks every entity's round trip byte for byte;
+  - the entities take 21.6 % of their old bytes: 5.0-17.6 KB less a map
+    (§58.2's layout: 4.2-14.2), the stream's pool +4..+18 KB, the
+    smallest 235 -> 249 KB (E3M6); the decode costs 42-166 k cycles at a
+    spawn; the frames the tip's hash for hash (start's 12 views, the 128
+    spawn views, the game bench; the C engine too);
+  - the entities single player never spawns (2-36 a map) stay: the
+    runtime spawns used at most 9 slots in the benches against 94-162
+    left free without them at hard, but gibs (10-20 s) and backpacks (2
+    minutes) grow with the play, so nothing shows they never need the
+    slots. Listed with the measures (0.8-13.6 KB a map);
+  - the analysis tool's reader outside the repo (`wld.py`) asserts
+    "QWVE": accepting "QWVF" is all it needs (it reads no entity).
+- **The executable trimmed** (2026-10-22). §60: the release prints
+  nothing (no printf, its strings gone: a console has no TTY), no 64-bit
+  division left (`q_div64_32` exact, inline, one `div` in practice; the
+  atan table a constant, its 1.8 M-cycle first call gone; a de Bruijn
+  ctz), no SDK debug font in the release, the code that runs once a level
+  compiled for size (`Q_COLD`, the menus' files at -Os). The release's
+  code and data -16.6 KB (`q1psx.exe` 317440 -> 301056 B), the stack's
+  room 43.4 -> 60.8 KB; the frames identical (start's views, the game,
+  the monsters', the movers' benches).
 - **The monsters by hand: the Ogre first** (the monsters rebuilt by hand from Quake's own models, the Ogre first). §62:
   - the cook's automatic decimation had turned the Ogre's skull into a
     spike in profile and its grenade launcher into a flat shard;

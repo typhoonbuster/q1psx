@@ -11,6 +11,7 @@
 #include "game.h"
 #include "hud.h"
 #include "level.h"
+#include "mem.h"
 #include "music.h"
 #include "render.h"
 #include "snd.h"
@@ -80,7 +81,7 @@ static edict_t *find_intermission(void)
 }
 
 /* the stats and the camera: SVC_INTERMISSION */
-static void execute_changelevel(edict_t *self)
+Q_COLD static void execute_changelevel(edict_t *self)
 {
 	(void) self;
 	level_intermission    = 1;

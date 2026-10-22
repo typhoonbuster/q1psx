@@ -6747,6 +6747,1143 @@ lines):
     where the player can be — the RAM wanted for the streamed
     assets is there too.
 
+## §57 — Level streaming by zones (2026-10-22)
+
+- **The ask:** the levels streamed in chunks: the chunk the player is in and the two adjacent
+  ones loaded, the teleporters counted, chunks of 64 to 128 KB, for much more room for the
+  streaming; then to start this implementation at once: the calls below
+  were made by measure, and the alternatives are listed (§57.8). On a
+  branch of its own, not merged.
+- **What it does.** A zoned map's level arena keeps its skeleton (nodes,
+  leaves, marks, PVS, clip hulls, the brush models and their records, the
+  entities) and three chunk slots. A zone is a set of camera leaves (§56's
+  tables); its chunk holds every world record the PSX may draw from any of
+  them. The camera leaf's zone is the one drawn; the two zones nearest to
+  it by walking distance (a teleporter one step) are read ahead into the
+  other slots, from the CD, while the player moves.
+
+### 57.1 The cook: skeleton and chunks
+
+- `qcook zones` (`tools/qcook/zones.c`) splits a cooked world: it reads
+  the whole `<map>_g0.wld` (QWVE, unchanged: the tools and the analysis
+  keep reading it), the map's table, and both texture sets (`_t1.tx4`,
+  `_t2.tx4`), and writes:
+  - `<map>_g0.skl`, the skeleton ("QWVZ", formats/qworld.h): a QWVE
+    file's header and sections, a `qw_zone_header` after the header, the
+    face stream and the vertex pool holding the brush models' records only
+    (their UVs mapped by the loader, as before), then the zone tables: the
+    chunk directory, a byte per leaf (its zone set), the sets (a zone and
+    its three nearest);
+  - `<map>_z1.zon`, `<map>_z2.zon`, the chunks per texture level ("QZN1"):
+    each chunk from a sector of its own, its records as the loader would
+    have left them (face ids doubled, the average light in the flags, the
+    UVs on that set's tiles, the vertex indices into the chunk's own pool),
+    a patch list, then its pool.
+- **The UVs in the cook.** Mapping a chunk's UVs when it lands would cost
+  about 0.8 frame a chunk (18 k UV words, two multiplies each), so the
+  cook maps them, once per texture level; the disc takes the build's
+  level only (`scripts/cd_image.cmake`). Hence a `.zon` per level, and the
+  zones' step runs after the textures' jobs (`scripts/cook.sh`).
+- **The node array is reordered.** The renderer ends a node's back block
+  where the next node's front block starts (`qw_face_end`), so every
+  chunk lays out its blocks in node order, an empty block for every node
+  without records in it. The world's blocks live in the chunk and the
+  brush models' in the skeleton, and the chain must not run from one to
+  the other: the skeleton's node array is the world's nodes that hold a
+  record in some chunk ("patched"), then an end node no walk reaches
+  (its `faces[0]` ends the current chunk's last block), then the world's
+  nodes no chunk gives a record (their blocks empty for good: almost none,
+  0-107 a map), then the brush models' nodes, then the sentinel. Children
+  are pointers, parents are re-indexed: the walk's order, so the frames,
+  do not change.
+- **The patch list:** a word per patched node with records in the chunk,
+  `skip << 24 | front words << 12 | back words` (skip: the patched nodes
+  before it with none, their blocks empty at the running pointer; a run
+  longer than 255 takes words of skip 255 and no blocks), the last word
+  the end node's. 529-1116 words a chunk (2-4.4 KB).
+- **The tables** come from `local.env`'s `Q1PSX_ZONE_TABLES` (derived
+  from Quake's data: never in the repo). Without it every map is cooked
+  whole, as before, and the build works anywhere. A table that does not
+  match the world (its leaf and face counts) leaves the map whole.
+- **A map stays whole** when its skeleton and slots would take as much as
+  the whole world. With the default tables: 20 maps zoned, 12 whole
+  (E1M5, E1M6, E1M7, E1M8, E2M6, E3M2, E3M3, E3M6, E3M7, E4M3, E4M6, END).
+
+| map | zones | records in the chunks (the world's) | chunks KB | patched nodes (never) | patch words max | sets | skeleton + slots = resident vs whole (KB) |
+|---|---|---|---|---|---|---|---|
+| START | 7 | 5836 (4133) | 37..93 | 2394 (28) | 725 | 29 | 277 + 3 x 94 = 559 vs 592 |
+| E1M1 | 10 | 9761 (4390) | 49..104 | 2332 (23) | 720 | 68 | 276 + 3 x 104 = 588 vs 600 |
+| E1M2 | 7 | 6170 (4172) | 27..92 | 2382 (43) | 685 | 57 | 295 + 3 x 94 = 577 vs 614 |
+| E1M3 | 8 | 5139 (3741) | 12..91 | 2184 (1) | 639 | 48 | 314 + 3 x 92 = 590 vs 599 |
+| E1M4 | 7 | 6530 (4681) | 53..88 | 2591 (6) | 693 | 42 | 334 + 3 x 90 = 604 vs 693 |
+| E1M5 | 7 | 5860 (3705) | 9..103 | 2041 (39) | 673 | 42 | 269 + 3 x 104 = 581 vs 555 (whole) |
+| E1M6 | 7 | 7032 (2708) | 66..94 | 1547 (1) | 684 | 41 | 266 + 3 x 96 = 554 vs 465 (whole) |
+| E1M7 | 1 | 1188 (1188) | 91..91 | 615 (1) | 616 | 1 | 95 + 1 x 92 = 187 vs 183 (whole) |
+| E1M8 | 25 | 24925 (2617) | 53..105 | 1117 (0) | 541 | 186 | 146 + 3 x 106 = 464 vs 353 (whole) |
+| E2M1 | 16 | 12331 (4649) | 20..107 | 2571 (13) | 733 | 144 | 302 + 3 x 108 = 626 vs 649 |
+| E2M2 | 9 | 9054 (4805) | 30..103 | 2821 (107) | 783 | 85 | 322 + 3 x 104 = 634 vs 680 |
+| E2M3 | 11 | 10245 (4584) | 52..94 | 2638 (29) | 682 | 123 | 320 + 3 x 96 = 608 vs 661 |
+| E2M4 | 12 | 9660 (5142) | 31..94 | 2771 (74) | 734 | 115 | 337 + 3 x 96 = 625 vs 714 |
+| E2M5 | 10 | 8764 (4392) | 31..93 | 2193 (29) | 565 | 98 | 282 + 3 x 94 = 564 vs 627 |
+| E2M6 | 11 | 7852 (3978) | 5..101 | 2282 (16) | 714 | 60 | 308 + 3 x 102 = 614 vs 606 (whole) |
+| E2M7 | 9 | 6922 (4736) | 8..104 | 2704 (1) | 785 | 60 | 331 + 3 x 106 = 649 vs 690 |
+| E3M1 | 9 | 8893 (4356) | 39..102 | 2193 (11) | 624 | 104 | 277 + 3 x 104 = 589 vs 607 |
+| E3M2 | 3 | 2953 (2384) | 66..89 | 1326 (14) | 701 | 6 | 226 + 3 x 90 = 496 vs 400 (whole) |
+| E3M3 | 5 | 4974 (3556) | 57..93 | 1871 (32) | 647 | 21 | 226 + 3 x 94 = 508 vs 482 (whole) |
+| E3M4 | 8 | 5635 (4855) | 3..112 | 2581 (18) | 833 | 47 | 371 + 3 x 114 = 713 vs 719 |
+| E3M5 | 8 | 7223 (5371) | 29..111 | 3059 (6) | 798 | 52 | 353 + 3 x 112 = 689 vs 767 |
+| E3M6 | 12 | 13263 (5559) | 51..153 | 3006 (33) | 1116 | 82 | 348 + 3 x 154 = 810 vs 745 (whole) |
+| E3M7 | 7 | 6441 (4277) | 5..110 | 2290 (26) | 881 | 28 | 255 + 3 x 112 = 591 vs 560 (whole) |
+| E4M1 | 9 | 8084 (4259) | 49..92 | 2547 (2) | 762 | 104 | 302 + 3 x 94 = 584 vs 630 |
+| E4M2 | 9 | 7455 (4115) | 11..94 | 2010 (0) | 608 | 57 | 285 + 3 x 96 = 573 vs 595 |
+| E4M3 | 8 | 7382 (3566) | 48..95 | 1963 (1) | 624 | 71 | 297 + 3 x 96 = 585 vs 558 (whole) |
+| E4M4 | 17 | 15399 (5038) | 4..93 | 2433 (0) | 699 | 150 | 305 + 3 x 94 = 587 vs 683 |
+| E4M5 | 8 | 7152 (4036) | 19..97 | 1920 (2) | 600 | 29 | 313 + 3 x 98 = 607 vs 618 |
+| E4M6 | 5 | 3535 (3178) | 19..80 | 1596 (0) | 552 | 27 | 253 + 3 x 82 = 499 vs 492 (whole) |
+| E4M7 | 10 | 9344 (5323) | 26..93 | 2856 (4) | 661 | 78 | 378 + 3 x 94 = 660 vs 763 |
+| E4M8 | 7 | 5821 (3993) | 21..95 | 2040 (10) | 662 | 34 | 287 + 3 x 96 = 575 vs 577 |
+| END | 2 | 1755 (1755) | 17..117 | 624 (0) | 529 | 2 | 108 + 2 x 118 = 344 vs 239 (whole) |
+
+### 57.2 The engine
+
+- **The switch, in hand-written asm** (`engine/zone.s` `zone_mark`): the
+  renderer already finds the camera's leaf and marks the PVS only when
+  that leaf changed (r_world.s `mark_call`, a `jal` render.c patches for
+  the draw distance). While a zoned map is loaded, render.c points that
+  call at `zone_mark` instead (`mark_patch`): the leaf's set looked up (its
+  index from its offset over 28, a multiply by 2^32/7), and when the set
+  is not the last call's, `zone_enter` (C) makes its zone current if its
+  chunk is in; then on to the marking render.c chose (`zone_rt.mark`).
+  r_world.s is unchanged, byte for byte. The cost when the leaf has not
+  changed: none; when it has, 17 instructions and the multiply's wait.
+- **Making a chunk current** (`zone_patch`, asm): its patch words into the
+  patched nodes' `faces[]`, then `r_state.vertpool` (and the walk's copy
+  in the scratchpad, `SP_VERTPOOL`, which zone_mark takes again). 12
+  cycles an empty node, 32 a word: 33-48 k cycles a switch on PCSX
+  (54.6 k at most, E3M5), 18-27 k on DuckStation. Before any chunk is
+  current every world block is empty (the skeleton's node offsets are 0).
+  The C engine (`Q1PSX_ENGINE_C`) takes zone_patch's C (zone.c, written
+  from the asm); zone_mark is the renderer's (r_world.s has no C).
+- **The slots and the reads** (`engine/zone.c`, between frames: `zone_frame`
+  before `stream_frame`): a read's progress, the late switch (the camera's
+  zone in now: made current), then the next read: the camera's zone,
+  then its two nearest, into a free slot, else the slot of a chunk no set
+  wants, else the least wanted's below it, never the drawn one. A chunk is
+  checked when it lands (its zone, the stamp the skeleton carries).
+- **Late:** the camera in a zone whose chunk is not in yet: the old zone
+  stays drawn (its records only), the frames are counted, the camera's
+  zone is read first. Leaf 0 (the camera in solid) keeps the zone.
+- **The drive** is shared: the stream starts no read while a chunk's read
+  is in flight or waiting (`zone_drive_wanted`), the SPU music refills
+  only when neither reads (`stream_reading` covers a chunk's), a chunk's
+  read waits for the stream's to end and for the music's ring
+  (`music_read_ok`). Music on the disc, DuckStation: no underrun.
+- **The bench reads a view's zone at once** (`zone_sync`): before the
+  frame, outside its cycles and before the stream's turn, the camera's
+  leaf is found as r_render will (`r_set_view`'s arithmetic, `fl_loop`'s
+  test) and its zone read and made current; the hook's own read at once
+  stays as the fallback. In play nothing waits.
+- **The dynamic lights** keep working on the current chunk: the asm reads
+  the vertices through `SP_VERTPOOL` as before, the C reference
+  (`DLIGHT_C`, the C engine) now through `r_state.vertpool`, and the light
+  bytes are put back before any switch (game_render_done, then the next
+  frame's hook).
+- **The loader** (world.c) takes a QWVZ like a QWVE (the brush models'
+  stream and pool); zone_map_start then finds `<MAP>_Z<tex>.ZON`, checks
+  its header and allocates the slots; load_level reads the spawn eye's
+  zone and its two nearest at once (`zone_preload`) before the stream's
+  preload.
+- **The build:** CMake `Q1PSX_ZONES` (ON) puts the zoned maps' skeletons
+  and chunks on the disc, OFF the whole worlds (an A / B; also forced for
+  a draw distance of 0 or past 1536, which the tables do not cover);
+  `scripts/bench.sh WHOLE=1` builds that disc.
+
+### 57.3 The drive's race (found on the way, fixed)
+
+- The first 128-view run lost E4M5 ("bad models file"): a drive error
+  20h ("wrong number of parameters") during its world's read; with a first
+  fix in, a second run lost every load after E4M7's (the drive no longer
+  answering). The parent had it too: its game bench read a sound from the
+  wrong place ("not a sound this engine reads").
+- psxcd's command writes (CdCommandF) select the register bank, reset the
+  parameter FIFO, write the parameters, then the command, with the CD's
+  interrupt enabled; the handler selects bank 1 and resets the FIFO. An
+  interrupt in between (a read's Pause answering late: psxcd's read
+  callback sends that Pause and nothing waits for it in a polled read)
+  sends the command without its parameters (error 20h: after a lost
+  Setloc the read goes on from wherever the drive was), and writes the
+  parameters into bank 1's register 2, the interrupt enable: the drive
+  goes quiet.
+- `engine/cd.c` now has one access layer every read goes through
+  (`cd_ready`, `cd_seek`, `cd_poll`, `cd_read_sync`, `cd_read_now`): a
+  command waits for the drive to have been idle two vblanks (no read, no
+  blocking command); the reads started between frames wait for it frame
+  after frame, never in a frame; a refused Setloc re-enables the drive's
+  interrupts as CdInit leaves them and is sent again.
+- After it: no drive error in three 32-map runs, the zones' walks
+  (PCSX-Redux and DuckStation, the music on), the game bench (whose sound
+  now reads right).
+- On the way, a bug of mine: a comment had swallowed a `return` in the
+  stream's sound step (the gate turned around: a sound piece's seek
+  waited out a chunk's whole read, 15 M cycles). Fixed; the pattern
+  searched for elsewhere.
+
+### 57.4 Identical frames
+
+- `scripts/dlcheck.sh save` on the parent (00dbc44), `check` on the zones:
+  - start's 12 views: IDENTICAL, -0.1 % cycles;
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1`): IDENTICAL, -0.5 %;
+  - the game bench's 23 hashes (`BENCH_GAME=1 HASHONLY=1`): IDENTICAL;
+  - under `EMU_ARGS=-interpreter`: 127 of 128 views identical, the 128th
+    identical but for a character the interpreter's console doubled;
+  - the C engine (`ENGINE_C=1`): start's 12 and the 128 views IDENTICAL
+    (+87.6 %, +93.7 %, as in §55); its game bench differs at the
+    graphics menu's effects page only (§55's dynamic warp threshold).
+- The frames got cheaper: a chunk's blocks hold the zone's records only,
+  so the record loop skips fewer records its frame never stamped (-2 k
+  cycles on start's v2, v10, v11).
+- `scripts/dlcheck.sh`: the game bench (no view lines) no longer counts as
+  a failed bench.
+
+### 57.5 The RAM, measured
+
+The world's load (the boot log's `world: ... arena`: the texture tables,
+the world or skeleton, the face stamps, the map's models, the slots) and
+the stream's pool after it, the parent against the zones:
+
+| map | zones | skeleton | slots | world load before -> after (KB) | freed | stream pool before -> after (KB) |
+|---|---|---|---|---|---|---|
+| START | 7 | 277 | 3 x 94 | 609 -> 575 | +34 | 471 -> 499 |
+| E1M1 | 10 | 276 | 3 x 104 | 617 -> 605 | +12 | 434 -> 440 |
+| E1M2 | 7 | 295 | 3 x 94 | 630 -> 592 | +38 | 385 -> 417 |
+| E1M3 | 8 | 314 | 3 x 92 | 613 -> 605 | +8 | 334 -> 336 |
+| E1M4 | 7 | 334 | 3 x 90 | 709 -> 621 | +88 | 278 -> 360 |
+| E1M5 | whole | - | - | 569 -> 569 | 0 | 420 -> 414 |
+| E1M6 | whole | - | - | 477 -> 477 | 0 | 480 -> 474 |
+| E1M7 | whole | - | - | 190 -> 190 | 0 | 908 -> 902 |
+| E1M8 | whole | - | - | 365 -> 365 | 0 | 700 -> 694 |
+| E2M1 | 16 | 302 | 3 x 108 | 666 -> 644 | +22 | 343 -> 359 |
+| E2M2 | 9 | 322 | 3 x 104 | 698 -> 652 | +46 | 332 -> 372 |
+| E2M3 | 11 | 320 | 3 x 96 | 677 -> 625 | +52 | 324 -> 370 |
+| E2M4 | 12 | 337 | 3 x 96 | 732 -> 642 | +90 | 266 -> 350 |
+| E2M5 | 10 | 282 | 3 x 94 | 643 -> 581 | +62 | 355 -> 411 |
+| E2M6 | whole | - | - | 622 -> 622 | 0 | 299 -> 293 |
+| E2M7 | 9 | 331 | 3 x 106 | 707 -> 665 | +42 | 260 -> 296 |
+| E3M1 | 9 | 277 | 3 x 104 | 623 -> 605 | +18 | 389 -> 401 |
+| E3M2 | whole | - | - | 412 -> 412 | 0 | 581 -> 575 |
+| E3M3 | whole | - | - | 497 -> 497 | 0 | 520 -> 514 |
+| E3M4 | 8 | 371 | 3 x 114 | 736 -> 730 | +6 | 218 -> 218 |
+| E3M5 | 8 | 353 | 3 x 112 | 784 -> 706 | +78 | 242 -> 314 |
+| E3M6 | whole | - | - | 763 -> 763 | 0 | 221 -> 215 |
+| E3M7 | whole | - | - | 576 -> 576 | 0 | 465 -> 459 |
+| E4M1 | 9 | 302 | 3 x 94 | 647 -> 601 | +46 | 361 -> 401 |
+| E4M2 | 9 | 285 | 3 x 96 | 609 -> 587 | +22 | 391 -> 407 |
+| E4M3 | whole | - | - | 573 -> 573 | 0 | 384 -> 378 |
+| E4M4 | 17 | 305 | 3 x 94 | 699 -> 603 | +96 | 283 -> 373 |
+| E4M5 | 8 | 313 | 3 x 98 | 634 -> 622 | +12 | 304 -> 310 |
+| E4M6 | whole | - | - | 506 -> 506 | 0 | 456 -> 450 |
+| E4M7 | 10 | 378 | 3 x 94 | 781 -> 679 | +102 | 171 -> 267 |
+| E4M8 | 7 | 287 | 3 x 96 | 592 -> 590 | +2 | 373 -> 369 |
+| END | whole | - | - | 248 -> 248 | 0 | 833 -> 827 |
+
+- The worst world load: 784 -> 763 KB (E3M6, whole, is the worst now);
+  the smallest stream pool: **171 -> 215 KB** (+26 %); freed on a zoned
+  map: 2-102 KB.
+- The level arena shrank by 6 KB (1249 -> 1243 KB): the zones' code (6
+  KB) would have come out of the stack, which keeps its room (release
+  43704 B, the parent's 43504; §54's 25 KB margin kept). The whole maps'
+  pools lose those 6 KB.
+- **Honestly, far below §56's 150-250 KB**, for measured reasons:
+  - the skeleton is bigger than §56 counted: it holds the brush models'
+    records and vertices and a few tables the analysis left out (+20-40
+    KB a map);
+  - the default tables hold every record the PVS lets the PSX draw within
+    1536 + 32 units (what makes the frames identical), duplicated across
+    zones, and a slot is the map's biggest chunk: one outlier sets all
+    three (E3M6's 153 KB zone keeps it whole; E3M4's and E3M5's 111-112);
+  - the patch words take 2-4.4 KB a chunk.
+
+### 57.6 The zones' walk
+
+`ZONES=1 scripts/bench.sh` (the `bench zones` lines): on each zoned map,
+the eye from the player's start through 31 of its items and monsters in
+entity order at running speed (320 units a second), 3600 frames at most,
+the stream and the zones' reads as in play. A leg whose eye line a wall
+cuts goes through it; its frames are counted apart (a way shorter than
+the walking distances the prefetch ranks zones by). Every patch is checked
+against a C computation of it.
+
+- PCSX-Redux, 20 maps: 8-29 switches a map (the patch above), 15-84 reads
+  (9-16 frames each: 0.15-0.27 s), 0 read errors, 0 patches wrong; late:
+  0-25 events and 0-373 frames a map, nearly all on the legs through
+  walls (the clear legs' worst: E3M1 26 frames, E4M2 23, E2M3 21); the
+  longest late run 20-39 frames.
+- DuckStation, the music on the disc: the same walk, 0 read errors, 0
+  patches wrong, no `music: the ring ran dry`; reads 14-26 frames each
+  (DuckStation's seeks are slower), late runs 28-59 frames.
+- The frames that switch also load what comes into view (the stream's
+  passes and installs): 0.9-1.6 M cycles at most; the patch itself is
+  33-55 k of it.
+
+### 57.7 DuckStation
+
+- The AppImage no longer started headless on this host (since §42: every
+  start waited before the boot). Found: the AppImage's FUSE runtime sits
+  blocked writing to a pipe. Its extracted binary starts at once
+  (`DuckStation-x64.AppImage --appimage-extract`, then
+  `squashfs-root/AppRun -batch -nogui -earlyconsole -- q1psx.cue`, the
+  private home as in §26.1).
+- The play bench (`BENCH_MAPS=1 PLAY=1 HASHONLY=1 MUSIC=1`): 32 maps
+  loaded and played, `bench play <MAP> ok` each, `bench done`, no GP0
+  error, no drive error (psxcd printed `CdSync() timeout` once inside
+  CdInit, before the engine runs: DuckStation's drive answers its init
+  later than psxcd waits). The zones' walk above.
+
+### 57.8 The choices made, and the alternatives
+
+- **The tables: `pvs_1536_96`** (the default, `local.env`): safe by
+  construction, the frames identical. The four sets, measured (the
+  skeleton + the slots, from the cook; the bench's for PVS 96 and seen 64):
+
+  | tables | maps zoned | the worst world file (cook) | its file freed a map: most / mean | the worst world load (bench) | the smallest stream pool (bench) | the frames |
+  |---|---|---|---|---|---|---|
+  | (whole worlds) | 0 | 767 KB | — | 784 KB | 171 KB | — |
+  | pvs_1536_96 | 20 | 745 KB | 103 / 27 KB | 763 KB | 215 KB | identical |
+  | pvs_1536_128 | 2 | 763 KB | 36 / 1 KB | — | — | identical |
+  | seen_1536_96 | 24 | 652 KB | 132 / 47 KB | — | — | not run |
+  | seen_1536_64 | 29 | 564 KB | 221 / 116 KB | 583 KB | **363 KB** | 22 of 128 spawn views' lists differ; their pictures identical (below) |
+
+  - **seen_1536_64** gives the room asked for (+192 KB on the
+    worst map's pool, E4M7 171 -> 363 KB) and cheaper frames (-1.6 % on
+    the 128 views): its chunks leave out the records the 2048 px renders
+    never saw, which the PSX draws and then paints over. On 36 views
+    (E1M5, E3M6, E4M4, 12 each, their spawn views included) the pictures
+    are identical pixel for pixel (pktview). The risk: a record seen only
+    from a place the scan did not sample (16-unit eyes; §56: the renders'
+    tail is slivers under a PSX pixel) would be missing there. To take
+    it: `Q1PSX_ZONE_TABLES=.../zones/seen_1536_64` in local.env.
+- **Three fixed slots, each the map's biggest chunk**, rather than an
+  arena holding just the biggest set (a zone and its two nearest) and
+  compacted when in pieces. That arena would take 10-80 KB less a map,
+  but a simulation of random walks over the 32 maps' zone sets (4000
+  zone changes a map) found a compaction in 15-19 % of the loads, most of
+  them moving the drawn chunk (a memmove and a re-patch: 150-300 k cycles,
+  a frame lost); with 64 KB of slack the drawn chunk never moved, but
+  25-30 % of the loads still moved others and the slack ate the gain.
+  Slots never move a chunk.
+- **The current zone and its two nearest** (the model asked for); a fourth
+  slot (the third nearest, which the tables give) would take one more
+  chunk of RAM for fewer late frames.
+- **A map stays whole** when zoning would not reduce its resident world.
+- **The bench reads a view's zone at once**.
+
+### 57.9 Left
+
+- **The skeleton** (84-378 KB a map, the bulk of what stays): the PVS rows
+  per zone (34-49 KB a map today), the clip hulls (55-81 KB) and the nodes
+  (56-130 KB) kept only where the player can be. That is where the room
+  wanted for the streamed assets is now.
+- **The outlier zones** (E3M6's 153 KB, END's 118, E3M4's and E3M5's
+  111-112): re-exported with a smaller cap by the analysis tool, E3M6
+  would zone and every slot of those maps would shrink.
+- The late frames when moving fast: a fourth slot, or prefetching on the
+  walking distance's lead (the tables carry it; the engine does not keep
+  it).
+- psxcd busy-waits for every command's acknowledge: starting a read costs
+  about 90 k cycles (the stream's reads as the zones'); an asynchronous
+  command layer would give them back.
+- The SDK's memcpy / memmove copy a byte at a time (13 cycles a byte on
+  PCSX): the stream's pool compaction uses memmove.
+- The patch could be unrolled (pairs of empty nodes: about -3 cycles
+  each), or cut to the nodes whose blocks change by grouping the patched
+  nodes by zone (dummy nodes between the groups).
+- Not checked: the real machine; a hands-on play across zones.
+
+## §58 — The skeleton's RAM: measured, and its repeats shared (2026-10-22)
+
+- **The ask** (§57.9, from the session that built the zones): a zoned
+  map keeps its whole skeleton resident, 276-378 KB, now the bulk of the
+  world's RAM; study, measure and propose ways to shrink it (the PVS rows
+  per zone; the clip hulls and the nodes only where the player can be;
+  anything else the measures show), each option with the RAM it frees on
+  the 32 maps, its CPU cost, its risk and what the asm would need, and
+  implement the option the measures favour if it is self-contained. The
+  frames stay the branch tip's (781649c), hash for hash. On its own
+  branch (on top of the zones' branch),
+  not merged.
+- **The tools** (scratch, not in the repo: they read Quake-derived files):
+  a C reader of the cooked worlds, skeletons and chunk files, the zone
+  tables and the analysis' reachable eyes (`quakespasm-q1psx/
+  scan/<map>/samples.bin`, §56); a structural comparison of two worlds
+  (every section byte for byte, the leaves' and the clip hulls'
+  equivalence, below).
+
+### 58.1 What the skeleton holds
+
+Before this section (KB; the zoned maps' skeleton from the cook, the
+other sections of every map's world; "brush" = the brush models'):
+
+| map | skeleton | nodes: world + brush | leaves: world + brush | PVS | clip: planes + clipnodes | marks | entities + strings | brush models' records + vertices |
+|---|---|---|---|---|---|---|---|---|
+| START | 278 | 85.1 + 17.1 | 30.9 + 12.0 | 33.4 | 22.5 + 31.2 | 10.9 | 7.9 + 1.5 | 14.0 + 3.6 |
+| E1M1 | 277 | 82.8 + 13.9 | 31.4 + 10.4 | 39.9 | 21.2 + 31.7 | 11.5 | 9.5 + 0.9 | 12.8 + 2.9 |
+| E1M2 | 296 | 85.3 + 14.4 | 30.4 + 10.8 | 31.0 | 24.4 + 47.7 | 11.1 | 14.3 + 1.0 | 14.3 + 3.3 |
+| E1M3 | 315 | 76.8 + 26.6 | 26.5 + 19.7 | 24.9 | 32.1 + 34.3 | 9.9 | 19.9 + 1.0 | 27.4 + 5.7 |
+| E1M4 | 335 | 91.3 + 21.0 | 33.7 + 16.0 | 36.7 | 34.5 + 40.7 | 12.5 | 17.4 + 1.1 | 16.6 + 3.8 |
+| E1M5 | (whole) | 73.1 + 17.9 | 25.5 + 13.3 | 20.7 | 30.9 + 31.1 | 9.7 | 17.7 + 1.0 | - |
+| E1M6 | (whole) | 54.4 + 31.6 | 17.7 + 22.5 | 18.2 | 19.4 + 24.3 | 6.6 | 14.8 + 0.9 | - |
+| E1M7 | (whole) | 21.7 + 9.1 | 7.7 + 6.8 | 5.9 | 9.6 + 11.2 | 2.9 | 6.2 + 0.6 | - |
+| E1M8 | (whole) | 39.3 + 7.8 | 13.9 + 5.7 | 15.9 | 9.3 + 18.3 | 6.3 | 9.7 + 0.7 | - |
+| E2M1 | 302 | 90.8 + 18.5 | 29.9 + 13.8 | 33.9 | 21.3 + 35.8 | 11.7 | 14.0 + 0.9 | 18.5 + 4.0 |
+| E2M2 | 323 | 102.9 + 13.6 | 34.4 + 10.1 | 43.3 | 28.3 + 39.3 | 12.3 | 11.2 + 0.9 | 14.9 + 3.8 |
+| E2M3 | 320 | 93.8 + 17.9 | 30.0 + 13.6 | 32.6 | 30.0 + 42.5 | 11.8 | 14.3 + 1.0 | 19.6 + 4.3 |
+| E2M4 | 338 | 100.0 + 16.9 | 34.4 + 12.7 | 42.1 | 24.1 + 45.1 | 12.7 | 16.8 + 1.0 | 18.6 + 4.4 |
+| E2M5 | 283 | 78.1 + 16.1 | 27.0 + 11.9 | 25.6 | 24.4 + 39.2 | 11.5 | 14.8 + 0.9 | 21.0 + 4.8 |
+| E2M6 | (whole) | 80.8 + 23.7 | 24.6 + 17.7 | 22.2 | 26.3 + 36.1 | 10.0 | 21.7 + 1.2 | - |
+| E2M7 | 332 | 95.1 + 21.8 | 33.8 + 16.5 | 33.3 | 32.1 + 35.8 | 12.0 | 21.2 + 1.1 | 15.4 + 3.6 |
+| E3M1 | 277 | 77.5 + 17.7 | 27.4 + 13.3 | 30.0 | 19.8 + 36.2 | 11.3 | 13.5 + 0.7 | 17.5 + 4.3 |
+| E3M2 | (whole) | 47.1 + 27.6 | 14.3 + 18.9 | 10.1 | 15.7 + 23.4 | 5.7 | 12.0 + 0.8 | - |
+| E3M3 | (whole) | 66.9 + 16.1 | 23.3 + 12.1 | 19.2 | 17.6 + 23.4 | 8.7 | 12.4 + 0.8 | - |
+| E3M4 | 371 | 91.4 + 36.0 | 31.9 + 26.1 | 31.8 | 26.7 + 43.8 | 12.0 | 15.3 + 1.1 | 35.0 + 8.1 |
+| E3M5 | 354 | 107.8 + 15.2 | 38.9 + 11.4 | 48.8 | 31.7 + 47.3 | 13.7 | 14.2 + 0.9 | 12.4 + 3.2 |
+| E3M6 | (whole) | 106.8 + 16.8 | 38.4 + 12.2 | 43.1 | 28.1 + 37.9 | 13.9 | 17.8 + 1.2 | - |
+| E3M7 | (whole) | 81.4 + 17.6 | 27.9 + 13.5 | 24.3 | 19.1 + 22.9 | 10.6 | 12.0 + 0.9 | - |
+| E4M1 | 302 | 89.6 + 17.6 | 33.3 + 12.7 | 37.8 | 22.7 + 33.1 | 11.0 | 15.6 + 1.1 | 15.8 + 3.5 |
+| E4M2 | 285 | 70.7 + 19.1 | 29.2 + 14.0 | 30.3 | 27.0 + 35.4 | 11.4 | 13.9 + 1.0 | 20.6 + 4.6 |
+| E4M3 | (whole) | 69.0 + 27.5 | 25.1 + 21.2 | 23.8 | 29.0 + 36.1 | 8.8 | 20.0 + 1.2 | - |
+| E4M4 | 306 | 85.5 + 12.0 | 34.3 + 9.3 | 40.4 | 24.5 + 43.6 | 14.1 | 21.5 + 1.4 | 9.1 + 2.1 |
+| E4M5 | 314 | 67.6 + 25.2 | 26.2 + 18.5 | 22.2 | 30.2 + 44.3 | 11.4 | 21.8 + 1.1 | 28.9 + 7.0 |
+| E4M6 | (whole) | 56.1 + 22.1 | 22.0 + 16.7 | 18.2 | 24.0 + 32.1 | 8.8 | 19.5 + 1.3 | - |
+| E4M7 | 379 | 100.5 + 25.8 | 39.3 + 19.7 | 41.4 | 36.4 + 44.8 | 14.4 | 19.5 + 1.2 | 20.0 + 4.1 |
+| E4M8 | 287 | 72.1 + 21.3 | 27.0 + 16.0 | 20.4 | 28.2 + 36.1 | 10.6 | 17.6 + 1.0 | 22.8 + 5.4 |
+| END | (whole) | 21.9 + 11.5 | 8.4 + 8.7 | 5.5 | 14.9 + 11.9 | 5.0 | 9.5 + 0.9 | - |
+
+- The nodes (22-108 KB of the world's, 8-36 KB of the brush models'),
+  the clip hulls (planes 9-36, clipnodes 11-48), the leaves, the PVS
+  (6-49) and, on a zoned map, the brush models' records (11-43): the
+  zones' tables add 2 KB at most.
+- Three findings carry the rest of this section:
+  - **the brush models' leaves** (210-953 a map) are all empty leaves
+    with no marks and no PVS row (Quake numbers them after the world's
+    1..visleafs). Nothing reads them but their contents byte: the
+    renderer's brush model walk stops at a leaf (r_world.s `bm_walk`),
+    the point hull's traces read the contents (clip.c `child_of`,
+    clip.s `LEAF`). 28 bytes each, and 2 of ambient (3 on a zoned map,
+    its leaf set);
+  - **qbsp's clip hulls repeat themselves**: hash-consing the clipnodes
+    (the same plane, children of the same contents or the same shared
+    node) leaves 69-87 % of them (E1M2: 8148 -> 5639);
+  - **the PVS of every place the player can reach covers 78-100 % of
+    the leaves**, so pruning the tree to where the player can be finds
+    next to nothing (58.3).
+
+### 58.2 The options, measured on the 32 maps
+
+KB a map would free (A + B measured on the cooked files; the others
+computed from the cooked data as described below):
+
+| map | A: the brush models' leaves shared | B: the clip hulls' repeats shared | A + B, measured | C: a compact entity table | D: the PVS rows as deltas | E: the PVS rows per zone | F: 16-bit node children |
+|---|---|---|---|---|---|---|---|
+| START | 13.2 | 5.2 | **18.4** | 5.4 | 8.5 | 9.4 | 11.4 |
+| E1M1 | 11.5 | 5.4 | **16.9** | 6.2 | 6.6 | 3.9 | 10.8 |
+| E1M2 | 11.9 | 14.7 | **26.6** | 9.0 | 9.8 | 19.0 | 11.1 |
+| E1M3 | 21.8 | 5.1 | **26.9** | 12.8 | 6.2 | 0.9 | 11.5 |
+| E1M4 | 17.7 | 6.6 | **24.3** | 11.4 | 8.8 | 18.7 | 12.5 |
+| E1M5 | 14.2 | 4.5 | **18.7** | 11.3 | 5.3 | - | 10.1 |
+| E1M6 | 24.1 | 3.6 | **27.7** | 9.8 | 3.5 | - | 9.6 |
+| E1M7 | 7.3 | 2.2 | **9.5** | 4.2 | 1.4 | - | 3.4 |
+| E1M8 | 6.1 | 4.4 | **10.5** | 6.2 | 2.7 | - | 5.2 |
+| E2M1 | 15.3 | 6.9 | **22.2** | 9.2 | 8.3 | 15.9 | 12.2 |
+| E2M2 | 11.2 | 7.1 | **18.3** | 7.3 | 10.3 | 31.3 | 13.0 |
+| E2M3 | 15.0 | 7.9 | **22.9** | 9.4 | 7.3 | 14.6 | 12.4 |
+| E2M4 | 14.0 | 9.4 | **23.4** | 10.8 | 10.3 | 18.1 | 13.0 |
+| E2M5 | 13.2 | 8.6 | **21.8** | 9.5 | 5.0 | 7.6 | 10.5 |
+| E2M6 | 18.9 | 6.0 | **24.9** | 14.0 | 5.2 | - | 11.6 |
+| E2M7 | 18.3 | 5.9 | **24.2** | 13.7 | 9.0 | 15.3 | 13.0 |
+| E3M1 | 14.8 | 7.0 | **21.8** | 8.9 | 8.2 | 18.0 | 10.6 |
+| E3M2 | 20.3 | 4.9 | **25.2** | 8.1 | 2.1 | - | 8.3 |
+| E3M3 | 12.9 | 4.5 | **17.4** | 8.1 | 3.8 | - | 9.2 |
+| E3M4 | 28.8 | 9.3 | **38.1** | 10.4 | 5.9 | 7.8 | 14.2 |
+| E3M5 | 12.6 | 10.2 | **22.8** | 9.2 | 11.7 | 24.8 | 13.7 |
+| E3M6 | 13.1 | 7.0 | **20.1** | 11.5 | 8.0 | - | 13.7 |
+| E3M7 | 14.5 | 3.7 | **18.2** | 8.1 | 5.3 | - | 11.0 |
+| E4M1 | 14.0 | 6.0 | **20.0** | 9.9 | 8.9 | 19.8 | 11.9 |
+| E4M2 | 15.4 | 6.8 | **22.2** | 9.2 | 6.9 | 12.3 | 10.0 |
+| E4M3 | 22.7 | 7.0 | **29.7** | 13.1 | 6.1 | - | 10.7 |
+| E4M4 | 10.2 | 10.2 | **20.4** | 13.8 | 9.5 | 28.4 | 10.8 |
+| E4M5 | 20.4 | 8.7 | **29.1** | 14.2 | 4.7 | 4.2 | 10.3 |
+| E4M6 | 17.8 | 6.0 | **23.8** | 12.9 | 4.5 | - | 8.7 |
+| E4M7 | 21.8 | 6.8 | **28.6** | 12.9 | 11.1 | 23.4 | 14.0 |
+| E4M8 | 17.7 | 5.6 | **23.3** | 11.6 | 5.5 | 8.4 | 10.4 |
+| END | 9.3 | 1.5 | **10.8** | 6.2 | 0.9 | - | 3.7 |
+
+- **A, the brush models' leaves shared** (implemented, 58.4): one leaf
+  per contents value after the world's (Quake's maps: one, empty). CPU:
+  none. Risk: none found (every reader checked; the structural
+  comparison and the frames below). The asm: nothing.
+- **B, the clip hulls' repeats shared** (implemented, 58.4): a trace or
+  a contents walk depends on each node's plane and children only, so a
+  DAG gives every result bit for bit (the asm's guard node, `PS_GNODE`,
+  is a subtree root: the same subtree). CPU: none. The asm: nothing.
+- **C, a compact entity table**: the cooked `qw_ent` is 56 bytes, most
+  of them zero; a class byte, a 4-byte mask of the 25 fields present and
+  those fields take a third (6.2-21.8 -> 2.0-7.7 KB). `ents_spawn`
+  decodes one into a `qw_ent` on the stack for the spawn functions (none
+  keeps the pointer: checked), the cook's bmf.c and world_check read it
+  the same way (a shared inline decoder in formats/qworld.h). CPU: at a
+  map's spawn and a restart only (about 100-200 cycles an entity, under
+  80 k cycles a map). Risk: low; a format change (a new magic, so the
+  analysis tool's reader, `analysis/wld.py`, asserting "QWVE", needs the
+  same change outside the repo). The asm: nothing. Self-contained, not
+  done here: it changes the format and the engine; next in line.
+- **D, the PVS rows as deltas**: each row Quake's run-length bytes, or
+  the XOR against a plain row among the 8 before it, run-length coded
+  (a delta's reference always plain: no chains; 68-89 % of the rows
+  become deltas). 16-32 % of the PVS (0.9-11.7 KB). CPU: `mark_pvs`
+  reads two streams for a delta row: about +12-20 cycles a row byte
+  (39-180 bytes), +0.5-3.6 k cycles each time the camera's leaf changes,
+  on top of its stamping (unchanged); ai.c's checkclient decodes the
+  same in C every tenth of a second. The asm: `MARKPVS` (r_world.s)
+  rewritten for the two streams, by hand; the C reference too. Risk:
+  low (the same bits); the frames' cost on leaf changes.
+- **E, the PVS rows per zone** (the §57.9 idea): a chunk carries the
+  rows of its zone's leaves; the switch points those leaves at them.
+  A slot then grows by the biggest zone's chunk + rows (+4-12 KB, × 3
+  slots), so the net is 0.9-31.3 KB on the 20 zoned maps (whole maps:
+  nothing). CPU: the switch rewrites up to 319 leaves' vis words, keeping
+  their render-list byte: about +5 k cycles on the 33-55 k of the patch;
+  the frames: none. The asm: zone.s `zone_mark` must not mark from a
+  leaf whose row is not in (a late zone: the old marking kept, s5 taken
+  from r_state for `mark_done`); r_world.s unchanged. Risk: behaviour in
+  play, not in the bench (`zone_sync`): while a zone is late the PVS is
+  the last leaf's (today the new leaf's, drawn from the old chunk), and
+  ai.c's checkclient finds no row for an eye in a zone not in (it would
+  keep its last row: a monster notices the player up to a late read
+  later). D and E overlap: D shrinks the rows E moves.
+- **F, 16-bit node children** (word offsets, a tag bit for a leaf):
+  -4 bytes a node, 3.4-14.2 KB. CPU: every child fetched costs an
+  `lhu`, a shift and an add (+5 cycles), 93-378 nodes a frame on start's
+  views: +0.5-2 k cycles a frame, plus the hull-0 traces' nodes (clip.s),
+  bmfrag's and the dynamic lights' walks. The asm: the world walk, the
+  brush model walk, the camera leaf's descent, `mark_pvs`'s parents
+  (unchanged: they are offsets already), clip.s's hull 0, bmfrag.s,
+  the dynamic lights' asm; their C references. Risk: a large change of
+  the hottest code for 11 KB a map. Not recommended before C and D.
+- **The edicts** (not the skeleton, the same level arena): the pool is
+  `num_ents + 2 + 96` edicts of 388 bytes whatever the skill:
+  - the entities single player never spawns (all three skill flags set:
+    Quake's deathmatch-only entities, 2-36 a map) keep their 56-byte entry
+    and an edict slot each: 0.9-15.6 KB. The cook could leave them out
+    (C's step: `ents_spawn` skips them before taking an edict, so the
+    spawned edicts' numbers do not change);
+  - those the skill leaves out keep their slots too: up to 38 KB (E1M3:
+    98 entities at easy, 41 at hard: 37 / 16 KB). Sizing the pool by the
+    skill's spawn count frees that.
+  Both shrink the runtime spawns' headroom (gibs, packs, delayed uses,
+  door triggers): today those slots come on top of the 96 spare ones, so
+  the peak in use needs measuring first. Not the skeleton's: listed.
+
+### 58.3 The clip hulls and the nodes where the player can be
+
+The analysis' reachable eyes (§56's flood: walking, jumping, riding,
+teleporting; 59-373 k eyes a map) against the cooked world:
+
+| map | eyes sampled | camera leaves / world leaves | their PVS's union | world nodes above it | hull-1 clipnodes the origins reach | hull-2 monsters (easy / normal / hard) |
+|---|---|---|---|---|---|---|
+| START | 89184 | 325 / 1128 | 1100 (98 %) | 2361 of 2422 (97 %) | 1685 of 2585 (65 %) | 0 / 0 / 0 |
+| E1M1 | 104341 | 468 / 1148 | 1137 (99 %) | 2326 of 2355 (99 %) | 2011 of 2556 (79 %) | 1 / 5 / 8 |
+| E1M2 | 125041 | 548 / 1109 | 1057 (95 %) | 2314 of 2425 (95 %) | 2054 of 2887 (71 %) | 5 / 7 / 15 |
+| E1M3 | 113136 | 407 / 967 | 932 (96 %) | 2096 of 2185 (96 %) | 1636 of 2130 (77 %) | 6 / 10 / 23 |
+| E1M4 | 249475 | 562 / 1230 | 1189 (97 %) | 2472 of 2597 (95 %) | 2254 of 3427 (66 %) | 7 / 14 / 24 |
+| E1M5 | 127544 | 342 / 932 | 804 (86 %) | 1855 of 2080 (89 %) | 1462 of 2237 (65 %) | 7 / 15 / 25 |
+| E1M6 | 77947 | 213 / 648 | 635 (98 %) | 1506 of 1548 (97 %) | 995 of 1442 (69 %) | 8 / 16 / 22 |
+| E1M7 | 78066 | 106 / 281 | 255 (91 %) | 576 of 616 (94 %) | 607 of 749 (81 %) | 13 / 13 / 13 |
+| E1M8 | 287638 | 232 / 508 | 477 (94 %) | 1040 of 1117 (93 %) | 1256 of 1619 (78 %) | 13 / 21 / 27 |
+| E2M1 | 151416 | 508 / 1092 | 1041 (95 %) | 2452 of 2584 (95 %) | 2508 of 3053 (82 %) | 2 / 5 / 7 |
+| E2M2 | 149163 | 510 / 1256 | 1112 (89 %) | 2625 of 2928 (90 %) | 2519 of 3544 (71 %) | 11 / 19 / 20 |
+| E2M3 | 220373 | 519 / 1095 | 1092 (100 %) | 2653 of 2667 (99 %) | 2600 of 3472 (75 %) | 5 / 10 / 19 |
+| E2M4 | 165952 | 495 / 1258 | 1184 (94 %) | 2691 of 2845 (95 %) | 2386 of 3621 (66 %) | 12 / 28 / 38 |
+| E2M5 | 263986 | 504 / 985 | 970 (98 %) | 2182 of 2222 (98 %) | 2551 of 2997 (85 %) | 14 / 26 / 33 |
+| E2M6 | 166595 | 474 / 897 | 871 (97 %) | 2230 of 2298 (97 %) | 2046 of 2682 (76 %) | 18 / 32 / 41 |
+| E2M7 | 132351 | 506 / 1236 | 1201 (97 %) | 2636 of 2705 (97 %) | 2112 of 2849 (74 %) | 11 / 21 / 25 |
+| E3M1 | 245155 | 609 / 1000 | 945 (94 %) | 2084 of 2204 (95 %) | 2266 of 2822 (80 %) | 3 / 6 / 9 |
+| E3M2 | 80921 | 227 / 522 | 481 (92 %) | 1246 of 1340 (93 %) | 1366 of 1797 (76 %) | 10 / 14 / 23 |
+| E3M3 | 74258 | 335 / 852 | 809 (95 %) | 1782 of 1903 (94 %) | 1576 of 1999 (79 %) | 5 / 9 / 14 |
+| E3M4 | 161437 | 540 / 1166 | 1103 (95 %) | 2462 of 2599 (95 %) | 2193 of 3163 (69 %) | 17 / 24 / 30 |
+| E3M5 | 372598 | 672 / 1423 | 1377 (97 %) | 2976 of 3065 (97 %) | 3087 of 4092 (75 %) | 11 / 19 / 24 |
+| E3M6 | 197808 | 479 / 1403 | 1214 (87 %) | 2634 of 3039 (87 %) | 1952 of 3126 (62 %) | 15 / 30 / 39 |
+| E3M7 | 59068 | 375 / 1021 | 955 (94 %) | 2169 of 2316 (94 %) | 1327 of 1816 (73 %) | 18 / 22 / 24 |
+| E4M1 | 155732 | 510 / 1218 | 1194 (98 %) | 2480 of 2549 (97 %) | 1952 of 2631 (74 %) | 4 / 5 / 5 |
+| E4M2 | 146279 | 481 / 1067 | 1055 (99 %) | 1995 of 2010 (99 %) | 2402 of 3044 (79 %) | 10 / 16 / 18 |
+| E4M3 | 148866 | 434 / 918 | 893 (97 %) | 1899 of 1964 (97 %) | 2027 of 2701 (75 %) | 7 / 16 / 25 |
+| E4M4 | 269701 | 512 / 1255 | 1237 (99 %) | 2391 of 2433 (98 %) | 2995 of 3899 (77 %) | 12 / 21 / 33 |
+| E4M5 | 224276 | 511 / 959 | 933 (97 %) | 1834 of 1922 (95 %) | 2718 of 3466 (78 %) | 9 / 13 / 19 |
+| E4M6 | 191061 | 465 / 804 | 774 (96 %) | 1521 of 1596 (95 %) | 1884 of 2320 (81 %) | 10 / 14 / 17 |
+| E4M7 | 233067 | 649 / 1436 | 1405 (98 %) | 2756 of 2860 (96 %) | 2728 of 3465 (79 %) | 12 / 17 / 21 |
+| E4M8 | 182324 | 384 / 988 | 916 (93 %) | 1930 of 2050 (94 %) | 2095 of 2977 (70 %) | 13 / 23 / 35 |
+| END | 164974 | 133 / 305 | 237 (78 %) | 518 of 624 (83 %) | 696 of 788 (88 %) | 10 / 14 / 14 |
+
+- **The render nodes:** the PVS's union of every leaf an eye reaches
+  covers 78-100 % of the world's leaves, and the nodes above them 83-99 %
+  of the nodes: 1-17 % never drawn from a reachable place. But the game
+  walks the same tree for its point queries, the hull-0 traces (shots,
+  missiles, lines of sight), CheckBottom and the entities' leaves,
+  anywhere monsters are (their closets too): only the render half of
+  those nodes could go, with a 6-byte game tree kept for all of them.
+  Nothing to gain.
+- **The hull-1 clipnodes:** the origins reach 62-88 % of the world's.
+  The rest is space an explosion, a lift's top or a fall can still put
+  the player in, and the monster closets the monsters walk in: only
+  empty regions no entity and no player can ever enter could go, which
+  needs the hulls' portals (the BSP has none for them) and would free a
+  part of those 12-38 % at best: 1-7 KB a map. Not worth its risk.
+- **Hull 2** is the dogs', ogres', fiends', shamblers' and vores' (a box
+  over 32 units wide, `ai.c hull_of`): every map but START has one at
+  every skill. START alone could leave it out (17 KB, the map with the
+  most room). Not done.
+- **The marks per zone** (only the marks of the chunk's records, for the
+  leaves its PVS reaches): 2.8-5.0 KB a zone against 2.9-14.4 KB in all;
+  three slots of it cost what the whole takes. Nothing to gain.
+
+### 58.4 A and B in the cook (implemented)
+
+- `tools/qcook/world.c`: the brush models' leaves become one leaf per
+  contents after the world's (`num_leaves` = visleafs + 2 on Quake's
+  maps), their nodes' leaf children and the leaf roots follow; the
+  shared leaf has no marks, no row, no parent, light 128, ambient 0. A
+  map whose leaves past the world's held marks, a row or a world node's
+  child would keep them all (none does). The clipnodes are hash-consed
+  (`clip_share`) and numbered depth first from the roots in Quake's
+  order (the world's hull 1, the brush models', then the hulls 2): hull
+  1's nodes stay first. The planes are untouched (the render nodes index
+  them). The cook prints `the brush models' N leaves -> 1 shared` and
+  `clip hulls: N clipnodes -> M`.
+- `tools/qcook/zones.c`: a table that counts the old leaves (the tables
+  of §56, made before) still matches: the world's leaves are the same,
+  the camera is never past them; those leaves' sets are QZ_NONE (a set
+  only a brush model's leaf used is gone).
+- No engine change: r_world.s, clip.s, zone.s and the C engine are as
+  they were; the format is QWVE / QWVZ as before.
+
+**Checked:**
+- the structural comparison, old cook against new, the 32 worlds and
+  the 20 skeletons: every section byte for byte but the leaves past the
+  world's (the shared one: no marks, no row, no parent), the node
+  children that pointed at them (to a leaf of the same contents), the
+  clipnodes (every root's hull, the world's and each brush model's, both
+  hulls, equivalent node for node) and the brush models' clip roots; the
+  zone header, the world leaves' sets and the sets they use identical.
+  The 40 chunk files are byte for byte the old ones but their stamps;
+- `scripts/dlcheck.sh` against the tip's references (saved on 781649c,
+  themselves identical to the parent's): start's 12 views, the 128 spawn
+  views (`BENCH_MAPS=1 HASHONLY=1`), the game bench's 23 hashes
+  (`BENCH_GAME=1 HASHONLY=1`): IDENTICAL, the frames' cycles -0.0 %
+  (6209214 -> 6209152; 45344907 -> 45343594); the C engine
+  (`ENGINE_C=1`): start's 12 and the 128 views IDENTICAL;
+- the bench's trace checks: `clipdiff` (4000 traces, 4000 contents,
+  4000 lines of sight, box nodes) and `pmdiff` (6000 ticks) 0 mismatches,
+  with the same results as the tip's (629 traces hit, 1947 start in
+  solid; the same pmove positions); an asm trace 2665 -> 2640 cycles;
+- the zones' walk on E3M4 (`ZONES=1 MAP=E3M4`): 17 switches, 0 patches
+  checked bad, 22 reads, 0 read errors, the late frames through walls.
+
+**The RAM, measured** (the bench's `bench zone <MAP>` and `world: ...
+arena` lines, KB, the tip -> this section):
+
+| map | skeleton | the world's load | the stream's pool |
+|---|---|---|---|
+| START | 277 -> 259 | 575 -> 557 | 499 -> 517 (+18) |
+| E1M1 | 276 -> 259 | 605 -> 587 | 440 -> 458 (+18) |
+| E1M2 | 295 -> 268 | 592 -> 566 | 417 -> 443 (+26) |
+| E1M3 | 314 -> 287 | 605 -> 577 | 336 -> 364 (+28) |
+| E1M4 | 334 -> 310 | 621 -> 597 | 360 -> 384 (+24) |
+| E1M5 | whole | 569 -> 551 | 414 -> 432 (+18) |
+| E1M6 | whole | 477 -> 449 | 474 -> 502 (+28) |
+| E1M7 | whole | 190 -> 180 | 902 -> 912 (+10) |
+| E1M8 | whole | 365 -> 355 | 694 -> 704 (+10) |
+| E2M1 | 302 -> 279 | 644 -> 620 | 359 -> 383 (+24) |
+| E2M2 | 322 -> 304 | 652 -> 634 | 372 -> 390 (+18) |
+| E2M3 | 320 -> 297 | 625 -> 601 | 370 -> 394 (+24) |
+| E2M4 | 337 -> 314 | 642 -> 620 | 350 -> 372 (+22) |
+| E2M5 | 282 -> 261 | 581 -> 559 | 411 -> 433 (+22) |
+| E2M6 | whole | 622 -> 596 | 293 -> 319 (+26) |
+| E2M7 | 331 -> 307 | 665 -> 641 | 296 -> 320 (+24) |
+| E3M1 | 277 -> 255 | 605 -> 583 | 401 -> 423 (+22) |
+| E3M2 | whole | 412 -> 386 | 575 -> 601 (+26) |
+| E3M3 | whole | 497 -> 479 | 514 -> 532 (+18) |
+| E3M4 | 371 -> 332 | 730 -> 692 | 218 -> 256 (+38) |
+| E3M5 | 353 -> 331 | 706 -> 684 | 314 -> 336 (+22) |
+| E3M6 | whole | 763 -> 743 | 215 -> 235 (+20) |
+| E3M7 | whole | 576 -> 558 | 459 -> 477 (+18) |
+| E4M1 | 302 -> 282 | 601 -> 581 | 401 -> 421 (+20) |
+| E4M2 | 285 -> 262 | 587 -> 565 | 407 -> 429 (+22) |
+| E4M3 | whole | 573 -> 543 | 378 -> 408 (+30) |
+| E4M4 | 305 -> 285 | 603 -> 583 | 373 -> 393 (+20) |
+| E4M5 | 313 -> 284 | 622 -> 594 | 310 -> 338 (+28) |
+| E4M6 | whole | 506 -> 482 | 450 -> 474 (+24) |
+| E4M7 | 378 -> 350 | 679 -> 651 | 267 -> 295 (+28) |
+| E4M8 | 287 -> 263 | 590 -> 566 | 369 -> 393 (+24) |
+| END | whole | 248 -> 238 | 827 -> 837 (+10) |
+
+- **9.5-38.1 KB freed a map, 22 on average, on all 32 maps** (the whole
+  ones too); the smallest stream pool 215 -> 235 KB (E3M6, whole), the
+  worst world load 763 -> 743 KB; a load reads that much less from the
+  disc. The zoned / whole split is unchanged (both sides shrink alike).
+- Not checked: DuckStation, the real machine, the release build (no
+  engine change: the same code, smaller files).
+
+### 58.5 Left open
+
+- **C, the compact entity table**: 4.2-14.2 KB a map, no frame cost, a
+  format change (the analysis tool's reader to follow outside the repo).
+  The next self-contained step (done: §59, 5.0-17.6 KB a map).
+- **D, the PVS as deltas** (0.9-11.7 KB, asm `MARKPVS` by hand) and
+  **E, the PVS rows per zone** (0.9-31.3 KB on the zoned maps, a
+  behaviour change while a zone is late): E frees more on the zoned maps,
+  D on every map, both together less than their sum.
+- **The edicts by the skill's count**: up to 38 KB, once the peak of the
+  runtime spawns is measured (§59.5: the slots the benches' play leaves
+  free).
+- **F, 16-bit node children**: 11 KB a map for the hottest code's
+  rewrite; last.
+- The tables' re-export (§56's tool) on the new worlds would count the
+  new leaves; `analysis/export.py` already skips leaves past visleafs.
+
+## §59 — The entities in a compact table (2026-10-22)
+
+- **The ask** (§58.5's next step): option C of §58.2, the cooked entity
+  table made compact, the frames the branch tip's (fea0ee3) hash for
+  hash; and the entities single player never spawns left out of the
+  cook, but only if the runtime spawns are measured never to need the
+  edict slots those entities leave free (otherwise listed, not done). On
+  its own branch (on top of §58's
+  branch), not merged.
+- **The result:**
+  - the entities take 21.6 % of their old bytes: 5.0-17.6 KB less a map
+    (§58.2's layout would have freed 4.2-14.2 KB);
+  - the stream's pool grows by 4-18 KB, the smallest one 235 -> 249 KB
+    (E3M6);
+  - the entities single player never spawns stay (59.5).
+
+### 59.1 The format (formats/qworld.h; magics QWVF, QWZF)
+
+The entities' section starts at `ofs_ents` and runs to `ofs_strings`.
+The header is unchanged: 156 bytes, the same fields.
+
+- `uint16_t names[QE_COUNT]`: each class's classname, its string offset
+  (0 for a class the map has none of). Every entity of a class has the
+  same offset: a known class is its name (`ent_class`), and the cook's
+  string pool keeps one copy of each string.
+- Then the `num_ents` entities, in the table's order (the edicts'
+  order). Each one is:
+  - a 32-bit head: the class in bits 0-6 (`QE_COUNT` <= 128), a bit per
+    field present in bits 7-30 (`QWE_BIT`), bit 31 zero;
+  - the fields present, in the order of their bits, little-endian and
+    unaligned (`QWE_FIELD_AT` gives each one's offset in the `qw_ent`
+    and its bytes in the table);
+  - the classname, for `QE_UNKNOWN` only.
+- Then zero bytes up to the strings' 4-byte alignment.
+
+The fields' sizes:
+
+- **The origin's three fields:** whole world units in 2 bytes,
+  multiplied by `QW_CLIP_SUB` when decoded. With the head's `QWE_FINE`
+  bit they are 1/8 units in 4 bytes instead. All 6505 origins of the id1
+  maps are whole.
+- **One byte each:**
+  - the spawnflags' high byte (the skill flags 256 / 512 / 1024) and its
+    low byte (the classes' own flags), as two fields;
+  - `model`: a BSP29 map has at most 256 models;
+  - `sounds`.
+- **6 bytes:** `mangle`, one field (it is one key, "pitch yaw roll").
+- **2 bytes each:** `angle`, `wait`, `speed`, `style`, `lip`, `delay`,
+  `health`, `height`, `dmg`, `count`, and the strings `targetname`,
+  `target`, `message`, `map`, `killtarget`.
+
+The 24 fields (`QWE_*`) are ordered by how often the id1 maps give
+them: the origin's three, `targetname`, `angle`, `target`, the
+spawnflags' high byte, `model`, the low byte, `wait`, `sounds`,
+`speed`, `style`, `lip`, `message`, `mangle`, `delay`, `health`,
+`height`, `dmg`, `map`, `count`, `killtarget`, then `QWE_FINE`. The
+decoder's loop stops after an entity's last field: 7.6 bits on
+average, against 14 in the struct's order.
+
+What §58.2 measured, and what each step here adds (the 32 maps'
+entities, in bytes):
+
+| layout | bytes | of the 56-byte entries |
+|---|---|---|
+| `qw_ent[]` (QWVE) | 499184 | 100 % |
+| §58.2: a class byte, a 4-byte mask, the fields present at their sizes | 172978 | 34.7 % |
+| the class in the head's low bits: one 4-byte head | 164064 | 32.9 % |
+| the origin in whole units: 2 bytes a field | 125710 | 25.2 % |
+| the model and each spawnflags byte in a byte, the mangle one field | 120368 | 24.1 % |
+| the classname by the class (the names table: 164 bytes a map) | 107788 | 21.6 % |
+| as cooked (the alignment: 44 bytes in all) | 107832 | 21.6 % |
+
+That is 65 KB less than §58.2's layout over the 32 maps, about 2 KB a
+map.
+
+**The decoder** (`qw_ent_decode`, static inline; the engine, the cook's
+`bmf.c` and `world_check` share it):
+
+1. it clears the `qw_ent` and takes the class from the head;
+2. it loops over the head's field bits, copying each field's bytes to
+   its offset (the origin's scaled, or copied whole with `QWE_FINE`);
+3. it sets the classname: `names[class]`, or the inline one for an
+   unknown class;
+4. it returns where the next entity starts.
+
+The cook's `ents_pack` (tools/qcook/ents.c) writes each entity, then
+decodes it back and checks it against its `qw_ent`, byte for byte. A
+`qw_ent` has no padding, so the whole struct compares. A map with a
+model past 255, or a class under two names, would stop the cook.
+
+### 59.2 The engine and the tools
+
+- **engine/world.c:** `world.ent_names` is the names table,
+  `world.ents` the entities after it.
+- **engine/ents.c `ents_spawn`:** it decodes each entity in turn into a
+  `qw_ent` on its stack (56 bytes) and goes on as before: the skill
+  test, `ent_new` (which copies the fields into the edict), then the
+  class's spawn function.
+  - No spawn function keeps the pointer. `triggers_spawn`,
+    `movers_spawn`, `level_spawn`, `items_spawn` and `monsters_spawn`
+    read the edict `ent_new` filled, never `q` (each has `(void) q;`).
+  - The table is walked once per spawn: `ents_spawn(1)` at a map's
+    start, `ents_spawn(0)` at a restart.
+- **CPU:** the decode, at a spawn only. Measured on PCSX-Redux:
+  369-438 cycles an entity, 42-166 k cycles a map (1.2-4.9 ms). A
+  restart's `bmf_load` alone takes 0.7-2.4 M.
+  - The first version took about 600 cycles an entity. GCC trimmed the
+    clearing `memset` to bytes 1-55 (the class's store follows it), and
+    an unaligned 55-byte clear is a library call. The loop also ran 14
+    bits an entity in the struct's order.
+  - A compound literal's 14 word stores and the frequency order took it
+    to about 400.
+  - No asm reads the entities. The C engine (§55) builds the same
+    `ents.c`.
+- **tools/qcook:**
+  - `world.c` writes the table after the brush models, the strings
+    4-byte aligned after it;
+  - `world_check` decodes it from a copy padded past the section, so a
+    wrong head cannot read past the file. It checks the head's spare bit,
+    each entity's class, model and strings, the names table's offsets
+    and the padding;
+  - `bmf.c` decodes the table into an array for its train paths
+    (`find_target` walks it in the table's order: the edicts');
+  - `zones.c` copies the section whole into the skeleton.
+- **The magics:** QWVE -> QWVF, and QWVZ -> QWZF (Z for the zones, F for
+  the world format it carries). The engine refuses an old file at the
+  load ("bad world file"), and so does every tool.
+
+### 59.3 Checked
+
+- **The cook:** every entity's round trip (8914 entities on the 32
+  maps); `qcook check` on the 32 worlds.
+- **A structural comparison**, old cook (fea0ee3) against new (scratch,
+  with an independent Python decoder), on the 32 worlds and the 20
+  skeletons:
+  - every section is byte for byte the old one but the entities';
+  - the header's fields are the same but the magic and `ofs_strings`;
+  - every decoded entity equals the old `qw_ent`, byte for byte;
+  - the zone tables (chunk directory, leaf sets, sets) are the same;
+  - the 40 chunk files are byte for byte the old ones but their stamps
+    (the skeleton's stamp hashes the world's length).
+- **`scripts/dlcheck.sh`** against the tip's references, saved on fea0ee3
+  before the change:
+  - start's 12 views: IDENTICAL (6209151 -> 6209152 cycles);
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1`): IDENTICAL
+    (45343575 -> 45342963);
+  - the game bench's 23 hashes (`BENCH_GAME=1 HASHONLY=1`): IDENTICAL;
+  - the C engine (`ENGINE_C=1`): start's 12 views IDENTICAL (+87.9 %,
+    §55's ratio), the 128 views IDENTICAL (+94.7 %).
+- **The release build** links (hazcheck clean): `ramcheck` 43400 bytes
+  for the stack, 43704 before. The decoder takes 304 bytes of code and
+  table.
+
+### 59.4 The RAM, measured
+
+From the bench's `bench zone <MAP>` and `world: ... arena` lines (KB),
+and the cooked worlds (the entities' section, bytes):
+
+| map | entities | their bytes | skeleton (KB) | the world's load (KB) | the stream's pool (KB) |
+|---|---|---|---|---|---|
+| START | 144 | 8064 -> 1704 | 259 -> 252 | 557 -> 551 | 517 -> 523 (+6) |
+| E1M1 | 174 | 9744 -> 2156 | 259 -> 252 | 587 -> 581 | 458 -> 464 (+6) |
+| E1M2 | 262 | 14672 -> 3368 | 268 -> 257 | 566 -> 554 | 443 -> 455 (+12) |
+| E1M3 | 364 | 20384 -> 4520 | 287 -> 272 | 577 -> 563 | 364 -> 378 (+14) |
+| E1M4 | 318 | 17808 -> 3844 | 310 -> 297 | 597 -> 583 | 384 -> 398 (+14) |
+| E1M5 | 323 | 18088 -> 4060 | whole | 551 -> 537 | 432 -> 446 (+14) |
+| E1M6 | 271 | 15176 -> 3312 | whole | 449 -> 437 | 502 -> 514 (+12) |
+| E1M7 | 113 | 6328 -> 1368 | whole | 180 -> 176 | 912 -> 916 (+4) |
+| E1M8 | 177 | 9912 -> 2240 | whole | 355 -> 347 | 704 -> 712 (+8) |
+| E2M1 | 256 | 14336 -> 3036 | 279 -> 268 | 620 -> 610 | 383 -> 393 (+10) |
+| E2M2 | 205 | 11480 -> 2532 | 304 -> 295 | 634 -> 624 | 390 -> 400 (+10) |
+| E2M3 | 261 | 14616 -> 3088 | 297 -> 285 | 601 -> 589 | 394 -> 406 (+12) |
+| E2M4 | 308 | 17248 -> 3752 | 314 -> 300 | 620 -> 606 | 372 -> 386 (+14) |
+| E2M5 | 270 | 15120 -> 3340 | 261 -> 249 | 559 -> 547 | 433 -> 445 (+12) |
+| E2M6 | 397 | 22232 -> 4748 | whole | 596 -> 580 | 319 -> 335 (+16) |
+| E2M7 | 388 | 21728 -> 4712 | 307 -> 290 | 641 -> 625 | 320 -> 336 (+16) |
+| E3M1 | 247 | 13832 -> 2928 | 255 -> 244 | 583 -> 573 | 423 -> 433 (+10) |
+| E3M2 | 220 | 12320 -> 2612 | whole | 386 -> 378 | 601 -> 609 (+8) |
+| E3M3 | 227 | 12712 -> 2868 | whole | 479 -> 469 | 532 -> 542 (+10) |
+| E3M4 | 280 | 15680 -> 3176 | 332 -> 320 | 692 -> 680 | 256 -> 268 (+12) |
+| E3M5 | 259 | 14504 -> 3092 | 331 -> 320 | 684 -> 674 | 336 -> 346 (+10) |
+| E3M6 | 326 | 18256 -> 3976 | whole | 743 -> 729 | 235 -> 249 (+14) |
+| E3M7 | 219 | 12264 -> 2524 | whole | 558 -> 548 | 477 -> 487 (+10) |
+| E4M1 | 286 | 16016 -> 3624 | 282 -> 269 | 581 -> 567 | 421 -> 435 (+14) |
+| E4M2 | 254 | 14224 -> 2992 | 262 -> 251 | 565 -> 553 | 429 -> 441 (+12) |
+| E4M3 | 366 | 20496 -> 4408 | whole | 543 -> 527 | 408 -> 424 (+16) |
+| E4M4 | 393 | 22008 -> 4776 | 285 -> 268 | 583 -> 567 | 393 -> 409 (+16) |
+| E4M5 | 398 | 22288 -> 4724 | 284 -> 267 | 594 -> 576 | 338 -> 356 (+18) |
+| E4M6 | 357 | 19992 -> 4184 | whole | 482 -> 466 | 474 -> 490 (+16) |
+| E4M7 | 356 | 19936 -> 4220 | 350 -> 334 | 651 -> 635 | 295 -> 311 (+16) |
+| E4M8 | 322 | 18032 -> 3816 | 263 -> 249 | 566 -> 552 | 393 -> 407 (+14) |
+| END | 173 | 9688 -> 2132 | whole | 238 -> 230 | 837 -> 845 (+8) |
+
+- 5.0-17.6 KB of file less a map; the entities take 21.6 % of their old
+  bytes.
+- The stream's pool grows by 4-18 KB, 12 KB on average (in 2 KB steps:
+  `cd_load` gives the world file whole sectors of the arena). The smallest pool is 235 -> 249 KB
+  (E3M6), the worst world load 743 -> 729 KB (E3M6).
+- A load reads that much less from the disc.
+
+### 59.5 The entities single player never spawns: measured, left out of the change
+
+These are Quake's deathmatch-only entities: all three skill flags are
+set. There are 2-36 a map (36 on START and E1M7, 2 on E3M2).
+
+- **What leaving them out would free:** their table bytes, 17-376 B a
+  map now, and the edict slots the pool keeps for them (the pool is
+  `num_ents + 2 + ENT_SPARE` edicts of 388 bytes): 0.8-13.6 KB.
+- **What it would not change:** `ents_spawn` skips them before taking
+  an edict, so no edict number changes, no train path (bmf.c's
+  `find_target` never finds them, at any skill) and no frame.
+- **But their slots are room for the runtime spawns:** an inhibited
+  entity's slot is free for `ent_spawn`.
+
+Measured with a bench build that counted the edicts in use (scratch,
+not committed), at hard, the skill with the least room, through
+`BENCH_MAPS=1 PLAY=1` (the spawn, then 30 frames of play):
+
+| map | pool | in use after the spawn | after 30 frames | free | the SP-never entities | free without them |
+|---|---|---|---|---|---|---|
+| START | 242 | 110 | 110 | 132 | 36 | 96 |
+| E1M1 | 272 | 160 | 162 | 110 | 14 | 96 |
+| E1M2 | 360 | 240 | 241 | 119 | 13 | 106 |
+| E1M3 | 462 | 327 | 330 | 132 | 17 | 115 |
+| E1M4 | 416 | 292 | 294 | 122 | 11 | 111 |
+| E1M5 | 421 | 311 | 312 | 109 | 5 | 104 |
+| E1M6 | 369 | 250 | 255 | 114 | 12 | 102 |
+| E1M7 | 211 | 75 | 75 | 136 | 36 | 100 |
+| E1M8 | 275 | 166 | 170 | 105 | 8 | 97 |
+| E2M1 | 354 | 214 | 216 | 138 | 14 | 124 |
+| E2M2 | 303 | 185 | 185 | 118 | 16 | 102 |
+| E2M3 | 359 | 217 | 218 | 141 | 16 | 125 |
+| E2M4 | 406 | 294 | 294 | 112 | 8 | 104 |
+| E2M5 | 368 | 229 | 235 | 133 | 16 | 117 |
+| E2M6 | 495 | 376 | 376 | 119 | 11 | 108 |
+| E2M7 | 486 | 353 | 353 | 133 | 15 | 118 |
+| E3M1 | 345 | 206 | 206 | 139 | 16 | 123 |
+| E3M2 | 318 | 218 | 218 | 100 | 2 | 98 |
+| E3M3 | 325 | 202 | 203 | 122 | 9 | 113 |
+| E3M4 | 378 | 267 | 269 | 109 | 9 | 100 |
+| E3M5 | 357 | 239 | 239 | 118 | 12 | 106 |
+| E3M6 | 424 | 290 | 290 | 134 | 8 | 126 |
+| E3M7 | 317 | 209 | 212 | 105 | 10 | 95 |
+| E4M1 | 384 | 235 | 235 | 149 | 17 | 132 |
+| E4M2 | 352 | 231 | 232 | 120 | 16 | 104 |
+| E4M3 | 464 | 347 | 352 | 112 | 18 | 94 |
+| E4M4 | 491 | 351 | 353 | 138 | 25 | 113 |
+| E4M5 | 496 | 339 | 340 | 156 | 25 | 131 |
+| E4M6 | 455 | 278 | 279 | 176 | 14 | 162 |
+| E4M7 | 454 | 287 | 291 | 163 | 15 | 148 |
+| E4M8 | 420 | 299 | 300 | 120 | 21 | 99 |
+| END | 271 | 157 | 157 | 114 | 6 | 108 |
+
+- **In use after the spawn:** the world, the player, the map's spawned
+  entities and what their spawn made (the plats' triggers), less those
+  the spawn removed. Those are the monster kinds the port does not have
+  yet (the enforcers, hell knights, vores, spawns, rotfish and
+  Shub-Niggurath: `monsters_spawn` removes them), up to 73 at hard on
+  E4M6.
+- **The runtime spawns the benches saw:** in the first 30 frames, the
+  door chains' trigger fields (0-5); in the game bench, 2 more slots;
+  in the monsters' scenarios (`MONSTERS=1`, E1M1 at hard: a monster of
+  each kind fighting and killed, then the crowd), 3. Without the SP-never
+  entities, 94-162 slots would stay free at hard: E4M3 94, E3M7 95,
+  START and E1M1 96.
+- **Once the missing monster kinds come,** they take their slots. The
+  free slots without the SP-never entities then become 87-115 (E4M8 87,
+  E4M3 and E4M6 89). That is computed: the pool, less the world, the
+  player, the map's spawned entities, the plats' triggers and the door
+  fields measured above.
+- **But the transient spawns grow with the play, not with the map:**
+  - 3 gibs per gibbed monster, each for 10-20 s (a zombie dies only
+    gibbed);
+  - a backpack per grunt and ogre (and enforcer, once they come), for 2
+    minutes;
+  - the scrags' two helpers and the shamblers' glow, each under a
+    second;
+  - the lava balls, 2 per `misc_fireball` at most;
+  - the teleport fogs, the teleport deaths and the delayed uses.
+
+  A fight that gibs 25 monsters in 20 s, with the packs left on the
+  floor, would pass 94 slots. Nothing measured shows the runtime spawns
+  never need those slots, so the cook keeps the entities (the ask's
+  condition: listed, not done). When the pool is full, `ent_spawn`
+  prints `ents: no free edict` and the spawn is skipped: a gib or a
+  pack that never appears, not a crash. No bench printed it.
+- **To take them out:**
+  - the cook's `ent_kept` leaves them out: 0.8-13.6 KB a map, at the
+    cost of 2-36 of the 100-176 free slots (87-115 left once every
+    monster kind is in). The tight maps gain the least (E3M6 3.0 KB,
+    E3M4 3.4, E4M7 5.7), START and E1M7 the most (13.6 each);
+  - or the names table's unused entry 0 (`QE_UNKNOWN`'s) could carry
+    their count, and `ents_load` keep their slots in the pool: 17-376 B
+    a map, no headroom change. Not done: a format oddity for a few
+    hundred bytes.
+- The same measure is what the "edicts by the skill" option (§58.2)
+  needs. A pool sized by the skill's spawns would free the inhibited
+  entities' slots: 10-99 at easy, 6-75 at normal, 6-41 at hard. The same
+  caveat holds: 96 spare slots, and play decides the peak.
+
+### 59.6 The analysis tool, outside the repo
+
+`quakespasm-q1psx/analysis/wld.py` asserts
+`h['magic'] == b'QWVE'`. It reads the header, the nodes, the leaves,
+the marks, the vertices and the brush models, never the entities, and
+their layout is unchanged. Accepting `QWVF` is all it needs. It is not
+changed here: the tool lives outside the repo, and nothing derived from
+Quake's data goes in the repo.
+
+### 59.7 Left
+
+- **Not checked:** DuckStation and the real machine. The change is the
+  spawn's decode and smaller files: a load reads less.
+- **The SP-never entities** (59.5): a call left open.
+- **The other options of §58.5**, as they were:
+  - D, the PVS rows as deltas;
+  - E, the PVS rows per zone;
+  - the edicts by the skill (the measure above is its input);
+  - F, 16-bit node children.
+
+## §60 — The executable trimmed: no printf, no 64-bit division, no debug font, the cold code for size (2026-10-22)
+
+- **The question**: whether the 1.2 MB ELF is wholly in RAM at boot. No: the ELF carries ~0.9 MB of DWARF (the
+  release preset is RelWithDebInfo); the console loads `q1psx.exe`, the
+  code and the data, 310 KB at 2cb0492. The RAM's real weight is the BSS
+  (1.6 MB: the level arena, the display buffers, the game arena) that
+  follows them; every KB of code is a KB the stack or an arena does not
+  get. Six ways were listed; the first four were taken.
+- **1. No printf in the release.** A console has no TTY to read. CMake
+  forces `engine/noprint.h` into every C file of a release (not a bench)
+  build: `printf(...)` is `((void) 0)`, so the calls, their arguments and
+  their format strings leave the code; `snprintf` (the screen's text)
+  stays. A call's arguments are no longer evaluated: the one with a side
+  effect, `pad_init`'s `pad_force_analog()`, is made before its printf
+  now. The SDK's own 38 printf calls (precompiled) stay, with printf.
+- **2. No 64-bit division.** libgcc's `__divdi3` (1.5 KB, its 256-byte
+  `__clz_tab`) served 22 calls: the monsters' aims and missiles, a mover's
+  time and place on its way, `vnormalize`, the world cube's clip of a
+  trace, and `atan2_d256`'s table, built at its first call by a series in
+  2.30 fixed point (about 5000 divisions: a 1.8 M-cycle tick, measured in
+  the monsters' bench, `mon cost`). Now:
+  - `q_div64_32` (engine/q_fixed.h, .c) divides an int64 by an int32 as
+    C does (truncated toward zero): inline, one `div` when the dividend
+    fits 32 bits (every division the game makes in practice), else a
+    restoring division on the 64 bits (`q_div64_32_long`). Checked on the
+    host against C's division: 19.4 M cases (edges and random), 0
+    mismatches;
+  - the atan table is a constant: the same integer code run once on the
+    host printed its 257 values;
+  - `ents_tick`'s `__builtin_ctz` (libgcc's `__ctzsi2`, which also needs
+    `__clz_tab`) is a de Bruijn table of 32 bytes (checked against the
+    builtin on 2^32 / 9973 values and every power of two).
+- **3. No debug font in the release.** `vid_init` loaded the SDK's font
+  (`FntLoad`, 2.1 KB of image and CLUT data) for `vid_text`'s fallback
+  before the game data. The release loads `GAME.DAT` first (its loading
+  screen draws with Quake's console font): `FntLoad` and the `FntSort`
+  fallback are out of the release, the VRAM at (960, 0) free.
+- **4. The cold code for size.** `Q_COLD` (engine/mem.h, GCC's `cold`:
+  the function optimized for size, in its own text section) on what runs
+  once a level: the world's, the entities', the stream's and the zones'
+  loads and spawns, the level's start and end, the boot's inits; the
+  menus' files (`menu.c`, `settings.c`) at `-Os`. The hot C keeps `-O2`:
+  `-Os` everywhere would take 35.5 KB more (226 -> 190 KB of C, measured
+  file by file) but slow the per-tick and per-frame C, unmeasured.
+- **Measured** (the release, `q1psx.exe` 317440 -> 301056 B):
+
+  | | code + data | |
+  |---|---|---|
+  | 1. printf | -9.0 KB | the strings 3.7 KB of it |
+  | 2. 64-bit division, ctz | -1.4 KB | with the inline fast path (0.6 KB) |
+  | 3. debug font | -3.4 KB | and 224 B of BSS |
+  | 4. cold code for size | -2.9 KB | |
+  | total | -16.6 KB | the BSS -0.7 KB |
+
+  The stack's room (scripts/ramcheck.sh): 43400 -> 60776 B. The level
+  arena keeps its size: what is freed goes to the stack's margin, as with
+  §54's 25 KB (the choice then); `MEM_LEVEL_BYTES` can take it.
+- **The same frames** (PCSX-Redux at 10x, `HASHONLY=1 PROFILE=0`,
+  references saved on 2cb0492): start's 12 views' display lists
+  identical (cycles +2 in 5.55 M), the game bench's hashes identical
+  (frame -0.007 %, ents -0.27 %, snd -0.6 %), the monsters' bench (its
+  dumps and every `mon` state line) and the movers' bench (`bmfhash`)
+  identical.
+- **Left:**
+  - 5, the transient static buffers shared (the cut's 13 KB and the slow
+    path's work area are never in use together) and 6, the monsters' code
+    as overlays a map loads (26 KB of code and 8 KB of tables, only the
+    map's kinds): a call left open;
+  - not checked: the release run in an emulator (it prints nothing now:
+    a look is the check), DuckStation, the real machine.
+
+## §61 — The stack's need, measured under load (2026-10-22)
+
+- **The question**: how big the stack must be, with crashes on
+  the busy levels (E1M3 named) thought to be a leak or an overflow.
+- **The measure**: `MONSTERS=3 MAP=E1M3` (scripts/bench.sh): the crowd
+  (the 47 monsters awake and after the player, 10 s), then a minute of
+  fight drawn: the player, who cannot die, fires rockets at the nearest
+  monster it sees, a frame rendered every tick; "mon fight" lines every
+  5 s with the stack meter (`stack_untouched`: the painted room never
+  reached), the edicts in use and the pool's size (`ents_in_use`), the
+  level arena, the render list's items, the frame's vblanks.
+- **The stack**: 2.6 KB at most (PCSX-Redux and DuckStation alike), of
+  the release's 60.8 KB (43.4 KB before §60; the link refuses under 16
+  KB). The stack is not what overflows.
+- **No leak to find there:** no malloc in the game (the SDK's
+  `InitHeap` at boot, nothing allocating); the arenas are bump
+  allocators reset at each level and nothing takes from them in play;
+  the fixed pools drop when full (the edicts: 296-303 of 462 on E1M3,
+  the 11 allocation sites checking a full pool).
+- **DuckStation** (closer to the machine) ran the same: no invalid
+  access, no GPU command error.
+- **What it shows instead**: E1M3 all awake is slow: frames of 5-7
+  vblanks (8-12 fps), the entities' ticks up to 1.9 M cycles (the
+  crowd's thinks); 4 ticks a frame at most (pad.h `PAD_MAX_TICKS`), so
+  the game slows down rather than freezing.
+- **Then, a playthrough** (DuckStation, from START to E1M3, the crash usually on the way back from the key): three more
+  scenarios, run on PCSX-Redux at 10x and on DuckStation's interpreter
+  (the mode in use) with the music on the disc:
+  - `MONSTERS=4` (MAP, E1M3 by default): the map cleared, each monster in
+    turn, the player on a spot in its sight, rockets, a frame each tick;
+  - `MONSTERS=5`: from MAP (E1M1) each map cleared, then its exit taken
+    as a player's (the intermission, the parms, the next map's spawn), to
+    E1M7: 129 monsters killed, no crash;
+  - `MONSTERS=6`: E1M3's gold key among its 17 monsters (zombies,
+    scrags, ogres, shamblers) awake, picked up, then the gold doors (*21,
+    *22) opened and crossed both ways four times, back at the key's place
+    between: no crash, the stack 4.3 KB at most, the edicts 320 of 462 at
+    most, DuckStation clean.
+- **Left:** the crash itself, not reproduced: what is seen (a
+  freeze, a black screen, DuckStation's own message or its exit), the
+  release's Graphics settings in that game, DuckStation's log (its
+  logging is off in the settings in use, and the release prints nothing
+  since §60).
+
 ## §62 — The monsters by hand: the Ogre first (2026-10-22)
 
 - **The ask:** the cooked monsters not good enough: every monster rebuilt by hand from Quake's

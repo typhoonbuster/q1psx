@@ -278,7 +278,8 @@ void pad_init(void)
 {
 	pad_buf[0][0] = pad_buf[1][0] = 0xff;   /* "no data" until the first poll */
 	attempts = 1;
-	printf("pad: analog mode %s\n", pad_force_analog() ? "on" : "not set (digital pad, or no answer)");
+	int analog = pad_force_analog();         /* (not in the printf: the release has none) */
+	printf("pad: analog mode %s\n", analog ? "on" : "not set (digital pad, or no answer)");
 	VSyncCallback(pad_vblank);
 	driver_start();
 }

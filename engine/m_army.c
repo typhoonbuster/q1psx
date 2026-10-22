@@ -174,7 +174,7 @@ static void army_fire(edict_t *self)
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ((int64_t) d[0] * d[0] + (int64_t) d[1] * d[1] +
 	                                             (int64_t) d[2] * d[2]));
 	for (int k = 0; k < 3; k++)
-		dir[k] = len ? (int32_t) ((int64_t) d[k] * 4096 / len) : 0;
+		dir[k] = len ? (int32_t) q_div64_32((int64_t) d[k] * 4096, len) : 0;
 	fire_bullets(self, 4, dir, 410);     /* '0.1 0.1 0' x4096 */
 }
 

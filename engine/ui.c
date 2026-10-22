@@ -203,7 +203,7 @@ void ui_text_box(int x, int y, int width, int lines)
 
 static int conback_in;           /* in VRAM: no map's textures over it yet */
 
-int ui_conback_load(void)
+Q_COLD int ui_conback_load(void)
 {
 	conback_in = 0;
 	mem_level_reset();

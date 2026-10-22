@@ -48,7 +48,14 @@
 #         monster of each kind there woken, fighting, killed; "mon" lines,
 #         dumps m<map>_<kind>_<step>; then the crowd: every monster of the
 #         map awake, the entities' cost a second); MONSTERS=2 the crowd
-#         alone (SAMPLE=1: its PC samples, "samples crowd").
+#         alone (SAMPLE=1: its PC samples, "samples crowd"); MONSTERS=3
+#         the crowd, then a minute of fight drawn (the player fires
+#         rockets turning round): "mon fight" lines (the stack's
+#         high-water mark, the edicts); MONSTERS=4 the map cleared
+#         (MAP=, default E1M3: each monster in turn, the player on a spot
+#         in its sight, rockets, frames drawn): "clear" lines; MONSTERS=5
+#         from MAP (E1M1) each map cleared, then its exit taken to the next
+#         map as a player's, to the episode's end.
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds
@@ -74,6 +81,13 @@
 #         every model with pieces ("ordasm" lines: the asks checked, any
 #         mismatch). Every bench prints an "order" line per view whose
 #         debug frame took such places: their count, their cycles.
+#         ZONES=1 walks every zoned map (MAP=: one) through its items at
+#         running speed, the chunks read as in play ("bench zones" lines:
+#         the switches and the patch's cycles, the reads, the late frames;
+#         docs/porting-notes.md §57). WHOLE=1 puts the whole worlds on the
+#         disc, the zones' A / B (CMake Q1PSX_ZONES OFF). Every bench prints
+#         a "bench zone <map>" line per map loaded: the skeleton, the
+#         chunk arena, the stream's pool.
 #         ENGINE_C=1 builds the C engine (CMake Q1PSX_ENGINE_C: every asm
 #         part's C version but the world renderer's, docs/porting-notes.md
 #         §55) in build-bench-c/, beside the asm's: its frames must be the
@@ -124,6 +138,8 @@ ENTS=${ENTS:-0}
 MONSTERS=${MONSTERS:-0}
 MOVERS=${MOVERS:-0}
 SAMPLE=${SAMPLE:-0}
+ZONES=${ZONES:-0}
+WHOLE=${WHOLE:-0}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
@@ -134,7 +150,8 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" "$ROOT" >/dev/null
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
 	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }
 
@@ -153,6 +170,7 @@ grep -A2 'MISMATCH' "$OUT/bench.log" | head -n 30 || true
 		"$OUT/bench.log"; }
 [ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$OUT/bench.log" || true; }
 [ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$OUT/bench.log" || true; }
+[ "$ZONES" = 1 ] && { grep '^zone: ' "$OUT/bench.log" || true; exit 0; }
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
 [ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$OUT/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
 [ "$MONSTERS" = 2 ] && exit 0

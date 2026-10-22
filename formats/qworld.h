@@ -1,5 +1,5 @@
 /*
- * q1psx — cooked world "QWVE" (architecture.md §6), one per map and geometry
+ * q1psx — cooked world "QWVF" (architecture.md §6), one per map and geometry
  * level (formats/qlevels.h). Written by `qcook`, loaded by engine/world.c,
  * walked by the asm renderer (engine/r_*.s).
  *
@@ -57,9 +57,12 @@
 
 #include "qtex.h"          /* qw_tex, qw_anim: the texture set's tables */
 
-#define QWORLD_MAGIC "QWVE"   /* (QWVD until §46: the clip roots were 32-bit) */
+#define QWORLD_MAGIC "QWVF"   /* (QWVE until §59: an entity was a whole qw_ent;
+                                 QWVD until §46: the clip roots were 32-bit) */
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
+#define QW_CLIP_SUB     8      /* physics positions (the clip hulls', the
+                                  entities' origins): 1/8 world unit     */
 #define QW_MAX_VERTS   42      /* per face record (multiple of 3): the
                                   renderer's scratchpad holds SXY, SZ and
                                   light for 42 vertices                  */
@@ -86,7 +89,10 @@ typedef struct {
 typedef struct {
 	char     magic[4];             /* "QWVB"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
-	uint32_t num_leaves;           /* including leaf 0 (solid)                */
+	uint32_t num_leaves;           /* leaf 0 (solid), the world's 1..num_visleafs,
+	                                  then one per contents for every brush
+	                                  model's leaves (nothing reads them but
+	                                  their contents: shared, §58)            */
 	uint32_t num_marks;
 	uint32_t num_faces;            /* the world's records (visframe ids)      */
 	uint32_t num_records;          /* face records in the stream, the brush
@@ -111,7 +117,9 @@ typedef struct {
 	                                  ambient_level[AMBIENT_WATER / SKY])      */
 	uint32_t ofs_bmodels, num_bmodels;   /* qw_bmodel[num_bmodels]: Quake's models,
 	                                  0 = the world (its entry is unused)     */
-	uint32_t ofs_ents, num_ents;   /* qw_ent[num_ents]: the entity lump cooked */
+	uint32_t ofs_ents, num_ents;   /* the entity lump cooked, num_ents entities in
+	                                  the compact table (qw_ent_decode); the
+	                                  section runs to ofs_strings             */
 	uint32_t ofs_strings, len_strings;   /* the entities' strings, NUL-ended;
 	                                  offset 0 is "" (no string)              */
 	uint32_t worldtype;            /* worldspawn's: 0 medieval, 1 metal, 2 base */
@@ -181,7 +189,8 @@ enum {
    are set by the spawn functions). Strings are offsets into the string
    section, 0 = not given. Angles are whole degrees as the map gives them
    (`angle`: -1 up, -2 down for SetMovedir), times are hundredths of a
-   second, the origin is in the physics' units. */
+   second, the origin is in the physics' units. The file holds them in the
+   compact table below; qw_ent_decode gives this struct back. */
 typedef struct {
 	uint8_t  class;        /* +0  QE_*                                         */
 	uint8_t  sounds;       /* +1                                               */
@@ -210,6 +219,93 @@ typedef struct {
 _Static_assert(sizeof(qw_bmodel) == 40 && sizeof(qw_ent) == 56, "qworld.h: the cooked tables' sizes");
 _Static_assert(__builtin_offsetof(qw_bmodel, root) == 24 && __builtin_offsetof(qw_bmodel, hull1) == 28 &&
                __builtin_offsetof(qw_bmodel, hull2) == 30, "engine/p_defs.inc BM_*");
+
+/* The compact entity table at ofs_ents (docs/porting-notes.md §59): most
+   of a qw_ent's fields are zero, so the file keeps the ones that are not.
+     uint16_t names[QE_COUNT]   each class's classname (a string offset; 0
+                                for a class the map has none of)
+     then num_ents entities in the table's order, each:
+       uint32_t head            bits 0-6 the class, bit 7 + QWE_* each field
+                                present, bit 31 zero
+       the fields present       in the order of their bits, little-endian,
+                                unaligned (QWE_FIELD_AT: their bytes)
+       uint16_t classname       for QE_UNKNOWN only (a known class's is
+                                names[class])
+     then zero bytes to the strings' 4-byte alignment.
+   The origin's fields are whole world units in 2 bytes (x QW_CLIP_SUB
+   decoded), or with QWE_FINE 1/QW_CLIP_SUB units in 4 (every id1 origin
+   is whole). A map has at most 256 brush models (BSP29), so the model
+   takes a byte; the spawnflags' two bytes are a field each (the skill
+   flags are the high byte). The fields go by how often the id1 maps give
+   them, so the decoder's loop ends early (7.6 bits an entity, not 14).
+   The cook decodes every entity it writes and checks it against its
+   qw_ent, byte for byte (tools/qcook/ents.c). */
+enum {
+	QWE_ORIGIN_X, QWE_ORIGIN_Y, QWE_ORIGIN_Z, QWE_TARGETNAME, QWE_ANGLE,
+	QWE_TARGET, QWE_FLAGS_HI, QWE_MODEL, QWE_FLAGS_LO, QWE_WAIT, QWE_SOUNDS,
+	QWE_SPEED, QWE_STYLE, QWE_LIP, QWE_MESSAGE, QWE_MANGLE, QWE_DELAY,
+	QWE_HEALTH, QWE_HEIGHT, QWE_DMG, QWE_MAP, QWE_COUNT, QWE_KILLTARGET,
+	QWE_FINE,
+	QWE_FIELDS
+};
+#define QWE_CLASS   0x7fu                       /* the head's class bits           */
+#define QWE_BIT(f)  (1u << (7 + (f)))           /* the head's bit of field f       */
+
+/* each field's offset in the qw_ent and its bytes in the table (the
+   origin's: 2, or 4 with QWE_FINE; QWE_FINE itself: none) */
+static const uint8_t QWE_FIELD_AT[QWE_FIELDS][2] = {
+	{  8, 2 }, { 12, 2 }, { 16, 2 }, { 46, 2 }, {  6, 2 },   /* origin, targetname, angle   */
+	{ 44, 2 }, {  3, 1 }, {  4, 1 }, {  2, 1 }, { 28, 2 },   /* target, spawnflags' high byte,
+	                                                            model, low byte, wait        */
+	{  1, 1 }, { 26, 2 }, { 42, 2 }, { 32, 2 }, { 50, 2 },   /* sounds, speed, style, lip,
+	                                                            message                      */
+	{ 20, 6 }, { 30, 2 }, { 38, 2 }, { 34, 2 }, { 36, 2 },   /* mangle, delay, health, height,
+	                                                            dmg                          */
+	{ 52, 2 }, { 40, 2 }, { 48, 2 }, {  0, 0 },              /* map, count, killtarget, FINE */
+};
+
+_Static_assert(QE_COUNT <= 128 && QWE_FIELDS <= 24, "qworld.h: the compact entity head's bits");
+_Static_assert(__builtin_offsetof(qw_ent, origin) == 8 && __builtin_offsetof(qw_ent, mangle) == 20 &&
+               __builtin_offsetof(qw_ent, map) == 52 && __builtin_offsetof(qw_ent, classname) == 54,
+               "qworld.h: QWE_FIELD_AT");
+
+/* The entity at p into q (every field: the absent ones zero); where the
+   next one starts. names: the table's class names (ofs_ents). */
+static inline const uint8_t *qw_ent_decode(const uint8_t *p, const uint16_t *names, qw_ent *q)
+{
+	uint32_t head = p[0] | p[1] << 8 | p[2] << 16 | (uint32_t) p[3] << 24;
+	uint32_t cls = head & QWE_CLASS, f = 0;
+	p += 4;
+	*q = (qw_ent) { .class = (uint8_t) cls };   /* (word stores: a memset would be
+	                                                 trimmed to bytes 1-55, a call) */
+	for (uint32_t bits = head << 1 >> 8; bits; bits >>= 1, f++) {   /* (bits 7-30) */
+		if (!(bits & 1))
+			continue;
+		uint8_t *d = (uint8_t *) q + QWE_FIELD_AT[f][0];
+		uint32_t n = QWE_FIELD_AT[f][1];
+		if (f <= QWE_ORIGIN_Z) {
+			int32_t v;
+			if (head & QWE_BIT(QWE_FINE)) {
+				v = (int32_t) (p[0] | p[1] << 8 | p[2] << 16 | (uint32_t) p[3] << 24);
+				p += 4;
+			} else {
+				v = (int16_t) (p[0] | p[1] << 8) * QW_CLIP_SUB;
+				p += 2;
+			}
+			__builtin_memcpy(d, &v, sizeof v);
+			continue;
+		}
+		while (n--)
+			*d++ = *p++;
+	}
+	if (cls) {
+		q->classname = names[cls];
+	} else {
+		q->classname = (uint16_t) (p[0] | p[1] << 8);
+		p += 2;
+	}
+	return p;
+}
 
 /* Nodes and leaves share their bbox layout (the renderer's frustum test
    takes either): c at +0, h at +8, each followed by a 16-bit field, so VZ is
@@ -309,8 +405,10 @@ typedef struct {
    qw_clip_header at ofs_clip, then the planes, then the clipnodes. Laid out
    for the asm trace (engine/clip.s): distances are pre-scaled to the
    physics' position unit (1/QW_CLIP_SUB world unit) and clipnodes hold their
-   plane's offset in words, so no per-node multiply is left. */
-#define QW_CLIP_SUB 8              /* physics positions: 1/8 world unit  */
+   plane's offset in words, so no per-node multiply is left. Identical
+   subtrees (the same plane, the same children) are one clipnode: the hulls
+   are a DAG, numbered depth first from the roots (the world's hull 1, the
+   brush models', then the hulls 2; docs/porting-notes.md §58). */
 #define QW_MAX_SPLIT 128           /* clip-hull depth the trace handles
                                       (Quake maps reach 65)              */
 typedef struct {
@@ -347,5 +445,112 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
 /* The face stream is followed by at least this many bytes of padding so the
    renderer's 3-at-a-time vertex loads never run off the end. */
 #define QW_STREAM_TAIL 16
+
+/* ------------------------------------------------------------ zones --------
+ * A zoned world (docs/porting-notes.md §57): the cook (`qcook zones`,
+ * tools/qcook/zones.c) splits the world's face records into zone chunks
+ * from the tables of the level-chunks analysis. A zone is a set of camera
+ * leaves; its chunk holds every world record the PSX may draw from any of
+ * them (records shared between zones are in each one's chunk). The level
+ * arena keeps the skeleton and a few chunk slots: the camera leaf's zone,
+ * the one drawn, and the zones nearest to it by walking distance,
+ * prefetched (engine/zone.c).
+ *
+ *   <MAP>_G<n>.WLD  the skeleton, "QWZF": a QWVF file's header and
+ *                   sections, a qw_zone_header right after the header, the
+ *                   face stream and the vertex pool holding the brush
+ *                   models' records only (their UVs mapped by the loader,
+ *                   as a QWVF's);
+ *   <MAP>_Z<t>.ZON  the chunks at texture level t (formats/qlevels.h): a
+ *                   qz_file header in sector 0, then each zone's qw_chunk
+ *                   from a sector of its own (qw_chunk_dir). A chunk's
+ *                   records come as the loader would leave them: face ids
+ *                   doubled, the average light in the flags, the UVs on
+ *                   the texture set's tiles, the vertex indices into the
+ *                   chunk's own pool.
+ *
+ * The skeleton's node array: the world's nodes holding records in some
+ * chunk first (world_nodes of them), then a node no walk reaches whose
+ * faces[0] ends the current chunk's last block, then the world's nodes no
+ * chunk gives a record (their blocks empty for good, never patched), then
+ * the brush models' nodes, then the sentinel. The walk follows children
+ * pointers, so the order changes nothing it draws. When a chunk becomes
+ * current, its patch list sets faces[] of the first world_nodes + 1 nodes
+ * (engine/zone.s zone_patch); before any, every world block is empty.
+ *
+ * The chunks live in num_slots slots of slot_bytes each in the level arena
+ * (engine/zone.c): a camera leaf's zone and its nearest, any of them in
+ * any slot. (An arena holding just the biggest such set, compacted when it
+ * is in pieces, would take 10-80 KB less a map, but moving the drawn
+ * chunk costs a frame: docs/porting-notes.md §57.)
+ */
+#define QWORLD_ZONED_MAGIC "QWZF"   /* (QWVZ until §59: the entities of QWVE) */
+#define QZONES_MAGIC       "QZN1"
+#define QZ_NONE            0xffu    /* a qw_zone_set's empty entry; a leaf in no set */
+
+typedef struct {
+	uint32_t num_zones;
+	uint32_t num_slots;      /* the chunks resident at once                     */
+	uint32_t slot_bytes;     /* a slot: the biggest chunk, whole sectors        */
+	uint32_t world_nodes;    /* the nodes the patch lists set, the end node next */
+	uint32_t num_sets;
+	uint32_t ofs_chunks;     /* qw_chunk_dir[num_zones]                         */
+	uint32_t ofs_leaf_set;   /* uint8_t[num_leaves]: the leaf's set, QZ_NONE for
+	                            leaf 0 (the camera in solid keeps its zone)     */
+	uint32_t ofs_sets;       /* qw_zone_set[num_sets]                            */
+	uint32_t reach;          /* world units: the tables hold every record the
+	                            PVS lets the PSX draw within this depth (the
+	                            draw distance + a margin)                       */
+	uint32_t stamp;          /* the chunks' file carries the same               */
+	uint32_t whole_records;  /* statistics: the world's records, its .wld's    */
+	uint32_t whole_bytes;    /*   bytes (what a whole load took)               */
+} qw_zone_header;            /* 48 bytes, at sizeof(qw_header) in a QWZF file  */
+
+typedef struct {
+	uint32_t sector;         /* the chunk's first sector in the .ZON file       */
+	uint32_t bytes;          /* its bytes (read in whole sectors)               */
+} qw_chunk_dir;
+
+/* the zones a camera leaf wants: its own (drawn), then the nearest others
+   by walking distance (a teleporter one step), QZ_NONE past the last */
+typedef struct {
+	uint8_t zone;
+	uint8_t near[3];
+} qw_zone_set;
+
+typedef struct {
+	char     magic[4];       /* "QZN1"                                          */
+	uint32_t stamp;          /* the skeleton's                                  */
+	uint32_t num_zones;
+	uint32_t tex_level;      /* the texture set its UVs are mapped onto         */
+} qz_file;
+
+typedef struct {
+	uint16_t zone;
+	uint16_t num_patch;      /* patch words, the last one the end node's        */
+	uint32_t stamp;
+	uint32_t ofs_records;    /* from the chunk's start: the blocks, the patched
+	                            nodes' in their order (front, back), then
+	                            QW_STREAM_TAIL bytes                            */
+	uint32_t len_records;
+	uint32_t ofs_verts;      /* qw_vert[num_verts]: the chunk's vertex pool      */
+	uint32_t num_verts;
+	uint32_t num_records;
+	uint32_t pad;
+} qw_chunk;                  /* 32 bytes, then the patch words */
+
+/* A patch word: a patched node and the patched nodes before it that hold
+   no record in the chunk (their blocks empty at the running pointer):
+   skip << 24 | front block's words << 12 | back block's words. A longer run
+   of empty nodes takes words of skip 255 and blocks of none (256 nodes
+   each). */
+#define QZP_SKIP(w)   ((w) >> 24)
+#define QZP_FRONT(w)  (((w) >> 10) & 0x3ffcu)    /* bytes */
+#define QZP_BACK(w)   (((w) << 2) & 0x3ffcu)     /* bytes */
+#define QZP_MAX_SKIP  255u
+#define QZP_MAX_WORDS 4095u
+
+_Static_assert(sizeof(qw_zone_header) == 48 && sizeof(qw_chunk) == 32 && sizeof(qz_file) == 16,
+               "qworld.h: the zones' tables");
 
 #endif

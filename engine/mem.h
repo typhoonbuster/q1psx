@@ -23,7 +23,7 @@
 
 #include <stdint.h>
 
-#define MEM_LEVEL_BYTES (1249 * 1024)  /* (1152 until 2026-10-19: with the monsters,
+#define MEM_LEVEL_BYTES (1243 * 1024)  /* (1152 until 2026-10-19: with the monsters,
                                           the streaming and the brush models' pieces
                                           the BSS ended past the 2 MB; the stack's
                                           16 KB checked at every link:
@@ -35,7 +35,10 @@
                                           3 KB for the alias models' order among a
                                           leaf's pieces, the paused monsters, the
                                           bodies' end, §50; 12 KB more from the code
-                                          the clean-up removed, §52) */
+                                          the clean-up removed, §52; 6 KB less for
+                                          the zones' code, the stack's room kept:
+                                          the zoned maps' worlds give the arena
+                                          back far more, §57) */
 #define MEM_LEVEL_WORLD (1136 * 1024)  /* the room a map's world may take while it
                                           loads (below it, a lower geometry level):
                                           the arena's size before §45, so the room
@@ -52,6 +55,12 @@
                                           while it held the 2D gun's packets, now lent
                                           by the stream's pool when that gun is
                                           chosen) */
+
+/* Code that runs once a level or at a menu's pace (the loads, the spawns,
+   a level's start and end): compiled for size, out of the hot code's way
+   (GCC's cold: -Os for the function, its own text section). Every KB of
+   code is a KB of RAM (docs/porting-notes.md §60). */
+#define Q_COLD __attribute__((cold))
 
 void     mem_level_reset(void);
 void    *mem_level_alloc(uint32_t bytes);      /* 16-byte aligned; NULL if full */

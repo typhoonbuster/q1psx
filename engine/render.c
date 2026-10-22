@@ -6,11 +6,13 @@
 #include <inline_c.h>
 
 #include "gdata.h"
+#include "mem.h"
 #include "prof.h"
 #include "render.h"
 #include "rlist.h"
 #include "vid.h"
 #include "world.h"
+#include "zone.h"
 
 r_state_t r_state;
 
@@ -60,6 +62,7 @@ _Static_assert(sizeof(qw_record)                 == 20,  "qw_record layout");
 _Static_assert(offsetof(qw_record, sc)           == 12,  "qw_record layout");
 
 static int bound;
+static void mark_patch(void);
 
 /* ------------------------------------------------------------------ trig -- */
 
@@ -223,14 +226,36 @@ static uint32_t orig_flatz[2];
 #define SLTI(w, imm)  (((w) & 0xffff0000u) | ((uint32_t) (imm) & 0xffffu))
 #define LI(w, v)      (0x24000000u | ((w) & 0x001f0000u) | (uint32_t) (v))   /* addiu rt, $zero, v */
 
+/* the patched words as built, once */
+static void keep_orig(void)
+{
+	if (orig[S_DR])
+		return;
+	for (int i = 0; i < S_ENTRIES; i++)
+		orig[i] = *entry[i];
+	for (int i = 0; i < 2; i++)
+		orig_flatz[i] = *flatz[i];
+}
+
+/* The camera-leaf call (r_world.s mark_call): the marking the draw
+   distance takes (mark_pvs, mark_pvs_far), through the zones' hook while a
+   zoned map is loaded (engine/zone.s zone_mark: the leaf's zone made
+   current before the walk, then on to the marking, zone_rt.mark). */
+extern uint32_t zone_mark[];
+
+static void mark_patch(void)
+{
+	keep_orig();
+	uint32_t mark = opt_dist ? (uint32_t) mark_pvs_far
+	              : ((uint32_t) mark_call & 0xf0000000u) | (orig[S_MARK] & 0x03ffffffu) << 2;   /* (jal mark_pvs) */
+	zone_rt.mark = mark;
+	*entry[S_MARK] = zone_on() ? J_TO(0x0c000000u, zone_mark) : J_TO(0x0c000000u, mark);
+	FlushCache();
+}
+
 void r_set_options(int dist, int flat)
 {
-	if (!orig[S_DR]) {
-		for (int i = 0; i < S_ENTRIES; i++)
-			orig[i] = *entry[i];
-		for (int i = 0; i < 2; i++)
-			orig_flatz[i] = *flatz[i];
-	}
+	keep_orig();
 	opt_dist = dist;
 	opt_flat = flat;
 	/* view units (world x 6): the draw distance, the fog's start (its last
@@ -260,8 +285,8 @@ void r_set_options(int dist, int flat)
 	                        ((((uint32_t) back[v] - ((uint32_t) dlr_ret0 + 4)) >> 2) & 0xffffu) : orig[S_RET0];
 	*entry[S_RET1] = v    ? J_TO(0x08000000u, back[v]) : orig[S_RET1];
 	*entry[S_RET2] = v    ? J_TO(0x08000000u, back[v]) : orig[S_RET2];
-	*entry[S_MARK] = dist ? J_TO(0x0c000000u, mark_pvs_far) : orig[S_MARK];
 	FlushCache();
+	mark_patch();
 	r_state.force_mark = 1;
 	mark_visframe = 0;
 	if (dist)
@@ -295,7 +320,7 @@ int r_viewport_rows(void)
 	return viewport_rows;
 }
 
-void r_init(void)
+Q_COLD void r_init(void)
 {
 	build_sintab();
 	InitGeom();
@@ -325,6 +350,7 @@ void r_bind_world(void)
 	r_state.view_leaf     = 0;
 	r_state.force_mark    = 1;
 	bound = 1;
+	mark_patch();                                /* (through the zones' hook or not) */
 }
 
 void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)

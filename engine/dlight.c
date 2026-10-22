@@ -56,7 +56,7 @@ static uint32_t isqrt32(uint32_t x)
 	return r;
 }
 
-void dl_init(void)
+Q_COLD void dl_init(void)
 {
 	dl_save_buf = mem_game_alloc(SAVE_ENTRY * SAVE_MAX);
 	dl_touched  = mem_game_alloc(TOUCHED_WORDS * 4);
@@ -237,6 +237,8 @@ void dl_light_record(qw_record *q, const qw_node *node)
 	}
 	int nv = q->num_verts;
 	const uint16_t *idx = (const uint16_t *) ((uint8_t *) q + sizeof *q);
+	const qw_vert *pool = (const qw_vert *) r_state.vertpool;   /* (the world's records': a
+	                                         zoned map's, the current chunk's, engine/zone.c) */
 	uint8_t *light = (uint8_t *) q + q->polys - ((nv + 3) & ~3);
 	for (int i = 0; i < n; i++) {
 		const rlight_t *l = &rlights[i];
@@ -280,7 +282,7 @@ void dl_light_record(qw_record *q, const qw_node *node)
 			prof_count[PROF_N_DLVERTS] += (uint32_t) nv;
 		}
 		for (int v = 0; v < nv; v++) {
-			const qw_vert *p = &world.verts[idx[v]];
+			const qw_vert *p = &pool[idx[v]];
 			int32_t a = p->x - e->ix, b = p->y - e->iy, c = p->z - e->iz;
 			uint32_t d2 = (uint32_t) (a * a + b * b + c * c) >> 11;
 			if (d2 >= 1024)
@@ -345,7 +347,7 @@ void dl_check_record(qw_record *q, const qw_node *node)
 		lit = 1;
 		int32_t ix = l->o[0] - ((pl->n[0] * d) >> 12), iy = l->o[1] - ((pl->n[1] * d) >> 12), iz = l->o[2] - ((pl->n[2] * d) >> 12);
 		for (int v = 0; v < nv; v++) {
-			const qw_vert *p = &world.verts[idx[v]];
+			const qw_vert *p = &((const qw_vert *) r_state.vertpool)[idx[v]];
 			int32_t a = p->x - ix, b = p->y - iy, c = p->z - iz;
 			uint32_t d2 = (uint32_t) (a * a + b * b + c * c) >> 11;
 			if (d2 >= 1024) continue;

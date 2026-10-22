@@ -3,7 +3,7 @@
  *
  *   qcook.c   command line, pak access, BSP lump parsing, the levels
  *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX6 output
- *   world.c   face splitting, face records, nodes/leaves/PVS, QWVE output
+ *   world.c   face splitting, face records, nodes/leaves/PVS, QWVF output
  *   game.c    models, sprites, HUD pictures -> QGM6 (formats/qgame.h)
  *   items.c   the map's own models -> QMM1 (formats/qgame.h)
  *   decim.c   an alias model's triangles reduced (the model levels)
@@ -11,6 +11,7 @@
  *             sound bank and the player start
  *   sound.c   the map's sound bank -> QSND (formats/qsound.h)
  *   bmf.c     the brush models' room for their cut pieces (engine/bmfrag.c)
+ *   zones.c   a world split into its skeleton and zone chunks (QWZF, QZN1)
  *
  * See docs/architecture.md §6-§7, formats/qworld.h / qtex.h / qlevels.h.
  */
@@ -22,6 +23,7 @@
 #include <stdint.h>
 
 #include "../../formats/qlevels.h"
+#include "../../formats/qworld.h"    /* qw_ent (ents_pack) */
 
 /* ------------------------------------------------------------------ util -- */
 
@@ -127,6 +129,10 @@ int         ent_class(const char *classname);                             /* QE_
    does not know */
 void ents_cook(const ent_list *l, int num_models, buf_t *table, buf_t *strings,
                uint32_t *worldtype, uint32_t *title, int *unknown);
+
+/* that table compact, as the world file holds it (formats/qworld.h
+   qw_ent_decode), appended to out */
+void ents_pack(const qw_ent *ents, uint32_t n, buf_t *out);
 
 /* drawn[m] = 1 for the world and every brush model some entity other
    than a trigger uses (a trigger's brushes are never drawn: no faces
@@ -315,5 +321,9 @@ int  world_check(const char *path);
 void bmf_rooms(uint8_t *f, size_t len);
 /* `qcook bmf <file.wld> [-v]`: measured again, against the file's */
 int  cmd_bmf(int argc, char **argv);
+
+/* `qcook zones`: a cooked world split into its skeleton and its zone chunks
+   from the level-chunks analysis' tables (zones.c, formats/qworld.h) */
+int  cmd_zones(int argc, char **argv);
 
 #endif

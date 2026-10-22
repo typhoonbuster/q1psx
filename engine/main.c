@@ -44,6 +44,7 @@
 #include "ui.h"
 #include "vid.h"
 #include "world.h"
+#include "zone.h"
 
 #ifndef Q1PSX_RELEASE
 #define Q1PSX_RELEASE 0       /* 1: Quake's menu (engine/menu.c), no debug overlay,
@@ -308,7 +309,7 @@ static void ui_rect(int x, int y, int w, int h, int r, int g, int b)
 
 /* One frame of the loading screen: the map, the level, a bar and the
    percentage (texture file + world file, in bytes read from the CD). */
-static void loading_screen(uint32_t done, uint32_t total)
+Q_COLD static void loading_screen(uint32_t done, uint32_t total)
 {
 	enum { BX = 40, BY = 116, BW = 240, BH = 10 };
 	char line[48];
@@ -338,11 +339,12 @@ static void loading_screen(uint32_t done, uint32_t total)
    models at the models' level. Sets world_ok and binds the renderer. */
 static uint32_t stack_untouched(void);
 
-static int load_level(int map)
+Q_COLD static int load_level(int map)
 {
 	world_ok = 0;
 	load_map = map;
 	stream_abort();                             /* (the arena is reset, the drive taken) */
+	zone_abort();
 	music_stop();                               /* one drive: the reads need it */
 	ui_conback_forget();                        /* (the map's textures over it) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
@@ -367,6 +369,14 @@ static int load_level(int map)
 		                                           voices; until then they are the file's,
 		                                           20 bytes each: a garbage reach of 0 on
 		                                           E2M7 divided by zero) */
+		if (zone_on()) {                        /* a zoned world: the spawn's zone and its
+		                                           nearest read, that zone made current */
+			int32_t eye[3];
+			for (int k = 0; k < 3; k++)
+				eye[k] = (world.has_spawn ? world.spawn[k] : 0) * CLIP_SUB;
+			eye[2] += 22 * CLIP_SUB;             /* (the view's height) */
+			zone_preload(eye);
+		}
 		stream_preload();                       /* what the spawn's surroundings want */
 		game_ws_sync();                         /* (the 2D gun's packets, read: linked) */
 		anim_reset();
@@ -474,10 +484,18 @@ static int play_trace;                     /* the play bench: the first frames' 
 
 static void run_frame(int interactive, int dump)
 {
+#ifdef Q1PSX_BENCH
+	if (world_ok)
+		zone_bench_frame(cam.pos);          /* (the bench: the view's zone read at once,
+		                                       before the frame, its cycles and the
+		                                       stream's turn) */
+#endif
 	prof_frame_reset();
 	uint32_t t0 = prof_now();
-	if (world_ok && game_active)
+	if (world_ok && game_active) {
+		zone_frame();                       /* (the world's chunks first: the drive) */
 		stream_frame();                     /* (between frames: the pools may move) */
+	}
 	if (interactive) {
 		PLAY_STEP("pad");
 		pad_t ticks[PAD_MAX_TICKS];
@@ -1300,6 +1318,133 @@ static void bench_view_ticks(const char *view)
 	game_active = 0;
 }
 
+/* the level arena's room the world takes, a zoned one's measure (§57):
+   the skeleton and the slots, the stream's pool after them (the world's
+   load in all: its "world: ... arena" line) */
+static void bench_zone_ram(const char *map)
+{
+	if (zone_on())
+		printf("bench zone %s: %d zones, the skeleton %u KB + the slots %u KB, the stream's pool %u KB\n",
+		       map, zone_count(), (unsigned) zone_skeleton_bytes() / 1024, (unsigned) zone_arena_bytes() / 1024,
+		       (unsigned) stream_stats.ram_size / 1024);
+	else
+		printf("bench zone %s: whole, the stream's pool %u KB\n", map, (unsigned) stream_stats.ram_size / 1024);
+}
+
+#ifndef Q1PSX_BENCH_ZONES
+#define Q1PSX_BENCH_ZONES 0   /* 1: the zones' walk (ZONES=1 scripts/bench.sh) */
+#endif
+
+/* The zones' walk (ZONES=1 scripts/bench.sh, docs/porting-notes.md §57):
+   on each zoned map (MAP=: that one), the eye taken from the player's
+   start through the map's items and monsters in their entity order at
+   running speed (320 units a second, a frame a 60th), the stream and the
+   zones' reads going on as in play (no read at once). A leg whose eye
+   line a wall cuts goes through it (its frames apart: a way shorter than
+   the walking distances the prefetch ranks zones by). Per map: the zone
+   switches and the patch's cycles (every patch checked against the C
+   one), the chunk reads (their bytes, the frames each took), the late
+   events and frames (the camera in a zone not in yet, drawn with the old
+   one), the longest run of them; the frames' cycles, the switching ones'
+   apart. */
+#define ZW_WAYPOINTS 32
+#define ZW_FRAMES    3600     /* a minute of walking a map at most */
+static void bench_zones(void)
+{
+	stream_log = 0;
+	for (int m = 0; m < world_num_maps(); m++) {
+		if (Q1PSX_BENCH_MAP[0] && strcmp(world_map_name(m), Q1PSX_BENCH_MAP))
+			continue;
+		if (!load_level(m)) {
+			printf("bench map %s FAILED to load\n", world_map_name(m));
+			continue;
+		}
+		bench_zone_ram(world_map_name(m));
+		if (!zone_on())
+			continue;
+		game_spawn();
+		game_active = 1;
+		zone_sync = 0;
+		/* the waypoints: the start, then the items and the monsters */
+		static int32_t wp[ZW_WAYPOINTS][3];
+		int nwp = 0, n = 0;
+		memcpy(wp[nwp++], pl.pm.pos, sizeof wp[0]);
+		for (int i = 2; i < num_edicts; i++)
+			n += edicts[i].inuse && (edicts[i].item_model >= 0 || edicts[i].masset >= 0);
+		int step = n > ZW_WAYPOINTS - 1 ? (n + ZW_WAYPOINTS - 2) / (ZW_WAYPOINTS - 1) : 1, k = 0;
+		for (int i = 2; i < num_edicts && nwp < ZW_WAYPOINTS; i++)
+			if (edicts[i].inuse && (edicts[i].item_model >= 0 || edicts[i].masset >= 0) && k++ % step == 0) {
+				memcpy(wp[nwp], edicts[i].origin, sizeof wp[0]);
+				wp[nwp++][2] += 24 * CLIP_SUB;      /* (on the floor: a standing player's origin) */
+			}
+		int32_t at[3];
+		memcpy(at, wp[0], sizeof at);
+		uint32_t frames = 0, units = 0, walls = 0, late = 0, late_wall = 0, run = 0, worst = 0, bad = 0;
+		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_wall = 1u << 30;
+		const int32_t speed = 320 * CLIP_SUB / 60;
+		uint32_t reads0 = stream_stats.reads;
+		for (int w = 1; w < nwp && frames < ZW_FRAMES; w++) {
+			int32_t d[3], e0[3], e1[3];
+			for (int c = 0; c < 3; c++) {
+				d[c]  = wp[w][c] - at[c];
+				e0[c] = at[c];
+				e1[c] = wp[w][c];
+			}
+			e0[2] += 22 * CLIP_SUB;
+			e1[2] += 22 * CLIP_SUB;
+			uint32_t len = q_isqrt64((uint64_t) ((int64_t) d[0] * d[0] + (int64_t) d[1] * d[1] +
+			                                     (int64_t) d[2] * d[2]));
+			trace_t tr;
+			int nf = (int) (len / (uint32_t) speed) + 1, through = clip_trace(0, e0, e1, &tr) < Q_FIX_ONE;
+			units += len / CLIP_SUB;
+			walls += through;
+			int yaw = r_atan2(d[1], d[0]);
+			for (int f = 1; f <= nf && frames < ZW_FRAMES; f++) {
+				for (int c = 0; c < 3; c++)
+					pl.pm.pos[c] = at[c] + (int32_t) ((int64_t) d[c] * f / nf);
+				memcpy(cam.pos, pl.pm.pos, sizeof cam.pos);
+				cam.pos[2] += 22 * CLIP_SUB;
+				cam.yaw = yaw;
+				cam.pitch = cam.roll = 0;
+				uint32_t sw0 = zone_stats.switches;
+				run_frame(0, 0);
+				frames++;
+				since_wall = through ? 0 : since_wall + 1;
+				uint32_t fc = prof_stage[PROF_FRAME];
+				fsum += fc;
+				if (fc > fmax) fmax = fc;
+				if (zone_stats.switches != sw0) {
+					swf++;
+					swsum += fc;
+					if (fc > swmax) swmax = fc;
+					bad += (uint32_t) zone_check_patch();
+				}
+				if (zone_of_leaf(zone_bench_leaf(cam.pos)) != zone_current() &&
+				    zone_of_leaf(zone_bench_leaf(cam.pos)) != (int) QZ_NONE) {
+					late++;
+					late_wall += since_wall < 60;     /* (in a leg through a wall, or a second after) */
+					if (++run > worst) worst = run;
+				} else {
+					run = 0;
+				}
+			}
+			memcpy(at, wp[w], sizeof at);
+		}
+		const zone_stats_t *z = &zone_stats;
+		printf("bench zones %s: %u frames, %u units, %u legs of %d through walls; %u switches (patch %u cycles avg, "
+		       "%u max; %u patches checked bad), %u reads (%u KB, %u frames each), %u waits for the drive; late: %u "
+		       "events, %u frames (%u through walls), the longest run %u; %u evictions, %u read errors; frames %u "
+		       "cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u\n",
+		       world_map_name(m), frames, units, walls, nwp - 1, z->switches,
+		       z->switches ? z->switch_cycles / z->switches : 0, z->switch_max, bad, z->loads, z->load_bytes / 1024,
+		       z->loads ? z->load_frames / z->loads : 0, z->waits, z->late_events, late, late_wall, worst,
+		       z->evictions, z->read_errors, frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax,
+		       stream_stats.reads - reads0);
+		game_active = 0;
+		zone_sync = 1;
+	}
+}
+
 static void bench_maps(void)
 {
 	static char names[4][16];
@@ -1313,6 +1458,7 @@ static void bench_maps(void)
 		}
 		printf("bench map %s geometry %s arena %u KB\n", world_map_name(m), level_name[world.level[QL_GEOMETRY]],
 		       mem_level_used() / 1024);
+		bench_zone_ram(world_map_name(m));
 		if (Q1PSX_BENCH_RESIDENCY) {
 			stream_log = 0;
 			bench_residency(world_map_name(m));
@@ -2352,7 +2498,7 @@ static void bench_monsters(void)
 	cmd.weapon_group = -1;
 	game_spawn();
 	ents_ticks(60, &cmd);                         /* the monsters' delayed starts */
-	for (int k = 0; k < (Q1PSX_BENCH_MONSTERS == 2 ? 0 : MK_COUNT); k++) {   /* (2: the crowd only) */
+	for (int k = 0; k < (Q1PSX_BENCH_MONSTERS >= 2 ? 0 : MK_COUNT); k++) {   /* (2, 3: the crowd only) */
 		/* a monster of the kind with a free spot in its sight: 450 .. 100
 		   units off (its ranged attack's reach first), its facing first,
 		   then around it */
@@ -2528,6 +2674,344 @@ static void bench_monsters(void)
 	}
 	prof_sample_stop();
 	prof_sample_print("crowd");
+	if (Q1PSX_BENCH_MONSTERS == 3) {
+		/* the fight (a busy level played): the player, who cannot die,
+		   fires rockets at the nearest monster it sees (turning round when
+		   none), a frame drawn every tick; the stack's high-water mark, the
+		   edicts and the pools logged */
+		pl.items |= IT_ROCKET_LAUNCHER;
+		game_give_weapon(W_RLAUNCHER);
+		cmd.fire = 1;
+		int peak = 0;
+		for (int t = 0; t < 3600; t++) {
+			pl.health = 100;
+			pl.dead = 0;
+			pl.ammo[AMMO_ROCKETS] = 100;
+			edict_t *aim = 0;                    /* the nearest living monster it sees */
+			int32_t best = 0;
+			for (int i = 2; i < num_edicts; i++) {
+				edict_t *c = &edicts[i];
+				if (!c->inuse || !c->mdef || c->health <= 0 || !ai_visible(ent_player, c))
+					continue;
+				int32_t dx = (c->origin[0] - pl.pm.pos[0]) >> 3, dy = (c->origin[1] - pl.pm.pos[1]) >> 3;
+				int32_t d2 = dx * dx + dy * dy;
+				if (!aim || d2 < best) {
+					aim = c;
+					best = d2;
+				}
+			}
+			if (aim)
+				ents_look_at(aim->origin);
+			else
+				pl.pm.yaw += ANG_TURN / 240;     /* none: a turn in 4 s */
+			game_tick(&cmd);
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			run_frame(0, 0);
+			int max, used = ents_in_use(&max);
+			if (used > peak)
+				peak = used;
+			if (t % 300 == 299) {
+				int alive = 0;
+				for (int i = 2; i < num_edicts; i++)
+					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
+				       "level arena %u KB, items %d, vbl %u\n", t + 1, alive, used, peak, max,
+				       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024), rl_num_items(),
+				       (unsigned) vid_stats.vbl);
+			}
+		}
+		cmd.fire = 0;
+	}
+}
+
+/* MONSTERS=4: the map cleared, as a player would: each living monster in
+   turn, the player put on a free spot in its sight (the scenarios' search,
+   any kind), rockets until it dies (10 s at most), a frame drawn every
+   tick; then the bodies' and gibs' time. "clear" lines: what was killed,
+   the stack meter, the edicts, the arena. */
+static void clear_map(void)
+{
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	ents_ticks(60, &cmd);
+	pl.items |= IT_ROCKET_LAUNCHER;
+	game_give_weapon(W_RLAUNCHER);
+	int killed = 0, peak = 0, skipped = 0;
+	static uint8_t tried[1024];
+	memset(tried, 0, sizeof tried);
+	for (;;) {
+		edict_t *e = 0;
+		int32_t spot[3];
+		trace_t tr;
+		for (int i = 2; i < num_edicts && i < 1024 && !e; i++) {
+			edict_t *c = &edicts[i];
+			if (!c->inuse || !c->mdef || c->health <= 0 || tried[i])
+				continue;
+			static const int turns[8] = { 0, 45, -45, 90, -90, 135, -135, 180 };
+			for (int a = 0; a < 8 && !e; a++)
+				for (int d = 450; d >= 100 && !e; d -= 25) {
+					int yaw = (c->ang[1] >> 4) + turns[a] * ANG_TURN / 360;
+					spot[0] = c->origin[0] + d * CLIP_SUB * r_cos(yaw) / 4096;
+					spot[1] = c->origin[1] + d * CLIP_SUB * r_sin(yaw) / 4096;
+					spot[2] = c->origin[2];
+					clip_trace(1, spot, spot, &tr);
+					if (tr.startsolid || tr.allsolid)
+						continue;
+					int32_t down[3] = { spot[0], spot[1], spot[2] - 64 * CLIP_SUB };
+					clip_trace(1, spot, down, &tr);
+					if (tr.startsolid || tr.fraction >= Q_FIX_ONE)
+						continue;
+					memcpy(spot, tr.endpos, sizeof spot);
+					int32_t feet[3] = { spot[0], spot[1], spot[2] - 23 * CLIP_SUB };
+					if (clip_contents(0, feet) != QW_CONTENTS_EMPTY)
+						continue;
+					int32_t ea[3] = { spot[0], spot[1], spot[2] + 22 * CLIP_SUB }, eb[3];
+					ai_view_org(c, eb);
+					if (ai_traceline(ea, eb, 1, c) >= Q_FIX_ONE)
+						e = c;
+				}
+			if (!e) {
+				tried[i] = 1;
+				skipped++;
+			}
+		}
+		if (!e)
+			break;
+		tried[e - edicts] = 1;
+		memcpy(pl.pm.pos, spot, sizeof pl.pm.pos);
+		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+		int kind = e->mdef->kind, t = 0;
+		cmd.fire = 1;
+		for (; t < 600 && e->inuse && e->health > 0; t++) {
+			pl.health = 100;
+			pl.dead = 0;
+			pl.ammo[AMMO_ROCKETS] = 100;
+			ents_look_at(e->origin);
+			game_tick(&cmd);
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			run_frame(0, 0);
+		}
+		cmd.fire = 0;
+		for (int u = 0; u < 60; u++) {            /* its death, its gibs */
+			pl.health = 100;
+			pl.dead = 0;
+			game_tick(&cmd);
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			run_frame(0, 0);
+		}
+		int max, used = ents_in_use(&max);
+		if (used > peak)
+			peak = used;
+		killed += e->health <= 0 || !e->inuse;
+		printf("clear %d: kind %d %s in %d ticks, edicts %d (peak %d) of %d, stack %u never reached, "
+		       "level arena %u KB, vbl %u\n", (int) (e - edicts), kind,
+		       e->health <= 0 || !e->inuse ? "dead" : "ALIVE", t, used, peak, max,
+		       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024), (unsigned) vid_stats.vbl);
+	}
+	for (int u = 0; u < 1800; u++) {              /* the bodies' and gibs' time, 30 s */
+		pl.health = 100;
+		pl.dead = 0;
+		game_tick(&cmd);
+		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+		run_frame(0, 0);
+	}
+	int max, used = ents_in_use(&max);
+	int alive = 0;
+	for (int i = 2; i < num_edicts; i++)
+		alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+	printf("clear done %s: %d killed, %d alive (%d with no spot), edicts %d (peak %d) of %d, stack %u never "
+	       "reached, level arena %u KB\n", world.map_name, killed, alive, skipped, used, peak, max,
+	       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024));
+}
+
+/* MONSTERS=4: MAP (E1M3) loaded and cleared. MONSTERS=5: from MAP (E1M1),
+   each map cleared, then its exit taken as a player's (the intermission,
+   the parms, the next map's load and spawn), to the episode's end. */
+static void bench_clear(void)
+{
+	const char *mapname = Q1PSX_BENCH_MAP[0] ? Q1PSX_BENCH_MAP : Q1PSX_BENCH_MONSTERS == 5 ? "E1M1" : "E1M3";
+	int m = world_find_map(mapname);
+	if (m < 0 || !load_level(m)) {
+		printf("clear: no %s\n", mapname);
+		return;
+	}
+	map_index = m;
+	game_active = 1;
+	game_spawn();
+	for (int n = 0; n < 12; n++) {
+		clear_map();
+		if (Q1PSX_BENCH_MONSTERS != 5)
+			return;
+		game_cmd_t cmd;
+		memset(&cmd, 0, sizeof cmd);
+		cmd.weapon_group = -1;
+		edict_t *cl = ents_first(QE_TRIGGER_CHANGELEVEL, 0);
+		if (!cl) {
+			printf("clear: %s has no exit\n", world.map_name);
+			return;
+		}
+		ents_place(cl->absmin, cl->absmax, 0);
+		ents_ticks(12, &cmd);
+		ents_ticks(150, &cmd);                    /* the intermission */
+		cmd.fire = 1;
+		ents_ticks(2, &cmd);
+		cmd.fire = 0;
+		char next[16];
+		if (!level_change_wanted(next)) {
+			printf("clear: %s's exit wants no map\n", world.map_name);
+			return;
+		}
+		int nm = world_find_map(next);
+		printf("clear: next map %s (disc %d)\n", next, nm);
+		if (nm < 0)
+			return;
+		game_save_parms();
+		map_index = nm;
+		if (!load_level(nm)) {
+			printf("clear: %s failed to load\n", next);
+			return;
+		}
+		game_spawn_level();
+		pl.items |= IT_ROCKET_LAUNCHER;
+	}
+}
+
+/* the floor under (x, y) from z down 512 units, the player's origin on it
+   (24 units up: 0 if none) */
+static int floor_at(int32_t x, int32_t y, int32_t z, int32_t out[3])
+{
+	trace_t tr;
+	int32_t a[3] = { x, y, z }, b[3] = { x, y, z - 512 * CLIP_SUB };
+	clip_trace(1, a, a, &tr);
+	if (tr.startsolid || tr.allsolid)
+		return 0;
+	clip_trace(1, a, b, &tr);
+	if (tr.fraction >= Q_FIX_ONE)
+		return 0;
+	memcpy(out, tr.endpos, sizeof tr.endpos);
+	return 1;
+}
+
+/* a phase of MONSTERS=6: `ticks` ticks walking along `yaw` (binary
+   degrees) or, with a monster in sight, firing at the nearest one; a frame
+   drawn each tick */
+static void key_phase(const char *what, int ticks, int yaw)
+{
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	for (int t = 0; t < ticks; t++) {
+		pl.health = 100;
+		pl.dead = 0;
+		pl.ammo[AMMO_ROCKETS] = 100;
+		edict_t *aim = 0;
+		int32_t best = 0;
+		for (int i = 2; i < num_edicts; i++) {
+			edict_t *c = &edicts[i];
+			if (!c->inuse || !c->mdef || c->health <= 0 || !ai_visible(ent_player, c))
+				continue;
+			int32_t dx = (c->origin[0] - pl.pm.pos[0]) >> 3, dy = (c->origin[1] - pl.pm.pos[1]) >> 3;
+			int32_t d2 = dx * dx + dy * dy;
+			if (!aim || d2 < best) {
+				aim = c;
+				best = d2;
+			}
+		}
+		if (aim && best < 600 * 600) {
+			ents_look_at(aim->origin);
+			cmd.fire = 1;
+			cmd.fwd = 0;
+		} else {
+			pl.pm.yaw = yaw;
+			cmd.fire = 0;
+			cmd.fwd = PM_AXIS;
+		}
+		game_tick(&cmd);
+		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+		run_frame(0, 0);
+	}
+	int max, used = ents_in_use(&max), alive = 0;
+	for (int i = 2; i < num_edicts; i++)
+		alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+	const edict_t *d21 = 0;
+	for (int i = 2; i < num_edicts; i++)
+		if (edicts[i].inuse && edicts[i].model == 21)
+			d21 = &edicts[i];
+	printf("key %s: at %d %d %d, keys %x, door *21 at %d %d %d, %d alive, edicts %d of %d, stack %u never "
+	       "reached, vbl %u\n", what, (int) (pl.pm.pos[0] / CLIP_SUB), (int) (pl.pm.pos[1] / CLIP_SUB),
+	       (int) (pl.pm.pos[2] / CLIP_SUB), (unsigned) (pl.items & (IT_KEY1 | IT_KEY2)),
+	       d21 ? (int) (d21->origin[0] / CLIP_SUB) : 0, d21 ? (int) (d21->origin[1] / CLIP_SUB) : 0,
+	       d21 ? (int) (d21->origin[2] / CLIP_SUB) : 0, alive, used, max, (unsigned) stack_untouched(),
+	       (unsigned) vid_stats.vbl);
+}
+
+/* MONSTERS=6: E1M3's gold key (the crash reported 2026-10-22, usually on the way back from the key): the monsters within
+   1200 units of the key awake and after the player; the key picked up
+   among them; then the gold doors (*21, *22, x -496) from their east and
+   west sides in turn, walked into, through and back, four times */
+static void bench_key(void)
+{
+	int m = world_find_map("E1M3");
+	if (m < 0 || !load_level(m)) {
+		printf("key: no E1M3\n");
+		return;
+	}
+	map_index = m;
+	game_active = 1;
+	game_spawn();
+	pl.items &= ~(IT_KEY1 | IT_KEY2);
+	pl.items |= IT_ROCKET_LAUNCHER;
+	game_give_weapon(W_RLAUNCHER);
+	game_cmd_t cmd;
+	memset(&cmd, 0, sizeof cmd);
+	cmd.weapon_group = -1;
+	ents_ticks(60, &cmd);
+	edict_t *key = ents_first(QE_ITEM_KEY2, 0);
+	if (!key) {
+		printf("key: no gold key\n");
+		return;
+	}
+	int awake = 0;
+	for (int i = 2; i < num_edicts; i++) {
+		edict_t *c = &edicts[i];
+		if (!c->inuse || !c->mdef || c->health <= 0 || c->takedamage == DAMAGE_NO)
+			continue;
+		int32_t dx = (c->origin[0] - key->origin[0]) >> 3, dy = (c->origin[1] - key->origin[1]) >> 3;
+		if (dx * dx + dy * dy > 1200 * 1200)
+			continue;
+		c->enemy = ent_player;
+		ai_found_target(c);
+		awake++;
+	}
+	printf("key: %d monsters awake around the key\n", awake);
+	int32_t at[3];
+	if (!floor_at(key->origin[0], key->origin[1], key->origin[2] + 32 * CLIP_SUB, at)) {
+		printf("key: no floor at the key\n");
+		return;
+	}
+	memcpy(pl.pm.pos, at, sizeof pl.pm.pos);
+	memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+	key_phase("picked", 300, 0);
+	int32_t west[3], east[3];
+	int ok_w = floor_at(-560 * CLIP_SUB, -160 * CLIP_SUB, 0, west), ok_e = floor_at(-430 * CLIP_SUB, -160 * CLIP_SUB, 0, east);
+	printf("key: the door's sides: west %d, east %d\n", ok_w, ok_e);
+	for (int n = 0; n < 4; n++) {
+		if (ok_w) {
+			memcpy(pl.pm.pos, west, sizeof pl.pm.pos);
+			memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+			key_phase("west to east", 300, 0);                   /* yaw 0: +x */
+		}
+		if (ok_e) {
+			memcpy(pl.pm.pos, east, sizeof pl.pm.pos);
+			memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+			key_phase("east to west", 300, ANG_TURN / 2);       /* -x */
+		}
+		memcpy(pl.pm.pos, at, sizeof pl.pm.pos);              /* back at the key's place */
+		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+		key_phase("at the key again", 200, 0);
+	}
+	printf("key done\n");
 }
 
 static void run_bench(void)
@@ -2535,6 +3019,25 @@ static void run_bench(void)
 	static char names[16][8];
 
 	printf("bench start\n");
+	zone_sync = 1;                              /* (a view's zone read before its frame) */
+	if (Q1PSX_BENCH_ZONES) {
+		bench_zones();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
+	if (Q1PSX_BENCH_MONSTERS == 6) {
+		bench_key();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
+	if (Q1PSX_BENCH_MONSTERS >= 4) {
+		bench_clear();
+		printf("bench done\n");
+		for (;;)
+			run_frame(0, 0);
+	}
 	if (Q1PSX_BENCH_MONSTERS) {
 		bench_monsters();
 		printf("bench done\n");

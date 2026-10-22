@@ -12,6 +12,7 @@
 
 #include "ents.h"
 #include "game.h"
+#include "mem.h"
 #include "render.h"
 #include "snd.h"
 #include "world.h"
@@ -894,7 +895,7 @@ static void func_button(edict_t *self)
 	travel_end(self);
 }
 
-void movers_spawn(edict_t *e, const qw_ent *q)
+Q_COLD void movers_spawn(edict_t *e, const qw_ent *q)
 {
 	(void) q;
 	switch (e->class) {
