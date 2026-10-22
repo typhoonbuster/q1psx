@@ -24,8 +24,8 @@ void anim_invalidate(void)
 		shown[i] = -1;
 }
 
-/* a tile's VRAM rectangle in the 4-bit set (four texels a halfword), the
-   cell's whole halfwords */
+/* a tile's VRAM rectangle in the 4-bit set (four texels a halfword), its
+   whole halfwords (the cook keeps an animated texture's tiles on them) */
 static void tile_rect(const qw_anim_tile *t, RECT *r)
 {
 	r->x = (int16_t) (QTEX4_PAGE_X0 + 64 * t->page + t->u0 / 4);

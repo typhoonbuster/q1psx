@@ -22,7 +22,13 @@
  * PKTVIEW_BG=r,g,b sets the clear colour (default black). A colour no
  * texture produces (e.g. 255,0,255) makes every pixel no polygon covers
  * stand out: cracks between polygons. PKTVIEW_DITHER=0 renders as the GPU
- * does with dithering off (the menu's option).
+ * does with dithering off (the menu's option). PKTVIEW_UVROUND=1 rounds a
+ * polygon's interpolated texture coordinates to the nearest texel, as the
+ * GPU does (it starts them half a texel up: Mednafen's and DuckStation's
+ * rasterizers, which follow the hardware), instead of cutting them: a texel
+ * shows from half a texel before its place, and a polygon whose UV reaches
+ * its tile's end reads the texel past it along that edge
+ * (docs/porting-notes.md §69).
  */
 
 #include <stdint.h>
@@ -254,6 +260,7 @@ static const int dither[4][4] = {
 
 static uint32_t twin;   /* current GP0 E2h texture window (0 = none) */
 static int dither_on = 1;   /* PKTVIEW_DITHER=0: the engine's dithering off */
+static int uv_round;        /* PKTVIEW_UVROUND=1: the GPU's texture coordinates */
 
 static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque)
 {
@@ -344,8 +351,9 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 			};
 			uint8_t col[3] = { (uint8_t) shade[0], (uint8_t) shade[1], (uint8_t) shade[2] };
 			if (textured) {
-				int u = (int) ((w0 * a.u + w1 * b.u + w2 * c.u) / area);
-				int v = (int) ((w0 * a.v + w1 * b.v + w2 * c.v) / area);
+				long hu = uv_round ? area : 0, den = uv_round ? 2 * area : area, mul = uv_round ? 2 : 1;
+				int u = (int) ((mul * (w0 * a.u + w1 * b.u + w2 * c.u) + hu) / den);
+				int v = (int) ((mul * (w0 * a.v + w1 * b.v + w2 * c.v) + hu) / den);
 				int op;
 				texel(tpage, clut, u, v, col, &op);
 				if (!op)
@@ -606,6 +614,8 @@ int main(int argc, char **argv)
 	const char *dis = getenv("PKTVIEW_DITHER");
 	if (dis && dis[0] == '0')
 		dither_on = 0;
+	const char *uvr = getenv("PKTVIEW_UVROUND");
+	uv_round = uvr && uvr[0] == '1';
 	const char *occ = getenv("PKTVIEW_OCCL");
 	occl_on = occ && occ[0] == '1';
 	const char *bgs = getenv("PKTVIEW_BG");

@@ -5,13 +5,17 @@
  *
  * The cook packs every texture tile of the map into whole 8bpp texture pages
  * and ships each page as one VRAM rectangle, so the engine just DMAs the
- * rectangles and frees the file. The set also carries the map's texture
- * table: each slot's CLUT, tpage and texture-window words (qw_tex, which the
- * renderer reads), how the world's texture coordinates land on its tile
- * (qtex_uvmap), and the animated textures' tiles (qw_anim). The world file
- * is the same for every texture level (formats/qworld.h): its polygons'
- * UVs are cooked for the finest level, and the loader maps them onto this
- * set's tiles once, at load.
+ * rectangles and frees the file. A tile's axis that does not wrap (its
+ * texture's size there is not a power of two) has a gutter: the texel
+ * column / row past the tile's end repeats its first, for the GPU reads it
+ * along a polygon's far edge (its texture coordinates are rounded to the
+ * nearest texel: docs/porting-notes.md §69). The set also carries the
+ * map's texture table: each slot's CLUT, tpage and texture-window words
+ * (qw_tex, which the renderer reads), how the world's texture coordinates
+ * land on its tile (qtex_uvmap), and the animated textures' tiles
+ * (qw_anim). The world file is the same for every texture level
+ * (formats/qworld.h): its polygons' UVs are cooked for the finest level,
+ * and the loader maps them onto this set's tiles once, at load.
  *
  * VRAM layout (halfword coordinates):
  *   framebuffers   (0,0)-(319,479)
@@ -88,7 +92,7 @@ typedef struct {
 typedef struct {
 	uint8_t  page, pad;
 	uint16_t slot;             /* its qw_tex index                        */
-	uint16_t u0, v0, w, h;     /* texels in its page                      */
+	uint16_t u0, v0, w, h;     /* texels in its page, the gutter included */
 } qw_anim_tile;                /* 12 bytes */
 
 typedef struct {

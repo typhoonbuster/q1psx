@@ -1,11 +1,12 @@
 /*
  * qcook — textures: palette -> CLUT, one tile per used miptex (one texture
  * repetition at the level's resolution), packed into whole 8bpp texture
- * pages, each power-of-two axis aligned for the GPU texture window, written
- * as a QTX6 file (formats/qtex.h) with the map's texture table: the slots'
- * words, how the world's UVs (cooked for the finest level's layout) land on
- * this set's tiles, the animated textures' tiles. Optionally the same pages
- * in 4bpp, each texture quantized to its own 16 colours (QTX7).
+ * pages, each power-of-two axis aligned for the GPU texture window, a
+ * one-texel gutter past each other axis, written as a QTX6 file
+ * (formats/qtex.h) with the map's texture table: the slots' words, how the
+ * world's UVs (cooked for the finest level's layout) land on this set's
+ * tiles, the animated textures' tiles. Optionally the same pages in 4bpp,
+ * each texture quantized to its own 16 colours (QTX7).
  */
 
 #include <math.h>
@@ -20,16 +21,84 @@
 
 #define PAGE_TEX 256                     /* texels per page side (8bpp) */
 
-#define CELLS    (PAGE_TEX / 8)          /* packing grid: 8x8-texel cells */
+/* ------------------------------------------------------------ packing -- */
 
-typedef struct { int idx, w, h; } pack_item;
+/* A tile to place: its texels with its gutter, rounded up to the grid its
+   corner snaps to. A wrapped axis starts at a multiple of its own size (the
+   texture window ORs its offset into the low bits); an animated texture's
+   tiles start at a multiple of 4 texels and take whole 4s (the engine moves
+   the frame of the moment into its display tile in halfwords of the 4-bit
+   pages: engine/anim.c); any texel otherwise. */
+typedef struct { int idx, w, h, ax, ay, aligned; } pack_item;
 
-/* biggest first: first fit then packs aligned power-of-two tiles tightly */
-static int by_area(const void *a, const void *b)
+#define PACK_ORDERS 8
+static int pack_order;                   /* the order pack_cmp sorts by */
+
+/* Biggest first: by area (order 0), height (1), width (2) or longest side
+   (3); orders 4-7 the same with the tiles that wrap on both axes first
+   (they tile the pages on power-of-two boundaries, the others fill in). */
+static int pack_cmp(const void *a, const void *b)
 {
 	const pack_item *x = a, *y = b;
-	if (x->w * x->h != y->w * y->h) return y->w * y->h - x->w * x->h;
-	return y->h - x->h;
+	if (pack_order >= 4 && x->aligned != y->aligned)
+		return y->aligned - x->aligned;
+	int kx, ky;
+	switch (pack_order & 3) {
+	case 0:  kx = x->w * x->h; ky = y->w * y->h; break;
+	case 1:  kx = x->h; ky = y->h; break;
+	case 2:  kx = x->w; ky = y->w; break;
+	default: kx = x->w > x->h ? x->w : x->h; ky = y->w > y->h ? y->w : y->h; break;
+	}
+	if (kx != ky) return ky - kx;
+	if (x->h != y->h) return y->h - x->h;
+	if (x->w != y->w) return y->w - x->w;
+	return x->idx - y->idx;
+}
+
+static uint8_t pack_taken[QTEX_MAP_PAGES][PAGE_TEX][PAGE_TEX];
+
+/* First fit of the tiles in their order over the map's pages, on the texel
+   grid: each at the first free place by page, row, then column (a taken
+   texel moves the column past it). at[idx] = page << 16 | v << 8 | u,
+   page_h[] the rows each page uses. Returns the rows in all (what the
+   stream does not get: engine/stream.c), -1 if a tile finds no place. */
+static long pack_first_fit(const pack_item *it, int n, int *at, int *page_h)
+{
+	memset(pack_taken, 0, sizeof pack_taken);
+	for (int p = 0; p < QTEX_PAGES; p++)
+		page_h[p] = 0;
+	for (int k = 0; k < n; k++) {
+		int w = it[k].w, h = it[k].h, page = -1, pu = 0, pv = 0;
+		for (int p = 0; p < QTEX_MAP_PAGES && page < 0; p++)
+			for (int v = 0; v + h <= PAGE_TEX && page < 0; v += it[k].ay)
+				for (int u = 0; u + w <= PAGE_TEX; ) {
+					int hit = -1;
+					for (int y = 0; y < h && hit < 0; y++)
+						for (int x = w - 1; x >= 0; x--)
+							if (pack_taken[p][v + y][u + x]) {
+								hit = u + x;
+								break;
+							}
+					if (hit < 0) {
+						page = p;
+						pu   = u;
+						pv   = v;
+						break;
+					}
+					u = (hit / it[k].ax + 1) * it[k].ax;
+				}
+		if (page < 0)
+			return -1;
+		for (int y = 0; y < h; y++)
+			memset(&pack_taken[page][pv + y][pu], 1, (size_t) w);
+		if (pv + h > page_h[page])
+			page_h[page] = pv + h;
+		at[it[k].idx] = page << 16 | pv << 8 | pu;
+	}
+	long rows = 0;
+	for (int p = 0; p < QTEX_MAP_PAGES; p++)
+		rows += page_h[p];
+	return rows;
 }
 
 static int is_pow2(int v)
@@ -291,7 +360,7 @@ static void tables_build(buf_t *out, const tex_set *ts, const tex_set *canon, co
 		memset(&q, 0, sizeof q);
 		#define TILE_OF(t, sl) do { const tex_slot *s_ = &ts->slots[sl]; (t).page = (uint8_t) s_->page; \
 			(t).slot = (uint16_t) (sl); (t).u0 = (uint16_t) s_->u0; (t).v0 = (uint16_t) s_->v0; \
-			(t).w = (uint16_t) s_->tile_w; (t).h = (uint16_t) s_->tile_h; } while (0)
+			(t).w = (uint16_t) (s_->tile_w + s_->gut_x); (t).h = (uint16_t) (s_->tile_h + s_->gut_y); } while (0)
 		TILE_OF(q.display, a->display);
 		q.num_frames = (uint8_t) a->nframes;
 		q.num_alt    = (uint8_t) a->nalt;
@@ -343,10 +412,12 @@ static void write_tex4(const tex_set *ts, const tex_set *canon, const bsp_t *b, 
 		uint16_t c16[16];
 		quantize16(hist, palette, map, c16);
 		uint8_t *n4 = nib + (size_t) s->page * PAGE_TEX * PAGE_TEX;
-		for (int y = 0; y < s->tile_h; y++)
-			for (int x = 0; x < s->tile_w; x++) {
+		for (int y = 0; y < s->tile_h + s->gut_y; y++)       /* (the gutter: texels of the tile) */
+			for (int x = 0; x < s->tile_w + s->gut_x; x++) {
 				int o = (s->v0 + y) * PAGE_TEX + s->u0 + x, pi = img[o];
 				n4[o] = map[pi];
+				if (x >= s->tile_w || y >= s->tile_h)
+					continue;
 				uint16_t c = c16[map[pi]];
 				int dr = (palette[pi * 3] >> 3) - (c & 31);
 				int dg = (palette[pi * 3 + 1] >> 3) - ((c >> 5) & 31);
@@ -523,6 +594,16 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 	                       : &b->miptex[ts->anims[(i) - b->num_miptex - nextra].src])
 	#define SLOT_EXTRA(i)  ((i) >= b->num_miptex && (i) < b->num_miptex + nextra ? &extra[(i) - b->num_miptex] : 0)
 
+	/* an animated texture's tiles: the frames, the alternates, the display
+	   tile the engine moves them into */
+	uint8_t *animated = xcalloc((size_t) total + 1, 1);
+	for (int c = 0; c < ts->num_anims; c++) {
+		const tex_anim *a = &ts->anims[c];
+		animated[a->display] = 1;
+		for (int k = 0; k < a->nframes; k++) animated[a->frames[k]] = 1;
+		for (int k = 0; k < a->nalt; k++)    animated[a->alt[k]] = 1;
+	}
+
 	/* tile size per texture: one repetition at the level's resolution */
 	pack_item *items = xcalloc((size_t) total + 1, sizeof *items);
 	int nitems = 0;
@@ -537,15 +618,16 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 			s->flags |= QWF_LIQUID;
 		if (!used[i] || !m->w || !m->mip[0] || (s->flags & QWF_SKY))
 			continue;
+		pack_item *it = &items[nitems++];
+		it->idx = i;
+		it->ax  = it->ay = 1;
 		if (x && x->skin) {                     /* a model's skin: as it is */
 			s->rep_w  = (m->w + 1) & ~1;        /* (halfword-aligned in 8bpp) */
 			s->rep_h  = m->h;
 			s->res_u  = s->res_v = 1.0 / x->div;
 			s->inner  = x->border;
-			items[nitems].idx = i;
-			items[nitems].w   = s->rep_w;
-			items[nitems].h   = s->rep_h;
-			nitems++;
+			it->w     = s->rep_w;
+			it->h     = s->rep_h;
 			continue;
 		}
 
@@ -568,12 +650,24 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		s->rep_h = h;
 		s->res_u = (double) w / m->w;
 		s->res_v = (double) h / m->h;
+		/* Another axis is cut at every repetition (tools/qcook/world.c), so
+		   a piece's UV on its far edge is the tile's size, and the GPU,
+		   which rounds its texture coordinates to the nearest texel, reads
+		   the texel past the tile along that edge: a gutter of one texel
+		   there, the tile's first column / row again (docs/porting-notes.md
+		   §69). */
+		s->gut_x = !s->win_x;
+		s->gut_y = !s->win_y;
 
-		items[nitems].idx = i;
-		items[nitems].w   = w;
-		items[nitems].h   = h;
-		nitems++;
+		it->w  = w + s->gut_x;
+		it->h  = h + s->gut_y;
+		it->ax = s->win_x ? w : animated[i] ? 4 : 1;
+		it->ay = s->win_y ? h : 1;
+		if (!s->win_x && animated[i])
+			it->w = (it->w + 3) & ~3;
+		it->aligned = s->win_x && s->win_y;
 	}
+	free(animated);
 	if (!out_path && !out4_path) {          /* the layout alone */
 		for (int n = 0; n < nitems; n++)
 			ts->slots[items[n].idx].present = 1;
@@ -581,70 +675,65 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		free(used);
 		return 1;
 	}
-	qsort(items, (size_t) nitems, sizeof *items, by_area);
 
-	/* First fit over the map's QTEX_MAP_PAGES pages of 256x256 texels, on a
-	   grid of 8x8 cells. A wrapped axis must start at a multiple of its own size (the
-	   texture window ORs its offset into the low bits). */
-	uint8_t *pages = xcalloc(QTEX_PAGES, PAGE_TEX * PAGE_TEX);
-	static uint8_t cell[QTEX_PAGES][CELLS][CELLS];   /* 1 = taken */
-	memset(cell, 0, sizeof cell);
+	/* First fit over the map's QTEX_MAP_PAGES pages of 256x256 texels, in
+	   each of the PACK_ORDERS orders: the one that uses the fewest rows */
+	pack_item *order = xcalloc((size_t) nitems + 1, sizeof *order);
+	int *at = xcalloc((size_t) total + 1, sizeof *at), *best_at = xcalloc((size_t) total + 1, sizeof *best_at);
 	int page_h[QTEX_PAGES] = { 0 };   /* used rows per page          */
+	long best = -1;
+	for (int o = 0; o < PACK_ORDERS; o++) {
+		memcpy(order, items, (size_t) nitems * sizeof *order);
+		pack_order = o;
+		qsort(order, (size_t) nitems, sizeof *order, pack_cmp);
+		int ph[QTEX_PAGES];
+		long rows = pack_first_fit(order, nitems, at, ph);
+		if (rows >= 0 && (best < 0 || rows < best)) {
+			int *t = best_at;
+			best_at = at;
+			at = t;
+			memcpy(page_h, ph, sizeof page_h);
+			best = rows;
+		}
+	}
+	free(order);
+	free(at);
+	if (best < 0) {
+		long need = 0, extras = 0;
+		for (int k = 0; k < nitems; k++) {
+			long ar = (long) items[k].w * items[k].h;
+			need += ar;
+			if (items[k].idx >= b->num_miptex && items[k].idx < b->num_miptex + nextra)
+				extras += ar;
+		}
+		if (may_fail) {
+			printf("qcook: %ld K texels (%ld K the models') overflow %d pages at %s\n",
+			       need / 1024, extras / 1024, QTEX_MAP_PAGES, level_name[level]);
+			free(best_at);
+			free(items);
+			free(used);
+			return 0;
+		}
+		die("textures do not fit in %d VRAM pages at %s (%ld K texels, %ld K of them the models', "
+		    "%d tiles)", QTEX_MAP_PAGES, level_name[level], need / 1024, extras / 1024, nitems);
+	}
+
+	uint8_t *pages = xcalloc(QTEX_PAGES, PAGE_TEX * PAGE_TEX);
 	int pages_used = 0;
 	for (int n = 0; n < nitems; n++) {
-		pack_item *it = &items[n];
-		tex_slot  *s  = &ts->slots[it->idx];
-		int cw = (it->w + 7) / 8, ch = (it->h + 7) / 8;
-		int ax = s->win_x ? cw : 1, ay = s->win_y ? ch : 1;   /* alignment, cells */
-		int page = -1, cx = 0, cy = 0;
-		for (int p = 0; p < QTEX_MAP_PAGES && page < 0; p++)
-			for (int y = 0; y + ch <= CELLS && page < 0; y += ay)
-				for (int x = 0; x + cw <= CELLS && page < 0; x += ax) {
-					int ok = 1;
-					for (int yy = 0; yy < ch && ok; yy++)
-						for (int xx = 0; xx < cw && ok; xx++)
-							ok = !cell[p][y + yy][x + xx];
-					if (ok) {
-						page = p;
-						cx = x;
-						cy = y;
-					}
-				}
-		if (page < 0) {
-			long need = 0, extras = 0;
-			for (int k = 0; k < nitems; k++) {
-				long ar = (long) ((items[k].w + 7) & ~7) * ((items[k].h + 7) & ~7);
-				need += ar;
-				if (items[k].idx >= b->num_miptex && items[k].idx < b->num_miptex + nextra)
-					extras += ar;
-			}
-			if (may_fail) {
-				printf("qcook: %ld K texels (%ld K the models') overflow %d pages at %s\n",
-				       need / 1024, extras / 1024, QTEX_MAP_PAGES, level_name[level]);
-				free(pages);
-				free(items);
-				free(used);
-				return 0;
-			}
-			die("textures do not fit in %d VRAM pages at %s (%ld K texels, %ld K of them "
-			    "the models', item %d of %d: %dx%d)", QTEX_MAP_PAGES, level_name[level], need / 1024,
-			    extras / 1024, n, nitems, it->w, it->h);
-		}
-		for (int yy = 0; yy < ch; yy++)
-			for (int xx = 0; xx < cw; xx++)
-				cell[page][cy + yy][cx + xx] = 1;
-
-		const bsp_miptex *m = SLOT_MIPTEX(it->idx);
-		const tex_extra  *x = SLOT_EXTRA(it->idx);
+		tex_slot *s = &ts->slots[items[n].idx];
+		int page = best_at[items[n].idx] >> 16;
+		const bsp_miptex *m = SLOT_MIPTEX(items[n].idx);
+		const tex_extra  *x = SLOT_EXTRA(items[n].idx);
 		int skin = x && x->skin;
 		int px = QTEX_PAGE_X0 + (page % QTEX_PAGE_COLS) * (PAGE_TEX / 2);
 		int py = (page / QTEX_PAGE_COLS) * PAGE_TEX;
 		s->present = 1;
-		s->u0      = cx * 8;
-		s->v0      = cy * 8;
+		s->u0      = best_at[items[n].idx] & 0xff;
+		s->v0      = (best_at[items[n].idx] >> 8) & 0xff;
 		s->page    = page;
-		s->tile_w  = it->w;
-		s->tile_h  = it->h;
+		s->tile_w  = s->rep_w;
+		s->tile_h  = s->rep_h;
 		s->tpage   = gpu_tpage(px, py);
 		s->clut    = gpu_clut(QTEX_CLUT_X, QTEX_CLUT_Y);
 		/* GP0 E2h: texcoord = (texcoord & ~(mask * 8)) | ((offset & mask) * 8) */
@@ -654,19 +743,20 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		uint32_t oy = s->win_y ? ((uint32_t) s->v0 >> 3) & 31 : 0;
 		s->window  = 0xE2000000u | mx | my << 5 | ox << 10 | oy << 15;
 
+		/* (the gutter: the texture repeats past the tile's end, as Quake's
+		   surfaces do: R_DrawSurface) */
 		uint8_t *img = pages + (size_t) page * PAGE_TEX * PAGE_TEX;
-		for (int y = 0; y < it->h; y++)
-			for (int xx = 0; xx < it->w; xx++)
+		for (int y = 0; y < s->tile_h + s->gut_y; y++)
+			for (int xx = 0; xx < s->tile_w + s->gut_x; xx++)
 				img[(s->v0 + y) * PAGE_TEX + s->u0 + xx] = skin
 					? m->mip[0][y * m->w + (xx < m->w ? xx : m->w - 1)]   /* (the pad: the last column) */
-					: sample(m, xx, y, s->rep_w, s->rep_h);
+					: sample(m, xx < s->tile_w ? xx : 0, y < s->tile_h ? y : 0, s->rep_w, s->rep_h);
 
-		ts->bytes += (uint32_t) (it->w * it->h);
-		if (s->v0 + it->h > page_h[page])
-			page_h[page] = s->v0 + it->h;
+		ts->bytes += (uint32_t) ((s->tile_w + s->gut_x) * (s->tile_h + s->gut_y));
 		if (page + 1 > pages_used)
 			pages_used = page + 1;
 	}
+	free(best_at);
 	ts->pages_used = pages_used;
 
 	/* QTX6, the 8-bit set (no disc carries it since docs/porting-notes.md
