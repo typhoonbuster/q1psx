@@ -1,6 +1,6 @@
 /*
- * q1psx — `qcook zones`: a cooked world (QWVE) split into its skeleton
- * (QWVZ) and its zone chunks (QZN1), from the level-chunks analysis'
+ * q1psx — `qcook zones`: a cooked world (QWVF) split into its skeleton
+ * (QWZF) and its zone chunks (QZN1), from the level-chunks analysis'
  * tables (formats/qworld.h "zones", docs/porting-notes.md §56, §57).
  *
  *   qcook zones --world <map>_g0.wld --tables <dir>/<map>.zones
@@ -576,7 +576,7 @@ int cmd_zones(int argc, char **argv)
 	h.ofs_ambient = (uint32_t) s.len; buf_put(&s, f + H->ofs_ambient, nl * 2); buf_align4(&s);
 	h.ofs_clip    = (uint32_t) s.len; buf_put(&s, f + H->ofs_clip, H->len_clip); buf_align4(&s);
 	h.ofs_bmodels = (uint32_t) s.len; buf_put(&s, bm2, H->num_bmodels * sizeof *bm2);
-	h.ofs_ents    = (uint32_t) s.len; buf_put(&s, f + H->ofs_ents, H->num_ents * sizeof(qw_ent));
+	h.ofs_ents    = (uint32_t) s.len; buf_put(&s, f + H->ofs_ents, H->ofs_strings - H->ofs_ents);
 	h.ofs_strings = (uint32_t) s.len; buf_put(&s, f + H->ofs_strings, H->len_strings); buf_align4(&s);
 	qw_chunk_dir *dir = xcalloc(nz, sizeof *dir);
 	for (uint32_t z = 0, sector = 1; z < nz; z++) {   /* (sector 0: the file's header) */

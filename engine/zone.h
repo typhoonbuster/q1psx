@@ -50,7 +50,7 @@ typedef struct {
 
 extern zone_stats_t zone_stats;
 
-/* world_load, a QWVZ skeleton just read and linked: its zone tables, the
+/* world_load, a QWZF skeleton just read and linked: its zone tables, the
    slots allocated, the .ZON file found (texture level `tex`). 0 on
    failure (the map then fails to load). */
 int  zone_map_start(const uint8_t *skeleton, const char *map, int tex);

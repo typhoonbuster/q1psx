@@ -1,5 +1,5 @@
 /*
- * qcook — world: QWVE file (formats/qworld.h), one per geometry level.
+ * qcook — world: QWVF file (formats/qworld.h), one per geometry level.
  *
  * Faces are attached to their BSP node (front block / back block), cut on
  * texture-repeat boundaries so every piece's UVs stay inside one VRAM tile
@@ -1688,7 +1688,8 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	buf_put(&f, bmodels, (size_t) b->num_models * sizeof *bmodels);
 	h.ofs_ents = (uint32_t) f.len;
 	h.num_ents = (uint32_t) (etab.len / sizeof(qw_ent));
-	buf_put(&f, etab.p, etab.len);
+	ents_pack((const qw_ent *) etab.p, h.num_ents, &f);   /* (compact: formats/qworld.h) */
+	buf_align4(&f);
 	h.ofs_strings = (uint32_t) f.len;
 	h.len_strings = (uint32_t) estr.len;
 	buf_put(&f, estr.p, estr.len);
@@ -1765,7 +1766,9 @@ int world_check(const char *path)
 	SECTION(h.ofs_verts, h.num_verts * sizeof(qw_vert));
 	SECTION(h.ofs_ambient, h.num_leaves * 2);
 	SECTION(h.ofs_bmodels, h.num_bmodels * sizeof(qw_bmodel));
-	SECTION(h.ofs_ents, h.num_ents * sizeof(qw_ent));
+	if (h.ofs_strings < h.ofs_ents + QE_COUNT * 2)
+		FAIL("the entities' section (%u..%u) holds no class names", h.ofs_ents, h.ofs_strings);
+	SECTION(h.ofs_ents, h.ofs_strings - h.ofs_ents);
 	SECTION(h.ofs_strings, h.len_strings);
 	if (h.max_depth > QW_MAX_DEPTH)
 		FAIL("depth %u > %d", h.max_depth, QW_MAX_DEPTH);
@@ -1870,12 +1873,27 @@ int world_check(const char *path)
 			FAIL("bmodel %u: a room of %u B, %u vertices, %u groups", i, bm[i].room_recs * 4u,
 			     bm[i].room_verts, bm[i].room_groups);
 	}
-	const qw_ent *ents = (const qw_ent *) (d + h.ofs_ents);
+	const uint16_t *names = (const uint16_t *) (d + h.ofs_ents);
 	const char *strs = (const char *) (d + h.ofs_strings);
 	if (h.len_strings < 1 || strs[0] || strs[h.len_strings - 1])
 		FAIL("string pool not NUL-ended");
+	for (int c = 0; c < QE_COUNT; c++)
+		if (names[c] >= h.len_strings || (!c && names[c]))
+			FAIL("class %d: name at %u", c, names[c]);
+	/* the compact entities, decoded from a copy padded past the section's
+	   end (a wrong head reads at most 4 + 40 + 2 bytes) */
+	uint32_t elen = h.ofs_strings - h.ofs_ents - QE_COUNT * 2;
+	uint8_t *ecopy = xcalloc(elen + 64, 1);
+	memcpy(ecopy, d + h.ofs_ents + QE_COUNT * 2, elen);
+	const uint8_t *ep = ecopy;
 	for (uint32_t i = 0; i < h.num_ents; i++) {
-		const qw_ent *e = &ents[i];
+		if (ep[3] & 0x80)
+			FAIL("entity %u: head bit 31 set", i);
+		qw_ent ent;
+		ep = qw_ent_decode(ep, names, &ent);
+		if ((uint32_t) (ep - ecopy) > elen)
+			FAIL("entity %u: past the section's end", i);
+		const qw_ent *e = &ent;
 		if (e->class >= QE_COUNT) FAIL("entity %u: class %u", i, e->class);
 		if (e->model < 0 || (uint32_t) e->model >= h.num_bmodels) FAIL("entity %u: model %d", i, e->model);
 		uint16_t so[6] = { e->target, e->targetname, e->killtarget, e->message, e->map, e->classname };
@@ -1883,6 +1901,11 @@ int world_check(const char *path)
 			if (so[k] >= h.len_strings) FAIL("entity %u: string offset %u", i, so[k]);
 		if (!e->classname) FAIL("entity %u: no classname", i);
 	}
+	if (elen - (uint32_t) (ep - ecopy) > 3)
+		FAIL("%u bytes after the entities", elen - (uint32_t) (ep - ecopy));
+	for (; ep < ecopy + elen; ep++)
+		if (*ep) FAIL("the entities' padding is not zero");
+	free(ecopy);
 	if (h.title >= h.len_strings) FAIL("title string out of range");
 
 	printf("check: %s OK — %u nodes, %u leaves, %u records (%u the world's), %u polys, depth %u; "

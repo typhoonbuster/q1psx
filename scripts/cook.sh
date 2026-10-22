@@ -27,11 +27,11 @@
 #
 # Output, per map (formats/qlevels.h: 0 low, 1 medium, 2 high):
 #   cooked/id1/<map>_t<N>.tx4   QTX7 4-bit textures (1, 2)        -> disc <MAP>_T<N>.TX4
-#   cooked/id1/<map>_g0.wld     QWVE world, low geometry          -> disc <MAP>_G0.WLD
+#   cooked/id1/<map>_g0.wld     QWVF world, low geometry          -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_m0.mdl     QMM1 its own models, low          -> disc <MAP>_M0.MDL
 #   cooked/id1/<map>.snd        QSB2 its sound bank               -> disc <MAP>.SND
 # and with Q1PSX_ZONE_TABLES, a map split into zones (formats/qworld.h):
-#   cooked/id1/<map>_g0.skl     QWVZ its skeleton                 -> disc <MAP>_G0.WLD
+#   cooked/id1/<map>_g0.skl     QWZF its skeleton                 -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_z<N>.zon   QZN1 its chunks, textures N (1, 2) -> disc <MAP>_Z<N>.ZON
 # the game data (the guns, the projectiles, the HUD; formats/qgame.h):
 #   cooked/id1/game_0.dat       QGM8, low                         -> disc GAME_0.DAT

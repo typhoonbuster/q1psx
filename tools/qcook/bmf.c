@@ -70,7 +70,7 @@ static struct {
 	const int32_t   *planes;     /* the clip section's table, in words */
 	const qw_vert   *verts;
 	const uint8_t   *faces;
-	const qw_ent    *ents;
+	const qw_ent    *ents;       /* decoded from the file's compact table */
 	const char      *strings;
 } W;
 
@@ -707,8 +707,14 @@ static qw_bmodel *world_view(uint8_t *f, size_t len)
 	W.planes  = (const int32_t *) (f + W.h->ofs_clip + sizeof(qw_clip_header));
 	W.verts   = (const qw_vert *) (f + W.h->ofs_verts);
 	W.faces   = f + W.h->ofs_faces;
-	W.ents    = (const qw_ent *) (f + W.h->ofs_ents);
 	W.strings = (const char *) (f + W.h->ofs_strings);
+	const uint16_t *names = (const uint16_t *) (f + W.h->ofs_ents);
+	const uint8_t *p = (const uint8_t *) (names + QE_COUNT);
+	qw_ent *ents = xmalloc((W.h->num_ents + 1) * sizeof *ents);
+	for (uint32_t i = 0; i < W.h->num_ents; i++)
+		p = qw_ent_decode(p, names, &ents[i]);
+	free((void *) W.ents);
+	W.ents = ents;
 	build_sintab();
 	return (qw_bmodel *) (f + W.h->ofs_bmodels);
 }

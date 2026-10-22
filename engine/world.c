@@ -397,7 +397,8 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 		                      ? (uint32_t) &world.leaves[r & 0x7fffffffu] | 1u
 		                      : (uint32_t) &world.nodes[r]) & 0x00ffffffu;
 	}
-	world.ents         = (const qw_ent *) (f + h->ofs_ents);
+	world.ent_names    = (const uint16_t *) (f + h->ofs_ents);
+	world.ents         = (const uint8_t *) (world.ent_names + QE_COUNT);
 	world.num_ents     = h->num_ents;
 	world.strings      = (const char *) (f + h->ofs_strings);
 	world.worldtype    = h->worldtype;

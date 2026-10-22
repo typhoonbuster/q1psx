@@ -324,3 +324,65 @@ void ents_cook(const ent_list *l, int num_models, buf_t *table, buf_t *strings,
 		buf_put(table, &q, sizeof q);
 	}
 }
+
+/* the compact table (formats/qworld.h qw_ent_decode): each class's name,
+   then each entity's head and the fields that are not zero; every entity
+   decoded again and checked against its qw_ent, byte for byte */
+void ents_pack(const qw_ent *ents, uint32_t n, buf_t *out)
+{
+	uint16_t names[QE_COUNT];
+	memset(names, 0, sizeof names);
+	for (uint32_t i = 0; i < n; i++) {
+		const qw_ent *q = &ents[i];
+		if (q->class && names[q->class] && names[q->class] != q->classname)
+			die("entity %u: class %u under two names", i, q->class);
+		if (q->class)
+			names[q->class] = q->classname;
+	}
+	buf_put(out, names, sizeof names);
+	for (uint32_t i = 0; i < n; i++) {
+		const qw_ent *q = &ents[i];
+		const uint8_t *s = (const uint8_t *) q;
+		uint8_t rec[4 + sizeof *q];
+		uint32_t len = 4, head = q->class, fine = 0;
+		for (int k = 0; k < 3; k++)
+			fine |= q->origin[k] % QW_CLIP_SUB || q->origin[k] / QW_CLIP_SUB < -32768 ||
+			        q->origin[k] / QW_CLIP_SUB > 32767;
+		if (fine)
+			head |= QWE_BIT(QWE_FINE);
+		for (uint32_t f = 0; f < QWE_FIELDS; f++) {
+			uint32_t at = QWE_FIELD_AT[f][0], nb = QWE_FIELD_AT[f][1], any = 0;
+			if (f >= QWE_ORIGIN_X && f <= QWE_ORIGIN_Z) {
+				int32_t v = q->origin[f - QWE_ORIGIN_X];
+				if (!v)
+					continue;
+				head |= QWE_BIT(f);
+				if (!fine) {
+					int16_t w = (int16_t) (v / QW_CLIP_SUB);
+					memcpy(rec + len, &w, 2);
+					len += 2;
+				} else {
+					memcpy(rec + len, &v, 4);
+					len += 4;
+				}
+				continue;
+			}
+			for (uint32_t k = 0; k < nb; k++)
+				any |= s[at + k];
+			if (!any)
+				continue;
+			head |= QWE_BIT(f);
+			memcpy(rec + len, s + at, nb);
+			len += nb;
+		}
+		if (!q->class) {
+			memcpy(rec + len, &q->classname, 2);
+			len += 2;
+		}
+		memcpy(rec, &head, 4);
+		qw_ent back;
+		if (qw_ent_decode(rec, names, &back) != rec + len || memcmp(&back, q, sizeof back))
+			die("entity %u (class %u): its compact form decodes otherwise", i, q->class);
+		buf_put(out, rec, len);
+	}
+}

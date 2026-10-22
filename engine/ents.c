@@ -1290,8 +1290,11 @@ void ents_spawn(int first)
 	num_edicts = 2;
 
 	int unknown = 0, inhibit = 0;
-	for (uint32_t i = 0; i < world.num_ents; i++) {
-		const qw_ent *q = &world.ents[i];
+	const uint8_t *at = world.ents;         /* the compact table, decoded one by one: */
+	for (uint32_t i = 0; i < world.num_ents; i++) {   /* the spawn functions read q */
+		qw_ent ent;                           /* during their call only */
+		at = qw_ent_decode(at, world.ent_names, &ent);
+		const qw_ent *q = &ent;
 		int cls = q->class;
 		/* ED_LoadFromFile: not on this skill (not easy 256, not medium
 		   512, not hard 1024) */

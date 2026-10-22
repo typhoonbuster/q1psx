@@ -3,7 +3,7 @@
  *
  * world_load() uploads the map's texture pages to VRAM (the QTX6 / QTX7 file
  * is transient but for its tables: the texture words, the UV maps, the
- * animated textures), then loads the QWVE world and the map's own models
+ * animated textures), then loads the QWVF world and the map's own models
  * (QMM1) into the level arena, maps their UVs onto the loaded set's tiles
  * and rewrites the world's link fields into absolute pointers for the asm
  * renderer: the nodes' children and face blocks, the leaves' marks and PVS
@@ -47,7 +47,9 @@ typedef struct {
 	                                   roots are KUSEG node pointers (bit 0:
 	                                   a leaf), like the nodes' children     */
 	uint32_t       num_bmodels;
-	const qw_ent  *ents;            /* [num_ents]: the cooked entity lump   */
+	const uint8_t *ents;            /* the cooked entity lump, num_ents in its
+	                                   compact table (qw_ent_decode)       */
+	const uint16_t *ent_names;      /* [QE_COUNT]: each class's classname   */
 	uint32_t       num_ents;
 	const char    *strings;         /* the entities' strings (offsets)      */
 	uint32_t       worldtype;       /* 0 medieval, 1 metal, 2 base          */
