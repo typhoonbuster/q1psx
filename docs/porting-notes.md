@@ -7971,12 +7971,12 @@ Quake's data goes in the repo.
 
 ### 63.1 The ordering table
 
-- **One per monster drawn:** R_SORT_N = 32 nodes, 0-word tags, taken
-  at the packet pointer (128 bytes), linked as a ring (node j -> node
-  j - 1).
+- **One per monster drawn:** R_SORT_N = 16 nodes, 0-word tags, taken
+  at the packet pointer (64 bytes), linked as a ring (node j -> node
+  j - 1). 32 at first; 16 chosen (63.7).
 - **A triangle's bucket:** AVSZ3 of its corners' SZ, the vertex cache's
-  (`OTZ = ZSF3 x (SZ1 + SZ2 + SZ3) >> 12`); OTZ / 4 mod 32 picks the
-  node (`andi` with `31 << 2`: the node's byte offset). The triangle is
+  (`OTZ = ZSF3 x (SZ1 + SZ2 + SZ3) >> 12`); OTZ / 4 mod 16 picks the
+  node (`andi` with `15 << 2`: the node's byte offset). The triangle is
   prepended to its node's chain, so within a bucket the last emitted is
   drawn first.
 - **The scale** (rlist.c `ent_sort`, per entity):
@@ -7984,11 +7984,11 @@ Quake's data goes in the repo.
     rho, with rho = 1.5 x its cooked radius (about the origin, over every
     frame, vertex units; 1.5 is the view matrix's scale) + 8 for the
     roundings;
-  - ZSF3 = 16384 x 30 / (6 rho) puts that range, summed over three
-    corners, on 30 buckets; at most 1365, so that OTZ stays within 16 bits
-    with all three corners at SZ 65535;
+  - ZSF3 = 16384 x (R_SORT_N - 2) / (6 rho) puts that range, summed over
+    three corners, on 14 buckets; at most 1365, so that OTZ stays within
+    16 bits with all three corners at SZ 65535;
   - the range starts anywhere on the ring: RE_ZNEAR is the bucket of its
-    near end (3 x max(0, depth - rho)). 30 buckets plus the roundings' 2
+    near end (3 x max(0, depth - rho)). 14 buckets plus the roundings' 2
     keep the range from meeting itself;
   - the origin's depth by the GTE (one MVMVA): rl_ent_matrix leaves the
     view's rotation and translation in it. One division a monster a frame
@@ -8024,10 +8024,11 @@ Quake's data goes in the repo.
 - **draw_model:** RE_SORT (rlist.h; set by `ent_sort`) branches to
   dm_sort, tested together with RE_VIEW. An unsorted alias model's path
   has the same instruction count as before.
-- **dm_sort:** ZSF3 (ctc2; nothing else uses AVSZ), the ring's 32 words
-  in 8 rounds of 4 stores, node 0 closed onto node 31, the nearest node
-  onto fp, the chain's start kept in the scratchpad (SP_SORTHEAD,
-  0x3bc). Then ds_records, and dm_exit_1 as for any model.
+- **dm_sort:** ZSF3 (ctc2; nothing else uses AVSZ), the ring's 16 words
+  in 4 rounds of 4 stores (R_SORT_N a power of two, 4 or more), node 0
+  closed onto node 15, the nearest node onto fp, the chain's start kept
+  in the scratchpad (SP_SORTHEAD, 0x3bc). Then ds_records, and dm_exit_1
+  as for any model.
 - **ds_records:** RECLOOP de's loop with deo1's draw distance (its cull
   and fog; their thresholds `ds_o_dcull` / `ds_o_fogz`, patched by
   render.c with deo1's). It differs from de in these ways:
@@ -8052,8 +8053,8 @@ Quake's data goes in the repo.
 - **The first version** took the xy through the CPU, as de does. It gave
   the same frames (the 128 views' and the game bench's hashes the same)
   and cost about three times as much: the 28 views +73 k cycles in all
-  against +21 k (before §64), the game bench +4.0..4.7 k a frame against
-  +0.8..1.3 k.
+  against +21 k (32 buckets, before §64), the game bench +4.0..4.7 k a
+  frame against +0.8..1.3 k.
 
 ### 63.4 Checked
 
@@ -8065,7 +8066,8 @@ Quake's data goes in the repo.
     and one window command fewer a zombie;
   - pktview's pictures: 0, 0, 1 and 1 pixels differ.
 - **The 128 spawn views** (`BENCH_MAPS=1 HASHONLY=1`, against master
-  c4063b4 built beside, §64's nine hand-made monsters in both):
+  c4063b4 built beside, §64's nine hand-made monsters in both; with 32
+  buckets, then 16):
   - 100 are identical, wherever no monster is in view;
   - 28 changed. A new "Q" line per dump (vid.c: the packets' hashes
     summed, the window commands left out and counted) shows every one of
@@ -8075,13 +8077,13 @@ Quake's data goes in the repo.
     E1M6.v0, E1M8.v0 v1 v3, E2M2.v0, E2M6.v0, E2M7.v0, E3M2.v0, E3M3.v0
     v1, E3M4.v0 v2, E3M6.v0 v1, E3M7.v2 v3, E4M3.v0 v1 v3, E4M4.v0,
     E4M5.v0, E4M6.v3, E4M8.v0.
-- **The game bench:** 15 of its 23 dumps are reordered (START's zombies),
-  the same packet sets; the 8 others are identical.
+- **The game bench** (32, then 16): 15 of its 23 dumps are reordered
+  (START's zombies), the same packet sets; the 8 others are identical.
 - **`MONSTERS=1 MAP=E1M8`** (before §64): its 12 dumps are reordered, the
   same packet sets. Its Ogre is far there: 0-16 pixels change.
 - **Eight views around E1M8's Ogre** at 90 units (`MAP=E1M8 BENCH_MAPS=1
   VIEW=1306,488,46,180,0,...`, the Ogre at 1216 488 24, facing 270; the
-  same results before and after §64's merge):
+  same results before and after §64's merge, with 32 and with 16):
   - pktview's pictures: from both sides, the near arm is now over the vest
     and the far arm where they had shown over it;
   - 15 of the 20 views reordered with the same packet sets, 4 identical
@@ -8089,7 +8091,8 @@ Quake's data goes in the repo.
   - one (v13, its back left: 10 monsters in view, the arena near its
     limit) lost a far small model of 3 records, 4 triangles shown, the
     pixels unchanged. R_MODEL_ROOM (§43) left it out sooner because the
-    rings' 120 bytes a monster had taken the room.
+    rings (120 bytes a monster with 32 buckets, 56 with 16) had taken the
+    room.
 - **The sheets** (quakespasm-q1psx/mobs, outside the repo:
   `mview.draw_psx(..., sort=N)` reproduces the engine's table, ZSF3,
   ring and order; `sheets.py --sorted=16,32,64`):
@@ -8099,26 +8102,29 @@ Quake's data goes in the repo.
     showed the far parts;
   - against 64 buckets, summed over the 64 views: the records' order
     differs by 150862 pixels (330 x 330 cells), 16 buckets by 25669, 32 by
-    5905. 32 kept.
-- **The C engine** (`ENGINE_C=1`, r_world.s asm in both; before §64): the
-  128 views' hashes are the asm's.
-- **The interpreter** (`EMU_ARGS=-interpreter`, before §64): the twenty
-  E1M8 views (with the Ogre's eight) give the dynarec's hashes.
+    5905. 32 was kept first; no difference was seen between the three
+    and 16 was chosen (63.7).
+- **The C engine** (`ENGINE_C=1`, r_world.s asm in both; before §64, 32
+  buckets): the 128 views' hashes are the asm's.
+- **The interpreter** (`EMU_ARGS=-interpreter`, before §64, 32 buckets):
+  the twenty E1M8 views (with the Ogre's eight) give the dynarec's
+  hashes.
 
 ### 63.5 What it costs
 
 - **Cycles** (PCSX-Redux, the views' 16-frame averages, against master
-  c4063b4):
-  - the 28 spawn views with monsters: +16.8 k cycles in all, -0.08..+0.23
-    % a view; all 128 views +0.04 %. A monster drawn costs -279..+880
-    cycles, most 200-600 at the spawn views' distances. Where it is less
-    than before, the xy through the GTE saved more on the triangles
-    turned away than the sort cost on the others;
-  - the Ogre alone at 90 units (E1M8.v16, its right side): +594 (+0.18 %);
-    eight monsters close (v12): +4436 (+0.31 %);
-  - the 100 views with none: within the noise (-464..+463);
-  - the game bench (START's zombies in view): +0.65..+0.98 k a frame
-    (+0.06..+0.09 %), its walks +0.02 %;
+  c4063b4; 16 buckets, 32's in brackets):
+  - the 28 spawn views with monsters: +12.9 k cycles in all [+16.8 k],
+    -0.10..+0.21 % a view; all 128 views +0.03 % [+0.04 %]. A monster
+    drawn costs -367..+793 cycles [-279..+880], most 100-600 at the spawn
+    views' distances. Where it is less than before, the xy through the
+    GTE saved more on the triangles turned away than the sort cost on the
+    others;
+  - the Ogre alone at 90 units (E1M8.v16, its right side): +418 (+0.12 %)
+    [+594]; eight monsters close (v12): +3557 (+0.25 %) [+4436];
+  - the 100 views with none: within the noise (-465..+465);
+  - the game bench (START's zombies in view): +0.30..+0.63 k a frame
+    (+0.03..+0.06 %) [+0.65..+0.98 k], its walks +0.01..0.02 %;
   - `MONSTERS=3`'s minute of fight on E1M1 (before §64, 0.9 monsters drawn
     a frame on average in its first 300 ticks, then none): +482 a frame
     there, the rest within the noise;
@@ -8127,27 +8133,44 @@ Quake's data goes in the repo.
 - **RAM:**
   - code and data: the release's stack room 60776 -> 58504 B (-2272),
     the default build's 48424 -> 46024;
-  - the packet arena: 128 bytes a monster drawn, less the window command
-    saved (8): 120;
+  - the packet arena: 64 bytes a monster drawn, less the window command
+    saved (8): 56;
   - the scratchpad's word 0x3bc;
   - r_ent_t's two pad words (zsf, znear).
 
 ### 63.6 Left
 
-- **The ring's room in the arena:** 120 bytes a monster. In a view near
-  the arena's end, R_MODEL_ROOM leaves a far model out sooner (one case
-  in the 148 views measured). A ring sized by the model's distance, with
-  fewer buckets far away, would also cost fewer cycles; it needs the mask
-  in a register.
+- **The ring's room in the arena:** 56 bytes a monster. In a view near the
+  arena's end, R_MODEL_ROOM leaves a far model out sooner (one case in the
+  148 views measured, with 16 buckets as with 32). A ring sized by the
+  model's distance, with fewer buckets far away, would also cost fewer
+  cycles; it needs the mask in a register.
 - **The same xy trick for de's triangles** (every other alias model, the
   gun, the brush models): identical frames, about 4.8 cycles a triangle.
   Proposed apart.
 - **A finer range:** the radius is over every frame (the death poses
   too). A radius per frame from the cook would give finer buckets for the
-  same 32, but 32 and 64 already differ little on the sheets.
+  same 16.
 - **Parts that cut through each other:** a triangle sort cannot split
   them, where Quake's z-buffer decides per pixel. The sheets show few
   such places on the Ogre.
+
+### 63.7 16 buckets
+
+- **The question** (after the sheets): whether 16, 32 and 64 buckets cost differently,
+  16 being enough if so (the three looked the same).
+- **Where the count costs:** only per monster drawn. The ring's init (4
+  stores and 4 instructions a round of 4 nodes), 4 bytes of the arena a
+  node, an empty node for the GPU's DMA to walk. A triangle's bucket is
+  the same work at any count (an immediate mask).
+- **Measured** (against master c4063b4, the same checks as 32's: 100
+  views identical, 28 reordered, the same packet sets; the game bench's
+  dumps likewise): 16 buckets cost about 88 cycles less a monster than 32
+  (the 28 views -3.9 k in all), the Ogre alone close -176, the game bench
+  -0.35 k a frame (its four zombies drawn). 64 would cost about 175 more
+  than 32 (four more rounds: not built).
+- R_SORT_N = 16 (rlist.h, r_defs.inc). The asm takes any power of two of
+  4 or more.
 
 ## §64 — The monsters by hand: the other eight (2026-10-22)
 

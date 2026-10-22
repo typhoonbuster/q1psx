@@ -83,7 +83,8 @@ typedef struct {
 #define RE_BMODEL 2
 #define RE_SORT   4      /* a monster (QSTM_SORT): its triangles drawn far to near
                             through its own ordering table (r_world.s draw_model) */
-#define R_SORT_N  32     /* that table's buckets (r_defs.inc R_SORT_N): a power of two */
+#define R_SORT_N  16     /* that table's buckets (r_defs.inc R_SORT_N): a power of two,
+                            4 or more (dm_sort sets the ring four nodes a round) */
 
 _Static_assert(sizeof(r_item_t) == 16, "r_defs.inc RI_*");
 _Static_assert(sizeof(r_ent_t) == 80 && __builtin_offsetof(r_ent_t, cam) == 60 &&

@@ -87,7 +87,7 @@
 .set RE_ZNEAR,   76     # RE_SORT: its nearest bucket x 4
 .set RE_VIEW,    1
 .set RE_SORT,    4
-.set R_SORT_N,   32     # a sorted model's table: its buckets (rlist.h R_SORT_N)
+.set R_SORT_N,   16     # a sorted model's table: its buckets (rlist.h R_SORT_N)
 
 # ---- qw_node (36 B) ----------------------------------------------------------
 .set N_C,         0     # int16 c[3]: VXY0 at +0, VZ0 with lh at +4

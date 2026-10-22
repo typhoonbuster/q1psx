@@ -1655,8 +1655,9 @@ followed by R0-R4.
   - the PS1 drew a model's triangles in the cook's order with no depth
     test, so a far part showed over a near one (the Ogre's vest over its
     near arm, from either side);
-  - each monster drawn now has its own ordering table: 32 nodes in the
-    packet arena, a ring. Each triangle goes into the bucket of its
+  - each monster drawn now has its own ordering table: 16 nodes in the
+    packet arena, a ring (16, not 32, the choice made: the same look on
+    the sheets, 88 cycles less a monster). Each triangle goes into the bucket of its
     corners' mean depth (the GTE's AVSZ3, its scale from the model's
     radius). The table is spliced whole into the world's bucket where the
     model always was;
@@ -1672,9 +1673,9 @@ followed by R0-R4.
     - the Ogre's sheets and E1M8's close views show the near parts over
       the far ones;
   - the cost:
-    - -279..+880 cycles a monster drawn (the 28 views +0.04 % over all
-      128), +594 for the Ogre alone at 90 units;
-    - 120 bytes of the packet arena a monster;
+    - -367..+793 cycles a monster drawn (+0.03 % over the 128 views),
+      +418 for the Ogre alone at 90 units;
+    - 56 bytes of the packet arena a monster;
     - 2.3 KB of code.
 - **The monsters by hand: the other eight** (the other monsters the same way, with the Reference / Before / After sheets). §64:
   - the soldier, the dog, the knight, the zombie, the scrag, the fiend,
