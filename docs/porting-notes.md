@@ -9105,6 +9105,16 @@ with the same zone tables):
   health and stream counts at every logged tick the same.
 - **The release link:** the executable byte for byte master's
   (`ramcheck` 58664 B), hazcheck clean (no asm touched).
+- **After the merge with master's §69 and §70** (7031c45, built beside
+  again): START's 12 views, the 128 views (`HASHONLY=1`), the game's 23
+  and the monsters' 8: the packets the same with the places masked, the
+  pictures as above (the game's 73 pixels, START's and the monsters'
+  none), the monsters' lines the same; the cycles the same but three game
+  dumps 118-348 cycles fewer, run after run (`gaxe`, `gsnailgun`,
+  `gglauncher`: their sound and entity stages; the bigger texture sets
+  put STREAM_0.DAT 29 sectors later on the bench's disc, so a streamed
+  sound comes in another frame), the vblanks the same; the release's
+  executable byte for byte master's (`ramcheck` 58552 B).
 
 ### 71.7 The cost
 
