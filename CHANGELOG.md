@@ -1762,3 +1762,26 @@ followed by R0-R4.
     repacked) and two VRAM copies fewer on E2M6 and E4M3; the pictures
     the same but 51 pixels of three spawn views, texels read one past
     their tile's edge.
+- **The texels past a tile's edge: a gutter, the packer on the texel
+  grid** (§68's follow-up; the gutter chosen repeats the
+  tile's start, with the packer revised). §69:
+  - the cause: the cook cuts a face at every repetition of a texture axis
+    that is not a power of two, so a piece's UV on its far edge is its
+    tile's size, and the GPU, which rounds its texture coordinates to the
+    nearest texel, read the atlas neighbour's texel along that edge: 2218
+    polygons of 263119 (0.85 %) on 29 maps (E1M8's `lgmetal` walls, the
+    buttons, the 192-high doors and windows), 1725 wrong pixels in 23 of
+    the 128 spawn views as the GPU shows them;
+  - every tile with such an axis has a one-texel gutter past its end
+    there that repeats its first column / row, as the texture window does
+    on a power-of-two axis and Quake's surfaces do; an animated texture's
+    gutter moves with its frame;
+  - the packer works on the texel grid (an animated texture's tiles on
+    halfwords) and keeps the best of eight orders: the gutters cost high
+    +510 page rows over 32 maps (2.2 K texels of the stream's VRAM a map,
+    8 K at most on E1M5), medium -27; the disc +65 KB (high), -3 KB
+    (medium);
+  - the frames: the same packets (the textures' places aside) and the
+    same cycles; the pictures change only where a texel past a tile's
+    end showed. pktview's `PKTVIEW_UVROUND=1` rounds the texture
+    coordinates as the GPU does.

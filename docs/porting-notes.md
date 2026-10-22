@@ -8769,7 +8769,8 @@ pools`), KB:
 - **The texels past a tile's edge** (68.3's 51 pixels): a polygon whose
   UV reaches its tile end reads the atlas' neighbour, on the PS1 as in
   pktview. Master shows the same bleed with other neighbours. A gutter
-  or the UVs clamped in the cook would end it: a change of its own.
+  or the UVs clamped in the cook would end it: a change of its own
+  (done: §69, a gutter).
 - **The aux pages' freed rows:** the main menu's rows leave 80 rows of the
   two aux pages unused (248 + 184 of 256 + 256). The stream does not use
   the aux pages; lending it their free rows is a change of its own. The
@@ -8778,3 +8779,190 @@ pools`), KB:
 - **Not checked:** DuckStation and the real machine (the files smaller,
   no engine path changed but the named sounds' table and the menu's
   rows); the C engine (`ENGINE_C=1`), which builds the same C changes.
+
+## §69 — The texels past a tile's edge: a gutter, the packer on the texel grid (2026-10-22)
+
+- **The ask** (§68.5's follow-up): world polygons show a row or a column
+  of wrong texels along an edge (§68.3: E4M2.v0's row y 152, E2M6.v1,
+  E4M4.v3, with other colours in master's pictures). Find the cause in
+  the cook, measure it, propose the fixes with their costs, implement the
+  choice made. Quake's look, nothing invented.
+
+### 69.1 The cause
+
+- **The cook.** `tools/qcook/world.c` cuts a face at every repetition of
+  a texture axis whose size is not a power of two (no texture window can
+  wrap it). A piece's UVs run from its cell's corner, 0 to the tile's
+  size N (the finest level's layout); a set maps them onto its own tiles
+  (`qtex_uvmap`: `(u * su + 16384) >> 15`, so at half resolution
+  u = rep - 1 lands on N too). A polygon along a cut, or ending where a
+  repetition ends, has the UV N on its far edge. `tex.c` packed the tiles
+  edge to edge (8 × 8-texel cells): texel N is the neighbour's, another
+  texture's texel drawn with this one's CLUT.
+- **The GPU** rounds the texture coordinates it interpolates to the
+  nearest texel: its stepper starts half a texel up (Mednafen's and
+  DuckStation's rasterizers, which follow the hardware: `(u << 12) +
+  (1 << 11)`, the texel at `>> 24`). Every pixel whose exact U lies in
+  [N - 0.5, N) reads texel N: a band half a texel wide along each such
+  edge, a whole row or column of pixels once the texture is magnified.
+  pktview cut the coordinates instead, so it showed only the pixels lying
+  exactly on a top or left edge whose UV is N: §68's 51 pixels.
+- **A power-of-two axis** has no such edge: the texture window folds
+  texel N onto the tile's first, the texture goes on.
+- **Quake** (`r_surf.c` `R_DrawSurface`, `d_scan.c` `D_DrawSpans8`): a
+  face's surface repeats the texture modulo its size, and the spans clamp
+  s and t inside the surface ("-1 (-epsilon) so we never wander off the
+  edge of the texture", `d_edge.c`). No other texture's texel ever shows.
+- **The page's edge:** no drawn tile ended at u or v 256 on such an axis
+  (6 tiles did, animation frames, which are never drawn): its far UV would
+  have wrapped to 0 in the byte. The gutter rules it out.
+
+### 69.2 Measured
+
+- **The polygons** whose UV reaches their tile's end on an axis that does
+  not wrap (the 32 low worlds' records, the brush models' included, mapped
+  onto each set's tiles; a host script reading the cook's tile table,
+  scratch): 2224 of 263119 at medium, 2218 at high (0.85 %), on 29 maps
+  (none on E3M3, E3M4, END), with 100 tiles in all (a texture counted
+  once a map). Most are on their tile's bottom edge. By texture (high):
+  `lgmetal` 320 × 192 1009 (E1M8 801), `lgmetal4` 309 (E3M5), the
+  48 × 48 buttons 183 (`+0button`, `+0shoot`, animated), `arch7` 99,
+  `lgmetal3` 74, then the 192-high windows, doors and arches
+  (`window01_*`, `wexit01`, `door0*`, `church7`...).
+- **The pictures** (pktview with the GPU's rounding, 69.5): 1725 pixels
+  of 23 of the 128 spawn views read a neighbour's texel (E1M8.v0 465,
+  E1M8.v1 244, E3M6.v3 238, E3M6.v1 210, E4M6.v1 87, E4M2.v0 45...): lines
+  along the repetitions' seams (E1M8's walls), across E4M2's floor.
+  pktview's truncation showed 528 of them, in 13 views.
+
+### 69.3 The options
+
+A was chosen, with the packer revised.
+
+| option | the look | VRAM (the 4-bit pages' rows, 32 maps) | disc | the CPU |
+|---|---|---|---|---|
+| A: a gutter repeating the tile's first column / row | the texture goes on past the tile's end, as the window does on a power-of-two axis and Quake's surfaces do | packer as it was: high +1156 rows (+36 a map, at most +96), medium +298; revised packer: high +510 (+16 a map, at most +64), medium -27 | high +148 KB / +65 KB, medium +38 KB / -3 KB | 0 |
+| B: the same gutter repeating its last column / row | Quake's texel at a face's end (the spans' clamp); along the cook's cuts the last texel shows 1.5 wide, the next piece's first 0.5 | as A | as A | 0 |
+| C: the UVs clamped to N - 1 at the load | the 2200 polygons' texture squeezed by a texel (1-4 %): a deformation Quake does not have | 0 (the tiles' sizes in the table: a format change) | 0 | 0 a frame |
+
+- A and B differ by 1185 pixels over the same 23 views; on E4M2's floor
+  no difference shows.
+- **The packer's cost** is the fragmentation, not the gutters' texels
+  (23 K in all at high, 89 rows): 96 + 96 + 64 rows filled a page exactly,
+  97 + 97 + 64 does not; five 48-wide buttons took a 256-texel row, five
+  52-wide ones do not. Measured on the way (scratch): the gutter only on
+  the axes some polygon reaches (+946 rows at high: the same), the
+  animation frames without one (the engine would fill the display tile's:
+  +233 at high, -104 at medium; not chosen).
+
+### 69.4 The cook (tools/qcook/tex.c)
+
+- **The gutter:** a miptex tile with an axis that does not wrap gets one
+  texel past its end on that axis (`tex_slot` `gut_x`, `gut_y`): the
+  right column, the bottom row, the corner, which repeat the tile's first
+  column, row and texel. The tile's size, its UVs and their map are
+  unchanged; the models' skins keep their own border (§22.8).
+- **The packer:** first fit on the texel grid, over the map's six pages
+  by page, row, then column (a taken texel moves the column past it).
+  A wrapped axis still starts at a multiple of its size (the window);
+  an animated texture's tiles at a multiple of 4 texels, 4 wide (the
+  engine moves them in halfwords of the 4-bit pages); any other tile at
+  any texel. Eight orders are packed (biggest first by area, height,
+  width or longest side, each also with the tiles that wrap on both axes
+  first) and the one using the fewest rows is kept (the first on a tie;
+  the last tie-break is the slot, so the result does not depend on
+  qsort). On its own (no gutter) it uses 240 rows fewer at medium and 144
+  at high than the 8-texel cells did. A set with no gutter keeps its
+  place: E3M3's, E3M4's and END's are byte for byte master's.
+- **The 4-bit set:** each texture's 16 colours are chosen from the tile
+  alone, as before; the gutter is coded with them.
+- **The animated textures:** `qw_anim_tile`'s size includes the gutter, so
+  the engine's move (`engine/anim.c`) brings the frame's gutter into the
+  display tile: 13 halfwords by 49 rows for a 48 × 48 button instead of
+  12 by 48. No engine code changed.
+- **The format is unchanged** (QTX7): the pages' places and the tables'
+  words change, CMake cooks again by itself.
+
+### 69.5 pktview
+
+- `PKTVIEW_UVROUND=1` rounds a polygon's interpolated texture coordinates
+  to the nearest texel, as the GPU does: the pictures then show what the
+  machine shows at the tiles' edges (and every texel half a texel
+  earlier). The default still cuts them, so earlier pictures compare.
+
+### 69.6 Checked
+
+Against master cf4a7b4 built beside (a worktree of origin/master, its cook
+with the same zone tables):
+
+- **The cooked files:** the worlds, the skeletons, the models, the banks,
+  GAME_0.DAT and STREAM_0.DAT byte for byte master's; 58 of the 64
+  texture sets and 26 of the 40 zone chunk files differ (the tiles'
+  places: the chunks' UVs are mapped onto them).
+- **The tiles** (a host script reading both sets, scratch): every tile of
+  the 64 sets (4380, 460 with a gutter) shows master's texels through its
+  CLUT, colour for colour; every gutter is its tile's first column, row
+  and texel; the animated tiles sit on halfwords; no two tiles share a
+  texel; no far UV passes 255. On master's own sets the same script finds
+  1003 places where a neighbour's texel sits in a gutter's.
+- **The display lists:** START's 12 views, the 128 spawn views (dumped in
+  full by a change not committed), the game bench's 23 dumps, the
+  monsters' 8 (E1M1): the `H` lines differ (the textures' places); with
+  every texture place masked (§68.3's script), the same packets in the
+  same order, but the 60 spawn views with an animated button: its frame
+  moved 13 × 49 halfwords instead of 12 × 48.
+- **The pictures** (pktview, each map with its own textures):
+  - pktview as it was: START's 12, the game's 23 and the monsters' 8
+    identical; the 128 views 528 pixels in 13 views (E1M8.v0 267,
+    E1M8.v1 163, E4M2.v0 47...);
+  - `PKTVIEW_UVROUND=1`: START's and the monsters' identical, the game's
+    73 pixels in 5 dumps (`gwalk0`, `gwalk1`, `gwalk3`, `gsshotgun`,
+    `glightning`: a column along one of START's walls), the 128 views
+    1725 pixels in 23 views;
+  - each of them a texel past a tile's end in master: the tiles' texels
+    are master's, the packets the same, and a cook with other places (the
+    first try's 4-texel grid) gives the same 128 pictures pixel for
+    pixel.
+- **The frames' cycles:** START's 12 views and the game's 23 dumps within
+  2 cycles; the 128 views -0.004 % (46266 k -> 46264 k), each view within
+  350 cycles, where two runs of master alone differ by up to 500 a view;
+  the vblanks the same.
+- **The play:** the physics checks (`clipdiff`, `pmdiff`, START's
+  `pmove` lines) the same, 0 mismatches; the monsters' states, positions,
+  health and stream counts at every logged tick the same.
+- **The release link:** the executable byte for byte master's
+  (`ramcheck` 58664 B), hazcheck clean (no asm touched).
+
+### 69.7 The cost
+
+- **VRAM**, the 4-bit pages' rows over the 32 maps (the stream gets the
+  rest, engine/stream.c): high 28624 -> 29134 (+510, +16 a map: E1M5
+  +64, E2M2 and E1M4 +53, E2M4, E4M5 and E4M8 +36; 11 maps the same,
+  E1M1, E2M6 and E4M1 13-16 rows fewer), medium 7480 -> 7453 (-27: six
+  maps 8-48 rows fewer, START 32). The packer alone would give 240 and
+  144 rows back: the gutters take 213 and 654. In the stream's pool
+  (`stream: pools`, high): 69 K texels less in all, 2.2 K a map, at most
+  8 K (E1M5: 367 -> 359 K); E1M1, E2M6 and E4M1 gain 1-2 K. Its RAM the
+  same.
+- **The disc:** the high sets 3805760 -> 3871040 B (+65 KB over 32 maps),
+  the medium ones 1098176 -> 1094720 B (-3 KB); the zone chunks the same
+  sizes.
+- **The CPU:** none (the same packets). The GPU moves 637 halfwords for a
+  button's frame instead of 576.
+- **The cook:** eight packings a set instead of one, still a hundredth of
+  a second a set.
+
+### 69.8 Left
+
+- **Not checked:** DuckStation and the machine (no engine path changed,
+  the pages' places only); the C engine (the same cooked files).
+- **The half texel:** the GPU shows every texel from half a texel before
+  its place (its rounding), Quake from its place (`D_DrawSpans8` cuts):
+  the whole texture sits half a texel early on every polygon. Integer UVs
+  cannot undo it.
+- **The items' boxes** (`items.c` `cook_box`) shift a face's UVs by whole
+  repetitions but do not cut it: a box texture with an axis that is not a
+  power of two would read past its tile. None in id1 (their sides are
+  16 or 32 texels).
+- **pktview's default** still cuts the coordinates (the older pictures'
+  way); `PKTVIEW_UVROUND=1` is the GPU's.
