@@ -7941,6 +7941,9 @@ Quake's data goes in the repo.
     - on master as it is (§57-§61 in, the maps whole: the tightest pools
       E4M7 209 KB, E3M6 249, E3M4 262, E3M5 268): 3 spots against 2, the
       one more on E2M7 (pool 294 KB);
+    - the same with the zones (the analysis' pvs_1536_96 tables, 20 maps
+      zoned: the tightest pools E3M6 249 KB, E3M4 268, E4M7 311): 2
+      against 2, none more;
     - on the master of before §57-§61 (pools of 171-242 KB on those maps):
       11 against 3, E3M4 alone 5 of 29 (pool 218 KB).
 
