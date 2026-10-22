@@ -669,11 +669,61 @@ int ai_range(edict_t *self, edict_t *targ)
    only asks whether it is clear: clip.h's line of sight (the trace's
    other results are not Quake's then; no caller reads them after it,
    each one traces its own line) */
+/* whether visleaf l (a leaf's index less one) is in the RLE row `in`
+   (Mod_DecompressVis walked to its byte, nothing written) */
+static int row_has(const uint8_t *in, uint32_t rowbytes, int l)
+{
+	uint32_t byte = (uint32_t) l >> 3, o = 0;
+	if (l < 0 || byte >= rowbytes)
+		return 1;
+	for (;;) {
+		if (*in) {
+			if (o == byte)
+				return (*in >> (l & 7)) & 1;
+			o++;
+			in++;
+			continue;
+		}
+		o += in[1];                       /* a run of zero bytes */
+		in += 2;
+		if (o > byte)
+			return 0;
+	}
+}
+
+/* the eye's leaf (the player's kept while its eye stays where it was) */
+static const qw_leaf *eye_leaf(const edict_t *e, const int32_t eye[3])
+{
+	static int32_t pl_eye[3] = { 0x7fffffff, 0, 0 };
+	static const qw_leaf *pl_leaf;
+	int32_t p[3] = { eye[0] / SUB, eye[1] / SUB, eye[2] / SUB };
+	if (e == ent_player && p[0] == pl_eye[0] && p[1] == pl_eye[1] && p[2] == pl_eye[2])
+		return pl_leaf;
+	const qw_leaf *l = world_point_leaf(p);
+	if (e == ent_player) {
+		__builtin_memcpy(pl_eye, p, sizeof pl_eye);
+		pl_leaf = l;
+	}
+	return l;
+}
+
 int ai_visible(edict_t *self, edict_t *targ)
 {
 	int32_t a[3], b[3];
 	ai_view_org(self, a);
 	ai_view_org(targ, b);
+	/* the PVS first: a clear line from the eye's leaf to the target's puts
+	   that leaf in the eye's potentially visible set (vis floods every
+	   straight line through the portals), so a target outside it is not
+	   seen: Quake's answer without its trace (E1M3's crowd: the sight
+	   lines were a quarter of its ticks, porting-notes §72) */
+	const qw_leaf *la = eye_leaf(self, a), *lb = eye_leaf(targ, b);
+	if (la && lb) {
+		la = (const qw_leaf *) ((uintptr_t) la | 0x80000000u);
+		uint32_t row = la->vis & 0x00ffffffu;   /* (the top byte: the render list's id) */
+		if (row && !row_has((const uint8_t *) (row | 0x80000000u), world.vis_rowbytes, leaf_index(lb) - 1))
+			return 0;
+	}
 	TR_TAG(AI_TR_VISIBLE);
 	q_fixed f = traceline(0, 1, a, b, 1, self);
 	if (ai_trace_inopen && ai_trace_inwater)
