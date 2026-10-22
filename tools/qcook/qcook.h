@@ -226,7 +226,7 @@ typedef struct {
 	int      tile_w, tile_h; /* texels of the tile, its gutter not counted */
 	int      gut_x, gut_y;   /* 1 on an axis that does not wrap: the texel
 	                            column / row past the tile's end repeats its
-	                            first (the gutter, docs/porting-notes.md §69) */
+	                            first (the gutter, docs/porting-notes.md §71) */
 	uint16_t tpage;          /* GPU tpage word (8bpp)                     */
 	uint16_t clut;           /* GPU CLUT word                             */
 	uint32_t window;         /* GP0 E2h texture-window command            */

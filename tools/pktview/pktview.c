@@ -28,7 +28,7 @@
  * rasterizers, which follow the hardware), instead of cutting them: a texel
  * shows from half a texel before its place, and a polygon whose UV reaches
  * its tile's end reads the texel past it along that edge
- * (docs/porting-notes.md §69).
+ * (docs/porting-notes.md §71).
  */
 
 #include <stdint.h>

@@ -655,7 +655,7 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		   which rounds its texture coordinates to the nearest texel, reads
 		   the texel past the tile along that edge: a gutter of one texel
 		   there, the tile's first column / row again (docs/porting-notes.md
-		   §69). */
+		   §71). */
 		s->gut_x = !s->win_x;
 		s->gut_y = !s->win_y;
 

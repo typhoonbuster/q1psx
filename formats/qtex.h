@@ -9,7 +9,7 @@
  * texture's size there is not a power of two) has a gutter: the texel
  * column / row past the tile's end repeats its first, for the GPU reads it
  * along a polygon's far edge (its texture coordinates are rounded to the
- * nearest texel: docs/porting-notes.md §69). The set also carries the
+ * nearest texel: docs/porting-notes.md §71). The set also carries the
  * map's texture table: each slot's CLUT, tpage and texture-window words
  * (qw_tex, which the renderer reads), how the world's texture coordinates
  * land on its tile (qtex_uvmap), and the animated textures' tiles
