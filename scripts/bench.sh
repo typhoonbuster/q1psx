@@ -44,18 +44,23 @@
 #         counter columns read 0).
 #         HASHONLY=1 dumps only the frames' hashes (`H` lines): no packets,
 #         no pictures, a run several times shorter (the console is slow).
+#         BENCH_GAME=1 ends with a "bench frame cache" line: the streamed
+#         models' frames expanded and refused over its frames.
 #         Every dump's `Q` line: its packets as a set (their hashes summed,
 #         the texture-window commands left out, and their count): a change
 #         of order alone keeps it (docs/porting-notes.md §63).
 #         MONSTERS=1 runs the monsters' scenarios (MAP=, default E1M1: a
 #         monster of each kind there woken, fighting, killed; "mon" lines,
-#         dumps m<map>_<kind>_<step>, each with its frame's cycles; then
-#         the crowd: every monster of the map awake, the entities' cost a
-#         second); MONSTERS=2 the crowd alone (SAMPLE=1: its PC samples,
-#         "samples crowd"); MONSTERS=3 the crowd, then a minute of fight
-#         drawn (the player fires rockets turning round): "mon fight" lines
-#         (the stack's high-water mark, the edicts, the frames' cycles and
-#         the streamed models drawn); MONSTERS=4 the map cleared
+#         dumps m<map>_<kind>_<step>, each with its frame's cycles and the
+#         frame cache's refusals (engine/mdl.c: a streamed model whose
+#         frame it could not expand, not drawn; docs/porting-notes.md
+#         §69); then the crowd: every monster of the map awake, the
+#         entities' cost a second); MONSTERS=2 the crowd alone (SAMPLE=1:
+#         its PC samples, "samples crowd"); MONSTERS=3 the crowd, then a
+#         minute of fight drawn (the player fires rockets turning round):
+#         "mon fight" lines (the stack's high-water mark, the edicts, the
+#         frames' cycles, the streamed models drawn and the frame cache's
+#         refusals); MONSTERS=4 the map cleared
 #         (MAP=, default E1M3: each monster in turn, the player on a spot
 #         in its sight, rockets, frames drawn): "clear" lines; MONSTERS=5
 #         from MAP (E1M1) each map cleared, then its exit taken to the next

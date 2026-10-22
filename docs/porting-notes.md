@@ -8770,7 +8770,7 @@ pools`), KB:
   UV reaches its tile end reads the atlas' neighbour, on the PS1 as in
   pktview. Master shows the same bleed with other neighbours. A gutter
   or the UVs clamped in the cook would end it: a change of its own
-  (done: §69, a gutter).
+  (done: §71, a gutter).
 - **The aux pages' freed rows:** the main menu's rows leave 80 rows of the
   two aux pages unused (248 + 184 of 256 + 256). The stream does not use
   the aux pages; lending it their free rows is a change of its own. The
@@ -8780,7 +8780,180 @@ pools`), KB:
   no engine path changed but the named sounds' table and the menu's
   rows); the C engine (`ENGINE_C=1`), which builds the same C changes.
 
-## §69 — The texels past a tile's edge: a gutter, the packer on the texel grid (2026-10-22)
+## §69 — The frame cache: a place past the frame's own expansions (2026-10-22)
+
+- **The ask** (§67's find, proposed apart): the streamed models' frame
+  cache (`engine/mdl.c`) refused an expansion while its ring still had
+  room. It must refuse only when no place keeps every expansion the frame
+  draws. The bench prints the refusals, and the frames stay master's but
+  for models now drawn.
+- **The flaw:**
+  - `mdl_frame` put a new expansion at the ring's head only. When the
+    bytes there held one the frame draws (its stamp), it returned NULL,
+    and `rl_model_stream` drew nothing for that model;
+  - a model drawn at every frame just past the head then blocks each new
+    expansion of the frame, room elsewhere or not.
+- **Measured on master** (its code with this change's prints, run first;
+  a200736, then cf4a7b4 with §68's cook):
+  - `MONSTERS=3 MAP=E1M3`, the minute of fight, on both: 129 models left
+    out (7, 17, 82 and 23 in four of the twelve 300-frame windows); 138
+    with every frame cooked (`QCOOK_NOFMAP=1`);
+  - `MONSTERS=1 MAP=E1M8` on cf4a7b4: `mE1M8_7_c` and `_d` refuse 2 a
+    frame, two Scrags (wizard.mdl, 576 B each). The ring had just
+    wrapped: the head was at 0, where an Ogre drawn that frame held
+    0..1120 of the ring's 24576 B. This is the case §67 foresaw;
+  - the same dumps on a200736 refused only with every frame cooked: a
+    Scrag (frame 32) and an Ogre (frame 18) at head 2376, where a Scrag's
+    spike (w_spike.mdl, drawn that frame) held 2816..3168;
+  - §67 read that picture as E1M8's dead shambler: it is the Scrag. The
+    Ogre shows no pixel in that view (a build that refuses it alone gives
+    the same picture as both drawn);
+  - the game bench: 0 refusals (23 expansions).
+- **The fix** (`engine/mdl.c`):
+  - the place: the head; when expansions the frame draws are in the way,
+    just past the furthest of them, again until the bytes are free; past
+    the ring's end, from its start, once. An expansion stays in one
+    piece, and one the frame draws never moves;
+  - a refusal now means no gap big enough between the frame's
+    expansions, or all 32 entries drawn in the frame;
+  - one scan both checks a place and lists the entries it overwrites (a
+    32-bit mask), where master scanned twice. A free entry's offset is
+    `NOWHERE`, past any place, so the scan needs no asset test; an entry
+    keeps its end, not its length;
+  - the new entry: one of those overwritten, else a free one, else the
+    one drawn longest ago. Master took the free or oldest one first, so
+    an overwrite lost one cached expansion more;
+  - the miss is a function apart (`expand_new`): mdl_frame is then a
+    leaf, its hits save no register, a miss is a tail jump. With the miss
+    inline, the fix's prologue saved 7 registers on every call (+25
+    cycles a hit).
+- **The bench prints the refusals:**
+  - each `mon dump` line: the frame cache refused N, in the frame
+    measured (the one before the dump, which draws the same);
+  - each `mon fight` line: over its 300 frames;
+  - at the game bench's end: `bench frame cache: N expansions, M
+    refused`.
+- **Checked** against master cf4a7b4's runs (the same commands,
+  PCSX-Redux in fast forward), and before the merge against a200736's:
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`): 128 of 128
+    `H` lines identical; the game bench (`BENCH_GAME=1 HASHONLY=1`): 23
+    of 23, 0 refused (both masters);
+  - `MONSTERS=1 MAP=E1M8 HASHONLY=1`: 0 refusals. On cf4a7b4, 10 of 12
+    identical; the 2 others (`mE1M8_7_c`, `_d`) gain the two Scrags
+    (render items 42 -> 44). In pktview's pictures, 10 are identical and
+    the two others differ by 122 pixels, a far Scrag (the other one
+    hidden). With every frame cooked: 12 of 12 (master refuses none
+    there);
+  - on a200736: 12 of 12 with the frame map. With every frame cooked, 0
+    refusals and the frame map's 12 hashes: `mE1M8_7_c` and `_d` gain
+    the Scrag and the Ogre (items 119 -> 121; 2618 pixels, all in the
+    Scrag's box);
+  - `MONSTERS=3 MAP=E1M3`: 0 refusals in the twelve windows, with both
+    cooks;
+  - the C engine (`ENGINE_C=1 MONSTERS=1 MAP=E1M8 HASHONLY=1`): its game
+    drifts from the asm's (3 of 12 dumps on cf4a7b4, 10 on a200736, on
+    master too). Against master's C engine on cf4a7b4: 12 of 12, no
+    refusal either way. On a200736: 9 of 12; the 3 others are where
+    master's refused (5, 1 and 1 a frame, with the frame map), render
+    items 111 -> 116 and 63 -> 64, pixels only on the models now drawn
+    (251, 3, 3);
+  - a host harness (outside the repo) ran random frames of draws. An
+    oracle checked every refusal (no gap between the frame's expansions,
+    or every entry the frame's), and every pool returned had to be intact
+    at the frame's end. Master refused with room in every workload (88496
+    of 90054 in one). The new ring never did, and never overwrote one of
+    its frame's.
+- **The cost** (PCSX-Redux; a measure build timed each call on root
+  counter 2, not committed; on a200736, the fight's refusals the same on
+  7903159):
+  - the fight on E1M3 (3600 frames, 6165 calls):
+    - a hit 378 -> 321 cycles: the leaf -10, and the entries hit sit
+      lower in the table (their index 15.9 -> 13.1);
+    - a miss's own work 2808 -> 1710 cycles, the expansion apart (~2100);
+    - 1.03 scans a miss (6 places past a frame's expansion in 182);
+    - mdl_frame 882 -> 727 cycles a frame, the 129 models drawn included;
+  - E1M8's monsters' bench (312 calls): a hit 283 -> 261, a miss's own
+    work 2868 -> 1746;
+  - the frames, against cf4a7b4:
+    - the 128 views -0.0045 % (-178..+82 a view);
+    - the game bench -430..+65 a frame, its walks -9 and -29;
+    - E1M8's dumps -32..-152; the two with the Scrags +73.0 k, the
+      models drawn;
+    - the fight's windows where master refused +0.21..+2.41 %, the models
+      drawn; the others -0.05..+0.02 %;
+  - each place past a frame's expansion costs one scan more (~600
+    cycles). At worst, two passes over the ring, one scan per expansion
+    jumped (never seen in the benches).
+- **RAM:** the code +100 B (+68 the fix, +32 the miss apart): the
+  release's stack room 58664 -> 58552 B, the default's 46088 -> 45992
+  (7903159).
+- **Left:**
+  - the lookup: 32 entries at 15 cycles each in PCSX's cost model (`lh`,
+    two `nop`s, the loop's branch and counter). An (asset, frame) key word
+    and a sentinel would make it ~8 an entry (about -90 cycles a hit at
+    index 13); or asm;
+  - the ring can still refuse when the frame's own expansions leave no
+    gap big enough (the harness's heavier workloads; no bench scene).
+    The ring's size and a compaction at the frame's start are the levers,
+    if a map shows it;
+  - the play on PCSX-Redux's and DuckStation's GPU: the crowds (E1M3,
+    E3M4) all drawn.
+
+## §70 — The C left, measured: where the cycles go (2026-10-22)
+
+- **The question**: space and cycles are tight, and too much of the engine is still C: the C not yet in asm, and
+  what moving it would gain.
+- **The measure**: the PC sampler (`SAMPLE=1`, PCSX-Redux at 10x,
+  `PROFILE=0`), its 32-byte blocks put on the bench ELF's functions (a
+  scratch symbolizer: asm = the `.s` objects' symbols, C = the `.c`
+  objects', the rest the SDK):
+  - start's 12 views and E1M3's (drawing): the asm 57-61 % (r_world.s,
+    r_slow.s), the SDK's waits 37-38 % (vblank, the GPU's queue), the C
+    2-5 %;
+  - the game bench (START, walking, firing): the asm 66 %, the C 7 %;
+  - E1M3's fight (`MONSTERS=3`: the 47 monsters awake, rockets, a frame
+    drawn each tick; now sampled, "samples fight"): clip.s 35.6 % (the
+    monsters' contents and traces), r_world.s 15.9 %, r_slow.s 15.0 %,
+    the C 16.8 %, the waits 16.7 %.
+- **The C, file by file** (the release's code; share of the fight, the
+  game bench, E1M3's views):
+
+  | file | code | fight | game | views |
+  |---|---|---|---|---|
+  | stream.c | 14.3 KB | 4.5 % | 1.7 % | 0.2 % |
+  | ents.c | 20.3 KB | 3.5 % | 1.8 % | 0.7 % |
+  | ai.c | 17.0 KB | 2.8 % | 0.2 % | 0 |
+  | world.c | 6.3 KB | 1.4 % | 0 | 0 |
+  | game.c | 36.2 KB | 0.6 % | 0.6 % | 0 |
+  | monsters.c | 6.4 KB | 0.6 % | 0.6 % | 1.0 % |
+  | rlist.c | 5.5 KB | 0.5 % | 0.6 % | 1.0 % |
+  | render.c, snd.c, items.c, hud.c, bmfrag.c, vid.c, dlight.c | 37 KB | 0.1-0.4 % each | | 0.1-0.8 % each |
+  | the monsters' own (m_*.c), movers, triggers, menus, loads, zones, cd, music | ~80 KB | 0 | 0 | 0 |
+
+  The hottest C functions in the fight: `held_by_more` 3.6 % (stream.c),
+  `world_point_leaf_from` 1.3 %, `touch_gather` 1.2 %, `ents_tick` 0.6 %,
+  ai.c's `traceline` 0.6 %, `next_wanted` 0.4 %, `monsters_render` 0.4 %,
+  then 0.1-0.3 % each (`ai_visible`, `movestep`, `step_direction`,
+  `ai_physics_step`, `check_water_transition`, `ent_link`, `area_of`,
+  `items_render`, `rl_add_particle`). The bench's own loop and
+  `prof_now` take 1.5 % of it.
+- **What it says**: the C is not the brake: two thirds of the busiest
+  frames are asm already, and a third of them the physics' asm (the
+  monsters' movement checks). All the hot C in asm at the ×1.4-1.8 §55
+  measured would take about 5 % off E1M3's busy frames, 2-3 % off the
+  game's, 1-2 % off the views'.
+  - `held_by_more` is quadratic: `next_wanted` calls it for every asset
+    stuck for room, and it walks every resident slot; a sum over the
+    resident assets sorted by score, once a pass, makes it a lookup (29 %
+    of the crowd's sim-only ticks, §61's bench).
+  - the physics' 36 %: fewer calls (what the monsters ask each tick:
+    CheckBottom's four contents and its traces, the walk's probes, the
+    lines of sight) is the lever there, the code being asm already.
+  - the code's size: the C is 190 KB, mostly cold or rarely run (no
+    sample in 120 KB of it); asm would not shrink it much. The RAM's
+    levers stay those of §60 (overlays, shared buffers, -Os).
+
+## §71 — The texels past a tile's edge: a gutter, the packer on the texel grid (2026-10-22)
 
 - **The ask** (§68.5's follow-up): world polygons show a row or a column
   of wrong texels along an edge (§68.3: E4M2.v0's row y 152, E2M6.v1,
@@ -8788,7 +8961,7 @@ pools`), KB:
   the cook, measure it, propose the fixes with their costs, implement the
   choice made. Quake's look, nothing invented.
 
-### 69.1 The cause
+### 71.1 The cause
 
 - **The cook.** `tools/qcook/world.c` cuts a face at every repetition of
   a texture axis whose size is not a power of two (no texture window can
@@ -8817,7 +8990,7 @@ pools`), KB:
   (6 tiles did, animation frames, which are never drawn): its far UV would
   have wrapped to 0 in the byte. The gutter rules it out.
 
-### 69.2 Measured
+### 71.2 Measured
 
 - **The polygons** whose UV reaches their tile's end on an axis that does
   not wrap (the 32 low worlds' records, the brush models' included, mapped
@@ -8829,13 +9002,13 @@ pools`), KB:
   48 × 48 buttons 183 (`+0button`, `+0shoot`, animated), `arch7` 99,
   `lgmetal3` 74, then the 192-high windows, doors and arches
   (`window01_*`, `wexit01`, `door0*`, `church7`...).
-- **The pictures** (pktview with the GPU's rounding, 69.5): 1725 pixels
+- **The pictures** (pktview with the GPU's rounding, 71.5): 1725 pixels
   of 23 of the 128 spawn views read a neighbour's texel (E1M8.v0 465,
   E1M8.v1 244, E3M6.v3 238, E3M6.v1 210, E4M6.v1 87, E4M2.v0 45...): lines
   along the repetitions' seams (E1M8's walls), across E4M2's floor.
   pktview's truncation showed 528 of them, in 13 views.
 
-### 69.3 The options
+### 71.3 The options
 
 A was chosen, with the packer revised.
 
@@ -8855,7 +9028,7 @@ A was chosen, with the packer revised.
   animation frames without one (the engine would fill the display tile's:
   +233 at high, -104 at medium; not chosen).
 
-### 69.4 The cook (tools/qcook/tex.c)
+### 71.4 The cook (tools/qcook/tex.c)
 
 - **The gutter:** a miptex tile with an axis that does not wrap gets one
   texel past its end on that axis (`tex_slot` `gut_x`, `gut_y`): the
@@ -8883,14 +9056,14 @@ A was chosen, with the packer revised.
 - **The format is unchanged** (QTX7): the pages' places and the tables'
   words change, CMake cooks again by itself.
 
-### 69.5 pktview
+### 71.5 pktview
 
 - `PKTVIEW_UVROUND=1` rounds a polygon's interpolated texture coordinates
   to the nearest texel, as the GPU does: the pictures then show what the
   machine shows at the tiles' edges (and every texel half a texel
   earlier). The default still cuts them, so earlier pictures compare.
 
-### 69.6 Checked
+### 71.6 Checked
 
 Against master cf4a7b4 built beside (a worktree of origin/master, its cook
 with the same zone tables):
@@ -8933,7 +9106,7 @@ with the same zone tables):
 - **The release link:** the executable byte for byte master's
   (`ramcheck` 58664 B), hazcheck clean (no asm touched).
 
-### 69.7 The cost
+### 71.7 The cost
 
 - **VRAM**, the 4-bit pages' rows over the 32 maps (the stream gets the
   rest, engine/stream.c): high 28624 -> 29134 (+510, +16 a map: E1M5
@@ -8952,7 +9125,7 @@ with the same zone tables):
 - **The cook:** eight packings a set instead of one, still a hundredth of
   a second a set.
 
-### 69.8 Left
+### 71.8 Left
 
 - **Not checked:** DuckStation and the machine (no engine path changed,
   the pages' places only); the C engine (the same cooked files).

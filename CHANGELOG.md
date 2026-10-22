@@ -1762,9 +1762,30 @@ followed by R0-R4.
     repacked) and two VRAM copies fewer on E2M6 and E4M3; the pictures
     the same but 51 pixels of three spawn views, texels read one past
     their tile's edge.
+- **The frame cache's refusals** (§67's find). §69:
+  - the streamed models' frame cache (`engine/mdl.c`) took a new
+    expansion only at its ring's head, and refused it when the bytes there
+    held one the frame draws, room elsewhere or not. Master's minute of
+    fight on E1M3 left out 129 models; E1M8's monsters' dumps left out two
+    Scrags, blocked by an Ogre after the ring's wrap (before §68's cook,
+    with every frame cooked: a Scrag and an Ogre; §67 read that Scrag as
+    the dead shambler);
+  - the ring now takes the place past the frame's own expansions in the
+    way, else from its start: a refusal means no gap big enough between
+    them, or all 32 entries drawn in the frame. One scan checks a place
+    and lists what it overwrites; the miss is a function apart, so a hit
+    saves no register;
+  - the bench prints the refusals: the `mon dump` and `mon fight` lines,
+    and a `bench frame cache` line at the game bench's end;
+  - 0 refusals in those runs. The views and the game bench are identical
+    to master's, the monsters' bench too but E1M8's two dumps, which now
+    draw the two Scrags;
+  - mdl_frame in the fight: a hit 378 -> 321 cycles, a miss's own work
+    2808 -> 1710 (the expansion apart), 882 -> 727 cycles a frame. The
+    code +100 B (the release's stack room 58664 -> 58552 B).
 - **The texels past a tile's edge: a gutter, the packer on the texel
   grid** (§68's follow-up; the gutter chosen repeats the
-  tile's start, with the packer revised). §69:
+  tile's start, with the packer revised). §71:
   - the cause: the cook cuts a face at every repetition of a texture axis
     that is not a power of two, so a piece's UV on its far edge is its
     tile's size, and the GPU, which rounds its texture coordinates to the
