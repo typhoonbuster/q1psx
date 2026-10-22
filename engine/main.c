@@ -2712,6 +2712,7 @@ static void bench_monsters(void)
 		int peak = 0;
 		uint32_t fsum = 0, fdrawn = 0;               /* (the frames' cycles, the monsters drawn) */
 		mdl_refused_since();
+		prof_sample_start();                         /* (SAMPLE=1: the fight's profile) */
 		for (int t = 0; t < 3600; t++) {
 			pl.health = 100;
 			pl.dead = 0;
@@ -2756,6 +2757,8 @@ static void bench_monsters(void)
 			}
 		}
 		cmd.fire = 0;
+		prof_sample_stop();
+		prof_sample_print("fight");
 	}
 }
 

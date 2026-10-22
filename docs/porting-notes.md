@@ -8897,3 +8897,57 @@ pools`), KB:
     if a map shows it;
   - the play on PCSX-Redux's and DuckStation's GPU: the crowds (E1M3,
     E3M4) all drawn.
+
+## §70 — The C left, measured: where the cycles go (2026-10-22)
+
+- **The question**: space and cycles are tight, and too much of the engine is still C: the C not yet in asm, and
+  what moving it would gain.
+- **The measure**: the PC sampler (`SAMPLE=1`, PCSX-Redux at 10x,
+  `PROFILE=0`), its 32-byte blocks put on the bench ELF's functions (a
+  scratch symbolizer: asm = the `.s` objects' symbols, C = the `.c`
+  objects', the rest the SDK):
+  - start's 12 views and E1M3's (drawing): the asm 57-61 % (r_world.s,
+    r_slow.s), the SDK's waits 37-38 % (vblank, the GPU's queue), the C
+    2-5 %;
+  - the game bench (START, walking, firing): the asm 66 %, the C 7 %;
+  - E1M3's fight (`MONSTERS=3`: the 47 monsters awake, rockets, a frame
+    drawn each tick; now sampled, "samples fight"): clip.s 35.6 % (the
+    monsters' contents and traces), r_world.s 15.9 %, r_slow.s 15.0 %,
+    the C 16.8 %, the waits 16.7 %.
+- **The C, file by file** (the release's code; share of the fight, the
+  game bench, E1M3's views):
+
+  | file | code | fight | game | views |
+  |---|---|---|---|---|
+  | stream.c | 14.3 KB | 4.5 % | 1.7 % | 0.2 % |
+  | ents.c | 20.3 KB | 3.5 % | 1.8 % | 0.7 % |
+  | ai.c | 17.0 KB | 2.8 % | 0.2 % | 0 |
+  | world.c | 6.3 KB | 1.4 % | 0 | 0 |
+  | game.c | 36.2 KB | 0.6 % | 0.6 % | 0 |
+  | monsters.c | 6.4 KB | 0.6 % | 0.6 % | 1.0 % |
+  | rlist.c | 5.5 KB | 0.5 % | 0.6 % | 1.0 % |
+  | render.c, snd.c, items.c, hud.c, bmfrag.c, vid.c, dlight.c | 37 KB | 0.1-0.4 % each | | 0.1-0.8 % each |
+  | the monsters' own (m_*.c), movers, triggers, menus, loads, zones, cd, music | ~80 KB | 0 | 0 | 0 |
+
+  The hottest C functions in the fight: `held_by_more` 3.6 % (stream.c),
+  `world_point_leaf_from` 1.3 %, `touch_gather` 1.2 %, `ents_tick` 0.6 %,
+  ai.c's `traceline` 0.6 %, `next_wanted` 0.4 %, `monsters_render` 0.4 %,
+  then 0.1-0.3 % each (`ai_visible`, `movestep`, `step_direction`,
+  `ai_physics_step`, `check_water_transition`, `ent_link`, `area_of`,
+  `items_render`, `rl_add_particle`). The bench's own loop and
+  `prof_now` take 1.5 % of it.
+- **What it says**: the C is not the brake: two thirds of the busiest
+  frames are asm already, and a third of them the physics' asm (the
+  monsters' movement checks). All the hot C in asm at the ×1.4-1.8 §55
+  measured would take about 5 % off E1M3's busy frames, 2-3 % off the
+  game's, 1-2 % off the views'.
+  - `held_by_more` is quadratic: `next_wanted` calls it for every asset
+    stuck for room, and it walks every resident slot; a sum over the
+    resident assets sorted by score, once a pass, makes it a lookup (29 %
+    of the crowd's sim-only ticks, §61's bench).
+  - the physics' 36 %: fewer calls (what the monsters ask each tick:
+    CheckBottom's four contents and its traces, the walk's probes, the
+    lines of sight) is the lever there, the code being asm already.
+  - the code's size: the C is 190 KB, mostly cold or rarely run (no
+    sample in 120 KB of it); asm would not shrink it much. The RAM's
+    levers stay those of §60 (overlays, shared buffers, -Os).
