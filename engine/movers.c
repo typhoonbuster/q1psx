@@ -539,6 +539,7 @@ static void plat_spawn_inside_trigger(edict_t *self)
 	if (!trigger)
 		return;
 	trigger->touch    = plat_center_touch;
+	trigger->flags   |= FL_TOUCH_PLAYER;
 	trigger->movetype = MOVETYPE_NONE;
 	trigger->solid    = SOLID_TRIGGER;
 	trigger->enemy    = self;

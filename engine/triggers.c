@@ -127,7 +127,8 @@ static void trigger_multiple(edict_t *self)
 		self->solid      = SOLID_BBOX;            /* shot, not touched (a box in the traces) */
 		ent_setmodel(self, self->model);
 	} else if (!(self->spawnflags & SPAWNFLAG_NOTOUCH)) {
-		self->touch = multi_touch;
+		self->touch  = multi_touch;
+		self->flags |= FL_TOUCH_PLAYER;
 	}
 }
 
@@ -399,6 +400,8 @@ Q_COLD void triggers_spawn(edict_t *e, const qw_ent *q)
 	case QE_TRIGGER_TELEPORT:
 		init_trigger(e);
 		e->touch = teleport_touch;
+		if (e->spawnflags & PLAYER_ONLY)
+			e->flags |= FL_TOUCH_PLAYER;
 		if (!e->target)
 			printf("ents: teleporter without a target\n");
 		e->use = teleport_use;
@@ -417,11 +420,13 @@ Q_COLD void triggers_spawn(edict_t *e, const qw_ent *q)
 		break;
 	case QE_TRIGGER_SETSKILL:
 		init_trigger(e);
-		e->touch = trigger_skill_touch;
+		e->touch  = trigger_skill_touch;
+		e->flags |= FL_TOUCH_PLAYER;
 		break;
 	case QE_TRIGGER_ONLYREGISTERED:
 		init_trigger(e);
-		e->touch = trigger_onlyregistered_touch;
+		e->touch  = trigger_onlyregistered_touch;
+		e->flags |= FL_TOUCH_PLAYER;
 		break;
 	case QE_TRIGGER_HURT:
 		init_trigger(e);

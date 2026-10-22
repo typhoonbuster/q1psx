@@ -36,6 +36,10 @@ enum { MOVETYPE_NONE, MOVETYPE_WALK = 3, MOVETYPE_STEP, MOVETYPE_FLY, MOVETYPE_T
 enum { STATE_TOP, STATE_BOTTOM, STATE_UP, STATE_DOWN };
 enum { DAMAGE_NO, DAMAGE_YES, DAMAGE_AIM };
 #define FL_ITEM 256
+#define FL_TOUCH_PLAYER (1u << 16)   /* (ours) its touch returns at once for all but the
+                                        player (id's QC: other.classname != "player"
+                                        first): the other edicts' touch pass leaves it
+                                        out (engine/ents.c touch_relink) */
 
 #define QE_WORLD  254        /* edicts[0]'s class */
 #define QE_PLAYER 255        /* the player's mirror edict's class */

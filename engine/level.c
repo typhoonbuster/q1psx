@@ -177,7 +177,8 @@ void level_spawn(edict_t *e, const qw_ent *q)
 			return;
 		}
 		init_trigger(e);
-		e->touch = changelevel_touch;
+		e->touch  = changelevel_touch;
+		e->flags |= FL_TOUCH_PLAYER;
 		break;
 	default:                                         /* info_intermission: a spot */
 		e->solid    = SOLID_NOT;

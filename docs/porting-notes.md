@@ -9149,3 +9149,37 @@ with the same zone tables):
   16 or 32 texels).
 - **pktview's default** still cuts the coordinates (the older pictures'
   way); `PKTVIEW_UVROUND=1` is the GPU's.
+
+## §72 — The world's cycles: the stream's lookup, the monsters' fewer calls (2026-10-22)
+
+- **The request**: §70's levers: (1) `held_by_more`'s quadratic walk,
+  (2) fewer physics calls from the monsters, Quake's behavior kept,
+  (3) the hot C in hand-written asm; and the ticks split: the player's
+  at 60 Hz, the rest at 30.
+- **(1) The stream's lookup** (`engine/stream.c`): `next_wanted` asked,
+  for each asset stuck for room, what the assets wanted less hold
+  (`held_by_more`: every resident slot walked). Now the resident assets
+  are sorted by their score once a search (insertion sort, the prefix
+  sums of their RAM, VRAM and SPU bytes) and each question is a binary
+  search; a search that found nothing is not repeated until something
+  changes (a slot freed, an asset in, a pass, a stuck mark). The crowd's
+  stream cost -71 %; every bench identical.
+- **(2a) The sight lines from the PVS** (`engine/ai.c` `ai_visible`): a
+  trace from eye to eye is asked only when the eye's leaf sees the
+  other's leaf (its PVS row, the render list's id in the leaf's top
+  byte masked off): a leaf the row leaves out cannot hold a point the
+  trace reaches, so the answer is the same. The crowd's visible traces
+  7.8 a tick -> 0, its `ents_tick` -13 %; every bench identical.
+- **(2b) The triggers a monster can touch** (`engine/ents.c`): a moving
+  monster (an item, what is thrown) walked every trigger slot its box
+  reaches, though most touches return at once for all but the player
+  (id's QC: `if (other.classname != "player") return;` first: the items,
+  `trigger_multiple`/`once`/`secret`, `changelevel`, `setskill`,
+  `onlyregistered`, a plat's inside trigger, a `PLAYER_ONLY`
+  teleporter). Those are flagged (`FL_ITEM`, ours `FL_TOUCH_PLAYER`) and
+  each area node keeps a second list, the other slots (door fields,
+  teleporters, `hurt`, `push`, `monsterjump`, `tdeath`, fireballs), in
+  the same link order, with its subtree counts: the other edicts walk
+  only those, the player all of them. The crowd's `ents_tick` -4 %
+  (cumulated with (2a): 261k -> 219k cycles a tick); every bench
+  identical.
