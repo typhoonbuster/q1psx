@@ -7436,14 +7436,335 @@ arena` lines, KB, the tip -> this section):
 
 - **C, the compact entity table**: 4.2-14.2 KB a map, no frame cost, a
   format change (the analysis tool's reader to follow outside the repo).
-  The next self-contained step.
+  The next self-contained step (done: §59, 5.0-17.6 KB a map).
 - **D, the PVS as deltas** (0.9-11.7 KB, asm `MARKPVS` by hand) and
   **E, the PVS rows per zone** (0.9-31.3 KB on the zoned maps, a
   behaviour change while a zone is late): E frees more on the zoned maps,
   D on every map, both together less than their sum.
 - **The edicts by the skill's count**: up to 38 KB, once the peak of the
-  runtime spawns is measured.
+  runtime spawns is measured (§59.5: the slots the benches' play leaves
+  free).
 - **F, 16-bit node children**: 11 KB a map for the hottest code's
   rewrite; last.
 - The tables' re-export (§56's tool) on the new worlds would count the
   new leaves; `analysis/export.py` already skips leaves past visleafs.
+
+## §59 — The entities in a compact table (2026-10-22)
+
+- **The ask** (§58.5's next step): option C of §58.2, the cooked entity
+  table made compact, the frames the branch tip's (fea0ee3) hash for
+  hash; and the entities single player never spawns left out of the
+  cook, but only if the runtime spawns are measured never to need the
+  edict slots those entities leave free (otherwise listed, not done). On
+  its own branch (on top of §58's
+  branch), not merged.
+- **The result:**
+  - the entities take 21.6 % of their old bytes: 5.0-17.6 KB less a map
+    (§58.2's layout would have freed 4.2-14.2 KB);
+  - the stream's pool grows by 4-18 KB, the smallest one 235 -> 249 KB
+    (E3M6);
+  - the entities single player never spawns stay (59.5).
+
+### 59.1 The format (formats/qworld.h; magics QWVF, QWZF)
+
+The entities' section starts at `ofs_ents` and runs to `ofs_strings`.
+The header is unchanged: 156 bytes, the same fields.
+
+- `uint16_t names[QE_COUNT]`: each class's classname, its string offset
+  (0 for a class the map has none of). Every entity of a class has the
+  same offset: a known class is its name (`ent_class`), and the cook's
+  string pool keeps one copy of each string.
+- Then the `num_ents` entities, in the table's order (the edicts'
+  order). Each one is:
+  - a 32-bit head: the class in bits 0-6 (`QE_COUNT` <= 128), a bit per
+    field present in bits 7-30 (`QWE_BIT`), bit 31 zero;
+  - the fields present, in the order of their bits, little-endian and
+    unaligned (`QWE_FIELD_AT` gives each one's offset in the `qw_ent`
+    and its bytes in the table);
+  - the classname, for `QE_UNKNOWN` only.
+- Then zero bytes up to the strings' 4-byte alignment.
+
+The fields' sizes:
+
+- **The origin's three fields:** whole world units in 2 bytes,
+  multiplied by `QW_CLIP_SUB` when decoded. With the head's `QWE_FINE`
+  bit they are 1/8 units in 4 bytes instead. All 6505 origins of the id1
+  maps are whole.
+- **One byte each:**
+  - the spawnflags' high byte (the skill flags 256 / 512 / 1024) and its
+    low byte (the classes' own flags), as two fields;
+  - `model`: a BSP29 map has at most 256 models;
+  - `sounds`.
+- **6 bytes:** `mangle`, one field (it is one key, "pitch yaw roll").
+- **2 bytes each:** `angle`, `wait`, `speed`, `style`, `lip`, `delay`,
+  `health`, `height`, `dmg`, `count`, and the strings `targetname`,
+  `target`, `message`, `map`, `killtarget`.
+
+The 24 fields (`QWE_*`) are ordered by how often the id1 maps give
+them: the origin's three, `targetname`, `angle`, `target`, the
+spawnflags' high byte, `model`, the low byte, `wait`, `sounds`,
+`speed`, `style`, `lip`, `message`, `mangle`, `delay`, `health`,
+`height`, `dmg`, `map`, `count`, `killtarget`, then `QWE_FINE`. The
+decoder's loop stops after an entity's last field: 7.6 bits on
+average, against 14 in the struct's order.
+
+What §58.2 measured, and what each step here adds (the 32 maps'
+entities, in bytes):
+
+| layout | bytes | of the 56-byte entries |
+|---|---|---|
+| `qw_ent[]` (QWVE) | 499184 | 100 % |
+| §58.2: a class byte, a 4-byte mask, the fields present at their sizes | 172978 | 34.7 % |
+| the class in the head's low bits: one 4-byte head | 164064 | 32.9 % |
+| the origin in whole units: 2 bytes a field | 125710 | 25.2 % |
+| the model and each spawnflags byte in a byte, the mangle one field | 120368 | 24.1 % |
+| the classname by the class (the names table: 164 bytes a map) | 107788 | 21.6 % |
+| as cooked (the alignment: 44 bytes in all) | 107832 | 21.6 % |
+
+That is 65 KB less than §58.2's layout over the 32 maps, about 2 KB a
+map.
+
+**The decoder** (`qw_ent_decode`, static inline; the engine, the cook's
+`bmf.c` and `world_check` share it):
+
+1. it clears the `qw_ent` and takes the class from the head;
+2. it loops over the head's field bits, copying each field's bytes to
+   its offset (the origin's scaled, or copied whole with `QWE_FINE`);
+3. it sets the classname: `names[class]`, or the inline one for an
+   unknown class;
+4. it returns where the next entity starts.
+
+The cook's `ents_pack` (tools/qcook/ents.c) writes each entity, then
+decodes it back and checks it against its `qw_ent`, byte for byte. A
+`qw_ent` has no padding, so the whole struct compares. A map with a
+model past 255, or a class under two names, would stop the cook.
+
+### 59.2 The engine and the tools
+
+- **engine/world.c:** `world.ent_names` is the names table,
+  `world.ents` the entities after it.
+- **engine/ents.c `ents_spawn`:** it decodes each entity in turn into a
+  `qw_ent` on its stack (56 bytes) and goes on as before: the skill
+  test, `ent_new` (which copies the fields into the edict), then the
+  class's spawn function.
+  - No spawn function keeps the pointer. `triggers_spawn`,
+    `movers_spawn`, `level_spawn`, `items_spawn` and `monsters_spawn`
+    read the edict `ent_new` filled, never `q` (each has `(void) q;`).
+  - The table is walked once per spawn: `ents_spawn(1)` at a map's
+    start, `ents_spawn(0)` at a restart.
+- **CPU:** the decode, at a spawn only. Measured on PCSX-Redux:
+  369-438 cycles an entity, 42-166 k cycles a map (1.2-4.9 ms). A
+  restart's `bmf_load` alone takes 0.7-2.4 M.
+  - The first version took about 600 cycles an entity. GCC trimmed the
+    clearing `memset` to bytes 1-55 (the class's store follows it), and
+    an unaligned 55-byte clear is a library call. The loop also ran 14
+    bits an entity in the struct's order.
+  - A compound literal's 14 word stores and the frequency order took it
+    to about 400.
+  - No asm reads the entities. The C engine (§55) builds the same
+    `ents.c`.
+- **tools/qcook:**
+  - `world.c` writes the table after the brush models, the strings
+    4-byte aligned after it;
+  - `world_check` decodes it from a copy padded past the section, so a
+    wrong head cannot read past the file. It checks the head's spare bit,
+    each entity's class, model and strings, the names table's offsets
+    and the padding;
+  - `bmf.c` decodes the table into an array for its train paths
+    (`find_target` walks it in the table's order: the edicts');
+  - `zones.c` copies the section whole into the skeleton.
+- **The magics:** QWVE -> QWVF, and QWVZ -> QWZF (Z for the zones, F for
+  the world format it carries). The engine refuses an old file at the
+  load ("bad world file"), and so does every tool.
+
+### 59.3 Checked
+
+- **The cook:** every entity's round trip (8914 entities on the 32
+  maps); `qcook check` on the 32 worlds.
+- **A structural comparison**, old cook (fea0ee3) against new (scratch,
+  with an independent Python decoder), on the 32 worlds and the 20
+  skeletons:
+  - every section is byte for byte the old one but the entities';
+  - the header's fields are the same but the magic and `ofs_strings`;
+  - every decoded entity equals the old `qw_ent`, byte for byte;
+  - the zone tables (chunk directory, leaf sets, sets) are the same;
+  - the 40 chunk files are byte for byte the old ones but their stamps
+    (the skeleton's stamp hashes the world's length).
+- **`scripts/dlcheck.sh`** against the tip's references, saved on fea0ee3
+  before the change:
+  - start's 12 views: IDENTICAL (6209151 -> 6209152 cycles);
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1`): IDENTICAL
+    (45343575 -> 45342963);
+  - the game bench's 23 hashes (`BENCH_GAME=1 HASHONLY=1`): IDENTICAL;
+  - the C engine (`ENGINE_C=1`): start's 12 views IDENTICAL (+87.9 %,
+    §55's ratio), the 128 views IDENTICAL (+94.7 %).
+- **The release build** links (hazcheck clean): `ramcheck` 43400 bytes
+  for the stack, 43704 before. The decoder takes 304 bytes of code and
+  table.
+
+### 59.4 The RAM, measured
+
+From the bench's `bench zone <MAP>` and `world: ... arena` lines (KB),
+and the cooked worlds (the entities' section, bytes):
+
+| map | entities | their bytes | skeleton (KB) | the world's load (KB) | the stream's pool (KB) |
+|---|---|---|---|---|---|
+| START | 144 | 8064 -> 1704 | 259 -> 252 | 557 -> 551 | 517 -> 523 (+6) |
+| E1M1 | 174 | 9744 -> 2156 | 259 -> 252 | 587 -> 581 | 458 -> 464 (+6) |
+| E1M2 | 262 | 14672 -> 3368 | 268 -> 257 | 566 -> 554 | 443 -> 455 (+12) |
+| E1M3 | 364 | 20384 -> 4520 | 287 -> 272 | 577 -> 563 | 364 -> 378 (+14) |
+| E1M4 | 318 | 17808 -> 3844 | 310 -> 297 | 597 -> 583 | 384 -> 398 (+14) |
+| E1M5 | 323 | 18088 -> 4060 | whole | 551 -> 537 | 432 -> 446 (+14) |
+| E1M6 | 271 | 15176 -> 3312 | whole | 449 -> 437 | 502 -> 514 (+12) |
+| E1M7 | 113 | 6328 -> 1368 | whole | 180 -> 176 | 912 -> 916 (+4) |
+| E1M8 | 177 | 9912 -> 2240 | whole | 355 -> 347 | 704 -> 712 (+8) |
+| E2M1 | 256 | 14336 -> 3036 | 279 -> 268 | 620 -> 610 | 383 -> 393 (+10) |
+| E2M2 | 205 | 11480 -> 2532 | 304 -> 295 | 634 -> 624 | 390 -> 400 (+10) |
+| E2M3 | 261 | 14616 -> 3088 | 297 -> 285 | 601 -> 589 | 394 -> 406 (+12) |
+| E2M4 | 308 | 17248 -> 3752 | 314 -> 300 | 620 -> 606 | 372 -> 386 (+14) |
+| E2M5 | 270 | 15120 -> 3340 | 261 -> 249 | 559 -> 547 | 433 -> 445 (+12) |
+| E2M6 | 397 | 22232 -> 4748 | whole | 596 -> 580 | 319 -> 335 (+16) |
+| E2M7 | 388 | 21728 -> 4712 | 307 -> 290 | 641 -> 625 | 320 -> 336 (+16) |
+| E3M1 | 247 | 13832 -> 2928 | 255 -> 244 | 583 -> 573 | 423 -> 433 (+10) |
+| E3M2 | 220 | 12320 -> 2612 | whole | 386 -> 378 | 601 -> 609 (+8) |
+| E3M3 | 227 | 12712 -> 2868 | whole | 479 -> 469 | 532 -> 542 (+10) |
+| E3M4 | 280 | 15680 -> 3176 | 332 -> 320 | 692 -> 680 | 256 -> 268 (+12) |
+| E3M5 | 259 | 14504 -> 3092 | 331 -> 320 | 684 -> 674 | 336 -> 346 (+10) |
+| E3M6 | 326 | 18256 -> 3976 | whole | 743 -> 729 | 235 -> 249 (+14) |
+| E3M7 | 219 | 12264 -> 2524 | whole | 558 -> 548 | 477 -> 487 (+10) |
+| E4M1 | 286 | 16016 -> 3624 | 282 -> 269 | 581 -> 567 | 421 -> 435 (+14) |
+| E4M2 | 254 | 14224 -> 2992 | 262 -> 251 | 565 -> 553 | 429 -> 441 (+12) |
+| E4M3 | 366 | 20496 -> 4408 | whole | 543 -> 527 | 408 -> 424 (+16) |
+| E4M4 | 393 | 22008 -> 4776 | 285 -> 268 | 583 -> 567 | 393 -> 409 (+16) |
+| E4M5 | 398 | 22288 -> 4724 | 284 -> 267 | 594 -> 576 | 338 -> 356 (+18) |
+| E4M6 | 357 | 19992 -> 4184 | whole | 482 -> 466 | 474 -> 490 (+16) |
+| E4M7 | 356 | 19936 -> 4220 | 350 -> 334 | 651 -> 635 | 295 -> 311 (+16) |
+| E4M8 | 322 | 18032 -> 3816 | 263 -> 249 | 566 -> 552 | 393 -> 407 (+14) |
+| END | 173 | 9688 -> 2132 | whole | 238 -> 230 | 837 -> 845 (+8) |
+
+- 5.0-17.6 KB of file less a map; the entities take 21.6 % of their old
+  bytes.
+- The stream's pool grows by 4-18 KB, 12 KB on average (in 2 KB steps:
+  `cd_load` gives the world file whole sectors of the arena). The smallest pool is 235 -> 249 KB
+  (E3M6), the worst world load 743 -> 729 KB (E3M6).
+- A load reads that much less from the disc.
+
+### 59.5 The entities single player never spawns: measured, left out of the change
+
+These are Quake's deathmatch-only entities: all three skill flags are
+set. There are 2-36 a map (36 on START and E1M7, 2 on E3M2).
+
+- **What leaving them out would free:** their table bytes, 17-376 B a
+  map now, and the edict slots the pool keeps for them (the pool is
+  `num_ents + 2 + ENT_SPARE` edicts of 388 bytes): 0.8-13.6 KB.
+- **What it would not change:** `ents_spawn` skips them before taking
+  an edict, so no edict number changes, no train path (bmf.c's
+  `find_target` never finds them, at any skill) and no frame.
+- **But their slots are room for the runtime spawns:** an inhibited
+  entity's slot is free for `ent_spawn`.
+
+Measured with a bench build that counted the edicts in use (scratch,
+not committed), at hard, the skill with the least room, through
+`BENCH_MAPS=1 PLAY=1` (the spawn, then 30 frames of play):
+
+| map | pool | in use after the spawn | after 30 frames | free | the SP-never entities | free without them |
+|---|---|---|---|---|---|---|
+| START | 242 | 110 | 110 | 132 | 36 | 96 |
+| E1M1 | 272 | 160 | 162 | 110 | 14 | 96 |
+| E1M2 | 360 | 240 | 241 | 119 | 13 | 106 |
+| E1M3 | 462 | 327 | 330 | 132 | 17 | 115 |
+| E1M4 | 416 | 292 | 294 | 122 | 11 | 111 |
+| E1M5 | 421 | 311 | 312 | 109 | 5 | 104 |
+| E1M6 | 369 | 250 | 255 | 114 | 12 | 102 |
+| E1M7 | 211 | 75 | 75 | 136 | 36 | 100 |
+| E1M8 | 275 | 166 | 170 | 105 | 8 | 97 |
+| E2M1 | 354 | 214 | 216 | 138 | 14 | 124 |
+| E2M2 | 303 | 185 | 185 | 118 | 16 | 102 |
+| E2M3 | 359 | 217 | 218 | 141 | 16 | 125 |
+| E2M4 | 406 | 294 | 294 | 112 | 8 | 104 |
+| E2M5 | 368 | 229 | 235 | 133 | 16 | 117 |
+| E2M6 | 495 | 376 | 376 | 119 | 11 | 108 |
+| E2M7 | 486 | 353 | 353 | 133 | 15 | 118 |
+| E3M1 | 345 | 206 | 206 | 139 | 16 | 123 |
+| E3M2 | 318 | 218 | 218 | 100 | 2 | 98 |
+| E3M3 | 325 | 202 | 203 | 122 | 9 | 113 |
+| E3M4 | 378 | 267 | 269 | 109 | 9 | 100 |
+| E3M5 | 357 | 239 | 239 | 118 | 12 | 106 |
+| E3M6 | 424 | 290 | 290 | 134 | 8 | 126 |
+| E3M7 | 317 | 209 | 212 | 105 | 10 | 95 |
+| E4M1 | 384 | 235 | 235 | 149 | 17 | 132 |
+| E4M2 | 352 | 231 | 232 | 120 | 16 | 104 |
+| E4M3 | 464 | 347 | 352 | 112 | 18 | 94 |
+| E4M4 | 491 | 351 | 353 | 138 | 25 | 113 |
+| E4M5 | 496 | 339 | 340 | 156 | 25 | 131 |
+| E4M6 | 455 | 278 | 279 | 176 | 14 | 162 |
+| E4M7 | 454 | 287 | 291 | 163 | 15 | 148 |
+| E4M8 | 420 | 299 | 300 | 120 | 21 | 99 |
+| END | 271 | 157 | 157 | 114 | 6 | 108 |
+
+- **In use after the spawn:** the world, the player, the map's spawned
+  entities and what their spawn made (the plats' triggers), less those
+  the spawn removed. Those are the monster kinds the port does not have
+  yet (the enforcers, hell knights, vores, spawns, rotfish and
+  Shub-Niggurath: `monsters_spawn` removes them), up to 73 at hard on
+  E4M6.
+- **The runtime spawns the benches saw:** in the first 30 frames, the
+  door chains' trigger fields (0-5); in the game bench, 2 more slots;
+  in the monsters' scenarios (`MONSTERS=1`, E1M1 at hard: a monster of
+  each kind fighting and killed, then the crowd), 3. Without the SP-never
+  entities, 94-162 slots would stay free at hard: E4M3 94, E3M7 95,
+  START and E1M1 96.
+- **Once the missing monster kinds come,** they take their slots. The
+  free slots without the SP-never entities then become 87-115 (E4M8 87,
+  E4M3 and E4M6 89). That is computed: the pool, less the world, the
+  player, the map's spawned entities, the plats' triggers and the door
+  fields measured above.
+- **But the transient spawns grow with the play, not with the map:**
+  - 3 gibs per gibbed monster, each for 10-20 s (a zombie dies only
+    gibbed);
+  - a backpack per grunt and ogre (and enforcer, once they come), for 2
+    minutes;
+  - the scrags' two helpers and the shamblers' glow, each under a
+    second;
+  - the lava balls, 2 per `misc_fireball` at most;
+  - the teleport fogs, the teleport deaths and the delayed uses.
+
+  A fight that gibs 25 monsters in 20 s, with the packs left on the
+  floor, would pass 94 slots. Nothing measured shows the runtime spawns
+  never need those slots, so the cook keeps the entities (the ask's
+  condition: listed, not done). When the pool is full, `ent_spawn`
+  prints `ents: no free edict` and the spawn is skipped: a gib or a
+  pack that never appears, not a crash. No bench printed it.
+- **To take them out:**
+  - the cook's `ent_kept` leaves them out: 0.8-13.6 KB a map, at the
+    cost of 2-36 of the 100-176 free slots (87-115 left once every
+    monster kind is in). The tight maps gain the least (E3M6 3.0 KB,
+    E3M4 3.4, E4M7 5.7), START and E1M7 the most (13.6 each);
+  - or the names table's unused entry 0 (`QE_UNKNOWN`'s) could carry
+    their count, and `ents_load` keep their slots in the pool: 17-376 B
+    a map, no headroom change. Not done: a format oddity for a few
+    hundred bytes.
+- The same measure is what the "edicts by the skill" option (§58.2)
+  needs. A pool sized by the skill's spawns would free the inhibited
+  entities' slots: 10-99 at easy, 6-75 at normal, 6-41 at hard. The same
+  caveat holds: 96 spare slots, and play decides the peak.
+
+### 59.6 The analysis tool, outside the repo
+
+`quakespasm-q1psx/analysis/wld.py` asserts
+`h['magic'] == b'QWVE'`. It reads the header, the nodes, the leaves,
+the marks, the vertices and the brush models, never the entities, and
+their layout is unchanged. Accepting `QWVF` is all it needs. It is not
+changed here: the tool lives outside the repo, and nothing derived from
+Quake's data goes in the repo.
+
+### 59.7 Left
+
+- **Not checked:** DuckStation and the real machine. The change is the
+  spawn's decode and smaller files: a load reads less.
+- **The SP-never entities** (59.5): a call left open.
+- **The other options of §58.5**, as they were:
+  - D, the PVS rows as deltas;
+  - E, the PVS rows per zone;
+  - the edicts by the skill (the measure above is its input);
+  - F, 16-bit node children.

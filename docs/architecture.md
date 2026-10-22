@@ -103,10 +103,10 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 |---|---|---|
 | BIOS / kernel | 64 KB | `0x80000000-0x8000FFFF`, untouchable |
 | Code + rodata + data/bss | ~300 KB | release 2026-10-19: 275 KB of code, 23 KB of rodata; the renderer asm is small, the game's C (monsters, streaming) is not |
-| Stack | 16 KB | from 0x801FFFF0 down to the BSS's end; the build fails under 16 KB (`scripts/ramcheck.sh`, porting-notes §42; 18.7 KB in the release of §52, 32.5 KB in §53's, about 43 KB in §54's: the game arena's 25 KB kept as the stack's margin for now; 43.7 KB in §57's, the zones' code taken from the level arena). The SDK's heap shares this gap: nothing in the engine mallocs (cd.c reads the disc's directories itself) |
+| Stack | 16 KB | from 0x801FFFF0 down to the BSS's end; the build fails under 16 KB (`scripts/ramcheck.sh`, porting-notes §42; 18.7 KB in the release of §52, 32.5 KB in §53's, about 43 KB in §54's: the game arena's 25 KB kept as the stack's margin for now; 43.7 KB in §57's, the zones' code taken from the level arena; 43.4 KB in §59's, the entities' decoder). The SDK's heap shares this gap: nothing in the engine mallocs (cd.c reads the disc's directories itself) |
 | Packet arenas | 2 × 96 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes); an alias model is left out when under 24 KB of room is left (`R_MODEL_ROOM`), and the menu keeps 12 KB while it is up (`R_MENU_ROOM`, porting-notes §43) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
-| Level arena | 1243 KB | world render data + clip hulls + PVS: a whole map's world, or a zoned map's skeleton (nodes, leaves, PVS, clip hulls, brush models, entities: 255-350 KB, §58) and three chunk slots, each its biggest zone's chunk (82-114 KB; porting-notes §57; the world's load in all at most 743 KB, it may take 1136 KB while it loads, `MEM_LEVEL_WORLD`) + the brush models' pieces (§41: 12-112 KB, the room the cook measured, §44, §46) + the streamed assets' RAM pool (the rest: 235-912 KB, §58) and, with the 2D gun, its packets (78 KB at the pool's end, §45, §47); 1152 KB until 2026-10-19, then 1136 (§42, §43), 1242 (§45), 1237 (§48, §50), 1249 (§52: the code the clean-up removed), 1243 (§57: the zones' code, the stack's room kept) |
+| Level arena | 1243 KB | world render data + clip hulls + PVS: a whole map's world, or a zoned map's skeleton (nodes, leaves, PVS, clip hulls, brush models, entities: 244-334 KB, §58, §59) and three chunk slots, each its biggest zone's chunk (82-114 KB; porting-notes §57; the world's load in all at most 729 KB, it may take 1136 KB while it loads, `MEM_LEVEL_WORLD`) + the brush models' pieces (§41: 12-112 KB, the room the cook measured, §44, §46) + the streamed assets' RAM pool (the rest: 249-916 KB, §58, §59) and, with the 2D gun, its packets (78 KB at the pool's end, §45, §47); 1152 KB until 2026-10-19, then 1136 (§42, §43), 1242 (§45), 1237 (§48, §50), 1249 (§52: the code the clean-up removed), 1243 (§57: the zones' code, the stack's room kept) |
 | Game arena | 90 KB | the game data every map needs (`GAME_0.DAT`, the one model level: the guns, rebuilt by hand from Quake's own, §52, their frames Quake's own vertex words and a pool the drawn frame is expanded into, §53, the projectiles' models, the HUD's pictures; in a 2D build the 2D gun's tables, its packets lent by the stream at each map's start, §45), filled at boot (85 KB: `mem: game arena` in the boot log; 112 KB before §53, 97 KB before §54), plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (24 KB); 224 KB until §45, 115 KB until §53, 100 KB until §54 |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
@@ -216,9 +216,11 @@ section is 4-byte aligned and laid out in the order the walker reads it.
   model by having the renderer walk its subtree from the model-space camera
   (the same node-side sorting and backface selection as the world), and
   lists the solid ones for the traces. **Entities** are cooked from the
-  lump into a `qw_ent` table (class enum, the id1 keys, strings in a pool);
-  the engine spawns them into edicts (`engine/ents.c`). See
-  `docs/porting-notes.md` §28.
+  lump into a compact table (QWVF: each class's name once, then per
+  entity a head of its class and the fields present, then those fields;
+  strings in a pool); the engine decodes each into a `qw_ent`
+  (`qw_ent_decode`: class enum, the id1 keys) and spawns it into an
+  edict (`engine/ents.c`). See `docs/porting-notes.md` §28, §59.
 - **Face block** = header + local vertex list (≤ 88 `SVECTOR`s) + polygon list.
   Each polygon is:
   - 4 vertex indices (1 byte each);
@@ -243,7 +245,7 @@ section is 4-byte aligned and laid out in the order the walker reads it.
   unrepaired (-2.3 % polygons, cracks possible). The affine warp itself is
   the renderer's subdivision threshold (a menu setting, §8).
 - **Zoned worlds** (porting-notes §57): with the level-chunks analysis'
-  tables, `qcook zones` splits a map's world into its skeleton ("QWVZ",
+  tables, `qcook zones` splits a map's world into its skeleton ("QWZF",
   shipped as `<MAP>_G0.WLD`: the sections above, the face stream and the
   vertex pool holding the brush models' records only, then the zone
   tables) and a chunk per zone (`<MAP>_Z<t>.ZON`, "QZN1", per texture
@@ -254,7 +256,7 @@ section is 4-byte aligned and laid out in the order the walker reads it.
   world's nodes (the skeleton puts those nodes first, then an end node no
   walk reaches) and reads the nearest zones ahead between frames. A map
   whose skeleton and slots would not take less than its whole world
-  stays a whole QWVE.
+  stays a whole QWVF.
 - **Shared repeats** (porting-notes §58): the brush models' leaves, which
   nothing reads but their contents, are one leaf per contents after the
   world's (leaves 1..visleafs keep Quake's numbers, the PVS rows index

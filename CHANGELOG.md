@@ -1608,3 +1608,24 @@ followed by R0-R4.
     late), the edicts the skill never uses (up to 38 KB, the runtime
     headroom to measure), 16-bit node children (3-14 KB, the hottest
     asm).
+- **The entities in a compact table** (§58.2's option C). §59:
+  - the world file (QWVF; zoned skeletons QWZF) holds each class's
+    classname once, then per entity a 32-bit head (the class, a bit per
+    field present) and the fields that are not zero: the origin in whole
+    world units in 2 bytes (1/8 units in 4 if needed), the model and each
+    spawnflags byte in a byte, the fields ordered by how often the id1
+    maps give them. `qw_ent_decode` (formats/qworld.h) gives the 56-byte
+    `qw_ent` back; `ents_spawn` decodes each entity on its stack, and the
+    cook checks every entity's round trip byte for byte;
+  - the entities take 21.6 % of their old bytes: 5.0-17.6 KB less a map
+    (§58.2's layout: 4.2-14.2), the stream's pool +4..+18 KB, the
+    smallest 235 -> 249 KB (E3M6); the decode costs 42-166 k cycles at a
+    spawn; the frames the tip's hash for hash (start's 12 views, the 128
+    spawn views, the game bench; the C engine too);
+  - the entities single player never spawns (2-36 a map) stay: the
+    runtime spawns used at most 9 slots in the benches against 94-162
+    left free without them at hard, but gibs (10-20 s) and backpacks (2
+    minutes) grow with the play, so nothing shows they never need the
+    slots. Listed with the measures (0.8-13.6 KB a map);
+  - the analysis tool's reader outside the repo (`wld.py`) asserts
+    "QWVE": accepting "QWVF" is all it needs (it reads no entity).
