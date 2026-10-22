@@ -1651,29 +1651,6 @@ followed by R0-R4.
   - the cost: 23 KB more in the stream's pool. On master as it is now, a
     visible monster lacks its model at 3 spots of every map's against 2 (one
     more on E2M7).
-- **The monsters by hand: the other eight** (the other monsters the same way, with the Reference / Before / After sheets). §64:
-  - the soldier, the dog, the knight, the zombie, the scrag, the fiend,
-    the shambler and Chthon rebuilt from Quake's own models;
-  - what carries their look kept whole: the heads, hands and feet, the
-    soldier's gun and muzzle flash, the knight's sword, the dog's teeth,
-    the horns, the spikes;
-  - each collapse under 3 units and 4 texels in every frame (Chthon 13
-    units: his coarse vertex grid);
-  - 64 sheets compared: the After matches Quake where the Before broke
-    (spiked heads, the muzzle flash and the sword as needles, the dog's
-    legs, the zombie's feet);
-  - two flaws of the method fixed:
-    - the hidden-triangle check now looks at every frame and zooms on each
-      candidate (it had taken the soldier's muzzle flash for never seen);
-    - a collapse that leaves nothing to measure is refused;
-  - `QCOOK_HAND=<files>` cooks only those tables (an A / B);
-  - the cost:
-    - the eight assets +152 KB;
-    - a visible monster lacks its model at 20 spots of 1020 against 3
-      (maps whole), 11 against 2 (zones), mostly on E3M4 and E2M2-E2M7;
-    - the spawn views +1.6 % (E1M8.v0 from 2 to 3 vblanks, none crossing
-      one);
-    - the crowd's frames unchanged.
 - **The monsters' triangles sorted by depth** (§62's proposal). §63:
   - the PS1 drew a model's triangles in the cook's order with no depth
     test, so a far part showed over a near one (the Ogre's vest over its
@@ -1699,3 +1676,26 @@ followed by R0-R4.
       128), +594 for the Ogre alone at 90 units;
     - 120 bytes of the packet arena a monster;
     - 2.3 KB of code.
+- **The monsters by hand: the other eight** (the other monsters the same way, with the Reference / Before / After sheets). §64:
+  - the soldier, the dog, the knight, the zombie, the scrag, the fiend,
+    the shambler and Chthon rebuilt from Quake's own models;
+  - what carries their look kept whole: the heads, hands and feet, the
+    soldier's gun and muzzle flash, the knight's sword, the dog's teeth,
+    the horns, the spikes;
+  - each collapse under 3 units and 4 texels in every frame (Chthon 13
+    units: his coarse vertex grid);
+  - 64 sheets compared: the After matches Quake where the Before broke
+    (spiked heads, the muzzle flash and the sword as needles, the dog's
+    legs, the zombie's feet);
+  - two flaws of the method fixed:
+    - the hidden-triangle check now looks at every frame and zooms on each
+      candidate (it had taken the soldier's muzzle flash for never seen);
+    - a collapse that leaves nothing to measure is refused;
+  - `QCOOK_HAND=<files>` cooks only those tables (an A / B);
+  - the cost:
+    - the eight assets +152 KB;
+    - a visible monster lacks its model at 20 spots of 1020 against 3
+      (maps whole), 11 against 2 (zones), mostly on E3M4 and E2M2-E2M7;
+    - the spawn views +1.6 % (E1M8.v0 from 2 to 3 vblanks, none crossing
+      one);
+    - the crowd's frames unchanged.
