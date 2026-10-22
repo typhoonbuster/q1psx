@@ -1588,3 +1588,23 @@ followed by R0-R4.
   - `ZONES=1 scripts/bench.sh`: the zones' walk (switches, reads, late
     frames, on PCSX-Redux and DuckStation with the music); DuckStation
     runs again headless from its extracted AppImage.
+- **The skeleton's RAM** (§57.9: a zoned map's skeleton, 276-378 KB, is
+  now the bulk of the world's RAM). §58:
+  - measured on the 32 maps: what the skeleton holds; the PVS of every
+    place the player reaches covers 78-100 % of the leaves and the nodes
+    above it 83-99 %, so pruning the tree or the clip hulls to where the
+    player can be frees next to nothing (the game's traces and point
+    queries walk the same trees anywhere monsters are);
+  - two repeats shared in the cook, the frames the tip's hash for hash
+    (start's 12 views, the 128 spawn views, the game bench; the C engine
+    too) and no engine change: the brush models' leaves (210-953 a map,
+    read for their contents only) are one shared leaf, the clip hulls'
+    identical subtrees one clipnode (69-87 % of the clipnodes left). 9.5-38
+    KB freed a map, 22 on average, on all 32 maps; the smallest stream
+    pool 215 -> 235 KB, the worst world load 763 -> 743 KB;
+  - the next options measured: a compact entity table (4-14
+    KB a map), the PVS rows as deltas (1-12 KB, `mark_pvs` by hand), the
+    PVS rows per zone (1-31 KB on the zoned maps, a change while a zone is
+    late), the edicts the skill never uses (up to 38 KB, the runtime
+    headroom to measure), 16-bit node children (3-14 KB, the hottest
+    asm).
