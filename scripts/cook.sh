@@ -52,7 +52,9 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
+_zone_tables=${Q1PSX_ZONE_TABLES-unset}            # (the command line's wins over local.env's)
 [ -f local.env ] && set -a && . ./local.env && set +a
+[ "$_zone_tables" != unset ] && Q1PSX_ZONE_TABLES=$_zone_tables
 : "${QUAKE_PAK0:?set QUAKE_PAK0 in local.env}"
 
 EP1="start e1m1 e1m2 e1m3 e1m4 e1m5 e1m6 e1m7 e1m8"
