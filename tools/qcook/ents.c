@@ -352,7 +352,7 @@ void ents_pack(const qw_ent *ents, uint32_t n, buf_t *out)
 			head |= QWE_BIT(QWE_FINE);
 		for (uint32_t f = 0; f < QWE_FIELDS; f++) {
 			uint32_t at = QWE_FIELD_AT[f][0], nb = QWE_FIELD_AT[f][1], any = 0;
-			if (f >= QWE_ORIGIN_X && f <= QWE_ORIGIN_Z) {
+			if (f <= QWE_ORIGIN_Z) {                      /* (the origin: fields 0-2) */
 				int32_t v = q->origin[f - QWE_ORIGIN_X];
 				if (!v)
 					continue;

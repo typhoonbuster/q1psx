@@ -236,14 +236,16 @@ _Static_assert(__builtin_offsetof(qw_bmodel, root) == 24 && __builtin_offsetof(q
    decoded), or with QWE_FINE 1/QW_CLIP_SUB units in 4 (every id1 origin
    is whole). A map has at most 256 brush models (BSP29), so the model
    takes a byte; the spawnflags' two bytes are a field each (the skill
-   flags are the high byte). The cook decodes every entity it writes and
-   checks it against its qw_ent, byte for byte (tools/qcook/ents.c). */
+   flags are the high byte). The fields go by how often the id1 maps give
+   them, so the decoder's loop ends early (7.6 bits an entity, not 14).
+   The cook decodes every entity it writes and checks it against its
+   qw_ent, byte for byte (tools/qcook/ents.c). */
 enum {
-	QWE_SOUNDS, QWE_FLAGS_LO, QWE_FLAGS_HI, QWE_MODEL, QWE_ANGLE,
-	QWE_ORIGIN_X, QWE_ORIGIN_Y, QWE_ORIGIN_Z, QWE_FINE, QWE_MANGLE,
-	QWE_SPEED, QWE_WAIT, QWE_DELAY, QWE_LIP, QWE_HEIGHT, QWE_DMG, QWE_HEALTH,
-	QWE_COUNT, QWE_STYLE, QWE_TARGET, QWE_TARGETNAME, QWE_KILLTARGET,
-	QWE_MESSAGE, QWE_MAP,
+	QWE_ORIGIN_X, QWE_ORIGIN_Y, QWE_ORIGIN_Z, QWE_TARGETNAME, QWE_ANGLE,
+	QWE_TARGET, QWE_FLAGS_HI, QWE_MODEL, QWE_FLAGS_LO, QWE_WAIT, QWE_SOUNDS,
+	QWE_SPEED, QWE_STYLE, QWE_LIP, QWE_MESSAGE, QWE_MANGLE, QWE_DELAY,
+	QWE_HEALTH, QWE_HEIGHT, QWE_DMG, QWE_MAP, QWE_COUNT, QWE_KILLTARGET,
+	QWE_FINE,
 	QWE_FIELDS
 };
 #define QWE_CLASS   0x7fu                       /* the head's class bits           */
@@ -252,11 +254,14 @@ enum {
 /* each field's offset in the qw_ent and its bytes in the table (the
    origin's: 2, or 4 with QWE_FINE; QWE_FINE itself: none) */
 static const uint8_t QWE_FIELD_AT[QWE_FIELDS][2] = {
-	{  1, 1 }, {  2, 1 }, {  3, 1 }, {  4, 1 }, {  6, 2 },   /* sounds, spawnflags, model, angle */
-	{  8, 2 }, { 12, 2 }, { 16, 2 }, {  0, 0 }, { 20, 6 },   /* origin, QWE_FINE, mangle         */
-	{ 26, 2 }, { 28, 2 }, { 30, 2 }, { 32, 2 }, { 34, 2 },   /* speed, wait, delay, lip, height  */
-	{ 36, 2 }, { 38, 2 }, { 40, 2 }, { 42, 2 },              /* dmg, health, count, style        */
-	{ 44, 2 }, { 46, 2 }, { 48, 2 }, { 50, 2 }, { 52, 2 },   /* target .. map                    */
+	{  8, 2 }, { 12, 2 }, { 16, 2 }, { 46, 2 }, {  6, 2 },   /* origin, targetname, angle   */
+	{ 44, 2 }, {  3, 1 }, {  4, 1 }, {  2, 1 }, { 28, 2 },   /* target, spawnflags' high byte,
+	                                                            model, low byte, wait        */
+	{  1, 1 }, { 26, 2 }, { 42, 2 }, { 32, 2 }, { 50, 2 },   /* sounds, speed, style, lip,
+	                                                            message                      */
+	{ 20, 6 }, { 30, 2 }, { 38, 2 }, { 34, 2 }, { 36, 2 },   /* mangle, delay, health, height,
+	                                                            dmg                          */
+	{ 52, 2 }, { 40, 2 }, { 48, 2 }, {  0, 0 },              /* map, count, killtarget, FINE */
 };
 
 _Static_assert(QE_COUNT <= 128 && QWE_FIELDS <= 24, "qworld.h: the compact entity head's bits");
@@ -269,16 +274,16 @@ _Static_assert(__builtin_offsetof(qw_ent, origin) == 8 && __builtin_offsetof(qw_
 static inline const uint8_t *qw_ent_decode(const uint8_t *p, const uint16_t *names, qw_ent *q)
 {
 	uint32_t head = p[0] | p[1] << 8 | p[2] << 16 | (uint32_t) p[3] << 24;
+	uint32_t cls = head & QWE_CLASS, f = 0;
 	p += 4;
-	__builtin_memset(q, 0, sizeof *q);
-	q->class = (uint8_t) (head & QWE_CLASS);
-	uint32_t f = 0;
+	*q = (qw_ent) { .class = (uint8_t) cls };   /* (word stores: a memset would be
+	                                                 trimmed to bytes 1-55, a call) */
 	for (uint32_t bits = head << 1 >> 8; bits; bits >>= 1, f++) {   /* (bits 7-30) */
 		if (!(bits & 1))
 			continue;
 		uint8_t *d = (uint8_t *) q + QWE_FIELD_AT[f][0];
 		uint32_t n = QWE_FIELD_AT[f][1];
-		if (f - QWE_ORIGIN_X <= QWE_ORIGIN_Z - QWE_ORIGIN_X) {
+		if (f <= QWE_ORIGIN_Z) {
 			int32_t v;
 			if (head & QWE_BIT(QWE_FINE)) {
 				v = (int32_t) (p[0] | p[1] << 8 | p[2] << 16 | (uint32_t) p[3] << 24);
@@ -293,8 +298,8 @@ static inline const uint8_t *qw_ent_decode(const uint8_t *p, const uint16_t *nam
 		while (n--)
 			*d++ = *p++;
 	}
-	if (q->class) {
-		q->classname = names[q->class];
+	if (cls) {
+		q->classname = names[cls];
 	} else {
 		q->classname = (uint16_t) (p[0] | p[1] << 8);
 		p += 2;
