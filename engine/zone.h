@@ -13,11 +13,11 @@
  *     late frames counted, the camera's zone read first;
  *   - between frames (zone_frame, before the stream's turn): a read's
  *     progress, the late switch, the next read: the camera's zone, then its
- *     nearest by walking distance (a teleporter one step), into the room
- *     the chunks no set wants leave (dropped, the least wanted first;
- *     compacted when the room is in pieces). The drive is shared with the
+ *     nearest by walking distance (a teleporter one step), into a free
+ *     slot, else the slot of a chunk no set wants now, else the least
+ *     wanted's below it (never the drawn one). The drive is shared with the
  *     streamed assets (engine/stream.c, which waits for a chunk's read) and
- *     the SPU music (engine/music.c: music_read_ok).
+ *     the SPU music (engine/music.c: music_read_ok), engine/cd.h's rules.
  *
  * Nothing here runs inside the renderer but zone_enter, before the walk.
  */
@@ -45,7 +45,6 @@ typedef struct {
 	uint32_t late_events, late_frames;         /* the camera in a zone not in; the frames
 	                                              drawn with another zone             */
 	uint32_t switches, switch_cycles, switch_max;   /* zones made current, the patch's cost */
-	uint32_t compactions, compact_bytes, compact_cycles;
 	uint32_t evictions, sync_loads, read_errors;
 	uint32_t waits;                            /* frames a read waited for the drive  */
 } zone_stats_t;

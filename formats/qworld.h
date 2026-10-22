@@ -380,9 +380,11 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
  * current, its patch list sets faces[] of the first world_nodes + 1 nodes
  * (engine/zone.s zone_patch); before any, every world block is empty.
  *
- * The chunks live in the level arena's chunk arena (engine/zone.c): any
- * camera leaf's set (its zone and the two nearest) fits it, and so do the
- * two biggest chunks (the zone drawn while the camera's loads).
+ * The chunks live in num_slots slots of slot_bytes each in the level arena
+ * (engine/zone.c): a camera leaf's zone and its nearest, any of them in
+ * any slot. (An arena holding just the biggest such set, compacted when it
+ * is in pieces, would take 10-80 KB less a map, but moving the drawn
+ * chunk costs a frame: docs/porting-notes.md §57.)
  */
 #define QWORLD_ZONED_MAGIC "QWVZ"
 #define QZONES_MAGIC       "QZN1"
@@ -390,8 +392,8 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
 
 typedef struct {
 	uint32_t num_zones;
-	uint32_t arena_bytes;    /* the chunk arena: whole sectors                  */
-	uint32_t max_chunk;      /* the biggest chunk's bytes                       */
+	uint32_t num_slots;      /* the chunks resident at once                     */
+	uint32_t slot_bytes;     /* a slot: the biggest chunk, whole sectors        */
 	uint32_t world_nodes;    /* the nodes the patch lists set, the end node next */
 	uint32_t num_sets;
 	uint32_t ofs_chunks;     /* qw_chunk_dir[num_zones]                         */

@@ -21,22 +21,22 @@ zone_rt_t    zone_rt __attribute__((aligned(16)));   /* (zone.s: one %hi for its
 zone_stats_t zone_stats;
 
 #define SECTOR    CD_SECTOR
-#define MAX_RES   6        /* chunks in the arena at once (in or being read) */
+#define MAX_RES   4        /* slots at most (the cook's num_slots)   */
 #define SET_NONE  0x100u   /* zone_rt.set before any call: no byte equals it */
 #define BACKOFF   30       /* frames before a read that failed is tried again */
 
 typedef struct {
-	int16_t  zone;         /* -1: a free entry                       */
+	int16_t  zone;         /* -1: free                               */
 	uint8_t  ready;        /* read and checked                       */
-	uint32_t at, size;     /* its place in the arena; whole sectors  */
+	uint32_t at;           /* its place: i x slot_bytes              */
 } slot_t;
 
 static const qw_zone_header *zh;   /* NULL: the map is whole */
 static const qw_chunk_dir   *zdir;
 static const qw_zone_set    *zsets;
-static uint8_t  *arena;
+static uint8_t  *arena;                   /* num_slots x slot_bytes */
 static int32_t   zon_lba;
-static uint32_t  skel_bytes;
+static uint32_t  skel_bytes, nslots;
 static slot_t    slots[MAX_RES];
 static int       cur_slot = -1;           /* the chunk drawn                     */
 static int       cur_zone = -1;
@@ -62,16 +62,6 @@ void zone_patch(qw_node *nd, const uint32_t *w, uint32_t n, uint8_t *p)
 		p += QZP_BACK(pw);
 	}
 }
-
-static void zone_move(uint8_t *dst, const uint8_t *src, uint32_t bytes)
-{
-	uint32_t *d = (uint32_t *) dst;
-	const uint32_t *s = (const uint32_t *) src;
-	for (bytes >>= 2; bytes; bytes--)
-		*d++ = *s++;
-}
-#else
-void zone_move(uint8_t *dst, const uint8_t *src, uint32_t bytes);   /* zone.s: down, 16-byte steps */
 #endif
 
 /* ---------------------------------------------------------- the drive -- */
@@ -95,9 +85,9 @@ int zone_drive_wanted(void)
 
 static int slot_of(int z)
 {
-	for (int i = 0; i < MAX_RES; i++)
+	for (uint32_t i = 0; i < nslots; i++)
 		if (slots[i].zone == z)
-			return i;
+			return (int) i;
 	return -1;
 }
 
@@ -107,33 +97,6 @@ static int is_wanted(int z, const uint8_t want[3], int upto)
 		if (want[i] == z)
 			return 1;
 	return 0;
-}
-
-static void evict(int s)
-{
-	slots[s].zone  = -1;
-	slots[s].ready = 0;
-	zone_stats.evictions++;
-}
-
-/* the lowest gap of `need` bytes the chunks leave: 1, its place in *at */
-static int gap(uint32_t need, uint32_t *at)
-{
-	uint32_t from = 0;
-	for (;;) {
-		uint32_t next = zh->arena_bytes;            /* the nearest chunk at or past `from` */
-		int hit = -1;
-		for (int i = 0; i < MAX_RES; i++)
-			if (slots[i].zone >= 0 && slots[i].at + slots[i].size > from && slots[i].at < next)
-				next = slots[i].at, hit = i;
-		if (next >= from && next - from >= need) {
-			*at = from;
-			return 1;
-		}
-		if (hit < 0)
-			return 0;
-		from = slots[hit].at + slots[hit].size;
-	}
 }
 
 /* the chunk drawn: the world nodes' blocks into it, its pool the renderer's */
@@ -152,76 +115,29 @@ static void make_current(int s)
 		zone_stats.switch_max = cyc;
 }
 
-/* the chunks slid down against each other (the one drawn too, its nodes
-   patched again at its new place); no read in flight */
-static void compact(void)
-{
-	uint32_t t0 = prof_now(), top = 0;
-	for (;;) {
-		int lo = -1;                              /* the lowest chunk at or past top */
-		for (int i = 0; i < MAX_RES; i++)
-			if (slots[i].zone >= 0 && slots[i].at >= top && (lo < 0 || slots[i].at < slots[lo].at))
-				lo = i;
-		if (lo < 0)
-			break;
-		if (slots[lo].at != top) {
-			zone_move(arena + top, arena + slots[lo].at, slots[lo].size);
-			zone_stats.compact_bytes += slots[lo].size;
-			slots[lo].at = top;
-			if (lo == cur_slot)
-				make_current(lo);
-		}
-		top += slots[lo].size;
-	}
-	zone_stats.compactions++;
-	zone_stats.compact_cycles += prof_cycles(t0, prof_now());
-}
-
-/* room for zone z's chunk, wanted at rank `rank` of want[] (0: the camera's
-   zone): the chunks no set wants dropped, the biggest first, then those
-   wanted less than it, then the rest compacted. Its slot (not ready), or -1
-   (no room without dropping what is wanted more). No read in flight. */
+/* a slot for zone z's chunk, wanted at rank `rank` of want[] (0: the
+   camera's zone): a free one, else the one holding a chunk no set wants
+   now, else the one holding the least wanted below z (never the drawn
+   one). Its index (not ready), or -1. No read in flight. */
 static int place(int z, const uint8_t want[3], int rank)
 {
-	uint32_t need = (zdir[z].bytes + SECTOR - 1) / SECTOR * SECTOR, at;
-	int e = -1;
-	for (int i = 0; i < MAX_RES && e < 0; i++)
+	int v = -1;
+	for (uint32_t i = 0; i < nslots && v < 0; i++)
 		if (slots[i].zone < 0)
-			e = i;
-	for (int step = 0; ; step++) {
-		if (e >= 0 && gap(need, &at)) {
-			slots[e].zone  = (int16_t) z;
-			slots[e].ready = 0;
-			slots[e].at    = at;
-			slots[e].size  = need;
-			return e;
-		}
-		int v = -1;                               /* a chunk to drop: none wanted first */
-		for (int i = 0; i < MAX_RES; i++)
-			if (slots[i].zone >= 0 && i != cur_slot && !is_wanted(slots[i].zone, want, 3) &&
-			    (v < 0 || slots[i].size > slots[v].size))
-				v = i;
-		for (int r = 2; v < 0 && r > rank; r--)   /* then the least wanted, below z */
-			if (want[r] != QZ_NONE && (v = slot_of(want[r])) == cur_slot)
-				v = -1;
-		if (v >= 0) {
-			evict(v);
-			if (e < 0)
-				e = v;
-			continue;
-		}
-		if (e < 0 || step > 2 * MAX_RES)
-			return -1;
-		uint32_t used = 0;
-		for (int i = 0; i < MAX_RES; i++)
-			if (slots[i].zone >= 0)
-				used += slots[i].size;
-		if (zh->arena_bytes - used < need)
-			return -1;                            /* (the room is not there, in pieces or not) */
-		compact();
-		if (!gap(need, &at))
-			return -1;
-	}
+			v = (int) i;
+	for (uint32_t i = 0; i < nslots && v < 0; i++)
+		if ((int) i != cur_slot && !is_wanted(slots[i].zone, want, 3))
+			v = (int) i;
+	for (int r = 2; v < 0 && r > rank; r--)
+		if (want[r] != QZ_NONE && (v = slot_of(want[r])) == cur_slot)
+			v = -1;
+	if (v < 0)
+		return -1;
+	if (slots[v].zone >= 0)
+		zone_stats.evictions++;
+	slots[v].zone  = (int16_t) z;
+	slots[v].ready = 0;
+	return v;
 }
 
 static void read_done(int ok)
@@ -256,7 +172,7 @@ static int load_now(int z, const uint8_t want[3], int rank)
 	placed = -1;
 	if (s < 0)
 		return -1;
-	if (!read_now(zon_lba + (int32_t) zdir[z].sector, slots[s].size / SECTOR, arena + slots[s].at)) {
+	if (!read_now(zon_lba + (int32_t) zdir[z].sector, (zdir[z].bytes + SECTOR - 1) / SECTOR, arena + slots[s].at)) {
 		slots[s].zone = -1;
 		zone_stats.read_errors++;
 		return -1;
@@ -302,7 +218,7 @@ static void next_read(void)
 	}
 	if (placed < 0)
 		return;
-	uint32_t sectors = slots[placed].size / SECTOR;
+	uint32_t sectors = (zdir[slots[placed].zone].bytes + SECTOR - 1) / SECTOR;
 	if (stream_reading() || !music_read_ok((int) sectors) || !cd_ready()) {
 		zone_stats.waits++;                       /* (the stream's read first; the music's
 		                                             ring full enough for this one; the last
@@ -340,6 +256,7 @@ void zone_abort(void)
 	zone_rt.set = SET_NONE;
 	for (int i = 0; i < MAX_RES; i++)
 		slots[i].zone = -1;
+	nslots = 0;
 }
 
 int zone_on(void)
@@ -352,7 +269,7 @@ int zone_map_start(const uint8_t *f, const char *map, int tex)
 	zone_abort();
 	const qw_zone_header *h = (const qw_zone_header *) (f + sizeof(qw_header));
 	if (!h->num_zones || h->num_zones >= QZ_NONE || !h->num_sets || h->num_sets > QZ_NONE ||
-	    !h->arena_bytes || (h->arena_bytes & (SECTOR - 1))) {
+	    !h->num_slots || h->num_slots > MAX_RES || !h->slot_bytes || (h->slot_bytes & (SECTOR - 1))) {
 		printf("zone: %s: bad zone tables\n", map);
 		return 0;
 	}
@@ -363,7 +280,7 @@ int zone_map_start(const uint8_t *f, const char *map, int tex)
 		printf("zone: no %s on the disc\n", name);
 		return 0;
 	}
-	uint8_t *a = mem_level_alloc(h->arena_bytes);
+	uint8_t *a = mem_level_alloc(h->num_slots * h->slot_bytes);
 	if (!a)
 		return 0;
 	const qz_file *fh = (const qz_file *) a;      /* (its header through the arena, empty yet) */
@@ -377,16 +294,20 @@ int zone_map_start(const uint8_t *f, const char *map, int tex)
 	zsets   = (const qw_zone_set *) (f + h->ofs_sets);
 	arena   = a;
 	zon_lba = (int32_t) lba;
+	nslots  = h->num_slots;
+	for (uint32_t i = 0; i < nslots; i++) {
+		slots[i].zone = -1;
+		slots[i].at   = i * h->slot_bytes;
+	}
 	skel_bytes = h->ofs_sets + h->num_sets * (uint32_t) sizeof(qw_zone_set);
 	zone_rt.leaves   = (uint32_t) world.leaves & 0x00ffffffu;
 	zone_rt.leaf_set = f + h->ofs_leaf_set;
 	zone_rt.set      = SET_NONE;
 	memset(&zone_stats, 0, sizeof zone_stats);
 	frame_no = backoff_until = 0;
-	printf("zone: %s %u zones, the skeleton %u KB, the chunk arena %u KB (the biggest chunk %u KB): "
-	       "%u KB resident against the whole world's %u KB\n", name, h->num_zones, skel_bytes / 1024,
-	       h->arena_bytes / 1024, h->max_chunk / 1024, (skel_bytes + h->arena_bytes) / 1024,
-	       h->whole_bytes / 1024);
+	printf("zone: %s %u zones, the skeleton %u KB + %u slots of %u KB: %u KB resident against the "
+	       "whole world's %u KB\n", name, h->num_zones, skel_bytes / 1024, h->num_slots, h->slot_bytes / 1024,
+	       (skel_bytes + h->num_slots * h->slot_bytes) / 1024, h->whole_bytes / 1024);
 	return 1;
 }
 
@@ -518,7 +439,7 @@ int zone_of_leaf(uint32_t leaf)
 
 int zone_current(void)            { return cur_zone; }
 int zone_count(void)              { return zh ? (int) zh->num_zones : 0; }
-uint32_t zone_arena_bytes(void)   { return zh ? zh->arena_bytes : 0; }
+uint32_t zone_arena_bytes(void)   { return zh ? zh->num_slots * zh->slot_bytes : 0; }
 uint32_t zone_skeleton_bytes(void) { return zh ? skel_bytes : 0; }
 
 int zone_check_patch(void)

@@ -1339,13 +1339,14 @@ static void bench_zone_ram(const char *map)
    on each zoned map (MAP=: that one), the eye taken from the player's
    start through the map's items and monsters in their entity order at
    running speed (320 units a second, a frame a 60th), the stream and the
-   zones' reads going on as in play (no read at once); a leg whose eye line
-   a wall cuts is jumped instead (a teleport no prefetch saw coming: its
-   late frames apart). Per map: the zone switches and the patch's cycles
-   (every patch checked against the C one), the chunk reads (their bytes,
-   the frames each took), the late events and frames (the camera in a
-   zone not in yet, drawn with the old one), the longest run of them, the
-   compactions; the frames' cycles, the switching ones' apart. */
+   zones' reads going on as in play (no read at once). A leg whose eye
+   line a wall cuts goes through it (its frames apart: a way shorter than
+   the walking distances the prefetch ranks zones by). Per map: the zone
+   switches and the patch's cycles (every patch checked against the C
+   one), the chunk reads (their bytes, the frames each took), the late
+   events and frames (the camera in a zone not in yet, drawn with the old
+   one), the longest run of them; the frames' cycles, the switching ones'
+   apart. */
 #define ZW_WAYPOINTS 32
 #define ZW_FRAMES    3600     /* a minute of walking a map at most */
 static void bench_zones(void)
@@ -1378,8 +1379,8 @@ static void bench_zones(void)
 			}
 		int32_t at[3];
 		memcpy(at, wp[0], sizeof at);
-		uint32_t frames = 0, units = 0, jumps = 0, late = 0, late_jump = 0, run = 0, worst = 0, bad = 0;
-		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_jump = 1u << 30;
+		uint32_t frames = 0, units = 0, walls = 0, late = 0, late_wall = 0, run = 0, worst = 0, bad = 0;
+		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_wall = 1u << 30;
 		const int32_t speed = 320 * CLIP_SUB / 60;
 		uint32_t reads0 = stream_stats.reads;
 		for (int w = 1; w < nwp && frames < ZW_FRAMES; w++) {
@@ -1394,14 +1395,9 @@ static void bench_zones(void)
 			uint32_t len = q_isqrt64((uint64_t) ((int64_t) d[0] * d[0] + (int64_t) d[1] * d[1] +
 			                                     (int64_t) d[2] * d[2]));
 			trace_t tr;
-			int nf = 1;
-			if (clip_trace(0, e0, e1, &tr) < Q_FIX_ONE) {
-				jumps++;                              /* (the eye line cut: jumped) */
-				since_jump = 0;
-			} else {
-				nf = (int) (len / (uint32_t) speed) + 1;
-				units += len / CLIP_SUB;
-			}
+			int nf = (int) (len / (uint32_t) speed) + 1, through = clip_trace(0, e0, e1, &tr) < Q_FIX_ONE;
+			units += len / CLIP_SUB;
+			walls += through;
 			int yaw = r_atan2(d[1], d[0]);
 			for (int f = 1; f <= nf && frames < ZW_FRAMES; f++) {
 				for (int c = 0; c < 3; c++)
@@ -1413,7 +1409,7 @@ static void bench_zones(void)
 				uint32_t sw0 = zone_stats.switches;
 				run_frame(0, 0);
 				frames++;
-				since_jump++;
+				since_wall = through ? 0 : since_wall + 1;
 				uint32_t fc = prof_stage[PROF_FRAME];
 				fsum += fc;
 				if (fc > fmax) fmax = fc;
@@ -1426,7 +1422,7 @@ static void bench_zones(void)
 				if (zone_of_leaf(zone_bench_leaf(cam.pos)) != zone_current() &&
 				    zone_of_leaf(zone_bench_leaf(cam.pos)) != (int) QZ_NONE) {
 					late++;
-					late_jump += since_jump < 120;    /* (2 s after a jump: the jump's) */
+					late_wall += since_wall < 60;     /* (in a leg through a wall, or a second after) */
 					if (++run > worst) worst = run;
 				} else {
 					run = 0;
@@ -1435,15 +1431,15 @@ static void bench_zones(void)
 			memcpy(at, wp[w], sizeof at);
 		}
 		const zone_stats_t *z = &zone_stats;
-		printf("bench zones %s: %u frames, %u units walked, %u jumps; %u switches (patch %u cycles avg, %u max; "
-		       "%u patches checked bad), %u reads (%u KB, %u frames each), %u waits for the drive; late: %u events, "
-		       "%u frames (%u after a jump), the longest run %u; %u compactions (%u KB, %u cycles); %u evictions, "
-		       "%u read errors; frames %u cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u\n",
-		       world_map_name(m), frames, units, jumps, z->switches,
+		printf("bench zones %s: %u frames, %u units, %u legs of %d through walls; %u switches (patch %u cycles avg, "
+		       "%u max; %u patches checked bad), %u reads (%u KB, %u frames each), %u waits for the drive; late: %u "
+		       "events, %u frames (%u through walls), the longest run %u; %u evictions, %u read errors; frames %u "
+		       "cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u\n",
+		       world_map_name(m), frames, units, walls, nwp - 1, z->switches,
 		       z->switches ? z->switch_cycles / z->switches : 0, z->switch_max, bad, z->loads, z->load_bytes / 1024,
-		       z->loads ? z->load_frames / z->loads : 0, z->waits, z->late_events, late, late_jump, worst,
-		       z->compactions, z->compact_bytes / 1024, z->compact_cycles, z->evictions, z->read_errors,
-		       frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax, stream_stats.reads - reads0);
+		       z->loads ? z->load_frames / z->loads : 0, z->waits, z->late_events, late, late_wall, worst,
+		       z->evictions, z->read_errors, frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax,
+		       stream_stats.reads - reads0);
 		game_active = 0;
 		zone_sync = 1;
 	}

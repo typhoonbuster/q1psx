@@ -18,12 +18,9 @@
 #   zone_patch   C ABI: a chunk's patch words into the world nodes' face
 #                blocks (formats/qworld.h QZP_*): a0 = the first node, a1 =
 #                the words, a2 = their count, a3 = the chunk's records
-#   zone_move    C ABI: a0 = dst, a1 = src, a2 = bytes (a multiple of 16,
-#                not 0), copied forwards: dst below src or apart
 #
-# The C engine (CMake Q1PSX_ENGINE_C: ZONE_C = 1) takes zone_patch and
-# zone_move in C (engine/zone.c); zone_mark is the renderer's (r_world.s
-# has no C).
+# The C engine (CMake Q1PSX_ENGINE_C: ZONE_C = 1) takes zone_patch in C
+# (engine/zone.c); zone_mark is the renderer's (r_world.s has no C).
 
 	.set noreorder
 	.set noat
@@ -117,24 +114,4 @@ zp_node:
 	nop
 	.size   zone_patch, . - zone_patch
 
-	.section .text.zone_move, "ax", @progbits
-	.global zone_move
-	.type   zone_move, @function
-zone_move:
-	addu    $a2, $a1, $a2                # the source's end
-zv_copy:
-	lw      $t0, 0($a1)                  # four words read, then written: an
-	lw      $t1, 4($a1)                  # overlap below the source is safe
-	lw      $t2, 8($a1)
-	lw      $t3, 12($a1)
-	addiu   $a1, $a1, 16
-	sw      $t0, 0($a0)
-	sw      $t1, 4($a0)
-	sw      $t2, 8($a0)
-	sw      $t3, 12($a0)
-	bne     $a1, $a2, zv_copy
-	addiu   $a0, $a0, 16
-	jr      $ra
-	nop
-	.size   zone_move, . - zone_move
 .endif

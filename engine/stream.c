@@ -839,7 +839,7 @@ static int sound_step(void)
 	if (sread.step == SR_WAIT)
 		return 0;
 	if (sread.step == SR_READ) {
-		int left = cd_poll();          /* (also runs CdReadRetry's retries) */
+		int left = cd_poll();                 /* (also runs CdReadRetry's retries) */
 		if (left > 0)
 			return 0;
 		if (left < 0) {
@@ -858,9 +858,10 @@ static int sound_step(void)
 		sound_done(1, 0);
 		return 1;
 	}
-	if (!music_read_ok(STAGE_SECTORS) || zone_drive_wanted() || !cd_ready())   /* (the SPU
-		return 0;                            music's refill first, a world chunk's read:
-		                                     engine/zone.c; the last read's Pause done) */
+	if (!music_read_ok(STAGE_SECTORS) || zone_drive_wanted() || !cd_ready())
+		return 0;                            /* (the SPU music's refill first, a world
+		                                        chunk's read: engine/zone.c; the last
+		                                        read's Pause done: engine/cd.h) */
 	if (!sound_read_piece()) {
 		sound_done(0, 0);
 		return 1;
@@ -1142,7 +1143,7 @@ void stream_frame(void)
 	if (frame_no % PASS_FRAMES == 0 || jump)
 		pass();
 	if (reading >= 0) {                       /* a model's read */
-		int left = cd_poll();          /* (also runs CdReadRetry's retries) */
+		int left = cd_poll();                 /* (also runs CdReadRetry's retries) */
 		if (left > 0)
 			return;
 		read_done(reading, left == 0);

@@ -12,11 +12,11 @@
  * local.env names their directory (scripts/cook.sh). They list each zone's
  * records (the world records' visibility ids) and, for each leaf, its zone
  * and the three nearest other zones by walking distance. `--resident`: the
- * zones a camera leaf wants at once (its own and the nearest), what the
- * chunk arena is sized for.
+ * zones a camera leaf wants at once (its own and the nearest): the slots
+ * the engine keeps (each the size of the biggest chunk).
  *
  * The map stays whole (nothing written, an older skeleton removed) when
- * its skeleton and chunk arena would take as much RAM as its whole world,
+ * its skeleton and slots would take as much RAM as its whole world,
  * when it has one zone, or when the tables do not match the world (another
  * cook's).
  */
@@ -511,25 +511,10 @@ int cmd_zones(int argc, char **argv)
 		leaf_set[l] = (uint8_t) i;
 	}
 
-	/* the chunk arena: every set's zone and its nearest (want - 1 of them),
-	   and the two biggest chunks (the zone drawn while the camera's loads),
-	   each in whole sectors (a chunk is read whole) */
-	uint32_t arena = 0, big[2] = { 0, 0 };
-	for (uint32_t z = 0; z < nz; z++) {
-		uint32_t b = sectors_of(chunk[z].len) * SECTOR;
-		if (b > big[0]) big[1] = big[0], big[0] = b;
-		else if (b > big[1]) big[1] = b;
-	}
-	for (uint32_t i = 0; i < nsets; i++) {
-		uint32_t sum = sectors_of(chunk[sets[i].zone].len) * SECTOR;
-		for (int j = 0; j < want - 1; j++)
-			if (sets[i].near[j] != QZ_NONE)
-				sum += sectors_of(chunk[sets[i].near[j]].len) * SECTOR;
-		if (sum > arena)
-			arena = sum;
-	}
-	if (big[0] + big[1] > arena)
-		arena = big[0] + big[1];
+	/* the slots: `want` of them (but no more than the zones), each the
+	   biggest chunk in whole sectors (a chunk is read whole) */
+	const uint32_t slot_bytes = sectors_of(max_bytes) * SECTOR;
+	const uint32_t nslots = (uint32_t) want < nz ? (uint32_t) want : nz;
 
 	/* the skeleton: the header (the zones' after it), the sections */
 	uint32_t stamp = fnv(2166136261u, &flen, sizeof flen);
@@ -548,8 +533,8 @@ int cmd_zones(int argc, char **argv)
 	qw_zone_header zh;
 	memset(&zh, 0, sizeof zh);
 	zh.num_zones     = nz;
-	zh.arena_bytes   = arena;
-	zh.max_chunk     = max_bytes;
+	zh.num_slots     = nslots;
+	zh.slot_bytes    = slot_bytes;
 	zh.world_nodes   = W;
 	zh.num_sets      = nsets;
 	zh.reach         = T.reach;
@@ -601,14 +586,14 @@ int cmd_zones(int argc, char **argv)
 	memcpy(s.p, &h, sizeof h);
 	memcpy(s.p + sizeof h, &zh, sizeof zh);
 
-	/* zoned only when the skeleton and its chunk arena take less than the
-	   whole world */
-	const uint32_t resident = (uint32_t) s.len + arena;
+	/* zoned only when the skeleton and its slots take less than the whole
+	   world */
+	const uint32_t resident = (uint32_t) s.len + nslots * slot_bytes;
 	printf("qcook: zones %s: %u zones, %u records in them (the world's %u), chunks %u..%u B, %u KB on the "
 	       "disc; %u nodes patched (%u never, %u the brush models'), %u patch words at most; %u sets; the "
-	       "skeleton %u B + the arena %u B (%d resident) = %u KB, the whole %u KB", wld, nz, chunk_records,
-	       H->num_faces, min_bytes, max_bytes, total / 1024, W, E, nn - W - E, max_patch, nsets,
-	       (uint32_t) s.len, arena, want, resident / 1024, (uint32_t) (flen / 1024));
+	       "skeleton %u B + %u slots of %u B = %u KB, the whole %u KB", wld, nz, chunk_records, H->num_faces,
+	       min_bytes, max_bytes, total / 1024, W, E, nn - W - E, max_patch, nsets, (uint32_t) s.len, nslots,
+	       slot_bytes, resident / 1024, (uint32_t) (flen / 1024));
 	if (nz < 2 || resident >= (uint32_t) flen) {
 		printf(": the map stays whole\n");
 	} else {
