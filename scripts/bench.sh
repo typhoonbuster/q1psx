@@ -48,7 +48,10 @@
 #         monster of each kind there woken, fighting, killed; "mon" lines,
 #         dumps m<map>_<kind>_<step>; then the crowd: every monster of the
 #         map awake, the entities' cost a second); MONSTERS=2 the crowd
-#         alone (SAMPLE=1: its PC samples, "samples crowd").
+#         alone (SAMPLE=1: its PC samples, "samples crowd"); MONSTERS=3
+#         the crowd, then a minute of fight drawn (the player fires
+#         rockets turning round): "mon fight" lines (the stack's
+#         high-water mark, the edicts).
 #         PLAY=1 (with BENCH_MAPS=1) runs the loading screen and 30 interactive
 #         frames per map; MAP=E1M1 restricts the maps bench to that map (its
 #         views dumped: the brush models in them; VIEW=x,y,z,yaw,pitch adds

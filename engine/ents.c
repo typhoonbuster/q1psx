@@ -1035,6 +1035,17 @@ int ents_num_touch(void)
 	return num_touch;
 }
 
+#ifdef Q1PSX_BENCH
+int ents_in_use(int *max)
+{
+	int n = 0;
+	for (int i = 0; i < num_edicts; i++)
+		n += edicts[i].inuse;
+	*max = max_edicts;
+	return n;
+}
+#endif
+
 /* the area nodes' lists: solid entries and trigger slots in each node */
 void ents_area_stats(void)
 {

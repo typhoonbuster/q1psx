@@ -262,6 +262,9 @@ int  ent_in_view(const int32_t org[3], int radius_vu);
 
 #ifdef Q1PSX_BENCH
 int  ents_num_touch(void);             /* the touch list's length (the bench's) */
+#ifdef Q1PSX_BENCH
+int  ents_in_use(int *max);            /* the edicts in use, *max the pool's */
+#endif
 void ents_area_stats(void);            /* the area nodes' lists (the bench's) */
 #endif
 

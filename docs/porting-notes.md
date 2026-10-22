@@ -7839,3 +7839,33 @@ Quake's data goes in the repo.
     map's kinds): a call left open;
   - not checked: the release run in an emulator (it prints nothing now:
     a look is the check), DuckStation, the real machine.
+
+## §61 — The stack's need, measured under load (2026-10-22)
+
+- **The question**: how big the stack must be, with crashes on
+  the busy levels (E1M3 named) thought to be a leak or an overflow.
+- **The measure**: `MONSTERS=3 MAP=E1M3` (scripts/bench.sh): the crowd
+  (the 47 monsters awake and after the player, 10 s), then a minute of
+  fight drawn: the player, who cannot die, fires rockets at the nearest
+  monster it sees, a frame rendered every tick; "mon fight" lines every
+  5 s with the stack meter (`stack_untouched`: the painted room never
+  reached), the edicts in use and the pool's size (`ents_in_use`), the
+  level arena, the render list's items, the frame's vblanks.
+- **The stack**: 2.6 KB at most (PCSX-Redux and DuckStation alike), of
+  the release's 60.8 KB (43.4 KB before §60; the link refuses under 16
+  KB). The stack is not what overflows.
+- **No leak to find there:** no malloc in the game (the SDK's
+  `InitHeap` at boot, nothing allocating); the arenas are bump
+  allocators reset at each level and nothing takes from them in play;
+  the fixed pools drop when full (the edicts: 296-303 of 462 on E1M3,
+  the 11 allocation sites checking a full pool).
+- **DuckStation** (closer to the machine) ran the same: no invalid
+  access, no GPU command error.
+- **What it shows instead**: E1M3 all awake is slow: frames of 5-7
+  vblanks (8-12 fps), the entities' ticks up to 1.9 M cycles (the
+  crowd's thinks); 4 ticks a frame at most (pad.h `PAD_MAX_TICKS`), so
+  the game slows down rather than freezing.
+- **Left:** the crash itself, not reproduced by this scenario (3
+  monsters killed in it: deaths, gibs, a zombie's rising, the level's
+  end barely seen): what is seen (a freeze, a black screen, the
+  emulator's message), which emulator, where and when.

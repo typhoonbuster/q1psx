@@ -2498,7 +2498,7 @@ static void bench_monsters(void)
 	cmd.weapon_group = -1;
 	game_spawn();
 	ents_ticks(60, &cmd);                         /* the monsters' delayed starts */
-	for (int k = 0; k < (Q1PSX_BENCH_MONSTERS == 2 ? 0 : MK_COUNT); k++) {   /* (2: the crowd only) */
+	for (int k = 0; k < (Q1PSX_BENCH_MONSTERS >= 2 ? 0 : MK_COUNT); k++) {   /* (2, 3: the crowd only) */
 		/* a monster of the kind with a free spot in its sight: 450 .. 100
 		   units off (its ranged attack's reach first), its facing first,
 		   then around it */
@@ -2674,6 +2674,54 @@ static void bench_monsters(void)
 	}
 	prof_sample_stop();
 	prof_sample_print("crowd");
+	if (Q1PSX_BENCH_MONSTERS == 3) {
+		/* the fight (a busy level played): the player, who cannot die,
+		   fires rockets at the nearest monster it sees (turning round when
+		   none), a frame drawn every tick; the stack's high-water mark, the
+		   edicts and the pools logged */
+		pl.items |= IT_ROCKET_LAUNCHER;
+		game_give_weapon(W_RLAUNCHER);
+		cmd.fire = 1;
+		int peak = 0;
+		for (int t = 0; t < 3600; t++) {
+			pl.health = 100;
+			pl.dead = 0;
+			pl.ammo[AMMO_ROCKETS] = 100;
+			edict_t *aim = 0;                    /* the nearest living monster it sees */
+			int32_t best = 0;
+			for (int i = 2; i < num_edicts; i++) {
+				edict_t *c = &edicts[i];
+				if (!c->inuse || !c->mdef || c->health <= 0 || !ai_visible(ent_player, c))
+					continue;
+				int32_t dx = (c->origin[0] - pl.pm.pos[0]) >> 3, dy = (c->origin[1] - pl.pm.pos[1]) >> 3;
+				int32_t d2 = dx * dx + dy * dy;
+				if (!aim || d2 < best) {
+					aim = c;
+					best = d2;
+				}
+			}
+			if (aim)
+				ents_look_at(aim->origin);
+			else
+				pl.pm.yaw += ANG_TURN / 240;     /* none: a turn in 4 s */
+			game_tick(&cmd);
+			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+			run_frame(0, 0);
+			int max, used = ents_in_use(&max);
+			if (used > peak)
+				peak = used;
+			if (t % 300 == 299) {
+				int alive = 0;
+				for (int i = 2; i < num_edicts; i++)
+					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
+				       "level arena %u KB, items %d, vbl %u\n", t + 1, alive, used, peak, max,
+				       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024), rl_num_items(),
+				       (unsigned) vid_stats.vbl);
+			}
+		}
+		cmd.fire = 0;
+	}
 }
 
 static void run_bench(void)
