@@ -8552,3 +8552,109 @@ Quake's data goes in the repo.
   - the outside tools: `quakespasm-q1psx/mobs/mview.py` reads
     the frame map;
   - a play on the tight maps (E3M4, E2M2-E2M7).
+
+## §68 — The frame cache: a place past the frame's own expansions (2026-10-22)
+
+- **The ask** (§67's find, proposed apart): the streamed models' frame
+  cache (`engine/mdl.c`) refused an expansion while its ring still had
+  room. It must refuse only when no place keeps every expansion the frame
+  draws. The bench prints the refusals, and the frames stay master's but
+  for models now drawn.
+- **The flaw** (master a200736):
+  - `mdl_frame` put a new expansion at the ring's head only. When the
+    bytes there held one the frame draws (its stamp), it returned NULL,
+    and `rl_model_stream` drew nothing for that model;
+  - a model drawn at every frame just past the head then blocks each new
+    expansion of the frame, room elsewhere or not.
+- **Measured on master** (its code with this change's prints, run first):
+  - `MONSTERS=3 MAP=E1M3`, the minute of fight: 129 models left out (7,
+    17, 82 and 23 in four of the twelve 300-frame windows); 138 with
+    every frame cooked (`QCOOK_NOFMAP=1`);
+  - `QCOOK_NOFMAP=1 MONSTERS=1 MAP=E1M8`: `mE1M8_7_c` and `_d` refuse 2
+    a frame, a Scrag (wizard.mdl, frame 32, 576 B) and an Ogre (ogre.mdl,
+    frame 18, 1120 B). The head was at 2376; a Scrag's spike (w_spike.mdl,
+    drawn that frame) held 2816..3168 of the ring's 24576 B;
+  - §67 read that picture as E1M8's dead shambler: it is the Scrag. The
+    Ogre shows no pixel in that view (a build that refuses it alone gives
+    the same picture as both drawn);
+  - with the frame map (the default cook): E1M8's dumps 0, the game bench
+    0 (23 expansions).
+- **The fix** (`engine/mdl.c`):
+  - the place: the head; when expansions the frame draws are in the way,
+    just past the furthest of them, again until the bytes are free; past
+    the ring's end, from its start, once. An expansion stays in one
+    piece, and one the frame draws never moves;
+  - a refusal now means no gap big enough between the frame's
+    expansions, or all 32 entries drawn in the frame;
+  - one scan both checks a place and lists the entries it overwrites (a
+    32-bit mask), where master scanned twice. A free entry's offset is
+    `NOWHERE`, past any place, so the scan needs no asset test; an entry
+    keeps its end, not its length;
+  - the new entry: one of those overwritten, else a free one, else the
+    one drawn longest ago. Master took the free or oldest one first, so
+    an overwrite lost one cached expansion more;
+  - the miss is a function apart (`expand_new`): mdl_frame is then a
+    leaf, its hits save no register, a miss is a tail jump. With the miss
+    inline, the fix's prologue saved 7 registers on every call (+25
+    cycles a hit).
+- **The bench prints the refusals:**
+  - each `mon dump` line: the frame cache refused N, in the frame
+    measured (the one before the dump, which draws the same);
+  - each `mon fight` line: over its 300 frames;
+  - at the game bench's end: `bench frame cache: N expansions, M
+    refused`.
+- **Checked** against master's runs (the same commands, PCSX-Redux in fast
+  forward):
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`): 128 of 128
+    `H` lines identical; the game bench (`BENCH_GAME=1 HASHONLY=1`): 23
+    of 23, 0 refused; `MONSTERS=1 MAP=E1M8 HASHONLY=1`: 12 of 12, 0
+    refused;
+  - `MONSTERS=3 MAP=E1M3`: 0 refusals in the twelve windows, with both
+    cooks;
+  - `QCOOK_NOFMAP=1 MONSTERS=1 MAP=E1M8`: 0 refusals, and the 12 hashes
+    are the frame map's. `mE1M8_7_c` and `_d` gain the two models (render
+    items 119 -> 121). In pktview's pictures, 10 are identical and the two
+    others differ by 2618 pixels, all in the Scrag's box;
+  - the C engine (`ENGINE_C=1 MONSTERS=1 MAP=E1M8`): its game drifts from
+    the asm's (10 of 12 dumps differ, on master too). Against master's C
+    engine, 9 are identical. The 3 others are where master's refused (5,
+    1 and 1 a frame, with the frame map): render items 111 -> 116 and
+    63 -> 64, pixels only on the models now drawn (251, 3, 3);
+  - a host harness (outside the repo) ran random frames of draws. An
+    oracle checked every refusal (no gap between the frame's expansions,
+    or every entry the frame's), and every pool returned had to be intact
+    at the frame's end. Master refused with room in every workload (88496
+    of 90054 in one). The new ring never did, and never overwrote one of
+    its frame's.
+- **The cost** (PCSX-Redux; a measure build timed each call on root
+  counter 2, not committed):
+  - the fight on E1M3 (3600 frames, 6165 calls):
+    - a hit 378 -> 321 cycles: the leaf -10, and the entries hit sit
+      lower in the table (their index 15.9 -> 13.1);
+    - a miss's own work 2808 -> 1710 cycles, the expansion apart (~2100);
+    - 1.03 scans a miss (6 places past a frame's expansion in 182);
+    - mdl_frame 882 -> 727 cycles a frame, the 129 models drawn included;
+  - E1M8's monsters' bench (312 calls): a hit 283 -> 261, a miss's own
+    work 2868 -> 1746;
+  - the frames:
+    - the 128 views -0.004 % (-131..+24 a view);
+    - the game bench -61..-95 a frame;
+    - E1M8's dumps -0.012 %;
+    - the fight's windows where master refused cost more now, the models
+      drawn (+0.22..+2.26 %); the others -0.04..0 %;
+  - each place past a frame's expansion costs one scan more (~600
+    cycles). At worst, two passes over the ring, one scan per expansion
+    jumped (never seen in the benches).
+- **RAM:** the code +100 B (+68 the fix, +32 the miss apart): the
+  release's stack room 58552 -> 58440 B, the default's 45976 -> 45880.
+- **Left:**
+  - the lookup: 32 entries at 15 cycles each in PCSX's cost model (`lh`,
+    two `nop`s, the loop's branch and counter). An (asset, frame) key word
+    and a sentinel would make it ~8 an entry (about -90 cycles a hit at
+    index 13); or asm;
+  - the ring can still refuse when the frame's own expansions leave no
+    gap big enough (the harness's heavier workloads; no bench scene).
+    The ring's size and a compaction at the frame's start are the levers,
+    if a map shows it;
+  - the play on PCSX-Redux's and DuckStation's GPU: the crowds (E1M3,
+    E3M4) all drawn.
