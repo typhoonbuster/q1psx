@@ -8297,3 +8297,49 @@ Quake's data goes in the repo.
     animation: a call left open;
   - (the PS1 drawing a model's triangles in the cook's order: settled by
     §63's depth sort.)
+
+## §65 — The freeze on E1M3: a secret door read as a monster (2026-10-22)
+
+- **The report**: a normal playthrough from START on DuckStation, frozen on E1M3, usually on the way back from the key; the emulator left running for a look. DuckStation's status bar: "Game: 0
+  FPS", "Video: 60 FPS (100%)": the game hung, not the emulator. Its save
+  state (F2) read offline: DuckStation's file is a header,
+  then zstd data; the CPU block after its "CPU" marker (pending ticks,
+  downcount, two completion ticks, the 34 registers, pc, npc, the COP0
+  registers); the 2 MB of RAM found by the release ELF's `.text` (the
+  code at 0x80010000, equal but for the self-modified words).
+- **What it showed**: pc in the BIOS (0xbfc0d8e0, its loop for an
+  exception it does not handle), EPC 0x80035300, cause 7: a bus error on
+  a load. At EPC, `monsters_stream_wants` (monsters.c, `e->mdef->kind`)
+  read a byte through `mdef` = 0xffffff40. In RAM, edict 287: class 7,
+  `func_door_secret`, in use; its word at `mdef`'s offset -192, its
+  first stop's y (`dest1[1]`, -24 units): the door had opened.
+- **The cause**: `mdef` lay in the union the monsters share with the
+  movers (`pos1` .. `move_delta`, ents.h), where `dest1[1]` is. `mdef` is
+  the engine's "a monster or its body" test everywhere (the lists'
+  rebuild, the stream's wants, the damage, the touches, the drawing). An
+  opened secret door read as a monster at the lists' next rebuild (a
+  pickup: the super shotgun's), and its stop as a pointer to its kind: a
+  bus error on the console and DuckStation, nothing on PCSX-Redux (it
+  reads the unmapped address quietly), so no bench saw it. A door that
+  only slid (pos1, pos2) left `dest1` at 0; the secret doors are the ones
+  that write it.
+- **The fix**: `mdef` out of the union, in every edict (0 but a
+  monster's, its body's, its head's); the edict 388 -> 392 bytes (an
+  index stays two shifts and two adds; 1.8 KB more of E1M3's pool, the
+  largest). And nightmare's `pain_finished` (a monster's field, in the
+  union) is set on a monster only: a shootable secret door's `th_pain`
+  wrote it over its first stop's x.
+- **Checked:**
+  - `ents_check` (the bench) refuses an `mdef` that is none of the kinds'
+    tables; `MONSTERS=6` now opens E1M3's five secret doors first, then
+    rebuilds the lists: with `mdef` back in the union, "CORRUPT ... class
+    7 ... mdef ffffffc0" (edict 55); with the fix, "edicts ok", on
+    PCSX-Redux and on DuckStation's interpreter (the whole scenario run,
+    no warning);
+  - against 0c4aee9's references (`HASHONLY=1 PROFILE=0`): the game
+    bench, the monsters' and the movers' display lists identical, the
+    monsters' states and the movers' hashes identical (two dumps' cycle
+    counts ±8);
+  - the release built (a scratch directory: the stack 58488 B).
+- **Left:** a play on DuckStation (the crash's save state was
+  the old code's: it cannot resume on the new).

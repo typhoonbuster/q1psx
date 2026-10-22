@@ -1700,3 +1700,11 @@ followed by R0-R4.
     - the spawn views +1.6 % (E1M8.v0 from 2 to 3 vblanks, none crossing
       one);
     - the crowd's frames unchanged.
+- **The freeze on E1M3** (2026-10-22: frozen after the gold key, on
+  DuckStation). §65: read from a save state: a bus error in the
+  stream's wants, an opened secret door's stop read as a monster's kind
+  (`mdef` shared a union with the movers' fields). `mdef` now in every
+  edict, 0 but a monster's; nightmare's pain timer set on monsters only;
+  the bench's edict check refuses a bad `mdef`, and `MONSTERS=6` opens
+  E1M3's secret doors first. The frames, the monsters and the movers as
+  before.

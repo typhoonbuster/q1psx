@@ -79,6 +79,11 @@ struct edict_s {
 	int32_t  absmin[3], absmax[3];   /* in the world, a unit wider (SV_LinkEdict) */
 	int32_t  velocity[3];    /* units per second (a pusher's: its travel's)    */
 	int32_t  movedir[3];     /* x4096                                          */
+	const struct mdef_s *mdef;   /* a monster's kind (monsters.c), its body's and
+	                                head's too; 0 for every other edict. Not in
+	                                the union below: a mover's words there read
+	                                as a pointer (an opened secret door's stop,
+	                                E1M3: a bus error, DuckStation frozen) */
 	union {
 		struct {             /* a mover's (movers.c, subs.qc's SUB_CalcMove)   */
 			int32_t pos1[3], pos2[3];        /* the mover's ends                */
@@ -90,7 +95,6 @@ struct edict_s {
 		struct {             /* a monster's (monsters.c, ai.c), a gib's, a head's */
 			edict_t *oldenemy, *goalentity, *movetarget;
 			int32_t  pausetime, search_time, show_hostile, pain_finished;   /* ticks */
-			const struct mdef_s *mdef;       /* its kind (monsters.c)           */
 			uint16_t ang[3];       /* pitch, yaw, roll: 65536 a turn (anglemod's) */
 			int16_t  avel[3];      /* MOVETYPE_BOUNCE's avelocity, degrees a second */
 			int16_t  ideal_yaw;    /* degrees (vectoyaw's whole ones)              */

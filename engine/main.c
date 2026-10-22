@@ -2992,6 +2992,24 @@ static void bench_key(void)
 		awake++;
 	}
 	printf("key: %d monsters awake around the key\n", awake);
+	/* the secret doors opened (the crash: an opened one's stop read
+	   as a monster's kind once the lists were rebuilt), then a temporary
+	   edict spawned and removed: the lists rebuilt with them open */
+	int secrets = 0;
+	for (int i = 2; i < num_edicts; i++) {
+		edict_t *c = &edicts[i];
+		if (c->inuse && c->class == QE_FUNC_DOOR_SECRET && c->use) {
+			ent_activator = ent_player;
+			c->use(c);
+			secrets++;
+		}
+	}
+	key_phase("secret doors opening", 240, 0);
+	edict_t *tmp = ent_spawn();
+	if (tmp)
+		ent_remove(tmp);
+	key_phase("lists rebuilt", 60, 0);
+	printf("key: %d secret doors opened, edicts %s\n", secrets, ents_check("secret doors") ? "ok" : "CORRUPT");
 	int32_t at[3];
 	if (!floor_at(key->origin[0], key->origin[1], key->origin[2] + 32 * CLIP_SUB, at)) {
 		printf("key: no floor at the key\n");
@@ -3018,7 +3036,7 @@ static void bench_key(void)
 		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
 		key_phase("at the key again", 200, 0);
 	}
-	printf("key done\n");
+	printf("key done, edicts %s\n", ents_check("key done") ? "ok" : "CORRUPT");
 }
 
 static void run_bench(void)
