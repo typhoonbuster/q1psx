@@ -2122,7 +2122,7 @@ static void bench_menu(void)
 	bench_menu_key(PAD_CROSS, "mnewgame");            /* New Game: "Are you sure" */
 	bench_menu_key(PAD_CIRCLE, 0);                    /* no */
 	bench_menu_key(PAD_TRIANGLE, 0);                  /* back to the main menu */
-	bench_menu_key(PAD_DOWN, 0);                      /* (Multiplayer greyed: to Options) */
+	bench_menu_key(PAD_DOWN, 0);                      /* (to Options) */
 	bench_menu_key(PAD_CROSS, "moptions");
 	bench_menu_key(PAD_UP, 0);                        /* (the greyed ones: to Graphics) */
 	bench_menu_key(PAD_CROSS, "mgraphics");

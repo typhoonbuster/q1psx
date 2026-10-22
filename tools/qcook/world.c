@@ -1543,11 +1543,55 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 		}
 	}
 
+	/* The brush models no entity uses (in the id1 maps, the models of the
+	   entities single player never spawns: ents_parse left them out) keep
+	   their record, not their trees: no face of theirs is drawn
+	   (ents_drawn_models), no edict walks or clips them. Their render
+	   nodes leave the file, the others numbered down in order (a parent
+	   still before its children, the sentinel last); each one's root
+	   becomes a leaf of its tree, its clip roots the world's (clip_share
+	   then leaves their clipnodes out). */
+	uint8_t *used = xcalloc((size_t) b->num_models, 1);
+	ents_used_models(&ents, b->num_models, used);
+	int *node_new = xmalloc(((size_t) b->num_nodes + 1) * sizeof *node_new);
+	int kept_nodes = 0;
+	for (int i = 0; i < b->num_nodes; i++)
+		node_new[i] = !reach[i] || used[reach[i] - 1] ? kept_nodes++ : -1;
+	node_new[b->num_nodes] = kept_nodes;
+	if (kept_nodes < b->num_nodes) {
+		for (int i = 0; i <= b->num_nodes; i++) {   /* (in place: node_new[i] <= i) */
+			if (node_new[i] < 0) {
+				if (nodes[i].faces[0] != nodes[i].faces[1] || nodes[i].faces[1] != nodes[i + 1].faces[0])
+					die("node %d of a model no entity uses has faces", i);   /* (its blocks: empty) */
+				continue;
+			}
+			qw_node *n = &nodes[node_new[i]];
+			*n = nodes[i];
+			if (i == b->num_nodes)
+				break;                               /* (the sentinel: its faces[0]) */
+			for (int c = 0; c < 2; c++)
+				if (!(n->child[c] & 0x80000000u))
+					n->child[c] = (uint32_t) node_new[n->child[c]];   /* (its tree's: kept) */
+			if (n->parent != QW_NOPARENT)
+				n->parent = (uint16_t) (node_new[n->parent / QW_NODE_WORDS] * QW_NODE_WORDS);
+		}
+		for (int i = 0; i < num_leaves; i++)
+			if (leaves[i].parent != QW_NOPARENT) {
+				int p = node_new[leaves[i].parent / QW_NODE_WORDS];
+				leaves[i].parent = p < 0 ? QW_NOPARENT : (uint16_t) (p * QW_NODE_WORDS);
+			}
+		int unused = 0;
+		for (int m = 1; m < b->num_models; m++)
+			unused += !used[m];
+		printf("qcook:   %d brush models no entity uses: %d render nodes -> %d\n", unused, b->num_nodes,
+		       kept_nodes);
+	}
+
 	/* assemble */
 	qw_header h;
 	memset(&h, 0, sizeof h);
 	memcpy(h.magic, QWORLD_MAGIC, 4);
-	h.num_nodes   = (uint32_t) b->num_nodes;
+	h.num_nodes   = (uint32_t) kept_nodes;
 	h.num_leaves  = (uint32_t) num_leaves;
 	h.num_marks   = (uint32_t) ngmarks;
 	h.num_faces   = o.wrecords;                /* visibility ids: the world's records */
@@ -1558,7 +1602,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	for (int k = 0; k < 3; k++)
 		h.spawn[k] = (int32_t) lround(so[k]);
 	h.spawn_yaw = (int32_t) lround(sa);
-	h.root      = (uint32_t) root;
+	h.root      = (uint32_t) node_new[root];
 	h.max_depth = (uint32_t) depth_of(b, root);
 	h.num_visleafs = (uint32_t) wm->visleafs;
 	if (h.max_depth > QW_MAX_DEPTH)
@@ -1576,13 +1620,16 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 			q->mins[k] = (int32_t) lround((bm->mins[k] - 1) * QW_CLIP_SUB);
 			q->maxs[k] = (int32_t) lround((bm->maxs[k] + 1) * QW_CLIP_SUB);
 		}
-		q->root  = bm->headnode[0] >= 0 ? (uint32_t) bm->headnode[0]
-		         : 0x80000000u | (uint32_t) (leaf_new ? leaf_new[-1 - bm->headnode[0]] : -1 - bm->headnode[0]);
+		int r = bm->headnode[0];
+		while (!used[m] && r >= 0)                  /* (a model no entity uses: a leaf of its tree) */
+			r = b->nodes[r].child[0];
+		q->root  = r >= 0 ? (uint32_t) node_new[r]
+		         : 0x80000000u | (uint32_t) (leaf_new ? leaf_new[-1 - r] : -1 - r);
 		if (bm->headnode[1] < 0 || bm->headnode[1] > 32767 || bm->headnode[2] < 0 || bm->headnode[2] > 32767)
 			die("brush model %d: clip roots %d, %d", m, bm->headnode[1], bm->headnode[2]);
 		q->hull1 = (int16_t) bm->headnode[1];
 		q->hull2 = (int16_t) bm->headnode[2];
-		int d = depth_of(b, bm->headnode[0]);
+		int d = depth_of(b, r);
 		if (d > QW_MAX_BM_DEPTH)
 			die("brush model %d: depth %d > %d", m, d, QW_MAX_BM_DEPTH);
 		q->depth = (uint16_t) d;
@@ -1600,7 +1647,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	buf_t f;
 	memset(&f, 0, sizeof f);
 	buf_put(&f, &h, sizeof h);
-	h.ofs_nodes = (uint32_t) f.len;  buf_put(&f, nodes, (size_t) (b->num_nodes + 1) * sizeof *nodes);
+	h.ofs_nodes = (uint32_t) f.len;  buf_put(&f, nodes, (size_t) (kept_nodes + 1) * sizeof *nodes);
 	h.ofs_leaves = (uint32_t) f.len; buf_put(&f, leaves, (size_t) num_leaves * sizeof *leaves);
 	h.ofs_marks = (uint32_t) f.len;  buf_put(&f, gmarks, (size_t) ngmarks * 2); buf_align4(&f);
 	h.ofs_vis = (uint32_t) f.len;    buf_put(&f, b->vis, b->vis_len); buf_align4(&f);
@@ -1640,9 +1687,9 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 		}
 		int nm = b->num_models;
 		int *roots = xmalloc((size_t) 2 * nm * sizeof *roots);
-		for (int m = 0; m < nm; m++) {
-			roots[m]      = b->models[m].headnode[1];
-			roots[nm + m] = b->models[m].headnode[2];
+		for (int m = 0; m < nm; m++) {               /* (a model no entity uses: the world's) */
+			roots[m]      = b->models[used[m] ? m : 0].headnode[1];
+			roots[nm + m] = b->models[used[m] ? m : 0].headnode[2];
 		}
 		qw_clipnode *cnodes = xcalloc((size_t) b->num_clipnodes + 1, sizeof *cnodes);
 		int ncn = clip_share(b, roots, 2 * nm, cnodes);
@@ -1703,7 +1750,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	fclose(fp);
 
 	printf("qcook: %s — %u B: nodes %zu, leaves %zu, marks %u, vis %u, faces %u\n",
-	       out_path, (uint32_t) f.len, b->num_nodes * sizeof *nodes,
+	       out_path, (uint32_t) f.len, kept_nodes * sizeof *nodes,
 	       num_leaves * sizeof *leaves, ngmarks * 2, b->vis_len, h.len_faces);
 	printf("qcook:   %u records, %u pieces -> %u quads + %u tris, %u vertex refs "
 	       "(%.1f/record) into a pool of %d; %u faces split; depth %u; %d bench views\n",
@@ -1718,14 +1765,14 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 		printf("qcook:   spawn %d %d %d yaw %d\n", h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
 	{
 		uint32_t brecs = o.records - o.wrecords;
-		printf("qcook:   %d brush models, %u records, depth <= %u; %u entities (%d unknown), "
-		       "%u B of strings; worldtype %u\n", b->num_models - 1, brecs, h.max_bm_depth,
-		       h.num_ents, unknown, h.len_strings, h.worldtype);
+		printf("qcook:   %d brush models, %u records, depth <= %u; %u entities (%d unknown, %d single "
+		       "player never spawns left out), %u B of strings; worldtype %u\n", b->num_models - 1, brecs,
+		       h.max_bm_depth, h.num_ents, unknown, ents.sp_never, h.len_strings, h.worldtype);
 	}
 
 	free(f.p); free(o.stream.p); free(nodes); free(leaves); free(bmodels);
 	free(etab.p); free(estr.p); ents_free(&ents);
-	free(node_parent); free(leaf_parent); free(reach); free(leaf_new);
+	free(node_parent); free(leaf_parent); free(reach); free(leaf_new); free(used); free(node_new);
 	free(face_group); free(gmarks); free(gfirst); free(gcount); free(uf_up); free(edge_face);
 	free(memb); free(order); free(o.pair_face); free(o.pair_rec);
 	free(face_mfirst); free(face_mleaf); free(face_model);

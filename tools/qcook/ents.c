@@ -3,7 +3,9 @@
  * table (ents_cook: formats/qworld.h qw_ent), the sound bank's entity-driven
  * sounds (sound.c) and the player start. Keys and values stay strings; the
  * accessors convert like Quake's ED_ParseEdict / ED_NewString ("\n" in a
- * value is a newline).
+ * value is a newline). The entities single player never spawns are left
+ * out of the list (ent_sp_never): the port is single player only, so
+ * nothing is cooked for them.
  */
 
 #include <math.h>
@@ -28,6 +30,19 @@ static void list_add(ent_list *l, int ent, const char *key, const char *val)
 	kv->val = strdup(val);
 	if (!kv->key || !kv->val) die("out of memory (entities)");
 	l->ents[ent].num_kv++;
+}
+
+/* An entity single player never spawns, coop and deathmatch's only:
+   their players' starts (client.qc SelectSpawnPoint looks for them in
+   coop or deathmatch only), and what is on no skill (all three skill
+   flags, not easy 256, not medium 512, not hard 1024: ED_LoadFromFile
+   inhibits it at every skill; deathmatch alone ignores them). */
+static int ent_sp_never(const ent_list *l, const ent_rec *e)
+{
+	if (!strcmp(e->classname, "info_player_coop") || !strcmp(e->classname, "info_player_deathmatch"))
+		return 1;
+	long flags = lround(ent_float(l, e, "spawnflags", 0));
+	return (flags & (256 | 512 | 1024)) == (256 | 512 | 1024);
 }
 
 void ents_parse(const bsp_t *b, ent_list *l)
@@ -68,6 +83,15 @@ void ents_parse(const bsp_t *b, ent_list *l)
 		for (int k = 0; k < e->num_kv; k++)
 			if (!strcmp(l->kv[e->first_kv + k].key, "classname"))
 				e->classname = l->kv[e->first_kv + k].val;
+		if (ent_sp_never(l, e)) {                 /* (its keys and values dropped too) */
+			for (int k = e->first_kv; k < l->num_kv; k++) {
+				free(l->kv[k].key);
+				free(l->kv[k].val);
+			}
+			l->num_kv = e->first_kv;
+			l->num--;
+			l->sp_never++;
+		}
 	}
 }
 
@@ -206,6 +230,17 @@ void ents_drawn_models(const bsp_t *b, uint8_t *drawn)
 	ents_free(&l);
 }
 
+void ents_used_models(const ent_list *l, int num_models, uint8_t *used)
+{
+	memset(used, 0, (size_t) num_models);
+	used[0] = 1;
+	for (int i = 0; i < l->num; i++) {
+		const char *m = ent_value(l, &l->ents[i], "model");
+		if (m && m[0] == '*' && atoi(m + 1) > 0 && atoi(m + 1) < num_models)
+			used[atoi(m + 1)] = 1;
+	}
+}
+
 int ent_class(const char *classname)
 {
 	for (size_t i = 0; i < sizeof CLASSES / sizeof CLASSES[0]; i++)
@@ -254,15 +289,13 @@ static int16_t i16(double v, const char *what)
 }
 
 /* Which entities the table keeps: not worldspawn (its fields go to the
-   header), not the coop / deathmatch starts, not info_null and lights
-   without a targetname (Quake removes them at spawn), not the ambient_*
-   sounds (the sound bank places them). */
+   header), not info_null and lights without a targetname (Quake removes
+   them at spawn), not the ambient_* sounds (the sound bank places them).
+   (Those single player never spawns are not in the list: ents_parse.) */
 static int ent_kept(const ent_list *l, const ent_rec *e)
 {
 	const char *c = e->classname;
-	if (!strcmp(c, "worldspawn") || !strcmp(c, "info_null") ||
-	    !strcmp(c, "info_player_coop") || !strcmp(c, "info_player_deathmatch") ||
-	    !strncmp(c, "ambient_", 8))
+	if (!strcmp(c, "worldspawn") || !strcmp(c, "info_null") || !strncmp(c, "ambient_", 8))
 		return 0;
 	if (!strcmp(c, "light") && !ent_value(l, e, "targetname"))
 		return 0;

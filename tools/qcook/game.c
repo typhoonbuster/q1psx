@@ -2525,6 +2525,15 @@ static const aux_spec AUX[] = {
 	{ "#disc", QGA_DISC, 0, 0 },
 };
 #define NUM_AUX (int) (sizeof AUX / sizeof AUX[0])
+
+/* A big menu's 20-row entries the port draws (engine/menu.c), kept one
+   under the other (bit k: entry k), cut from the whole picture once its
+   colours are chosen (its pixels the same): the main menu's Single Player
+   and Options, not its Multiplayer (single player only), Help or Quit */
+#define MENU_ROWS 20
+static const struct { int id; unsigned bands; } AUX_BANDS[] = {
+	{ QGA_MAINMENU, 1u << 0 | 1u << 2 },
+};
 #define AUX_PAGES 2
 
 typedef struct {
@@ -2668,6 +2677,15 @@ static void aux_prepare(const uint8_t *pak, long pak_len)
 			memcpy(tmp + (size_t) y * w, d + (size_t) y * lw + x0, (size_t) w);
 		aux_quantize(a, tmp, trans);
 		free(tmp);
+		for (size_t k = 0; k < sizeof AUX_BANDS / sizeof AUX_BANDS[0]; k++) {
+			if (AUX_BANDS[k].id != as->id)
+				continue;
+			int h = 0;                                /* (its bands' rows, moved up) */
+			for (int y = 0; y < lh; y++)
+				if (AUX_BANDS[k].bands >> (y / MENU_ROWS) & 1)
+					memmove(a->px + (size_t) h++ * w, a->px + (size_t) y * w, (size_t) w);
+			a->h = h;
+		}
 	}
 	/* MaxRects over the two pages: several orders and fits tried, the
 	   first that places everything kept */

@@ -5,9 +5,9 @@
  * host.c "always pause in single player if in console or menus").
  *
  * The pad stands for Quake's keys: the d-pad the arrows, Cross ENTER,
- * Triangle and Circle ESCAPE, START the menu key (togglemenu). What has no
- * PlayStation counterpart (multiplayer, help, quit, loading and saving, the
- * console, the mouse) is shown greyed.
+ * Triangle and Circle ESCAPE, START the menu key (togglemenu). What the
+ * port does not do (multiplayer: single player only; help, quit, loading
+ * and saving, the console, the mouse) is left out (engine/menu.c).
  */
 
 #ifndef Q1PSX_MENU_H

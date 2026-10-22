@@ -85,7 +85,7 @@ static int32_t listener_right[3];              /* x4096                     */
 static int     snd_tick;                       /* the sound clock, ticks    */
 
 static const char *const names[S_COUNT] = {
-	"weapons/ax1.wav", "player/axhit1.wav", "player/axhit2.wav", "weapons/guncock.wav",
+	"weapons/ax1.wav", "player/axhit2.wav", "weapons/guncock.wav",
 	"weapons/shotgn2.wav", "weapons/rocket1i.wav", "weapons/spike2.wav", "weapons/grenade.wav",
 	"weapons/bounce.wav", "weapons/sgun1.wav", "weapons/r_exp3.wav", "weapons/lstart.wav",
 	"weapons/lhit.wav", "weapons/tink1.wav", "weapons/ric1.wav", "weapons/ric2.wav", "weapons/ric3.wav",
@@ -98,10 +98,10 @@ static const char *const names[S_COUNT] = {
 	"player/gasp1.wav", "player/gasp2.wav",
 	"player/inh2o.wav", "player/inlava.wav", "player/slimbrn2.wav", "misc/outwater.wav",
 	"misc/water1.wav", "misc/water2.wav", "misc/h2ohit1.wav",
-	"player/gib.wav", "player/udeath.wav", "player/tornoff2.wav", "player/teledth1.wav",
+	"player/gib.wav", "player/udeath.wav",
 	"misc/r_tele1.wav", "misc/r_tele2.wav", "misc/r_tele3.wav", "misc/r_tele4.wav", "misc/r_tele5.wav",
 	"misc/menu1.wav", "misc/menu2.wav", "misc/menu3.wav", "misc/talk.wav",
-	"items/itembk2.wav", "weapons/lock4.wav", "weapons/pkup.wav", "items/armor1.wav",
+	"weapons/lock4.wav", "weapons/pkup.wav", "items/armor1.wav",
 	"items/damage3.wav", "misc/power.wav", "demon/dland2.wav",
 	"ambience/water1.wav", "ambience/wind2.wav",
 	"misc/secret.wav", "misc/trigger1.wav", "ambience/windfly.wav", "ambience/hum1.wav",

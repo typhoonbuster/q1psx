@@ -155,7 +155,8 @@ typedef struct {
 /* The entity classes the cook knows (tools/qcook/ents.c names them); an
    unknown classname cooks as QE_UNKNOWN with its name kept. Lights without
    a targetname, info_null, the ambient_* sounds (the sound bank has them),
-   worldspawn and the coop / deathmatch starts are left out. */
+   worldspawn and what single player never spawns (the coop / deathmatch
+   starts, the entities on no skill) are left out. */
 enum {
 	QE_UNKNOWN,
 	QE_INFO_PLAYER_START, QE_INFO_PLAYER_START2, QE_INFO_TELEPORT_DESTINATION,

@@ -178,15 +178,17 @@ static void spawn_tfog(const int32_t org[3])
 }
 
 /* tdeath_touch: what stands where the teleported one arrives dies (the
-   player there kills a monster arriving) */
+   player there kills a monster arriving). The QC's multiplayer cases are
+   gone: a player arriving on the player (the owner is never the player
+   when the player touches it: the test above), and the classname
+   teledeath2 for an invincible one (read by the obituaries and a player's
+   gib sound only) */
 static void tdeath_touch(edict_t *self)
 {
 	edict_t *other = ent_other;
 	if (other == self->owner)
 		return;
-	/* frag anyone who teleports in on top of an invincible player (the
-	   player's classname teledeath2: the obituary's) */
-	if (other == ent_player && self->owner != ent_player) {
+	if (other == ent_player) {                    /* other monsters explode themselves */
 		ent_damage(self->owner, self, self, 50000);
 		return;
 	}
