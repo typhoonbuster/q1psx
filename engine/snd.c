@@ -201,7 +201,7 @@ void snd_init(void)
 		dyn[i].sfx = -1;
 }
 
-int snd_load_bank(const char *map)
+Q_COLD int snd_load_bank(const char *map)
 {
 	char name[24];
 	snprintf(name, sizeof name, "\\MAPS\\%s.SND;1", map);
@@ -287,7 +287,7 @@ void snd_forget(int s)
 /* the static sounds: a looping voice per distinct sound, silent until the
    listener comes near; the ambients' voices too (S_StopAllSounds, then
    S_StaticSound for each) */
-void snd_map_start(void)
+Q_COLD void snd_map_start(void)
 {
 	snd_stop_all();
 	static_n = 0;

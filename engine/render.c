@@ -6,6 +6,7 @@
 #include <inline_c.h>
 
 #include "gdata.h"
+#include "mem.h"
 #include "prof.h"
 #include "render.h"
 #include "rlist.h"
@@ -319,7 +320,7 @@ int r_viewport_rows(void)
 	return viewport_rows;
 }
 
-void r_init(void)
+Q_COLD void r_init(void)
 {
 	build_sintab();
 	InitGeom();

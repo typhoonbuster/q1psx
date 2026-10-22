@@ -309,7 +309,7 @@ static void ui_rect(int x, int y, int w, int h, int r, int g, int b)
 
 /* One frame of the loading screen: the map, the level, a bar and the
    percentage (texture file + world file, in bytes read from the CD). */
-static void loading_screen(uint32_t done, uint32_t total)
+Q_COLD static void loading_screen(uint32_t done, uint32_t total)
 {
 	enum { BX = 40, BY = 116, BW = 240, BH = 10 };
 	char line[48];
@@ -339,7 +339,7 @@ static void loading_screen(uint32_t done, uint32_t total)
    models at the models' level. Sets world_ok and binds the renderer. */
 static uint32_t stack_untouched(void);
 
-static int load_level(int map)
+Q_COLD static int load_level(int map)
 {
 	world_ok = 0;
 	load_map = map;

@@ -211,7 +211,7 @@ static int load_directory(int level)
 	return 1;
 }
 
-void stream_init(int level)
+Q_COLD void stream_init(int level)
 {
 	num_assets = 0;
 	for (int i = 0; i < MAX_RES; i++)
@@ -1066,7 +1066,7 @@ void stream_abort(void)
 		slot_free(&res[i]);
 }
 
-void stream_map_start(uint32_t keep)
+Q_COLD void stream_map_start(uint32_t keep)
 {
 	stream_abort();
 	for (int a = 0; a < num_assets; a++) {
@@ -1247,7 +1247,7 @@ void stream_preload_at(const int32_t org[3])
 }
 #endif
 
-void stream_preload(void)
+Q_COLD void stream_preload(void)
 {
 	if (lend_state == L_ROOM &&               /* the lent block (the map's start gave it room) */
 	    read_sectors(lend_lba, (int) (lend_bytes / QST_SECTOR), lend_at)) {

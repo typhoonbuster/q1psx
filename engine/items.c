@@ -20,6 +20,7 @@
 #include "game.h"
 #include "hud.h"
 #include "level.h"
+#include "mem.h"
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
@@ -535,7 +536,7 @@ static void toss_tick(edict_t *e)
 
 /* ----------------------------------------------------------------- spawn -- */
 
-void items_spawn(edict_t *e, const qw_ent *q)
+Q_COLD void items_spawn(edict_t *e, const qw_ent *q)
 {
 	(void) q;
 	switch (e->class) {

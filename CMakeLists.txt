@@ -94,9 +94,19 @@ target_compile_options(q1psx PRIVATE
 
 # The release build (presets "release", "release-medium"): Quake's own menu
 # over the game (engine/menu.c), no debug overlay, no map menu, no cheats.
+# The menus' code at -Os (a menu's pace; every KB of code is RAM:
+# docs/porting-notes.md §60); the loads and spawns elsewhere: Q_COLD
+# (engine/mem.h)
+set_source_files_properties(engine/menu.c engine/settings.c PROPERTIES COMPILE_OPTIONS -Os)
+
 option(Q1PSX_RELEASE "Quake's menu, no debug tools" OFF)
 if(Q1PSX_RELEASE)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_RELEASE=1)
+	if(NOT Q1PSX_BENCH)
+		# no printf: a console has no TTY (engine/noprint.h)
+		target_compile_options(q1psx PRIVATE
+			$<$<COMPILE_LANGUAGE:C>:-include ${PROJECT_SOURCE_DIR}/engine/noprint.h>)
+	endif()
 endif()
 # The build's choices (docs/porting-notes.md §52, engine/settings.h), every
 # build's alike: the textures the disc carries (4-bit; the geometry and the

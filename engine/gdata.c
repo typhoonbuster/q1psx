@@ -33,7 +33,7 @@ static const uint8_t *gdata_file(int level, uint32_t *size)
 	return f;
 }
 
-int gdata_load(int level)
+Q_COLD int gdata_load(int level)
 {
 	uint32_t mark = mem_level_mark(), size;
 	memset(&gdata, 0, sizeof gdata);

@@ -207,7 +207,7 @@ static void cast_lightning(edict_t *self)
 	}
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
 	for (int k = 0; k < 3; k++)
-		end[k] = self->origin[k] + (len ? (int32_t) ((int64_t) d[k] * 600 / len) : 0);
+		end[k] = self->origin[k] + (len ? (int32_t) q_div64_32((int64_t) d[k] * 600, len) : 0);
 	ai_traceline(org, end, 1, self);
 	int32_t hit[3] = { ai_trace_endpos[0], ai_trace_endpos[1], ai_trace_endpos[2] };
 	game_monster_beam(self, org, hit, monster_asset(self, 3));   /* TE_LIGHTNING1 */

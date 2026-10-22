@@ -11,6 +11,7 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "mem.h"
 #include "monsters.h"
 #include "prof.h"
 #include "q_fixed.h"
@@ -81,7 +82,7 @@ static void vnormalize(const int32_t v[3], int32_t out[3])
 {
 	int32_t l = vlen(v);
 	for (int k = 0; k < 3; k++)
-		out[k] = l ? (int32_t) ((int64_t) v[k] * 4096 / l) : 0;
+		out[k] = l ? (int32_t) q_div64_32((int64_t) v[k] * 4096, l) : 0;
 }
 
 /* Quake's vectoangles: yaw and pitch (positive up) of a direction */
@@ -1260,7 +1261,7 @@ static int cut_to_world(int32_t a[3], int32_t b[3])
 				return 0;
 			continue;
 		}
-		int64_t ta = ((int64_t) (-lim - a[k]) << 16) / d, tb = ((int64_t) (lim - a[k]) << 16) / d;
+		int64_t ta = q_div64_32((int64_t) (-lim - a[k]) << 16, d), tb = q_div64_32((int64_t) (lim - a[k]) << 16, d);
 		if (ta > tb) { int64_t t = ta; ta = tb; tb = t; }
 		if (ta > t0) t0 = ta;
 		if (tb < t1) t1 = tb;
@@ -1729,7 +1730,7 @@ void game_spawn_bubble(const int32_t org[3])
 
 /* ExitIntermission's SVC_FINALE text for a map (the edition's: e1m7 has
    one for the shareware game), or the four runes' (map NULL) */
-const char *game_finale_text(const char *map)
+Q_COLD const char *game_finale_text(const char *map)
 {
 	int registered = world_registered();
 	for (uint32_t i = 0; i < gdata.num_finales; i++) {
@@ -1839,7 +1840,7 @@ static void parms_apply(void)
 }
 
 /* PutClientInServer with DecodeLevelParms: SelectSpawnPoint's spot */
-void game_spawn_level(void)
+Q_COLD void game_spawn_level(void)
 {
 	game_view_cut = 1;                            /* (the scheduler: no lerp across it) */
 	if (!parms.valid)

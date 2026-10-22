@@ -264,7 +264,7 @@ int zone_on(void)
 	return zh != 0;
 }
 
-int zone_map_start(const uint8_t *f, const char *map, int tex)
+Q_COLD int zone_map_start(const uint8_t *f, const char *map, int tex)
 {
 	zone_abort();
 	const qw_zone_header *h = (const qw_zone_header *) (f + sizeof(qw_header));
@@ -331,7 +331,7 @@ static uint32_t leaf_at(const int32_t pos[3])
 	return (((at & ~1u) & 0x00ffffffu) - ((uint32_t) world.leaves & 0x00ffffffu)) / sizeof(qw_leaf);
 }
 
-void zone_preload(const int32_t eye[3])
+Q_COLD void zone_preload(const int32_t eye[3])
 {
 	if (!zh)
 		return;

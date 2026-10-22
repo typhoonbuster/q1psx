@@ -1629,3 +1629,12 @@ followed by R0-R4.
     slots. Listed with the measures (0.8-13.6 KB a map);
   - the analysis tool's reader outside the repo (`wld.py`) asserts
     "QWVE": accepting "QWVF" is all it needs (it reads no entity).
+- **The executable trimmed** (2026-10-22). §60: the release prints
+  nothing (no printf, its strings gone: a console has no TTY), no 64-bit
+  division left (`q_div64_32` exact, inline, one `div` in practice; the
+  atan table a constant, its 1.8 M-cycle first call gone; a de Bruijn
+  ctz), no SDK debug font in the release, the code that runs once a level
+  compiled for size (`Q_COLD`, the menus' files at -Os). The release's
+  code and data -16.6 KB (`q1psx.exe` 317440 -> 301056 B), the stack's
+  room 43.4 -> 60.8 KB; the frames identical (start's views, the game,
+  the monsters', the movers' benches).

@@ -11,6 +11,7 @@
 #include "dlight.h"
 #include "game.h"
 #include "hud.h"
+#include "mem.h"
 #include "monsters.h"
 #include "render.h"
 #include "rlist.h"
@@ -42,7 +43,7 @@ static int16_t gib_asset[4];                      /* gib1..3, zom_gib           
 static int16_t backpack_asset;
 
 
-void monsters_map_start(void)
+Q_COLD void monsters_map_start(void)
 {
 	static const char *const gibs[4] = { "progs/gib1.mdl", "progs/gib2.mdl", "progs/gib3.mdl",
 	                                     "progs/zom_gib.mdl" };
@@ -163,7 +164,7 @@ void monster_death_use(edict_t *self)
 }
 
 /* walkmonster_start_go: on the floor, its path or standing */
-static void walkmonster_start_go(edict_t *self)
+Q_COLD static void walkmonster_start_go(edict_t *self)
 {
 	const mdef_t *m = self->mdef;
 	self->origin[2] += SUB;               /* raise off floor a bit */
@@ -205,7 +206,7 @@ static void walkmonster_start_go(edict_t *self)
 	self->nextthink += (int32_t) (frand() * TICKS(50) >> 16);
 }
 
-static void flymonster_start_go(edict_t *self)
+Q_COLD static void flymonster_start_go(edict_t *self)
 {
 	const mdef_t *m = self->mdef;
 	self->takedamage = DAMAGE_AIM;
@@ -246,7 +247,7 @@ static void monster_start(edict_t *self)
 	ent_total_monsters++;
 }
 
-void monsters_spawn(edict_t *e, const qw_ent *q)
+Q_COLD void monsters_spawn(edict_t *e, const qw_ent *q)
 {
 	(void) q;
 	int k = kind_of(e->class);

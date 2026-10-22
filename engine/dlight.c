@@ -56,7 +56,7 @@ static uint32_t isqrt32(uint32_t x)
 	return r;
 }
 
-void dl_init(void)
+Q_COLD void dl_init(void)
 {
 	dl_save_buf = mem_game_alloc(SAVE_ENTRY * SAVE_MAX);
 	dl_touched  = mem_game_alloc(TOUCHED_WORDS * 4);

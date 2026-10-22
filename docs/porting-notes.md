@@ -7768,3 +7768,74 @@ Quake's data goes in the repo.
   - E, the PVS rows per zone;
   - the edicts by the skill (the measure above is its input);
   - F, 16-bit node children.
+
+## §60 — The executable trimmed: no printf, no 64-bit division, no debug font, the cold code for size (2026-10-22)
+
+- **The question**: whether the 1.2 MB ELF is wholly in RAM at boot. No: the ELF carries ~0.9 MB of DWARF (the
+  release preset is RelWithDebInfo); the console loads `q1psx.exe`, the
+  code and the data, 310 KB at 2cb0492. The RAM's real weight is the BSS
+  (1.6 MB: the level arena, the display buffers, the game arena) that
+  follows them; every KB of code is a KB the stack or an arena does not
+  get. Six ways were listed; the first four were taken.
+- **1. No printf in the release.** A console has no TTY to read. CMake
+  forces `engine/noprint.h` into every C file of a release (not a bench)
+  build: `printf(...)` is `((void) 0)`, so the calls, their arguments and
+  their format strings leave the code; `snprintf` (the screen's text)
+  stays. A call's arguments are no longer evaluated: the one with a side
+  effect, `pad_init`'s `pad_force_analog()`, is made before its printf
+  now. The SDK's own 38 printf calls (precompiled) stay, with printf.
+- **2. No 64-bit division.** libgcc's `__divdi3` (1.5 KB, its 256-byte
+  `__clz_tab`) served 22 calls: the monsters' aims and missiles, a mover's
+  time and place on its way, `vnormalize`, the world cube's clip of a
+  trace, and `atan2_d256`'s table, built at its first call by a series in
+  2.30 fixed point (about 5000 divisions: a 1.8 M-cycle tick, measured in
+  the monsters' bench, `mon cost`). Now:
+  - `q_div64_32` (engine/q_fixed.h, .c) divides an int64 by an int32 as
+    C does (truncated toward zero): inline, one `div` when the dividend
+    fits 32 bits (every division the game makes in practice), else a
+    restoring division on the 64 bits (`q_div64_32_long`). Checked on the
+    host against C's division: 19.4 M cases (edges and random), 0
+    mismatches;
+  - the atan table is a constant: the same integer code run once on the
+    host printed its 257 values;
+  - `ents_tick`'s `__builtin_ctz` (libgcc's `__ctzsi2`, which also needs
+    `__clz_tab`) is a de Bruijn table of 32 bytes (checked against the
+    builtin on 2^32 / 9973 values and every power of two).
+- **3. No debug font in the release.** `vid_init` loaded the SDK's font
+  (`FntLoad`, 2.1 KB of image and CLUT data) for `vid_text`'s fallback
+  before the game data. The release loads `GAME.DAT` first (its loading
+  screen draws with Quake's console font): `FntLoad` and the `FntSort`
+  fallback are out of the release, the VRAM at (960, 0) free.
+- **4. The cold code for size.** `Q_COLD` (engine/mem.h, GCC's `cold`:
+  the function optimized for size, in its own text section) on what runs
+  once a level: the world's, the entities', the stream's and the zones'
+  loads and spawns, the level's start and end, the boot's inits; the
+  menus' files (`menu.c`, `settings.c`) at `-Os`. The hot C keeps `-O2`:
+  `-Os` everywhere would take 35.5 KB more (226 -> 190 KB of C, measured
+  file by file) but slow the per-tick and per-frame C, unmeasured.
+- **Measured** (the release, `q1psx.exe` 317440 -> 301056 B):
+
+  | | code + data | |
+  |---|---|---|
+  | 1. printf | -9.0 KB | the strings 3.7 KB of it |
+  | 2. 64-bit division, ctz | -1.4 KB | with the inline fast path (0.6 KB) |
+  | 3. debug font | -3.4 KB | and 224 B of BSS |
+  | 4. cold code for size | -2.9 KB | |
+  | total | -16.6 KB | the BSS -0.7 KB |
+
+  The stack's room (scripts/ramcheck.sh): 43400 -> 60776 B. The level
+  arena keeps its size: what is freed goes to the stack's margin, as with
+  §54's 25 KB (the choice then); `MEM_LEVEL_BYTES` can take it.
+- **The same frames** (PCSX-Redux at 10x, `HASHONLY=1 PROFILE=0`,
+  references saved on 2cb0492): start's 12 views' display lists
+  identical (cycles +2 in 5.55 M), the game bench's hashes identical
+  (frame -0.007 %, ents -0.27 %, snd -0.6 %), the monsters' bench (its
+  dumps and every `mon` state line) and the movers' bench (`bmfhash`)
+  identical.
+- **Left:**
+  - 5, the transient static buffers shared (the cut's 13 KB and the slow
+    path's work area are never in use together) and 6, the monsters' code
+    as overlays a map loads (26 KB of code and 8 KB of tables, only the
+    map's kinds): a call left open;
+  - not checked: the release run in an emulator (it prints nothing now:
+    a look is the check), DuckStation, the real machine.

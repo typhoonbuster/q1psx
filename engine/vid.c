@@ -3,6 +3,7 @@
 #include <string.h>
 #include <psxgpu.h>
 
+#include "mem.h"
 #include "prof.h"
 #include "gdata.h"
 #include "ui.h"
@@ -186,7 +187,7 @@ void *vid_hud_block(int previous)
 	return buf[back ^ previous].arena + VID_ARENA_BYTES - VID_HUD_BYTES;
 }
 
-void vid_init(void)
+Q_COLD void vid_init(void)
 {
 	ResetGraph(0);
 
@@ -199,7 +200,9 @@ void vid_init(void)
 	}
 	vid_set_bg(0, 0, 0);
 
-	FntLoad(960, 0);
+#if !Q1PSX_RELEASE
+	FntLoad(960, 0);                     /* (vid_text before the game data) */
+#endif
 
 	back = 0;
 	begin_buffer(back);
@@ -245,6 +248,8 @@ void vid_text(int x, int y, const char *s)
 		ui_text(x, y, s);
 		return;
 	}
+#if !Q1PSX_RELEASE                       /* (the release loads the game data first:
+                                            no SDK font, docs/porting-notes.md §60) */
 	/* FntSort emits one SPRT per glyph (~4 words) + a DR_TPAGE */
 	int need = 20 * ((int) strlen(s) + 2);
 	if (vid_frame.pkt + need > vid_frame.end) {
@@ -252,6 +257,7 @@ void vid_text(int x, int y, const char *s)
 		return;
 	}
 	vid_frame.pkt = FntSort(&vid_frame.ot[OT_OVERLAY], vid_frame.pkt, x, y, s);
+#endif
 }
 
 void vid_flip(void)

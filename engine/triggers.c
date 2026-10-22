@@ -14,6 +14,7 @@
 #include "ents.h"
 #include "game.h"
 #include "level.h"
+#include "mem.h"
 #include "monsters.h"
 #include "render.h"
 #include "snd.h"
@@ -364,7 +365,7 @@ static void brush_static(edict_t *self, int solid)
 		ent_setmodel(self, self->model);
 }
 
-void triggers_spawn(edict_t *e, const qw_ent *q)
+Q_COLD void triggers_spawn(edict_t *e, const qw_ent *q)
 {
 	(void) q;
 	switch (e->class) {

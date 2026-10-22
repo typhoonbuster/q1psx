@@ -577,7 +577,7 @@ void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func
 		speed = 1;
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ((int64_t) d[0] * d[0] + (int64_t) d[1] * d[1] +
 	                                             (int64_t) d[2] * d[2]));   /* 1/8 units */
-	int32_t ticks = (int32_t) (((int64_t) len * 60 + 4 * speed) / (8 * speed));
+	int32_t ticks = (int32_t) q_div64_32((int64_t) len * 60 + 4 * speed, 8 * speed);
 	if (ticks < TICKS(10)) {
 		self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
 		self->nextthink = self->ltime + TICKS(10);
@@ -775,7 +775,7 @@ static void move_at(const edict_t *e, int32_t t, int32_t out[3])
 		return;
 	}
 	for (int k = 0; k < 3; k++)
-		out[k] = e->move_from[k] + (int32_t) ((int64_t) e->move_delta[k] * t / e->move_ticks);
+		out[k] = e->move_from[k] + (int32_t) q_div64_32((int64_t) e->move_delta[k] * t, e->move_ticks);
 }
 
 /* SV_PushMove: the pusher to its next position; the player in its way, or
@@ -1145,6 +1145,13 @@ static void touch_player(void)
 	}
 }
 
+/* the lowest set bit's index by a de Bruijn sequence (the edicts' active
+   words): __builtin_ctz is libgcc's __ctzsi2 and its 256-byte table here */
+static const uint8_t ctz_tab[32] = {
+	0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
+	31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
+};
+
 void ents_tick(void)
 {
 	if (!edicts)
@@ -1159,7 +1166,7 @@ void ents_tick(void)
 	for (int w = 0; w < ENT_WORDS; w++) {
 		uint32_t bits = active[w];
 		while (bits) {
-			int b = __builtin_ctz(bits);
+			int b = ctz_tab[((bits & -bits) * 0x077cb531u) >> 27];   /* (not libgcc's __ctzsi2) */
 			bits &= bits - 1;
 			edict_t *e = &edicts[w * 32 + b];
 			if (e->inuse && ent_force_retouch && e->movetype != MOVETYPE_PUSH)
@@ -1200,7 +1207,7 @@ void ents_tick(void)
 
 /* ---------------------------------------------------------------- spawn -- */
 
-void ents_load(void)
+Q_COLD void ents_load(void)
 {
 	num_edicts = 0;
 	max_edicts = (int) world.num_ents + 2 + ENT_SPARE;
@@ -1246,7 +1253,7 @@ static edict_t *ent_new(const qw_ent *q)
 	return e;
 }
 
-void ents_spawn(int first)
+Q_COLD void ents_spawn(int first)
 {
 	ents_first_spawn = first;
 	clip_num_bmodels = 0;

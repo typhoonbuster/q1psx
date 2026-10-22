@@ -56,6 +56,12 @@
                                           by the stream's pool when that gun is
                                           chosen) */
 
+/* Code that runs once a level or at a menu's pace (the loads, the spawns,
+   a level's start and end): compiled for size, out of the hot code's way
+   (GCC's cold: -Os for the function, its own text section). Every KB of
+   code is a KB of RAM (docs/porting-notes.md §60). */
+#define Q_COLD __attribute__((cold))
+
 void     mem_level_reset(void);
 void    *mem_level_alloc(uint32_t bytes);      /* 16-byte aligned; NULL if full */
 uint32_t mem_level_mark(void);

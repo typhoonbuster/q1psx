@@ -186,7 +186,7 @@ static void boss_missile(edict_t *self, int pf, int pr, int pu)
 		d[k] = at[k] - org[k];
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
 	for (int k = 0; k < 3; k++)
-		vec[k] = len ? (int32_t) ((int64_t) d[k] * 300 / len) : 0;
+		vec[k] = len ? (int32_t) q_div64_32((int64_t) d[k] * 300, len) : 0;
 	game_monster_missile(MM_LAVABALL, self, org, vec, monster_asset(self, 1), SND_NONE, SND_NONE);
 	ent_sound(self, CHAN_WEAPON, s_throw, 255, ATTN_NORM);
 	if (self->enemy->health <= 0)        /* check for dead enemy */
@@ -274,7 +274,7 @@ static void lightning_fire(edict_t *self)
 		d[k] = p2[k] - p1[k];
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
 	for (int k = 0; k < 3; k++) {
-		n[k] = len ? (int32_t) ((int64_t) d[k] * 100 * SUB / len) : 0;
+		n[k] = len ? (int32_t) q_div64_32((int64_t) d[k] * 100 * SUB, len) : 0;
 		p2[k] -= n[k];
 	}
 	self->nextthink = ent_time + TICKS(10);

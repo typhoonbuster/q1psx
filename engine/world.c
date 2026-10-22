@@ -62,7 +62,7 @@ int world_level_mask(int axis)
 	return level_mask[axis] ? level_mask[axis] : all[axis];
 }
 
-int world_scan_maps(void)
+Q_COLD int world_scan_maps(void)
 {
 	num_disc_maps = 0;
 	memset(level_mask, 0, sizeof level_mask);
@@ -283,7 +283,7 @@ static int load_models(const char *name)
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-int world_load(int map, int tex, int geo, int models, world_progress_fn progress)
+Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn progress)
 {
 	zone_abort();                        /* (a chunk read stopped before the arena goes) */
 	mem_level_reset();
