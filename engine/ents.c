@@ -666,7 +666,8 @@ void ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int d
 	if (targ->th_pain) {
 		ai_damage_take = take;
 		targ->th_pain(targ);
-		if (game_skill == 3)              /* nightmare mode monsters don't go into pain frames often */
+		if (game_skill == 3 && targ->mdef)   /* nightmare mode monsters don't go into pain frames often
+		                                        (a monster's field: not a shootable door's stops) */
 			targ->pain_finished = ent_time + TICKS(500);
 	}
 }
@@ -1377,12 +1378,13 @@ int ents_check(const char *where)
 		const edict_t *e = &edicts[i];
 		if (!e->inuse)
 			continue;
+		extern int monsters_mdef_ok(const struct mdef_s *m);
 		if (e->num_leaves > ENT_MAX_LEAVES || e->item_model < -1 || e->item_model >= (int) world.num_models ||
-		    e->model < 0 || e->model >= (int) world.num_bmodels || e->class > QE_TEMP) {
+		    e->model < 0 || e->model >= (int) world.num_bmodels || e->class > QE_TEMP || !monsters_mdef_ok(e->mdef)) {
 			printf("ents: CORRUPT at %s: edict %d of %d at %08x (size %u, pool %08x..%08x) class %d model %d "
-			       "item %d leaves %d\n", where, i, num_edicts, (unsigned) (uintptr_t) e, (unsigned) sizeof *e,
+			       "item %d leaves %d mdef %08x\n", where, i, num_edicts, (unsigned) (uintptr_t) e, (unsigned) sizeof *e,
 			       (unsigned) (uintptr_t) edicts, (unsigned) (uintptr_t) (edicts + max_edicts), e->class,
-			       e->model, (int) e->item_model, e->num_leaves);
+			       e->model, (int) e->item_model, e->num_leaves, (unsigned) (uintptr_t) e->mdef);
 			const uint32_t *w = (const uint32_t *) e;
 			for (unsigned k = 0; k + 8 <= sizeof *e / 4; k += 8)
 				printf("  +%03x %08x %08x %08x %08x %08x %08x %08x %08x\n", k * 4, (unsigned) w[k], (unsigned) w[k + 1],

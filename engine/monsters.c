@@ -455,6 +455,18 @@ static uint32_t seen_tier(edict_t *e)
 	return l && l->visframe == (uint16_t) r_state.visframe ? 0 : STREAM_HIDDEN;
 }
 
+#ifdef Q1PSX_BENCH
+int monsters_mdef_ok(const struct mdef_s *m)
+{
+	if (!m || m == &mdef_ogre_marksman)
+		return 1;
+	for (int k = 0; k < MK_COUNT; k++)
+		if (m == KINDS[k])
+			return 1;
+	return 0;
+}
+#endif
+
 /* the kinds' assets at their nearest living monster's distance (Chebyshev,
    world units), those the player's PVS holds first: a kind's model and
    sounds at its nearest member's want, its head a tier under (only used
