@@ -27,8 +27,8 @@ void mdl_forget(int a);
 void mdl_new_frame(void);
 
 /* the pool of frame `frame` of the resident model `a` (its header m),
-   expanded: NULL when the cache cannot take it this frame (it holds only
-   expansions this frame draws) */
+   expanded: NULL when the cache cannot take it this frame (no gap for it
+   between the expansions this frame draws, or every entry drawn) */
 const qw_vert *mdl_frame(int a, const qst_model *m, int frame);
 
 /* engine/mdl_expand.s: n vertex words into qw_vert's: x | y << 16, then

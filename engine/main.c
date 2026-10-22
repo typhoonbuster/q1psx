@@ -28,6 +28,7 @@
 #include "anim.h"
 #include "menu.h"
 #include "dlight.h"
+#include "mdl.h"
 #include "mem.h"
 #include "monsters.h"
 #include "music.h"
@@ -1575,13 +1576,25 @@ static void ents_look_at(const int32_t at[3])
 	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 }
 
+/* the frame cache's refusals since the last call (engine/mdl.c: a model
+   whose frame it cannot expand is not drawn) */
+static uint32_t mdl_refused_since(void)
+{
+	static uint32_t seen;
+	uint32_t n = mdl_stat_refused - seen;
+	seen = mdl_stat_refused;
+	return n;
+}
+
 static void ents_dump(const char *name)
 {
 	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
-	for (int i = 0; i < 2; i++)
-		run_frame(0, 0);
-	printf("mon dump %s: %d streamed models drawn; frame %u cycles (block %u, slow %u, ents %u)\n", name,
-	       monsters_drawn, (unsigned) prof_stage[PROF_FRAME], (unsigned) prof_stage[PROF_R_BLOCK],
+	run_frame(0, 0);
+	mdl_refused_since();
+	run_frame(0, 0);                                  /* (measured: it draws what the dump will) */
+	printf("mon dump %s: %d streamed models drawn, the frame cache refused %u; frame %u cycles "
+	       "(block %u, slow %u, ents %u)\n", name, monsters_drawn, (unsigned) mdl_refused_since(),
+	       (unsigned) prof_stage[PROF_FRAME], (unsigned) prof_stage[PROF_R_BLOCK],
 	       (unsigned) prof_stage[PROF_R_SLOW], (unsigned) prof_stage[PROF_ENTS]);
 	printf("D %s\n", name);
 	ents_debug = 1;                                   /* (the models drawn, their pieces) */
@@ -2300,6 +2313,8 @@ static void bench_game(void)
 	static const char *const wname[W_COUNT] = { "axe", "shotgun", "sshotgun", "nailgun",
 	                                            "snailgun", "glauncher", "rlauncher", "lightning" };
 	static char names[W_COUNT + 2][12];
+	uint32_t expanded = mdl_stat_expanded;
+	mdl_refused_since();
 	game_spawn();
 	game_active = 1;
 	pl.pm.pitch = -40;                                  /* a little down: the floor hits */
@@ -2421,6 +2436,8 @@ static void bench_game(void)
 	bench_tick_cost();                                /* (last: they move the player) */
 	bench_tick_rates();
 	bench_walk();
+	printf("bench frame cache: %u expansions, %u refused (every frame of the game bench)\n",
+	       (unsigned) (mdl_stat_expanded - expanded), (unsigned) mdl_refused_since());
 	game_active = 0;
 	pad_read();                                       /* the interrupt-driven poll, seen once */
 	printf("pad poll: %s type %d held %04x sticks %d %d %d %d\n", pad.connected ? "connected" : "absent",
@@ -2694,6 +2711,7 @@ static void bench_monsters(void)
 		cmd.fire = 1;
 		int peak = 0;
 		uint32_t fsum = 0, fdrawn = 0;               /* (the frames' cycles, the monsters drawn) */
+		mdl_refused_since();
 		for (int t = 0; t < 3600; t++) {
 			pl.health = 100;
 			pl.dead = 0;
@@ -2728,10 +2746,12 @@ static void bench_monsters(void)
 				for (int i = 2; i < num_edicts; i++)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
-				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn\n",
+				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn, "
+				       "the frame cache refused %u\n",
 				       t + 1, alive, used, peak, max, (unsigned) stack_untouched(),
 				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) vid_stats.vbl,
-				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10));
+				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10),
+				       (unsigned) mdl_refused_since());
 				fsum = fdrawn = 0;
 			}
 		}
