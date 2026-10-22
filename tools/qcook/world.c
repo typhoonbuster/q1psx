@@ -990,6 +990,87 @@ static int clip_depth(const bsp_t *b, int n)
 	return 1 + (a > c ? a : c);
 }
 
+/* The clip hulls with their identical subtrees shared: two clipnodes on
+   the same plane whose children are the same contents or shared nodes are
+   one. A trace or a contents walk takes the same planes and reaches the
+   same contents through either, so every result is the same, bit for bit;
+   qbsp's hulls repeat 1.5-14.7 KB of subtrees a map (docs/porting-notes.md
+   §58). The roots (`roots`: the world's hull 1, the brush models', then the
+   hulls 2; a contents root stays as it is) are numbered depth first, so
+   hull 1's nodes come first, as in the BSP. `out` takes the table (room
+   for b->num_clipnodes), `roots` the new indices; returns the count. */
+typedef struct { int plane, child[2]; } share_key;
+
+static int share_canon(const bsp_t *b, int n, int *canon, share_key *keys, int *nkeys, int *hash, int hmask)
+{
+	if (canon[n] >= 0)
+		return canon[n];
+	share_key k;
+	k.plane = b->clipnodes[n].planenum;
+	for (int c = 0; c < 2; c++) {
+		int ch = b->clipnodes[n].child[c];
+		k.child[c] = ch < 0 ? ch : share_canon(b, ch, canon, keys, nkeys, hash, hmask);
+	}
+	uint32_t hv = (uint32_t) k.plane * 2654435761u ^ (uint32_t) k.child[0] * 40503u ^ (uint32_t) k.child[1] * 2246822519u;
+	for (uint32_t i = hv & (uint32_t) hmask;; i = (i + 1) & (uint32_t) hmask) {
+		int id = hash[i];
+		if (id < 0) {
+			id = (*nkeys)++;
+			keys[id] = k;
+			hash[i] = id;
+			return canon[n] = id;
+		}
+		if (keys[id].plane == k.plane && keys[id].child[0] == k.child[0] && keys[id].child[1] == k.child[1])
+			return canon[n] = id;
+	}
+}
+
+static int clip_share(const bsp_t *b, int *roots, int nroots, qw_clipnode *out)
+{
+	int n = b->num_clipnodes, hmask = 1, nkeys = 0, count = 0;
+	while (hmask < 2 * n + 2)
+		hmask <<= 1;
+	int *canon = xmalloc((size_t) n * sizeof *canon), *hash = xmalloc((size_t) hmask * sizeof *hash);
+	int *num = xmalloc((size_t) n * sizeof *num), *stack = xmalloc((size_t) (n + nroots + 2) * sizeof *stack);
+	share_key *keys = xmalloc((size_t) n * sizeof *keys);
+	for (int i = 0; i < n; i++)
+		canon[i] = num[i] = -1;
+	for (int i = 0; i < hmask; i++)
+		hash[i] = -1;
+	hmask--;
+	for (int r = 0; r < nroots; r++)
+		if (roots[r] >= 0)
+			roots[r] = share_canon(b, roots[r], canon, keys, &nkeys, hash, hmask);
+	for (int r = 0; r < nroots; r++) {              /* depth first, child 0 first */
+		if (roots[r] < 0)
+			continue;
+		int sp = 0;
+		stack[sp++] = roots[r];
+		while (sp) {
+			int id = stack[--sp];
+			if (num[id] >= 0)
+				continue;
+			num[id] = count++;
+			for (int c = 1; c >= 0; c--)
+				if (keys[id].child[c] >= 0)
+					stack[sp++] = keys[id].child[c];
+		}
+	}
+	for (int id = 0; id < nkeys; id++) {
+		if (num[id] < 0)
+			continue;                                  /* (no root reaches it) */
+		qw_clipnode *q = &out[num[id]];
+		q->plane3 = (uint16_t) (keys[id].plane * 3);
+		for (int c = 0; c < 2; c++)
+			q->child[c] = (int16_t) (keys[id].child[c] < 0 ? keys[id].child[c] : num[keys[id].child[c]]);
+	}
+	for (int r = 0; r < nroots; r++)
+		if (roots[r] >= 0)
+			roots[r] = num[roots[r]];
+	free(canon); free(hash); free(num); free(stack); free(keys);
+	return count;
+}
+
 void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *out_path)
 {
 	const bsp_model *wm = &b->models[0];
@@ -1316,6 +1397,58 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	}
 	free(lsum); free(lcnt); free(nsum); free(ncnt);
 
+	/* The brush models' leaves (Quake numbers them after the world's, whose
+	   PVS rows index leaves 1..visleafs): no marks, no PVS row, nothing the
+	   engine reads but their contents (the renderer stops at a brush
+	   model's leaf, the point hull's traces read its contents byte). They
+	   become one leaf per contents, after the world's (docs/porting-notes.md
+	   §58): 210-953 leaves a map, 28 bytes each and their ambient bytes.
+	   A map whose leaves past the world's held anything else would keep
+	   them all (none does). */
+	int num_leaves = b->num_leaves, own_leaves = b->num_leaves;   /* (own: the leaves kept as they are) */
+	int *leaf_new = NULL;                     /* [b->num_leaves]: a leaf's index in the file */
+	{
+		int merge = wm->visleafs + 1 < b->num_leaves;
+		for (int i = wm->visleafs + 1; i < b->num_leaves && merge; i++)
+			if (gcount[i] || leaves[i].vis != QW_NONE ||
+			    (leaf_parent[i] != QW_NONE && reach[leaf_parent[i]] == 1))   /* (a world leaf) */
+				merge = 0;
+		if (merge) {
+			int8_t shared[8];
+			int nshared = 0;
+			leaf_new   = xmalloc((size_t) b->num_leaves * sizeof *leaf_new);
+			own_leaves = wm->visleafs + 1;
+			for (int i = 0; i < b->num_leaves; i++) {
+				leaf_new[i] = i;
+				if (i < own_leaves)
+					continue;
+				int k = 0;
+				while (k < nshared && shared[k] != leaves[i].contents)
+					k++;
+				if (k == nshared) {
+					if (nshared == (int) sizeof shared)
+						die("brush models' leaves: more than %d contents", (int) sizeof shared);
+					shared[nshared++] = leaves[i].contents;
+				}
+				leaf_new[i] = own_leaves + k;
+			}
+			for (int k = 0; k < nshared; k++) {
+				qw_leaf *l = &leaves[own_leaves + k];
+				memset(l, 0, sizeof *l);
+				l->vis      = QW_NONE;
+				l->parent   = QW_NOPARENT;
+				l->contents = shared[k];
+				l->light    = 128;
+			}
+			for (int i = 0; i < b->num_nodes; i++)
+				for (int c = 0; c < 2; c++)
+					if (nodes[i].child[c] & 0x80000000u)
+						nodes[i].child[c] = 0x80000000u | (uint32_t) leaf_new[nodes[i].child[c] & 0x7fffffffu];
+			num_leaves = own_leaves + nshared;
+			printf("qcook:   the brush models' %d leaves -> %d shared\n", b->num_leaves - own_leaves, nshared);
+		}
+	}
+
 	/* bench views: spawn x4 yaws, then the 3 leaves that see the most faces */
 	qw_view views[16];
 	int nviews = 0;
@@ -1415,7 +1548,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	memset(&h, 0, sizeof h);
 	memcpy(h.magic, QWORLD_MAGIC, 4);
 	h.num_nodes   = (uint32_t) b->num_nodes;
-	h.num_leaves  = (uint32_t) b->num_leaves;
+	h.num_leaves  = (uint32_t) num_leaves;
 	h.num_marks   = (uint32_t) ngmarks;
 	h.num_faces   = o.wrecords;                /* visibility ids: the world's records */
 	h.num_records = o.records;
@@ -1444,7 +1577,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 			q->maxs[k] = (int32_t) lround((bm->maxs[k] + 1) * QW_CLIP_SUB);
 		}
 		q->root  = bm->headnode[0] >= 0 ? (uint32_t) bm->headnode[0]
-		         : 0x80000000u | (uint32_t) (-1 - bm->headnode[0]);
+		         : 0x80000000u | (uint32_t) (leaf_new ? leaf_new[-1 - bm->headnode[0]] : -1 - bm->headnode[0]);
 		if (bm->headnode[1] < 0 || bm->headnode[1] > 32767 || bm->headnode[2] < 0 || bm->headnode[2] > 32767)
 			die("brush model %d: clip roots %d, %d", m, bm->headnode[1], bm->headnode[2]);
 		q->hull1 = (int16_t) bm->headnode[1];
@@ -1468,7 +1601,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	memset(&f, 0, sizeof f);
 	buf_put(&f, &h, sizeof h);
 	h.ofs_nodes = (uint32_t) f.len;  buf_put(&f, nodes, (size_t) (b->num_nodes + 1) * sizeof *nodes);
-	h.ofs_leaves = (uint32_t) f.len; buf_put(&f, leaves, (size_t) b->num_leaves * sizeof *leaves);
+	h.ofs_leaves = (uint32_t) f.len; buf_put(&f, leaves, (size_t) num_leaves * sizeof *leaves);
 	h.ofs_marks = (uint32_t) f.len;  buf_put(&f, gmarks, (size_t) ngmarks * 2); buf_align4(&f);
 	h.ofs_vis = (uint32_t) f.len;    buf_put(&f, b->vis, b->vis_len); buf_align4(&f);
 	h.len_vis = b->vis_len;
@@ -1487,19 +1620,44 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	}
 
 	h.ofs_ambient = (uint32_t) f.len;           /* the leaves' water / sky levels */
-	for (int i = 0; i < b->num_leaves; i++)
-		buf_put(&f, b->leaves[i].ambient, 2);
+	for (int i = 0; i < num_leaves; i++) {
+		static const uint8_t none[2];             /* (the brush models' shared leaves) */
+		buf_put(&f, i < own_leaves ? b->leaves[i].ambient : none, 2);
+	}
 	buf_align4(&f);
 	h.num_tex = (uint32_t) ts->num;              /* (the texture set's table) */
 
-	/* clip hulls 1 and 2 (all BSP planes, all clipnodes) */
+	/* clip hulls 1 and 2 (all BSP planes; the clipnodes with their
+	   identical subtrees shared: clip_share) */
 	{
+		for (int i = 0; i < b->num_clipnodes; i++) {
+			const bsp_clipnode *cn = &b->clipnodes[i];
+			if (cn->planenum < 0 || cn->planenum >= b->num_planes || cn->planenum * 3 > 0xffff)
+				die("clipnode %d: bad plane (or more than 21845 planes)", i);
+			for (int c = 0; c < 2; c++)
+				if (cn->child[c] >= b->num_clipnodes)
+					die("clipnode %d: child out of range", i);
+		}
+		int nm = b->num_models;
+		int *roots = xmalloc((size_t) 2 * nm * sizeof *roots);
+		for (int m = 0; m < nm; m++) {
+			roots[m]      = b->models[m].headnode[1];
+			roots[nm + m] = b->models[m].headnode[2];
+		}
+		qw_clipnode *cnodes = xcalloc((size_t) b->num_clipnodes + 1, sizeof *cnodes);
+		int ncn = clip_share(b, roots, 2 * nm, cnodes);
+		for (int m = 1; m < nm; m++) {
+			bmodels[m].hull1 = (int16_t) roots[m];
+			bmodels[m].hull2 = (int16_t) roots[nm + m];
+		}
+		printf("qcook:   clip hulls: %d clipnodes -> %d, the identical subtrees shared\n", b->num_clipnodes, ncn);
+
 		h.ofs_clip = (uint32_t) f.len;
 		qw_clip_header ch;
 		ch.num_planes    = (uint32_t) b->num_planes;
-		ch.num_clipnodes = (uint32_t) b->num_clipnodes;
-		ch.hull1_root    = wm->headnode[1];
-		ch.hull2_root    = wm->headnode[2];
+		ch.num_clipnodes = (uint32_t) ncn;
+		ch.hull1_root    = roots[0];
+		ch.hull2_root    = roots[nm];
 		buf_put(&f, &ch, sizeof ch);
 		for (int i = 0; i < b->num_planes; i++) {
 			const bsp_plane *pl = &b->planes[i];
@@ -1511,19 +1669,9 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 			qp.dist = (int32_t) lround((double) pl->dist * 4096.0 * QW_CLIP_SUB);
 			buf_put(&f, &qp, sizeof qp);
 		}
-		for (int i = 0; i < b->num_clipnodes; i++) {
-			const bsp_clipnode *cn = &b->clipnodes[i];
-			qw_clipnode qc;
-			if (cn->planenum < 0 || cn->planenum >= b->num_planes || cn->planenum * 3 > 0xffff)
-				die("clipnode %d: bad plane (or more than 21845 planes)", i);
-			for (int c = 0; c < 2; c++)
-				if (cn->child[c] >= b->num_clipnodes)
-					die("clipnode %d: child out of range", i);
-			qc.plane3   = (uint16_t) (cn->planenum * 3);
-			qc.child[0] = (int16_t) cn->child[0];
-			qc.child[1] = (int16_t) cn->child[1];
-			buf_put(&f, &qc, sizeof qc);
-		}
+		buf_put(&f, cnodes, (size_t) ncn * sizeof *cnodes);
+		free(cnodes);
+		free(roots);
 		h.len_clip = (uint32_t) f.len - h.ofs_clip;
 		for (int m = 0; m < b->num_models; m++)
 			for (int hull = 1; hull <= 2; hull++) {
@@ -1555,7 +1703,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 
 	printf("qcook: %s — %u B: nodes %zu, leaves %zu, marks %u, vis %u, faces %u\n",
 	       out_path, (uint32_t) f.len, b->num_nodes * sizeof *nodes,
-	       b->num_leaves * sizeof *leaves, ngmarks * 2, b->vis_len, h.len_faces);
+	       num_leaves * sizeof *leaves, ngmarks * 2, b->vis_len, h.len_faces);
 	printf("qcook:   %u records, %u pieces -> %u quads + %u tris, %u vertex refs "
 	       "(%.1f/record) into a pool of %d; %u faces split; depth %u; %d bench views\n",
 	       o.records, o.pieces, o.quads, o.tris, o.verts,
@@ -1576,7 +1724,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 
 	free(f.p); free(o.stream.p); free(nodes); free(leaves); free(bmodels);
 	free(etab.p); free(estr.p); ents_free(&ents);
-	free(node_parent); free(leaf_parent); free(reach);
+	free(node_parent); free(leaf_parent); free(reach); free(leaf_new);
 	free(face_group); free(gmarks); free(gfirst); free(gcount); free(uf_up); free(edge_face);
 	free(memb); free(order); free(o.pair_face); free(o.pair_rec);
 	free(face_mfirst); free(face_mleaf); free(face_model);

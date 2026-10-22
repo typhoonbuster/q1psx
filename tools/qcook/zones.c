@@ -299,7 +299,10 @@ int cmd_zones(int argc, char **argv)
 		free(f);
 		return 0;
 	}
-	if (T.num_leaves != nl || T.num_faces != H->num_faces) {
+	/* (a table may count the brush models' leaves one by one, as the cook
+	   wrote them before they were shared, docs/porting-notes.md §58: the
+	   world's leaves are the same, the camera's never past them) */
+	if ((T.num_leaves != nl && (T.num_leaves < nl || nl <= H->num_visleafs)) || T.num_faces != H->num_faces) {
 		printf("qcook: zones: %s is for %u leaves, %u faces; the world has %u, %u: the map stays whole\n",
 		       tab, T.num_leaves, T.num_faces, nl, H->num_faces);
 		free(f);
@@ -492,8 +495,9 @@ int cmd_zones(int argc, char **argv)
 	uint32_t nsets = 0;
 	uint8_t *leaf_set = xmalloc(nl);
 	for (uint32_t l = 0; l < nl; l++) {
-		if (!l) {
-			leaf_set[l] = QZ_NONE;            /* the camera in solid: its zone kept */
+		if (!l || l > H->num_visleafs) {
+			leaf_set[l] = QZ_NONE;            /* the camera in solid: its zone kept (the
+			                                     brush models' leaves: never the camera's) */
 			continue;
 		}
 		qw_zone_set st = { (uint8_t) T.leaf_zone[l], { QZ_NONE, QZ_NONE, QZ_NONE } };

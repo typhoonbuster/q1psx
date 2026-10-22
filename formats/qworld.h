@@ -86,7 +86,10 @@ typedef struct {
 typedef struct {
 	char     magic[4];             /* "QWVB"                                  */
 	uint32_t num_nodes;            /* + 1 sentinel node in the file           */
-	uint32_t num_leaves;           /* including leaf 0 (solid)                */
+	uint32_t num_leaves;           /* leaf 0 (solid), the world's 1..num_visleafs,
+	                                  then one per contents for every brush
+	                                  model's leaves (nothing reads them but
+	                                  their contents: shared, §58)            */
 	uint32_t num_marks;
 	uint32_t num_faces;            /* the world's records (visframe ids)      */
 	uint32_t num_records;          /* face records in the stream, the brush
@@ -309,7 +312,10 @@ typedef struct {
    qw_clip_header at ofs_clip, then the planes, then the clipnodes. Laid out
    for the asm trace (engine/clip.s): distances are pre-scaled to the
    physics' position unit (1/QW_CLIP_SUB world unit) and clipnodes hold their
-   plane's offset in words, so no per-node multiply is left. */
+   plane's offset in words, so no per-node multiply is left. Identical
+   subtrees (the same plane, the same children) are one clipnode: the hulls
+   are a DAG, numbered depth first from the roots (the world's hull 1, the
+   brush models', then the hulls 2; docs/porting-notes.md §58). */
 #define QW_CLIP_SUB 8              /* physics positions: 1/8 world unit  */
 #define QW_MAX_SPLIT 128           /* clip-hull depth the trace handles
                                       (Quake maps reach 65)              */
