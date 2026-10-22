@@ -31,8 +31,8 @@ mkdir -p "$REF"
 	echo "dlcheck: bench failed (see $OUT/bench.log)"; exit 1; }
 LOG="$OUT/bench.log"
 grep -E '^(P|E|D|H) ' "$LOG" > "$REF/current.dl"
-grep -E '^bench (view[0-9]+|[A-Z0-9]+\.v[0-9]) ' "$LOG" |
-	sed -E 's/^bench ([^ ]+) .* frame=([0-9]+)\/.*/\1 \2/' > "$REF/current.bench"
+{ grep -E '^bench (view[0-9]+|[A-Z0-9]+\.v[0-9]) ' "$LOG" || true; } |
+	sed -E 's/^bench ([^ ]+) .* frame=([0-9]+)\/.*/\1 \2/' > "$REF/current.bench"   # (the game bench: none)
 
 if [ "$MODE" = save ]; then
 	cp "$REF/current.dl" "$REF/$NAME.dl"
@@ -45,7 +45,7 @@ fi
 awk 'NR == FNR { ref[$1] = $2; next }
 	($1 in ref) { r = ref[$1]; d = $2 - r; tot0 += r; tot1 += $2; if (r > max0) max0 = r; if ($2 > max1) max1 = $2
 	  printf "%-9s %7d -> %7d  %+6d (%+.1f%%)\n", $1, r, $2, d, 100.0 * d / r }
-	END { printf "total     %7d -> %7d  %+.1f%%   worst %d -> %d\n", tot0, tot1, 100.0 * (tot1 - tot0) / tot0, max0, max1 }' \
+	END { if (tot0) printf "total     %7d -> %7d  %+.1f%%   worst %d -> %d\n", tot0, tot1, 100.0 * (tot1 - tot0) / tot0, max0, max1 }' \
 	"$REF/$NAME.bench" "$REF/current.bench"
 if cmp -s "$REF/$NAME.dl" "$REF/current.dl"; then
 	echo "dlcheck: display lists IDENTICAL to '$NAME'"

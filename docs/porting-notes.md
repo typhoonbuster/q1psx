@@ -6746,3 +6746,355 @@ lines):
   - next, the skeleton: the PVS rows per zone, the clip hulls and nodes
     where the player can be — the RAM wanted for the streamed
     assets is there too.
+
+## §57 — Level streaming by zones (2026-10-22)
+
+- **The ask:** the levels streamed in chunks: the chunk the player is in and the two adjacent
+  ones loaded, the teleporters counted, chunks of 64 to 128 KB, for much more room for the
+  streaming; then to start this implementation at once: the calls below
+  were made by measure, and the alternatives are listed (§57.8). On a
+  branch of its own, not merged.
+- **What it does.** A zoned map's level arena keeps its skeleton (nodes,
+  leaves, marks, PVS, clip hulls, the brush models and their records, the
+  entities) and three chunk slots. A zone is a set of camera leaves (§56's
+  tables); its chunk holds every world record the PSX may draw from any of
+  them. The camera leaf's zone is the one drawn; the two zones nearest to
+  it by walking distance (a teleporter one step) are read ahead into the
+  other slots, from the CD, while the player moves.
+
+### 57.1 The cook: skeleton and chunks
+
+- `qcook zones` (`tools/qcook/zones.c`) splits a cooked world: it reads
+  the whole `<map>_g0.wld` (QWVE, unchanged: the tools and the analysis
+  keep reading it), the map's table, and both texture sets (`_t1.tx4`,
+  `_t2.tx4`), and writes:
+  - `<map>_g0.skl`, the skeleton ("QWVZ", formats/qworld.h): a QWVE
+    file's header and sections, a `qw_zone_header` after the header, the
+    face stream and the vertex pool holding the brush models' records only
+    (their UVs mapped by the loader, as before), then the zone tables: the
+    chunk directory, a byte per leaf (its zone set), the sets (a zone and
+    its three nearest);
+  - `<map>_z1.zon`, `<map>_z2.zon`, the chunks per texture level ("QZN1"):
+    each chunk from a sector of its own, its records as the loader would
+    have left them (face ids doubled, the average light in the flags, the
+    UVs on that set's tiles, the vertex indices into the chunk's own pool),
+    a patch list, then its pool.
+- **The UVs in the cook.** Mapping a chunk's UVs when it lands would cost
+  about 0.8 frame a chunk (18 k UV words, two multiplies each), so the
+  cook maps them, once per texture level; the disc takes the build's
+  level only (`scripts/cd_image.cmake`). Hence a `.zon` per level, and the
+  zones' step runs after the textures' jobs (`scripts/cook.sh`).
+- **The node array is reordered.** The renderer ends a node's back block
+  where the next node's front block starts (`qw_face_end`), so every
+  chunk lays out its blocks in node order, an empty block for every node
+  without records in it. The world's blocks live in the chunk and the
+  brush models' in the skeleton, and the chain must not run from one to
+  the other: the skeleton's node array is the world's nodes that hold a
+  record in some chunk ("patched"), then an end node no walk reaches
+  (its `faces[0]` ends the current chunk's last block), then the world's
+  nodes no chunk gives a record (their blocks empty for good: almost none,
+  0-107 a map), then the brush models' nodes, then the sentinel. Children
+  are pointers, parents are re-indexed: the walk's order, so the frames,
+  do not change.
+- **The patch list:** a word per patched node with records in the chunk,
+  `skip << 24 | front words << 12 | back words` (skip: the patched nodes
+  before it with none, their blocks empty at the running pointer; a run
+  longer than 255 takes words of skip 255 and no blocks), the last word
+  the end node's. 529-1116 words a chunk (2-4.4 KB).
+- **The tables** come from `local.env`'s `Q1PSX_ZONE_TABLES` (derived
+  from Quake's data: never in the repo). Without it every map is cooked
+  whole, as before, and the build works anywhere. A table that does not
+  match the world (its leaf and face counts) leaves the map whole.
+- **A map stays whole** when its skeleton and slots would take as much as
+  the whole world. With the default tables: 20 maps zoned, 12 whole
+  (E1M5, E1M6, E1M7, E1M8, E2M6, E3M2, E3M3, E3M6, E3M7, E4M3, E4M6, END).
+
+| map | zones | records in the chunks (the world's) | chunks KB | patched nodes (never) | patch words max | sets | skeleton + slots = resident vs whole (KB) |
+|---|---|---|---|---|---|---|---|
+| START | 7 | 5836 (4133) | 37..93 | 2394 (28) | 725 | 29 | 277 + 3 x 94 = 559 vs 592 |
+| E1M1 | 10 | 9761 (4390) | 49..104 | 2332 (23) | 720 | 68 | 276 + 3 x 104 = 588 vs 600 |
+| E1M2 | 7 | 6170 (4172) | 27..92 | 2382 (43) | 685 | 57 | 295 + 3 x 94 = 577 vs 614 |
+| E1M3 | 8 | 5139 (3741) | 12..91 | 2184 (1) | 639 | 48 | 314 + 3 x 92 = 590 vs 599 |
+| E1M4 | 7 | 6530 (4681) | 53..88 | 2591 (6) | 693 | 42 | 334 + 3 x 90 = 604 vs 693 |
+| E1M5 | 7 | 5860 (3705) | 9..103 | 2041 (39) | 673 | 42 | 269 + 3 x 104 = 581 vs 555 (whole) |
+| E1M6 | 7 | 7032 (2708) | 66..94 | 1547 (1) | 684 | 41 | 266 + 3 x 96 = 554 vs 465 (whole) |
+| E1M7 | 1 | 1188 (1188) | 91..91 | 615 (1) | 616 | 1 | 95 + 1 x 92 = 187 vs 183 (whole) |
+| E1M8 | 25 | 24925 (2617) | 53..105 | 1117 (0) | 541 | 186 | 146 + 3 x 106 = 464 vs 353 (whole) |
+| E2M1 | 16 | 12331 (4649) | 20..107 | 2571 (13) | 733 | 144 | 302 + 3 x 108 = 626 vs 649 |
+| E2M2 | 9 | 9054 (4805) | 30..103 | 2821 (107) | 783 | 85 | 322 + 3 x 104 = 634 vs 680 |
+| E2M3 | 11 | 10245 (4584) | 52..94 | 2638 (29) | 682 | 123 | 320 + 3 x 96 = 608 vs 661 |
+| E2M4 | 12 | 9660 (5142) | 31..94 | 2771 (74) | 734 | 115 | 337 + 3 x 96 = 625 vs 714 |
+| E2M5 | 10 | 8764 (4392) | 31..93 | 2193 (29) | 565 | 98 | 282 + 3 x 94 = 564 vs 627 |
+| E2M6 | 11 | 7852 (3978) | 5..101 | 2282 (16) | 714 | 60 | 308 + 3 x 102 = 614 vs 606 (whole) |
+| E2M7 | 9 | 6922 (4736) | 8..104 | 2704 (1) | 785 | 60 | 331 + 3 x 106 = 649 vs 690 |
+| E3M1 | 9 | 8893 (4356) | 39..102 | 2193 (11) | 624 | 104 | 277 + 3 x 104 = 589 vs 607 |
+| E3M2 | 3 | 2953 (2384) | 66..89 | 1326 (14) | 701 | 6 | 226 + 3 x 90 = 496 vs 400 (whole) |
+| E3M3 | 5 | 4974 (3556) | 57..93 | 1871 (32) | 647 | 21 | 226 + 3 x 94 = 508 vs 482 (whole) |
+| E3M4 | 8 | 5635 (4855) | 3..112 | 2581 (18) | 833 | 47 | 371 + 3 x 114 = 713 vs 719 |
+| E3M5 | 8 | 7223 (5371) | 29..111 | 3059 (6) | 798 | 52 | 353 + 3 x 112 = 689 vs 767 |
+| E3M6 | 12 | 13263 (5559) | 51..153 | 3006 (33) | 1116 | 82 | 348 + 3 x 154 = 810 vs 745 (whole) |
+| E3M7 | 7 | 6441 (4277) | 5..110 | 2290 (26) | 881 | 28 | 255 + 3 x 112 = 591 vs 560 (whole) |
+| E4M1 | 9 | 8084 (4259) | 49..92 | 2547 (2) | 762 | 104 | 302 + 3 x 94 = 584 vs 630 |
+| E4M2 | 9 | 7455 (4115) | 11..94 | 2010 (0) | 608 | 57 | 285 + 3 x 96 = 573 vs 595 |
+| E4M3 | 8 | 7382 (3566) | 48..95 | 1963 (1) | 624 | 71 | 297 + 3 x 96 = 585 vs 558 (whole) |
+| E4M4 | 17 | 15399 (5038) | 4..93 | 2433 (0) | 699 | 150 | 305 + 3 x 94 = 587 vs 683 |
+| E4M5 | 8 | 7152 (4036) | 19..97 | 1920 (2) | 600 | 29 | 313 + 3 x 98 = 607 vs 618 |
+| E4M6 | 5 | 3535 (3178) | 19..80 | 1596 (0) | 552 | 27 | 253 + 3 x 82 = 499 vs 492 (whole) |
+| E4M7 | 10 | 9344 (5323) | 26..93 | 2856 (4) | 661 | 78 | 378 + 3 x 94 = 660 vs 763 |
+| E4M8 | 7 | 5821 (3993) | 21..95 | 2040 (10) | 662 | 34 | 287 + 3 x 96 = 575 vs 577 |
+| END | 2 | 1755 (1755) | 17..117 | 624 (0) | 529 | 2 | 108 + 2 x 118 = 344 vs 239 (whole) |
+
+### 57.2 The engine
+
+- **The switch, in hand-written asm** (`engine/zone.s` `zone_mark`): the
+  renderer already finds the camera's leaf and marks the PVS only when
+  that leaf changed (r_world.s `mark_call`, a `jal` render.c patches for
+  the draw distance). While a zoned map is loaded, render.c points that
+  call at `zone_mark` instead (`mark_patch`): the leaf's set looked up (its
+  index from its offset over 28, a multiply by 2^32/7), and when the set
+  is not the last call's, `zone_enter` (C) makes its zone current if its
+  chunk is in; then on to the marking render.c chose (`zone_rt.mark`).
+  r_world.s is unchanged, byte for byte. The cost when the leaf has not
+  changed: none; when it has, 17 instructions and the multiply's wait.
+- **Making a chunk current** (`zone_patch`, asm): its patch words into the
+  patched nodes' `faces[]`, then `r_state.vertpool` (and the walk's copy
+  in the scratchpad, `SP_VERTPOOL`, which zone_mark takes again). 12
+  cycles an empty node, 32 a word: 33-48 k cycles a switch on PCSX
+  (54.6 k at most, E3M5), 18-27 k on DuckStation. Before any chunk is
+  current every world block is empty (the skeleton's node offsets are 0).
+  The C engine (`Q1PSX_ENGINE_C`) takes zone_patch's C (zone.c, written
+  from the asm); zone_mark is the renderer's (r_world.s has no C).
+- **The slots and the reads** (`engine/zone.c`, between frames: `zone_frame`
+  before `stream_frame`): a read's progress, the late switch (the camera's
+  zone in now: made current), then the next read: the camera's zone,
+  then its two nearest, into a free slot, else the slot of a chunk no set
+  wants, else the least wanted's below it, never the drawn one. A chunk is
+  checked when it lands (its zone, the stamp the skeleton carries).
+- **Late:** the camera in a zone whose chunk is not in yet: the old zone
+  stays drawn (its records only), the frames are counted, the camera's
+  zone is read first. Leaf 0 (the camera in solid) keeps the zone.
+- **The drive** is shared: the stream starts no read while a chunk's read
+  is in flight or waiting (`zone_drive_wanted`), the SPU music refills
+  only when neither reads (`stream_reading` covers a chunk's), a chunk's
+  read waits for the stream's to end and for the music's ring
+  (`music_read_ok`). Music on the disc, DuckStation: no underrun.
+- **The bench reads a view's zone at once** (`zone_sync`): before the
+  frame, outside its cycles and before the stream's turn, the camera's
+  leaf is found as r_render will (`r_set_view`'s arithmetic, `fl_loop`'s
+  test) and its zone read and made current; the hook's own read at once
+  stays as the fallback. In play nothing waits.
+- **The dynamic lights** keep working on the current chunk: the asm reads
+  the vertices through `SP_VERTPOOL` as before, the C reference
+  (`DLIGHT_C`, the C engine) now through `r_state.vertpool`, and the light
+  bytes are put back before any switch (game_render_done, then the next
+  frame's hook).
+- **The loader** (world.c) takes a QWVZ like a QWVE (the brush models'
+  stream and pool); zone_map_start then finds `<MAP>_Z<tex>.ZON`, checks
+  its header and allocates the slots; load_level reads the spawn eye's
+  zone and its two nearest at once (`zone_preload`) before the stream's
+  preload.
+- **The build:** CMake `Q1PSX_ZONES` (ON) puts the zoned maps' skeletons
+  and chunks on the disc, OFF the whole worlds (an A / B; also forced for
+  a draw distance of 0 or past 1536, which the tables do not cover);
+  `scripts/bench.sh WHOLE=1` builds that disc.
+
+### 57.3 The drive's race (found on the way, fixed)
+
+- The first 128-view run lost E4M5 ("bad models file"): a drive error
+  20h ("wrong number of parameters") during its world's read; with a first
+  fix in, a second run lost every load after E4M7's (the drive no longer
+  answering). The parent had it too: its game bench read a sound from the
+  wrong place ("not a sound this engine reads").
+- psxcd's command writes (CdCommandF) select the register bank, reset the
+  parameter FIFO, write the parameters, then the command, with the CD's
+  interrupt enabled; the handler selects bank 1 and resets the FIFO. An
+  interrupt in between (a read's Pause answering late: psxcd's read
+  callback sends that Pause and nothing waits for it in a polled read)
+  sends the command without its parameters (error 20h: after a lost
+  Setloc the read goes on from wherever the drive was), and writes the
+  parameters into bank 1's register 2, the interrupt enable: the drive
+  goes quiet.
+- `engine/cd.c` now has one access layer every read goes through
+  (`cd_ready`, `cd_seek`, `cd_poll`, `cd_read_sync`, `cd_read_now`): a
+  command waits for the drive to have been idle two vblanks (no read, no
+  blocking command); the reads started between frames wait for it frame
+  after frame, never in a frame; a refused Setloc re-enables the drive's
+  interrupts as CdInit leaves them and is sent again.
+- After it: no drive error in three 32-map runs, the zones' walks
+  (PCSX-Redux and DuckStation, the music on), the game bench (whose sound
+  now reads right).
+- On the way, a bug of mine: a comment had swallowed a `return` in the
+  stream's sound step (the gate turned around: a sound piece's seek
+  waited out a chunk's whole read, 15 M cycles). Fixed; the pattern
+  searched for elsewhere.
+
+### 57.4 Identical frames
+
+- `scripts/dlcheck.sh save` on the parent (00dbc44), `check` on the zones:
+  - start's 12 views: IDENTICAL, -0.1 % cycles;
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1`): IDENTICAL, -0.5 %;
+  - the game bench's 23 hashes (`BENCH_GAME=1 HASHONLY=1`): IDENTICAL;
+  - under `EMU_ARGS=-interpreter`: 127 of 128 views identical, the 128th
+    identical but for a character the interpreter's console doubled;
+  - the C engine (`ENGINE_C=1`): start's 12 and the 128 views IDENTICAL
+    (+87.6 %, +93.7 %, as in §55); its game bench differs at the
+    graphics menu's effects page only (§55's dynamic warp threshold).
+- The frames got cheaper: a chunk's blocks hold the zone's records only,
+  so the record loop skips fewer records its frame never stamped (-2 k
+  cycles on start's v2, v10, v11).
+- `scripts/dlcheck.sh`: the game bench (no view lines) no longer counts as
+  a failed bench.
+
+### 57.5 The RAM, measured
+
+The world's load (the boot log's `world: ... arena`: the texture tables,
+the world or skeleton, the face stamps, the map's models, the slots) and
+the stream's pool after it, the parent against the zones:
+
+| map | zones | skeleton | slots | world load before -> after (KB) | freed | stream pool before -> after (KB) |
+|---|---|---|---|---|---|---|
+| START | 7 | 277 | 3 x 94 | 609 -> 575 | +34 | 471 -> 499 |
+| E1M1 | 10 | 276 | 3 x 104 | 617 -> 605 | +12 | 434 -> 440 |
+| E1M2 | 7 | 295 | 3 x 94 | 630 -> 592 | +38 | 385 -> 417 |
+| E1M3 | 8 | 314 | 3 x 92 | 613 -> 605 | +8 | 334 -> 336 |
+| E1M4 | 7 | 334 | 3 x 90 | 709 -> 621 | +88 | 278 -> 360 |
+| E1M5 | whole | - | - | 569 -> 569 | 0 | 420 -> 414 |
+| E1M6 | whole | - | - | 477 -> 477 | 0 | 480 -> 474 |
+| E1M7 | whole | - | - | 190 -> 190 | 0 | 908 -> 902 |
+| E1M8 | whole | - | - | 365 -> 365 | 0 | 700 -> 694 |
+| E2M1 | 16 | 302 | 3 x 108 | 666 -> 644 | +22 | 343 -> 359 |
+| E2M2 | 9 | 322 | 3 x 104 | 698 -> 652 | +46 | 332 -> 372 |
+| E2M3 | 11 | 320 | 3 x 96 | 677 -> 625 | +52 | 324 -> 370 |
+| E2M4 | 12 | 337 | 3 x 96 | 732 -> 642 | +90 | 266 -> 350 |
+| E2M5 | 10 | 282 | 3 x 94 | 643 -> 581 | +62 | 355 -> 411 |
+| E2M6 | whole | - | - | 622 -> 622 | 0 | 299 -> 293 |
+| E2M7 | 9 | 331 | 3 x 106 | 707 -> 665 | +42 | 260 -> 296 |
+| E3M1 | 9 | 277 | 3 x 104 | 623 -> 605 | +18 | 389 -> 401 |
+| E3M2 | whole | - | - | 412 -> 412 | 0 | 581 -> 575 |
+| E3M3 | whole | - | - | 497 -> 497 | 0 | 520 -> 514 |
+| E3M4 | 8 | 371 | 3 x 114 | 736 -> 730 | +6 | 218 -> 218 |
+| E3M5 | 8 | 353 | 3 x 112 | 784 -> 706 | +78 | 242 -> 314 |
+| E3M6 | whole | - | - | 763 -> 763 | 0 | 221 -> 215 |
+| E3M7 | whole | - | - | 576 -> 576 | 0 | 465 -> 459 |
+| E4M1 | 9 | 302 | 3 x 94 | 647 -> 601 | +46 | 361 -> 401 |
+| E4M2 | 9 | 285 | 3 x 96 | 609 -> 587 | +22 | 391 -> 407 |
+| E4M3 | whole | - | - | 573 -> 573 | 0 | 384 -> 378 |
+| E4M4 | 17 | 305 | 3 x 94 | 699 -> 603 | +96 | 283 -> 373 |
+| E4M5 | 8 | 313 | 3 x 98 | 634 -> 622 | +12 | 304 -> 310 |
+| E4M6 | whole | - | - | 506 -> 506 | 0 | 456 -> 450 |
+| E4M7 | 10 | 378 | 3 x 94 | 781 -> 679 | +102 | 171 -> 267 |
+| E4M8 | 7 | 287 | 3 x 96 | 592 -> 590 | +2 | 373 -> 369 |
+| END | whole | - | - | 248 -> 248 | 0 | 833 -> 827 |
+
+- The worst world load: 784 -> 763 KB (E3M6, whole, is the worst now);
+  the smallest stream pool: **171 -> 215 KB** (+26 %); freed on a zoned
+  map: 2-102 KB.
+- The level arena shrank by 6 KB (1249 -> 1243 KB): the zones' code (6
+  KB) would have come out of the stack, which keeps its room (release
+  43704 B, the parent's 43504; §54's 25 KB margin kept). The whole maps'
+  pools lose those 6 KB.
+- **Honestly, far below §56's 150-250 KB**, for measured reasons:
+  - the skeleton is bigger than §56 counted: it holds the brush models'
+    records and vertices and a few tables the analysis left out (+20-40
+    KB a map);
+  - the default tables hold every record the PVS lets the PSX draw within
+    1536 + 32 units (what makes the frames identical), duplicated across
+    zones, and a slot is the map's biggest chunk: one outlier sets all
+    three (E3M6's 153 KB zone keeps it whole; E3M4's and E3M5's 111-112);
+  - the patch words take 2-4.4 KB a chunk.
+
+### 57.6 The zones' walk
+
+`ZONES=1 scripts/bench.sh` (the `bench zones` lines): on each zoned map,
+the eye from the player's start through 31 of its items and monsters in
+entity order at running speed (320 units a second), 3600 frames at most,
+the stream and the zones' reads as in play. A leg whose eye line a wall
+cuts goes through it; its frames are counted apart (a way shorter than
+the walking distances the prefetch ranks zones by). Every patch is checked
+against a C computation of it.
+
+- PCSX-Redux, 20 maps: 8-29 switches a map (the patch above), 15-84 reads
+  (9-16 frames each: 0.15-0.27 s), 0 read errors, 0 patches wrong; late:
+  0-25 events and 0-373 frames a map, nearly all on the legs through
+  walls (the clear legs' worst: E3M1 26 frames, E4M2 23, E2M3 21); the
+  longest late run 20-39 frames.
+- DuckStation, the music on the disc: the same walk, 0 read errors, 0
+  patches wrong, no `music: the ring ran dry`; reads 14-26 frames each
+  (DuckStation's seeks are slower), late runs 28-59 frames.
+- The frames that switch also load what comes into view (the stream's
+  passes and installs): 0.9-1.6 M cycles at most; the patch itself is
+  33-55 k of it.
+
+### 57.7 DuckStation
+
+- The AppImage no longer started headless on this host (since §42: every
+  start waited before the boot). Found: the AppImage's FUSE runtime sits
+  blocked writing to a pipe. Its extracted binary starts at once
+  (`DuckStation-x64.AppImage --appimage-extract`, then
+  `squashfs-root/AppRun -batch -nogui -earlyconsole -- q1psx.cue`, the
+  private home as in §26.1).
+- The play bench (`BENCH_MAPS=1 PLAY=1 HASHONLY=1 MUSIC=1`): 32 maps
+  loaded and played, `bench play <MAP> ok` each, `bench done`, no GP0
+  error, no drive error (psxcd printed `CdSync() timeout` once inside
+  CdInit, before the engine runs: DuckStation's drive answers its init
+  later than psxcd waits). The zones' walk above.
+
+### 57.8 The choices made, and the alternatives
+
+- **The tables: `pvs_1536_96`** (the default, `local.env`): safe by
+  construction, the frames identical. The four sets, measured (the
+  skeleton + the slots, from the cook; the bench's for PVS 96 and seen 64):
+
+  | tables | maps zoned | the worst world file (cook) | its file freed a map: most / mean | the worst world load (bench) | the smallest stream pool (bench) | the frames |
+  |---|---|---|---|---|---|---|
+  | (whole worlds) | 0 | 767 KB | — | 784 KB | 171 KB | — |
+  | pvs_1536_96 | 20 | 745 KB | 103 / 27 KB | 763 KB | 215 KB | identical |
+  | pvs_1536_128 | 2 | 763 KB | 36 / 1 KB | — | — | identical |
+  | seen_1536_96 | 24 | 652 KB | 132 / 47 KB | — | — | not run |
+  | seen_1536_64 | 29 | 564 KB | 221 / 116 KB | 583 KB | **363 KB** | 22 of 128 spawn views' lists differ; their pictures identical (below) |
+
+  - **seen_1536_64** gives the room asked for (+192 KB on the
+    worst map's pool, E4M7 171 -> 363 KB) and cheaper frames (-1.6 % on
+    the 128 views): its chunks leave out the records the 2048 px renders
+    never saw, which the PSX draws and then paints over. On 36 views
+    (E1M5, E3M6, E4M4, 12 each, their spawn views included) the pictures
+    are identical pixel for pixel (pktview). The risk: a record seen only
+    from a place the scan did not sample (16-unit eyes; §56: the renders'
+    tail is slivers under a PSX pixel) would be missing there. To take
+    it: `Q1PSX_ZONE_TABLES=.../zones/seen_1536_64` in local.env.
+- **Three fixed slots, each the map's biggest chunk**, rather than an
+  arena holding just the biggest set (a zone and its two nearest) and
+  compacted when in pieces. That arena would take 10-80 KB less a map,
+  but a simulation of random walks over the 32 maps' zone sets (4000
+  zone changes a map) found a compaction in 15-19 % of the loads, most of
+  them moving the drawn chunk (a memmove and a re-patch: 150-300 k cycles,
+  a frame lost); with 64 KB of slack the drawn chunk never moved, but
+  25-30 % of the loads still moved others and the slack ate the gain.
+  Slots never move a chunk.
+- **The current zone and its two nearest** (the model asked for); a fourth
+  slot (the third nearest, which the tables give) would take one more
+  chunk of RAM for fewer late frames.
+- **A map stays whole** when zoning would not reduce its resident world.
+- **The bench reads a view's zone at once**.
+
+### 57.9 Left
+
+- **The skeleton** (84-378 KB a map, the bulk of what stays): the PVS rows
+  per zone (34-49 KB a map today), the clip hulls (55-81 KB) and the nodes
+  (56-130 KB) kept only where the player can be. That is where the room
+  wanted for the streamed assets is now.
+- **The outlier zones** (E3M6's 153 KB, END's 118, E3M4's and E3M5's
+  111-112): re-exported with a smaller cap by the analysis tool, E3M6
+  would zone and every slot of those maps would shrink.
+- The late frames when moving fast: a fourth slot, or prefetching on the
+  walking distance's lead (the tables carry it; the engine does not keep
+  it).
+- psxcd busy-waits for every command's acknowledge: starting a read costs
+  about 90 k cycles (the stream's reads as the zones'); an asynchronous
+  command layer would give them back.
+- The SDK's memcpy / memmove copy a byte at a time (13 cycles a byte on
+  PCSX): the stream's pool compaction uses memmove.
+- The patch could be unrolled (pairs of empty nodes: about -3 cycles
+  each), or cut to the nodes whose blocks change by grouping the patched
+  nodes by zone (dummy nodes between the groups).
+- Not checked: the real machine; a hands-on play across zones.

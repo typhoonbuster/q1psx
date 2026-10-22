@@ -81,7 +81,7 @@ int zone_drive_wanted(void)
 	return reading >= 0 || placed >= 0;
 }
 
-/* ---------------------------------------------------------- the arena -- */
+/* ---------------------------------------------------------- the slots -- */
 
 static int slot_of(int z)
 {
@@ -283,7 +283,7 @@ int zone_map_start(const uint8_t *f, const char *map, int tex)
 	uint8_t *a = mem_level_alloc(h->num_slots * h->slot_bytes);
 	if (!a)
 		return 0;
-	const qz_file *fh = (const qz_file *) a;      /* (its header through the arena, empty yet) */
+	const qz_file *fh = (const qz_file *) a;      /* (its header through the slots, empty yet) */
 	if (!read_now((int32_t) lba, 1, a) || memcmp(fh->magic, QZONES_MAGIC, 4) || fh->stamp != h->stamp ||
 	    fh->num_zones != h->num_zones) {
 		printf("zone: %s is not this skeleton's (another cook?)\n", name);

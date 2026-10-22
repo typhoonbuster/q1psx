@@ -435,7 +435,7 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 		return 0;
 	/* a zoned world (formats/qworld.h "zones"): the skeleton read, its
 	   world blocks empty until zone_preload makes a chunk current; the
-	   chunk arena last, under the world's cap */
+	   slots last, under the world's cap */
 	if (zoned && !zone_map_start(f, disc_maps[map], tex))
 		return 0;
 	world.level[QL_TEXTURES] = (int8_t) tex;

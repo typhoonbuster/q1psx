@@ -1559,3 +1559,32 @@ followed by R0-R4.
     zones of 64 KB would free 250 KB;
   - the zone tables for the cook are ready outside the repo. The
     implementation follows on its own branch.
+- **Level streaming by zones** (the levels streamed in chunks, for much more room for the streaming). §57:
+  - `qcook zones` splits a world into its skeleton (QWVZ: nodes, leaves,
+    PVS, clip hulls, the brush models, the entities) and a chunk per zone
+    (QZN1, per texture level: the records a zone's leaves may draw, as the
+    loader would leave them), from §56's tables (`Q1PSX_ZONE_TABLES` in
+    local.env; never in the repo; without them every map stays whole);
+  - the engine keeps the skeleton and three slots: the camera leaf's zone,
+    drawn, and its two nearest by walking distance (a teleporter one step),
+    read between frames while the player moves. The switch hangs on the
+    renderer's camera-leaf call through a hand-written asm hook
+    (`engine/zone.s`), r_world.s unchanged; a late chunk leaves the old
+    zone drawn, counted;
+  - the frames are the parent's, hash for hash: start's 12 views, the 128
+    spawn views (under the interpreter too), the game bench; the C engine
+    too. And 0.5 % cheaper (the chunks' blocks carry fewer records to
+    skip);
+  - the RAM: 20 maps zoned, 12 kept whole; 2-102 KB freed on a zoned map,
+    the smallest stream pool 171 -> 215 KB. Below §56's estimate: the
+    skeleton holds the brush models' geometry, and the frame-identical
+    tables plus fixed slots cost more than the analysis' best case. The
+    tighter "seen" tables would give 363 KB (the pictures identical on the
+    views checked, 22 of 128 display lists not): left open;
+  - the CD: a race between psxcd's command writes and the drive's
+    interrupt lost Setlocs (another file's sectors read: the parent's
+    corrupted sound) and could silence the drive; every read now waits for
+    the drive to settle (`engine/cd.c`);
+  - `ZONES=1 scripts/bench.sh`: the zones' walk (switches, reads, late
+    frames, on PCSX-Redux and DuckStation with the music); DuckStation
+    runs again headless from its extracted AppImage.

@@ -1319,12 +1319,12 @@ static void bench_view_ticks(const char *view)
 }
 
 /* the level arena's room the world takes, a zoned one's measure (§57):
-   the skeleton and the chunk arena, the stream's pool after them (the
-   world's load in all: its "world: ... arena" line) */
+   the skeleton and the slots, the stream's pool after them (the world's
+   load in all: its "world: ... arena" line) */
 static void bench_zone_ram(const char *map)
 {
 	if (zone_on())
-		printf("bench zone %s: %d zones, the skeleton %u KB + the chunk arena %u KB, the stream's pool %u KB\n",
+		printf("bench zone %s: %d zones, the skeleton %u KB + the slots %u KB, the stream's pool %u KB\n",
 		       map, zone_count(), (unsigned) zone_skeleton_bytes() / 1024, (unsigned) zone_arena_bytes() / 1024,
 		       (unsigned) stream_stats.ram_size / 1024);
 	else
