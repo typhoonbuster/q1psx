@@ -25,10 +25,12 @@
 enum { M_NONE, M_MAIN, M_SINGLEPLAYER, M_NEWGAME, M_OPTIONS, M_GRAPHICS };
 
 /* Only what the PlayStation port does: the main menu's Single Player and
-   Options (rows 0 and 2 of mainmenu.lmp), the single player menu's New Game
-   (row 0 of sp_menu.lmp), the options the port handles; the graphics page's
-   rows (engine/settings.h SET_*) */
-static const uint8_t main_rows[]  = { 0, 2 };
+   Options (rows 0 and 2 of mainmenu.lmp, the only ones the cook keeps:
+   rows 0 and 1 of its picture; no multiplayer, help or quit: tools/qcook/
+   game.c AUX_BANDS), the single player menu's New Game (row 0 of
+   sp_menu.lmp), the options the port handles; the graphics page's rows
+   (engine/settings.h SET_*) */
+static const uint8_t main_rows[]  = { 0, 1 };
 static const uint8_t sp_rows[]    = { 0 };
 #define MAIN_ITEMS         (int) sizeof main_rows
 #define SINGLEPLAYER_ITEMS (int) sizeof sp_rows

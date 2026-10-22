@@ -115,8 +115,12 @@ typedef struct { int first_kv, num_kv; const char *classname; } ent_rec;
 typedef struct {
 	ent_rec *ents; int num, cap;
 	ent_kv  *kv;   int num_kv, cap_kv;
+	int      sp_never;        /* the entities left out: single player never
+	                             spawns them (coop and deathmatch's only) */
 } ent_list;
 
+/* the map's entities, but those single player never spawns: the coop and
+   deathmatch starts, and what is on no skill (all three skill flags) */
 void        ents_parse(const bsp_t *b, ent_list *l);
 void        ents_free(ent_list *l);
 const char *ent_value(const ent_list *l, const ent_rec *e, const char *key);   /* NULL if absent */
@@ -138,6 +142,11 @@ void ents_pack(const qw_ent *ents, uint32_t n, buf_t *out);
    than a trigger uses (a trigger's brushes are never drawn: no faces
    cooked, no textures packed for them) */
 void ents_drawn_models(const bsp_t *b, uint8_t *drawn);
+
+/* used[m] = 1 for the world and every brush model an entity of the list
+   uses (the triggers' too); in the id1 maps, a model no entity uses
+   belongs to an entity single player never spawns */
+void ents_used_models(const ent_list *l, int num_models, uint8_t *used);
 
 /* ------------------------------------------------------- a map's models -- */
 

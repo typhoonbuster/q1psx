@@ -195,7 +195,7 @@ static const struct { uint16_t from, to, buttons; } pad_script[] = {
 	{ 1560, 1564, PAD_CROSS },     /* New Game (START reloaded) */
 	{ 2100, 2160, PAD_UP },        /* a second's walk */
 	{ 2220, 2224, PAD_START },     /* the menu */
-	{ 2280, 2284, PAD_DOWN },      /* (Multiplayer greyed: Options) */
+	{ 2280, 2284, PAD_DOWN },      /* (to Options) */
 	{ 2340, 2344, PAD_CROSS },     /* Options */
 	{ 2400, 2404, PAD_UP },        /* (to Graphics) */
 	{ 2460, 2464, PAD_CROSS },     /* Graphics: the textures */

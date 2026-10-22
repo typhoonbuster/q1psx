@@ -1738,7 +1738,31 @@ followed by R0-R4.
     of reach as before). The views and the game bench identical. The
     monsters' bench draws E1M8's dead shambler, which master's frame
     cache refused; the cache's flaw itself is left for apart.
-- **The frame cache's refusals** (§67's find). §68:
+- **Single player only: what only multiplayer used, out of the cook**
+  (2026-10-22).
+  §68:
+  - the entities single player never spawns leave the cook's entity list
+    (the coop and deathmatch starts, the 471 entities on no skill: 2-36 a
+    map), and with them what was cooked for them alone: their brush
+    models' faces and trees (109 models: 909 faces, 852 render nodes, 9.5
+    KB of clipnodes), the textures only those faces used (27 maps), the
+    item boxes only their items used (15 maps; START's 10, START has no
+    item in single player), START's items sound group;
+  - the four sounds only multiplayer plays leave every map's bank and the
+    engine's table: an item's respawn, a player telefragged, a player's
+    axe pain, a player leaving (21-22 KB of SPU RAM a map);
+  - the main menu picture keeps the two rows the menu draws, not its
+    Multiplayer row (nor Help and Quit); `tdeath_touch`'s test of a
+    player arriving on the player goes;
+  - the gain: the stream's pool +2..+30 KB a map (8.6 on average, E3M6's
+    smallest 247 -> 250), the edicts 0.8-13.6 KB, SPU RAM 21-37 KB, the
+    maps' files 22-59 KB a map (863 KB in all), GAME_0.DAT 10 KB, the
+    stack +112 B;
+  - the frames: the same packets but for the textures' places (the atlas
+    repacked) and two VRAM copies fewer on E2M6 and E4M3; the pictures
+    the same but 51 pixels of three spawn views, texels read one past
+    their tile's edge.
+- **The frame cache's refusals** (§67's find). §69:
   - the streamed models' frame cache (`engine/mdl.c`) took a new
     expansion only at its ring's head, and refused it when the bytes there
     held one the frame draws, room elsewhere or not. Master's minute of

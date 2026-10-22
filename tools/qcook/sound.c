@@ -4,7 +4,8 @@
  *
  * The bank: Quake's always-precached list (world.qc worldspawn, weapons.qc
  * W_Precache, the menu's: the player's, the weapons') with the groups the
- * map cannot use left out, the area ambients the BSP's leaf levels can
+ * map cannot use and the sounds only multiplayer plays left out (ALWAYS),
+ * the area ambients the BSP's leaf levels can
  * raise (snd_dma.c ambient_sfx: water1, wind2), and the map's static
  * sources (misc.qc ambientsound calls) by their sound's hash. The sounds
  * with a place in the map are streamed instead: the ambient entities'
@@ -33,11 +34,21 @@ static const char *const group_name[SG_COUNT] = { "core", "water", "lava", "slim
 
 typedef struct { const char *name; int group; } sound_spec;
 
-/* world.qc worldspawn + weapons.qc W_Precache + the menu (menu.c) */
+/* world.qc worldspawn + weapons.qc W_Precache + the menu (menu.c), but
+   the four sounds only multiplayer plays (the port is single player
+   only):
+   - items/itembk2.wav, an item's respawn (items.qc SUB_regen: deathmatch
+     alone sets the think time);
+   - player/teledth1.wav, a player telefragged (player.qc PainSound,
+     GibPlayer): a teleporter's death hurts a player only when another
+     player arrives on him (triggers.qc tdeath_touch);
+   - player/axhit1.wav, a player's pain from an axe (PainSound's axhitme):
+     only a player swings one (weapons.qc W_FireAxe);
+   - player/tornoff2.wav, a player leaving the game (client.qc
+     ClientDisconnect). */
 static const sound_spec ALWAYS[] = {
 	{ "demon/dland2.wav",   SG_CORE },    /* landing thud                        */
 	{ "misc/h2ohit1.wav",   SG_WATER },   /* landing splash                      */
-	{ "items/itembk2.wav",  SG_ITEMS },   /* item respawn                        */
 	{ "player/plyrjmp8.wav", SG_CORE },
 	{ "player/land.wav",    SG_CORE },
 	{ "player/land2.wav",   SG_CORE },
@@ -47,7 +58,6 @@ static const sound_spec ALWAYS[] = {
 	{ "player/gasp2.wav",   SG_WATER },
 	{ "player/h2odeath.wav", SG_WATER },
 	{ "misc/talk.wav",      SG_CORE },
-	{ "player/teledth1.wav", SG_TELE },
 	{ "misc/r_tele1.wav",   SG_TELE },
 	{ "misc/r_tele2.wav",   SG_TELE },
 	{ "misc/r_tele3.wav",   SG_TELE },
@@ -62,7 +72,6 @@ static const sound_spec ALWAYS[] = {
 	{ "misc/power.wav",     SG_BOSS },
 	{ "player/gib.wav",     SG_CORE },
 	{ "player/udeath.wav",  SG_CORE },
-	{ "player/tornoff2.wav", SG_CORE },
 	{ "player/pain1.wav",   SG_CORE },
 	{ "player/pain2.wav",   SG_CORE },
 	{ "player/pain3.wav",   SG_CORE },
@@ -75,7 +84,6 @@ static const sound_spec ALWAYS[] = {
 	{ "player/death4.wav",  SG_CORE },
 	{ "player/death5.wav",  SG_CORE },
 	{ "weapons/ax1.wav",    SG_CORE },
-	{ "player/axhit1.wav",  SG_CORE },
 	{ "player/axhit2.wav",  SG_CORE },
 	{ "player/h2ojump.wav", SG_WATER },
 	{ "player/slimbrn2.wav", SG_SLIME },

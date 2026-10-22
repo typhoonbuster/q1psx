@@ -8553,7 +8553,233 @@ Quake's data goes in the repo.
     the frame map;
   - a play on the tight maps (E3M4, E2M2-E2M7).
 
-## §68 — The frame cache: a place past the frame's own expansions (2026-10-22)
+## §68 — Single player only: what only multiplayer used, out of the cook (2026-10-22)
+
+- **The ask:** the port will never run multiplayer, neither deathmatch
+  nor coop. What
+  exists only for it goes: the assets, the maps' resources, the engine's
+  and the cook's code. The gain is measured (RAM, disc). For §59.5's
+  entities single player never spawns, the cook was chosen, not the
+  runtime. Single player must see and play exactly what it did.
+- **What only multiplayer used** (id's QC 1.06, read in the rerelease's
+  `quakec`; the 32 maps' entity lumps):
+  - **the entities single player never spawns:**
+    - the coop and deathmatch starts (109 + 225): `SelectSpawnPoint`
+      looks for them only in coop or deathmatch. The table already left
+      them out (§28);
+    - what is on no skill: the three skill flags (not easy 256, not
+      medium 512, not hard 1024), which `ED_LoadFromFile` inhibits at
+      every skill when deathmatch is 0 (deathmatch alone ignores them).
+      471 entities on the 32 maps, 2-36 a map: 213 weapons, 83 ammo
+      boxes, 26 powerups, 19 health boxes, 15 armours, 80 `func_wall`,
+      5 buttons, 3 doors, 11 `trigger_once`, 4 `trigger_multiple`, 6
+      teleporters and their 6 destinations;
+  - **what the cook made for them alone:**
+    - their brush models (1-10 a map, 109 in all): 909 faces cooked, 852
+      render nodes, 9.5 KB of shared clipnodes;
+    - the textures only those faces used: 1 or 2 on 27 maps. E2M6's and
+      E4M3's are animated: their frame and CLUT were copied into the
+      display slot every frame, though nothing drew them;
+    - the item boxes only their items used, on 15 maps. START has no item
+      at all in single player: its 10 boxes and its bank's items group
+      (`weapons/lock4`, `pkup`, `items/armor1`, `damage3`) were
+      deathmatch's;
+  - **four sounds in every map's bank** (`tools/qcook/sound.c` ALWAYS),
+    5.5 + 8.0 + 3.8 + 4.3 KB of SPU RAM:
+    - `items/itembk2.wav`, an item's respawn (`SUB_regen`). Only
+      deathmatch sets its think time: in single player a taken item is
+      gone;
+    - `player/teledth1.wav`, a player telefragged (`PainSound`,
+      `GibPlayer`). `tdeath_touch` hurts a player only when another
+      player arrives on him;
+    - `player/axhit1.wav`, a player's pain from an axe (`axhitme`). Only
+      `W_FireAxe`, a player's axe, sets it, and only a player's pain reads
+      it: a player's axe on a player;
+    - `player/tornoff2.wav`, a player leaving the game
+      (`ClientDisconnect`);
+  - **the main menu's Multiplayer row:** not drawn since §52 (the menu
+    draws rows 0 and 2 of `gfx/mainmenu.lmp`), still cooked into
+    GAME_0.DAT's aux pages with the Help and Quit rows;
+  - **the engine's game code** was already single player's: no
+    deathmatch, coop, teamplay, frags, obituaries or respawns (the QC
+    transcribed for single player, §29, §40). Left of it:
+    `tdeath_touch`'s test that the arriving one is not the player (always
+    true when the player is touched: the owner is never the one touching),
+    and comments on a greyed Multiplayer entry (menu.h, pad.c, main.c).
+- **Not multiplayer's:** STREAM_0.DAT (one copy of each asset for every
+  map: an item model deathmatch-only on one map is single player's on
+  another); the player's model (never cooked: the port draws no player
+  body); the sounds single player plays rarely (`misc/talk.wav`, the
+  teleporters' `misc/r_tele*`).
+
+### 68.1 The cook (tools/qcook)
+
+- **`ents.c`:** `ents_parse` leaves out what single player never spawns
+  (`ent_sp_never`: the coop and deathmatch starts, the entities on no
+  skill). Every reader of the list sees only what single player spawns:
+  - the entity table and its strings;
+  - `ents_drawn_models`: no faces cooked for their brush models (the
+    still models' buried faces too), no textures packed for them;
+  - `items.c`: no boxes for their items;
+  - `sound.c`: no sound group for them alone, no static sources;
+  - `bmf.c` (through the table): no room measured for their models any
+    more (START 19 -> 12 models). The engine never reserved one:
+    `bmf_reserve` takes the spawned edicts' models.
+- **`world.c`:** a brush model no entity uses (in the id1 maps, one of
+  those entities') keeps its 40-byte record, so the entities' model
+  numbers stay, but not its trees:
+  - its render nodes leave the node array. The others are numbered down
+    in order (a parent before its children, the sentinel last); their
+    children and parents, the leaves' parents, the world's root and the
+    used models' roots follow;
+  - the face stream is unchanged: a dropped node's blocks are empty (no
+    face of the model is drawn), and the cook dies otherwise;
+  - its root becomes a leaf of its tree (depth 0), its clip roots the
+    world's: `clip_share` then leaves its clipnodes out;
+  - the cook prints `N brush models no entity uses: X render nodes -> Y`.
+- **`sound.c`:** ALWAYS without the four sounds, each with its reason.
+- **`game.c`:** `AUX_BANDS`: `gfx/mainmenu.lmp` keeps the two 20-row
+  entries the menu draws, Single Player and Options, stacked. They are
+  cut after the whole picture is quantized: its 16 colours are the same.
+  k-means over the two rows alone (30 of its 34 colours) would choose
+  others.
+- **The format is unchanged** (QWVF, QSB2, QGM8): the files are smaller.
+  A checkout's older cooked files still load; CMake cooks again by itself
+  (the cooker changed).
+
+### 68.2 The engine
+
+- `snd.h` / `snd.c`: the four names out of the named table (4 lookups
+  fewer at a map's load).
+- `menu.c`: `main_rows` {0, 1}, the cooked picture's rows.
+- `triggers.c` `tdeath_touch`: the player touched kills the arriving
+  one, with no test of who arrives. The QC's `teledeath2` classname
+  (read by the obituaries and a player's gib sound) stays out.
+- No asm touched; hazcheck clean.
+
+### 68.3 Checked
+
+Against master a200736 built beside (`git archive`, its cook with the same
+zone tables), and before the merge against c1f8bd1 with the same results:
+
+- **The cook:** every world's check. The 32 worlds cooked with every tree
+  kept (the same cooker, `used` all set: scratch) against the shipped
+  ones, compared by a script (scratch):
+  - every section byte for byte but the nodes, the leaves' parents, the
+    clipnodes and the brush models' roots;
+  - each node kept equal to its old one, its children and parent
+    renumbered; the world's hulls and each used model's node for node;
+  - the dropped nodes' face blocks empty.
+- **The display lists:** the textures' places move (the atlas repacked
+  on 27 maps for a texture, on 15 for a box; the stream's skins then sit
+  elsewhere in VRAM), so the dumps' `H` lines differ:
+  - START's 12 views 12 of 12, the 128 spawn views 94 of 128, the game
+    bench's 23 dumps all, the monsters' (`MONSTERS=1`, E1M1) 8 of 8;
+  - with every GP0 command decoded and its CLUT, texture page base, UVs,
+    texture window and VRAM copy places masked (a script, scratch), the
+    packets are the same, in the same order, but:
+    - E2M6's and E4M3's 8 views: two VRAM copies fewer each (the
+      animated texture only a deathmatch wall drew, its frame and its
+      CLUT);
+    - the menu's `mmain` and `msingle`: one texture page command more
+      (the aux pictures repacked: the cursor's dot, and in `msingle` the
+      single player menu's picture, in the other aux page);
+- **The pictures** (pktview, each map's dumps with its own textures; the
+  maps bench dumped in full by a temporary change, not committed):
+  - START's 12, the game bench's 23 (the menu's pages among them: the
+    main menu as before) and the monsters' 8: identical;
+  - 125 of the 128 spawn views identical. E2M6.v1 differs by 1 pixel,
+    E4M4.v3 by 2, E4M2.v0 by 48 (one row). Each is a polygon's edge whose
+    UV reaches its texture's tile end: the GPU reads the texel past it,
+    which is the atlas' neighbour, master's or this one's;
+- **The play:** the physics checks (`clipdiff`, `pmdiff`, START's `pmove`
+  lines) the same results; the monsters' scenarios the same states,
+  positions and health at every logged tick (the stream there: 32 of 44
+  assets in at the first one, not 28: the pool is bigger).
+- **The links' `ramcheck`:** release 58552 -> 58664 B, default 45976 ->
+  46088 B (+112: the four names and their strings, the named slots).
+
+### 68.4 The gain
+
+The bench's lines (`bench zone`, `zone:`, `world:`, `snd:`, `stream:
+pools`), KB:
+
+| map | entities | the edicts' pool | the skeleton, or the whole world | the stream's pool | the map's SPU bank | the stream's VRAM (K texels) |
+|---|---|---|---|---|---|---|
+| START | 144 -> 108 | 91.7 -> 78.1 | 252 -> 240 | 522 -> 552 (+30) | 377 -> 340 | 315 -> 319 |
+| E1M1 | 174 -> 160 | 103.1 -> 97.8 | 252 -> 250 | 463 -> 471 (+8) | 371 -> 350 | 315 -> 315 |
+| E1M2 | 262 -> 249 | 136.4 -> 131.5 | 257 -> 256 | 454 -> 460 (+6) | 364 -> 343 | 379 -> 379 |
+| E1M3 | 364 -> 347 | 175.1 -> 168.6 | 272 -> 266 | 376 -> 389 (+13) | 364 -> 343 | 379 -> 383 |
+| E1M4 | 318 -> 307 | 157.6 -> 153.5 | 297 -> 294 | 397 -> 403 (+6) | 371 -> 350 | 381 -> 381 |
+| E1M5 | 323 -> 318 | 159.5 -> 157.6 | whole 537 -> 537 | 444 -> 446 (+2) | 364 -> 343 | 365 -> 367 |
+| E1M6 | 271 -> 259 | 139.8 -> 135.3 | whole 437 -> 435 | 512 -> 519 (+7) | 377 -> 356 | 367 -> 367 |
+| E1M7 | 113 -> 77 | 79.9 -> 66.3 | whole 176 -> 171 | 915 -> 934 (+19) | 388 -> 367 | 415 -> 417 |
+| E1M8 | 177 -> 169 | 104.2 -> 101.2 | whole 347 -> 347 | 711 -> 714 (+3) | 362 -> 340 | 407 -> 407 |
+| E2M1 | 256 -> 242 | 134.1 -> 128.8 | 268 -> 266 | 391 -> 399 (+8) | 364 -> 343 | 323 -> 323 |
+| E2M2 | 205 -> 189 | 114.8 -> 108.7 | 295 -> 294 | 399 -> 406 (+7) | 364 -> 343 | 391 -> 391 |
+| E2M3 | 261 -> 245 | 136.0 -> 130.0 | 285 -> 281 | 405 -> 415 (+10) | 364 -> 343 | 379 -> 379 |
+| E2M4 | 308 -> 300 | 153.8 -> 150.8 | 300 -> 295 | 384 -> 393 (+9) | 371 -> 350 | 419 -> 419 |
+| E2M5 | 270 -> 254 | 139.4 -> 133.4 | 249 -> 245 | 444 -> 454 (+10) | 371 -> 350 | 389 -> 391 |
+| E2M6 | 397 -> 386 | 187.6 -> 183.4 | whole 580 -> 576 | 333 -> 342 (+9) | 364 -> 343 | 391 -> 395 |
+| E2M7 | 388 -> 373 | 184.1 -> 178.5 | 290 -> 289 | 334 -> 342 (+8) | 371 -> 350 | 373 -> 375 |
+| E3M1 | 247 -> 231 | 130.7 -> 124.7 | 244 -> 241 | 432 -> 442 (+10) | 371 -> 350 | 345 -> 345 |
+| E3M2 | 220 -> 218 | 120.5 -> 119.7 | whole 378 -> 376 | 608 -> 611 (+3) | 377 -> 356 | 371 -> 371 |
+| E3M3 | 227 -> 218 | 123.1 -> 119.7 | whole 469 -> 469 | 541 -> 544 (+3) | 377 -> 356 | 387 -> 387 |
+| E3M4 | 280 -> 271 | 143.2 -> 139.8 | 320 -> 318 | 267 -> 273 (+6) | 377 -> 356 | 373 -> 375 |
+| E3M5 | 259 -> 247 | 135.3 -> 130.7 | 320 -> 316 | 345 -> 353 (+8) | 364 -> 343 | 419 -> 423 |
+| E3M6 | 326 -> 318 | 160.7 -> 157.6 | whole 729 -> 729 | 247 -> 250 (+3) | 377 -> 356 | 391 -> 391 |
+| E3M7 | 219 -> 209 | 120.1 -> 116.3 | whole 548 -> 546 | 486 -> 492 (+6) | 377 -> 356 | 399 -> 399 |
+| E4M1 | 286 -> 269 | 145.5 -> 139.1 | 269 -> 265 | 433 -> 444 (+11) | 364 -> 343 | 327 -> 327 |
+| E4M2 | 254 -> 238 | 133.4 -> 127.3 | 251 -> 250 | 439 -> 446 (+7) | 364 -> 343 | 433 -> 435 |
+| E4M3 | 366 -> 348 | 175.8 -> 169.0 | whole 527 -> 525 | 422 -> 432 (+10) | 377 -> 356 | 359 -> 375 |
+| E4M4 | 393 -> 368 | 186.0 -> 176.6 | 268 -> 267 | 407 -> 419 (+12) | 348 -> 327 | 405 -> 407 |
+| E4M5 | 398 -> 373 | 187.9 -> 178.5 | 267 -> 260 | 354 -> 370 (+16) | 384 -> 363 | 393 -> 393 |
+| E4M6 | 357 -> 343 | 172.4 -> 167.1 | whole 466 -> 464 | 488 -> 495 (+7) | 348 -> 327 | 379 -> 379 |
+| E4M7 | 356 -> 341 | 172.0 -> 166.3 | 334 -> 333 | 309 -> 317 (+8) | 371 -> 350 | 379 -> 379 |
+| E4M8 | 322 -> 301 | 159.1 -> 151.2 | 249 -> 248 | 406 -> 414 (+8) | 377 -> 356 | 411 -> 411 |
+| END | 173 -> 167 | 102.7 -> 100.4 | whole 230 -> 230 | 844 -> 846 (+2) | 362 -> 340 | 457 -> 457 |
+
+- **The stream's pool:** +2..+30 KB a map, 8.6 on average (the arena gives
+  it whole 2 KB). The smallest pool is 247 -> 250 KB (E3M6), the tight
+  maps gain little (E3M4 +6, E4M7 +8). START gains the most (+30): its
+  deathmatch walls, boxes and 36 entities. The edicts' pool is
+  `num_ents + 2 + 96` slots of 388 bytes: 0.8-13.6 KB of it.
+- **SPU RAM:** every bank 21-22 KB smaller (START 37: its items group).
+  That room goes to the streamed sounds' pool (`stream_spu_pool`: the
+  rest of SPU RAM).
+- **VRAM:** the textures' freed rows go to the stream's regions: +0..+16 K
+  texels (E4M3 the most).
+- **The disc** (2 KB sectors, the high textures' set):
+  - the maps' files 863 KB smaller, 22.3-59.1 KB a map: the banks 711 KB
+    of it, the worlds 90, the textures 50, the boxes 12. In whole sectors
+    40272 -> 39426 KB (-846 KB);
+  - GAME_0.DAT 407904 -> 397664 B (the menu's rows);
+  - the medium textures' set (release-medium) -16 KB;
+  - the release image 74890032 -> 73883376 B.
+- **A load** reads that much less: 22-59 KB a map.
+- **The frames:** the 128 views -0.02 %: E2M6's and E4M3's eight views
+  -1.3..-1.9 k cycles each (the two VRAM copies a frame), the other 120
+  within the noise (-0.5..+0.5 k), START's too.
+
+### 68.5 Left
+
+- **The dead models' records:** 40 bytes each (1-10 a map). Dropping them
+  renumbers the models: the entities, the textures' animations
+  (`qw_anim.models`), the cook's rooms. Not done.
+- **The texels past a tile's edge** (68.3's 51 pixels): a polygon whose
+  UV reaches its tile end reads the atlas' neighbour, on the PS1 as in
+  pktview. Master shows the same bleed with other neighbours. A gutter
+  or the UVs clamped in the cook would end it: a change of its own.
+- **The aux pages' freed rows:** the main menu's rows leave 80 rows of the
+  two aux pages unused (248 + 184 of 256 + 256). The stream does not use
+  the aux pages; lending it their free rows is a change of its own. The
+  single player menu's Load and Save rows are as dead (not
+  multiplayer's, left).
+- **Not checked:** DuckStation and the real machine (the files smaller,
+  no engine path changed but the named sounds' table and the menu's
+  rows); the C engine (`ENGINE_C=1`), which builds the same C changes.
+
+## §69 — The frame cache: a place past the frame's own expansions (2026-10-22)
 
 - **The ask** (§67's find, proposed apart): the streamed models' frame
   cache (`engine/mdl.c`) refused an expansion while its ring still had
