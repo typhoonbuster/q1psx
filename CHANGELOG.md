@@ -1700,3 +1700,14 @@ followed by R0-R4.
     - the spawn views +1.6 % (E1M8.v0 from 2 to 3 vblanks, none crossing
       one);
     - the crowd's frames unchanged.
+- **The models' triangles: the corners' xy through the GTE** (§63's
+  follow-up). §66:
+  - de and deo1 (every alias model but the sorted monsters, the view
+    model, the brush models) load a triangle's corners into the GTE with
+    `lwc2` for the back-face NCLIP and store them from there with `swc2`;
+    they went through the CPU's registers before (`lw`, `mtc2`, `sw`);
+  - three instructions fewer a triangle, about 4.8 cycles, drawn or
+    culled; the frames identical (START's views, the 128 spawn views, the
+    game bench, the monsters', the movers'; the C engine, the
+    interpreter);
+  - the 128 views -0.12 %, the game bench with the 3D gun -0.16..-0.30 %.

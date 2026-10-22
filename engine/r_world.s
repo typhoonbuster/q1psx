@@ -549,6 +549,9 @@
 # front, MAC0 < 0; a brush model's faces, walked here, are front ones).
 # Until 2026-10-21 a model drew its back too, under or over its front by
 # the records' order alone (the super nailgun's turning barrels).
+# The corners' xy go to the GTE by lwc2 and from it to the packet by swc2
+# (§66: no copy in the CPU's registers). The flat branch, which no
+# instance assembles (a model's loop has no flat shading), keeps the copy.
 .if \flat
 \q\()_tri_emit:                             # POLY_FT3
 	lw      $t6, SP_SXY($t3)             # xy0
@@ -582,12 +585,9 @@
 	addiu   $s6, $s6, 32
 .else
 \q\()_tri_emit:                             # POLY_GT3
-	lw      $t6, SP_SXY($t3)             # xy0
-	lw      $t7, SP_SXY($t4)             # xy1
-	lw      $t9, SP_SXY($t5)             # xy2
-	mtc2    $t6, C2_SXY0
-	mtc2    $t7, C2_SXY1
-	mtc2    $t9, C2_SXY2
+	lwc2    C2_SXY0, SP_SXY($t3)         # the corners' xy: into the GTE for the
+	lwc2    C2_SXY1, SP_SXY($t4)         # NCLIP, from there to the packet (no
+	lwc2    C2_SXY2, SP_SXY($t5)         # copy in the CPU's registers: §66)
 	lw      $t0, SP_COL($t3)             # c0 (two instructions before the NCLIP)
 	lw      $t1, 4($a3)                  # uv0 | uv1 << 16
 	NCLIP
@@ -603,13 +603,13 @@
 	bgez    $t4, \q\()_tri_next          # turned away: left out
 	sw      $t0, 4($s6)                  # (a packet not linked: harmless)
 	lw      $t4, 8($a3)                  # uv2 | pad (0, see qw_tri)
-	sw      $t6, 8($s6)
-	sw      $t3, 12($s6)
+	swc2    C2_SXY0, 8($s6)              # xy0 (the NCLIP done: no GTE command
+	sw      $t3, 12($s6)                 #  runs while they are read)
 	sw      $t2, 16($s6)
-	sw      $t7, 20($s6)
+	swc2    C2_SXY1, 20($s6)             # xy1
 	sw      $t1, 24($s6)
 	sw      $t5, 28($s6)
-	sw      $t9, 32($s6)
+	swc2    C2_SXY2, 32($s6)             # xy2
 	sw      $t4, 36($s6)
 	lui     $t9, 0x0900
 	or      $t9, $t9, $fp                # tag: 9 words

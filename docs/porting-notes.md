@@ -8147,7 +8147,7 @@ Quake's data goes in the repo.
   cycles; it needs the mask in a register.
 - **The same xy trick for de's triangles** (every other alias model, the
   gun, the brush models): identical frames, about 4.8 cycles a triangle.
-  Proposed apart.
+  Proposed apart (done: §66).
 - **A finer range:** the radius is over every frame (the death poses
   too). A radius per frame from the cook would give finer buckets for the
   same 16.
@@ -8297,3 +8297,62 @@ Quake's data goes in the repo.
     animation: a call left open;
   - (the PS1 drawing a model's triangles in the cook's order: settled by
     §63's depth sort.)
+
+## §66 — The models' triangles: the corners' xy through the GTE (2026-10-22)
+
+- **The ask** (§63's follow-up): give the
+  models' record loops the emit that keeps §63's sort cheap. de and deo1
+  draw every alias model but the sorted monsters (items, flames, heads,
+  gibs, projectiles, the view model), the brush models and their pieces.
+  Their output (the packets, their order) must not change.
+- **Before:** POLYS's triangle emit for models (`.if \var`) loaded each
+  corner's xy from the vertex cache (`lw`), gave it to the GTE for the
+  back-face NCLIP (`mtc2`), then stored it to the packet (`sw`). These
+  are three instructions a corner.
+- **Now:** `lwc2 C2_SXY0..2` before the NCLIP and `swc2 C2_SXY0..2` into
+  the packet after the cull, as §63's ds_tri_emit. These are two
+  instructions a corner, three a triangle fewer. In PCSX-Redux's cost model
+  (§21.1: lw 2, mtc2 2, lwc2 ~2.4, sw and swc2 3) that is about 4.8 cycles
+  less a triangle, drawn or culled.
+  - No GTE command runs while the xy are read back: the NCLIP's result
+    (MAC0) is read before.
+  - t6, t7 and t9 are no longer used there.
+- **Left as it was:** the flat branch of that path (POLY_FT3 with `\var`)
+  keeps the CPU's copy. No instance assembles it: a model's loop has no
+  flat shading. The world's loops (dr, dro*) have no NCLIP.
+- **Checked** against master 0c4aee9 built beside (`git archive`), the `H`
+  line of every dump:
+  - START's 12 views: identical;
+  - the 128 spawn views (`BENCH_MAPS=1 HASHONLY=1`): 128 of 128
+    identical;
+  - the game bench (`BENCH_GAME=1 HASHONLY=1`, the 3D gun in every dump):
+    23 of 23;
+  - `MONSTERS=1 MAP=E1M8 HASHONLY=1`: 12 of 12;
+  - `MOVERS=1` (E1M6's train, E1M3's, E3M4's door: the brush models
+    moving): 159 of 159, and its 3 `bmfhash` lines;
+  - the C engine (`ENGINE_C=1 BENCH_MAPS=1 HASHONLY=1`): the 128 views'
+    hashes are the asm's;
+  - the interpreter (`EMU_ARGS=-interpreter MAP=E1M1 BENCH_MAPS=1
+    HASHONLY=1`, E1M1's items, flames and brush models): its 12 views the
+    dynarec's;
+  - hazcheck clean at every link.
+- **The gain** (cycles, the views' 16-frame averages):
+  - START's 12 views -0.12 % in all, -511..-1766 a view where models are
+    in sight (view0 -0.19 %);
+  - the 128 spawn views -0.12 % in all, up to -4.9 k a view;
+  - the game bench, the 3D gun drawn: -1.8..-3.7 k a frame
+    (-0.16..-0.30 %); its walks within the noise (-536, +1724);
+  - the movers' frames -315..-819.
+- **RAM:** the code 24 bytes shorter (3 instructions in de and deo1): the
+  release's stack room 58504 -> 58536 B, the default's 46024 -> 46040.
+- **On the way:**
+  - the base's first `BENCH_MAPS=1` run froze after E1M4.v3, while E1M5
+    loaded (the log's last line a stream read, `stream: in 81f862e5`).
+    The emulator was killed and the second run went through. Master's
+    code, not this change: noted for the stream's and the drive's
+    sessions;
+  - two bench builds of one tree run at once (`ENGINE_C=1` and the
+    default) when the cook must run again: one build's cook rewrites
+    `cooked/` while the other lists it for its disc, and that disc came
+    out with no map, no GAME_0.DAT, no STREAM_0.DAT (`world: 0 maps on
+    the disc`). Build them one after the other, or run the cook first.
