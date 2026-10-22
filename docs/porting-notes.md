@@ -8295,5 +8295,5 @@ Quake's data goes in the repo.
   - the residency on the tight maps (E3M4, E2M2, E2M6, E2M7). The options
     are a lighter cut, room in the pools, or frames streamed by
     animation: a call left open;
-  - the PS1 draws a model's triangles in the cook's order (§63's depth
-    sort).
+  - (the PS1 drawing a model's triangles in the cook's order: settled by
+    §63's depth sort.)
