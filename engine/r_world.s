@@ -1955,7 +1955,7 @@ dr_light_full:
 # (d, rad = radius - |d|, the impact point; cached in dl_blk while the
 # block lasts, DLB_*), nothing under minlight; the light bytes saved once
 # a frame (dl_touched, a dl_save_buf entry); then each vertex within
-# cutoff of the impact point gets (rad - dist) x 3/8, saturating, dist
+# cutoff of the impact point gets (rad - dist) x 53/128, saturating, dist
 # from dl_sqrt on the squared distance >> 11. Clobbers at, v0, v1, a1-a3,
 # t0-t7, t9, ra.
 dl_light_record_asm:
@@ -2196,9 +2196,13 @@ dlr_v:
 	subu    $t7, $t3, $t7                # cutoff - dist
 	blez    $t7, dlr_v_next
 	addu    $t7, $t7, $t4                # rad - dist
-	sll     $at, $t7, 1
-	addu    $t7, $t7, $at                # x 3
-	sra     $t7, $t7, 3                  # / 8
+	sll     $at, $t7, 6                  # x 53 = 64 - 1 - 2 - 8 (a quarter
+	subu    $at, $at, $t7                #  world unit per vertex unit x the
+	sll     $t7, $t7, 1                  #  cook's light gain, 1.656: dlight.h
+	subu    $at, $at, $t7                #  DL_GAIN)
+	sll     $t7, $t7, 2
+	subu    $at, $at, $t7
+	sra     $t7, $at, 7                  # / 128
 	addu    $a2, $a2, $t7
 	sltiu   $at, $a2, 256
 	bnez    $at, dlr_v_next

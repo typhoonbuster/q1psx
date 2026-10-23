@@ -689,7 +689,7 @@ void items_render(void)
 		if (flame)                                /* an animated group, 10 a second, its phase */
 			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
 		int light = (m->flags & QGF_FLAT) && flame ? 128
-		          : leaf->light + dl_add_at(org, game_tick_count) * 3 / 2;
+		          : leaf->light + DL_GAIN(dl_add_at(org, game_tick_count));
 		rl_add_model(leaf, rl_model(m, frame, org, (m->flags & QGF_ROTATE) ? yaw : 0, 0, 0, light), org, e->mins);
 	}
 }

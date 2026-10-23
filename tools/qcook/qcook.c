@@ -351,7 +351,7 @@ static int cmd_map(int argc, char **argv)
 	const char *out_mdl  = arg(argc, argv, "--mdl", NULL);
 	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
 	const char *out_snd  = arg(argc, argv, "--sounds", NULL);
-	light_gain           = atof(arg(argc, argv, "--light-gain", "1.5"));
+	light_gain           = atof(arg(argc, argv, "--light-gain", "1.66"));
 	if (!pak_path || !map || (!out_tex && !out_tex4 && !out_wld && !out_mdl))
 		die("usage: qcook map --pak <pak> --map <name> [--textures l [--tex <out>] [--tex4 <out>]]"
 		    " [--geometry l --world <out>] [--models l --mdl <out>] [--palette-pak <pak0>]");

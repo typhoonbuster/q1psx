@@ -12,8 +12,9 @@
 #                QUAKE_PAK1). Unset: the maps already in cooked/id1 (so the
 #                re-cook a build triggers keeps the disc's map set: CMake
 #                globbed it at configure time), or ep1 if there are none.
-#   LIGHT_GAIN   vertex light scale (default 1.5; 1 = Quake's own brightness,
-#                dark on a TV)
+#   LIGHT_GAIN   vertex light scale (default 1.66; 1 = Quake's own brightness,
+#                dark on a TV; the engine's dynamic lights follow it: dlight.h
+#                DL_GAIN)
 #   QUAKE_MUSIC  a directory of trackNN.ogg / .mp3 / .wav (the 2021 rerelease:
 #                <Quake>/rerelease/id1/music); default: next to pak0. ffmpeg
 #                resamples them for the SPU music.
@@ -105,7 +106,7 @@ cook_one() {   # map axis level (t / g / m, 0..2)
 	m) what="--models $name --mdl $out.mdl" ;;
 	esac
 	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" $what \
-	                      --light-gain "${LIGHT_GAIN:-1.5}" > "$LOGS/$1_$2$3.log" 2>&1 \
+	                      --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1_$2$3.log" 2>&1 \
 	|| { echo "cook FAILED: $1 $2$3"; cat "$LOGS/$1_$2$3.log"; return 1; }
 }
 export -f cook_one

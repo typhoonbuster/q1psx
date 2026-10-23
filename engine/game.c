@@ -2560,7 +2560,7 @@ void game_render(void)
 		const qw_leaf *leaf = leaf_at(org);
 		int light = leaf ? leaf->light : 128;
 		if (light < 24) light = 24;                   /* always some light on the gun */
-		light += dl_add_at(org, game_tick_count) * 3 / 2;   /* (x the cook's light gain) */
+		light += DL_GAIN(dl_add_at(org, game_tick_count));   /* (x the cook's light gain) */
 		if (light > 170) light = 170;                 /* (rlist.c ent_model's bound) */
 #if Q1PSX_WEAPON_2D
 		if (game_draw_viewmodel == 2 && ws_draw(pl.weapon, pl.weaponframe, bob, light)) {
@@ -2583,7 +2583,7 @@ void game_render(void)
 		proj_t *p = &projs[i];
 		if (p->type == PJ_FREE || !p->leaf)
 			continue;
-		int light = p->leaf->light + dl_add_at(p->org, game_tick_count) * 3 / 2;
+		int light = p->leaf->light + DL_GAIN(dl_add_at(p->org, game_tick_count));
 		switch (p->type) {
 		case PJ_SPIKE:
 			rl_add_model(p->leaf, rl_model(&gdata.models[QGM_SPIKE], 0, p->org, p->yaw, p->pitch, 0, light),

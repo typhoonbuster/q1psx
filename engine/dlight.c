@@ -217,8 +217,8 @@ typedef struct {
    to the plane|`, nothing under the light's minlight, the impact point
    (cached per block); then the light bytes saved once a frame
    (dl_touched, a dl_save_buf entry) and each vertex within `rad -
-   minlight` of the impact point gets `rad - dist` x 3/8 (a quarter world
-   unit per vertex unit, x 1.5 for the cook's light gain), saturating at
+   minlight` of the impact point gets `rad - dist` x 53/128 (a quarter world
+   unit per vertex unit, x 1.656 for the cook's light gain: DL_GAIN), saturating at
    255; `dist` from dl_sqrt on the squared distance >> 11 (Quake's
    octagonal "sd + td / 2" approximated the same length). */
 #if Q1PSX_DLIGHT_C != 0
@@ -292,7 +292,7 @@ void dl_light_record(qw_record *q, const qw_node *node)
 			int add = e->cutoff - dist;      /* > 0: within rad - minlight */
 			if (add <= 0)
 				continue;
-			add = ((add + e->minlight) * 3) >> 3;   /* (rad - dist) x 3/8 */
+			add = ((add + e->minlight) * 53) >> 7;   /* (rad - dist) x 53/128 */
 			int lv = light[v] + add;
 			light[v] = (uint8_t) (lv > 255 ? 255 : lv);
 		}
@@ -354,7 +354,7 @@ void dl_check_record(qw_record *q, const qw_node *node)
 			if (d2 >= 1024) continue;
 			int add = cutoff - dl_sqrt[d2];
 			if (add <= 0) continue;
-			add = ((add + l->minlight) * 3) >> 3;
+			add = ((add + l->minlight) * 53) >> 7;
 			expect[v] += add;
 			if (expect[v] > 255) expect[v] = 255;
 		}

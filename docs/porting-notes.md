@@ -1560,9 +1560,11 @@ enables it in the drawing environment (`vid.c`, `dtd = 1`).
 - Faces without a lightmap in a lit map are black, as in Quake.
 - `--light-gain` (`LIGHT_GAIN` in `cook.sh`) scales the light. 1.0 is
   faithful and dark (start's mean light is 50); 1.6 is much more readable
-  on a TV. The default is 1.5 (chosen 2026-10-15, to try on
-  a screen). It costs nothing at run time and +584 bytes over the 32
-  maps.
+  on a TV. The default was 1.5 (chosen 2026-10-15, to try on
+  a screen); it is 1.66 since 2026-10-24 (1.5 too dark in play).
+  It costs nothing at run time and +584 bytes over the 32 maps. The
+  engine's dynamic lights follow it (`engine/dlight.h` `DL_GAIN`,
+  53/32 = 1.656: the models' share, and the world's vertices' 53/128).
 - **Format QWV7:**
   - each record carries one light byte per vertex, padded to 4, ending
     where the polygons start: `polys - ((num_verts + 3) & ~3)`;
@@ -2797,7 +2799,7 @@ the vertex. Three enumerations were tried before the right one:
   per record, 52-byte entries in a 24 KB buffer of the game arena) and
   each vertex within `rad − minlight` of the impact point gets `rad −
   dist` × 3/8 (a quarter world unit per vertex unit, × 1.5 for the cook's
-  light gain), saturating at 255. `dist` comes from a 1024-entry table
+  light gain; × 53/128 since the gain is 1.66, §15), saturating at 255. `dist` comes from a 1024-entry table
   of square roots on the squared distance >> 11 (Quake's octagonal
   "sd + td / 2" approximated the same length). `dl_restore` puts the
   bytes back after `r_frame`, as Quake rebuilds a dlit lightmap each

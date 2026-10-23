@@ -1907,3 +1907,8 @@ followed by R0-R4.
     DuckStation (the stretch); the 128 views identical at 320×240;
     the release's stack room 87560 B (−3056 B);
   - bench: `RES=`, `GPUTIME=1`; pktview reads the target.
+- **Brighter light** (2026-10-24, `docs/porting-notes.md` §15): the cook's
+  light gain 1.5 → 1.66 (`LIGHT_GAIN`, `qcook --light-gain`): the world's
+  vertex light, the liquids, the leaves' light for the models; the
+  dynamic lights follow (`DL_GAIN`: the models' × 53/32, the world's
+  vertices' × 53/128 in the asm and the C). Every map cooked again.

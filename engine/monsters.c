@@ -558,7 +558,7 @@ void monsters_render(void)
 		if (flame)
 			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
 		int light = (m->flags & QSTM_FLAT) && flame ? 128
-		          : leaf->light + dl_add_at(org, game_tick_count) * 3 / 2;
+		          : leaf->light + DL_GAIN(dl_add_at(org, game_tick_count));
 		if (e->mdef && e->health <= 0) {          /* a body's last second: darkened */
 			int32_t left = e->pain_finished - game_tick_count;
 			if (left < CORPSE_FADE)

@@ -69,5 +69,8 @@ void      dl_restore_asm(void);            /* (engine/r_world.s: the same, no C 
 void      dl_light_record(qw_record *rec, const qw_node *node);
 void      dl_check_record(qw_record *rec, const qw_node *node);   /* (R_DLIGHT_C = 2) */
 int       dl_add_at(const int32_t org[3], int now);   /* Σ (radius - distance), world units */
+/* a dynamic light's share at the cook's light gain (scripts/cook.sh
+   LIGHT_GAIN 1.66): x 53 / 32 = 1.656, the world's vertices' 53 / 128 x 4 */
+#define DL_GAIN(x) ((x) * 53 / 32)
 
 #endif
