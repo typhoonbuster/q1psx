@@ -9225,3 +9225,72 @@ with the same zone tables):
   pose, the movers' bitmap; the stream's sorted table lives on
   `next_wanted`'s stack, 768 B for a moment, not for good, and the two
   trigger lists share one walk, their next links in two rows).
+
+## §73 — The frame cache's lookup in asm: a key word, a sentinel (2026-10-23)
+
+- **The ask** (§69's follow-up, on a branch of its own): make `mdl_frame`'s lookup cheaper, the frames unchanged.
+  It walked 32 entries at 15 cycles each in PCSX's cost model (`lh`, two
+  `nop`s, the loop's branch and counter): a hit cost ~320 cycles in the
+  E1M3 fight. The candidates were a key word and a sentinel, or asm.
+- **The table** (`engine/mdl.c` `mdl_cache_t`) holds the entries by
+  field:
+  - the keys together: asset << 16 | the frame stored, `FREE`
+    (0xffffffff) for none. key[32] is the lookup's sentinel, and three
+    more words are read past it;
+  - then the offsets, the ends and the stamps, the ring and this frame's
+    stamp;
+  - the miss is `mdl_expand_new`: §69's placement, the same choices, on
+    the arrays.
+- **The asm** (`engine/mdl_frame.s`):
+  - the key: the frame map's entry for a body (§67), the asset and the
+    cache's address in the shadows of the flags' branches;
+  - the key is written at key[32], then four keys a turn: each compare
+    in the shadow of the next key's load, the pointer's step in a
+    branch's delay slot (9 instructions, 18 cycles: 4.5 an entry);
+  - a hit stamps its entry and returns the ring + its offset. The
+    sentinel's is a miss: a tail jump to `mdl_expand_new`, a2 the frame
+    stored.
+- **The C** (`mdl.c`'s `mdl_frame`, the C engine's and the
+  specification): the same key and sentinel, a plain loop. GCC makes it
+  `lw`, `addiu`, `bne`, `nop`: 8 cycles an entry.
+- **Measured** (PCSX-Redux in fast forward; a measure build timed each
+  call on root counter 2, not committed; on master 153b83d). The fight:
+  `MONSTERS=3 MAP=E1M3`, 3600 frames, 5941 hits at index 13.5 on
+  average, 124 misses. E1M8: `MONSTERS=1`, 268 hits at index 10.0, 31
+  misses.
+
+  | Cycles | master (§69) | C, key + sentinel | asm |
+  |---|---|---|---|
+  | a hit, the fight | 324 | 210 | 134 |
+  | a hit, E1M8 | 277 | 187 | 122 |
+  | a miss's own work, the fight (the expansion apart) | 1685 | 1438 | 1329 |
+  | a miss's own work, E1M8 | 1724 | 1509 | 1381 |
+  | mdl_frame a frame, the fight | 665 | 469 | 339 |
+
+  - The frames against master:
+    - the fight -0.048 % (-338 cycles a frame, every window lower);
+    - the game bench -85..-1435 a frame, its walks -192 and -292;
+    - E1M8's dumps -96..-1976 (-0.055 %);
+    - the 128 views -0.012 % (-583..+222 a view).
+- **Checked** against master 153b83d's runs (the same commands, run
+  first; the same results on a93d630 before its ticks landed):
+  - `BENCH_MAPS=1 HASHONLY=1 PROFILE=0`: 128 of 128 `H` lines
+    identical; `BENCH_GAME=1 HASHONLY=1`: 23 of 23; `MONSTERS=1 MAP=E1M8
+    HASHONLY=1`: 12 of 12; 0 refusals in those and in the fight;
+  - the asm against the C, call by call: a check build (not committed)
+    called the C lookup after each `mdl_frame` and compared the pools.
+    8878 calls (E1M8, the fight, the game bench), 0 mismatches;
+  - the interpreter (`EMU_ARGS=-interpreter MONSTERS=1 MAP=E1M8
+    HASHONLY=1`): 12 of 12 master's;
+  - the C engine (`ENGINE_C=1 MONSTERS=1 MAP=E1M8 HASHONLY=1`): 12 of
+    12 master's C engine's;
+  - §69's host harness on the new C: every pool it returned is
+    master's, call by call (five workloads, millions of calls); never a
+    refusal with room, never an overwrite;
+  - hazcheck clean.
+- **RAM:** the table +16 B (the sentinel's 4 words). The stack room:
+  release 57768 -> 57704 B, default 45240 -> 45176.
+- **Left:**
+  - eight keys a turn: ~4.25 an entry, more landing code;
+  - a hint per asset (the entry its last hit took, a byte an asset):
+    most hits without a scan, for RAM. A call left open.
