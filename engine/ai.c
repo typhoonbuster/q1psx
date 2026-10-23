@@ -246,12 +246,41 @@ static int leaf_index(const qw_leaf *l)
 	return (int) ((const qw_leaf *) ((uintptr_t) l | 0x80000000u) - world.leaves);
 }
 
+/* the leaf of an edict's eye (ai_view_org, 1/8 units): the player's kept
+   for its eye's place, a monster's in its edict (a sight line asks it of
+   both ends, many a tick; they move at their thinks); dropped with the
+   map (ai_map_start) */
+static int32_t        pl_eye[3];
+static const qw_leaf *pl_eye_leaf;
+
+static const qw_leaf *eye_leaf(edict_t *e, const int32_t eye[3])
+{
+	int32_t p[3] = { eye[0] / SUB, eye[1] / SUB, eye[2] / SUB };
+	if (e == ent_player) {
+		if (!pl_eye_leaf || p[0] != pl_eye[0] || p[1] != pl_eye[1] || p[2] != pl_eye[2]) {
+			__builtin_memcpy(pl_eye, p, sizeof pl_eye);
+			pl_eye_leaf = world_point_leaf(p);
+		}
+		return pl_eye_leaf;
+	}
+	if (e->item_model < 0 && e->masset < 0)
+		return world_point_leaf(p);
+	int32_t key = (p[0] & 0xffff) | (p[1] << 16);
+	if (!e->am.eye_leaf || e->am.eye_key[0] != key || e->am.eye_key[1] != p[2]) {
+		e->am.eye_leaf   = world_point_leaf(p);
+		e->am.eye_key[0] = key;
+		e->am.eye_key[1] = p[2];
+	}
+	return e->am.eye_leaf;
+}
+
 /* PF_checkclient: the player, if the monster's eye is in the leaves the
    player's eye sees (its PVS row, taken again every tenth of a second);
    not when dead or not a target */
 static uint8_t check_pvs[1024];
 static int32_t check_time = -1000;
 static int     check_ok;
+static const qw_leaf *check_leaf;    /* the leaf check_pvs is the row of */
 static int16_t s_h2ohit1, s_dland2;   /* the physics' sounds */
 
 void ai_map_start(void)
@@ -260,6 +289,7 @@ void ai_map_start(void)
 	s_dland2   = (int16_t) snd_find("demon/dland2.wav");
 	check_time = -1000;
 	check_ok = 0;
+	pl_eye_leaf = 0;
 	ai_sight_entity = 0;
 	ai_sight_entity_time = -1000;
 }
@@ -271,9 +301,8 @@ static void new_check(void)
 		return;
 	int32_t eye[3];
 	ai_view_org(ent_player, eye);
-	for (int k = 0; k < 3; k++)
-		eye[k] /= SUB;
-	const qw_leaf *leaf = world_point_leaf(eye);
+	const qw_leaf *leaf = eye_leaf(ent_player, eye);
+	check_leaf = leaf;
 	if (leaf)
 		leaf = (const qw_leaf *) ((uintptr_t) leaf | 0x80000000u);
 	uint32_t row = world.vis_rowbytes;
@@ -308,9 +337,7 @@ edict_t *ai_checkclient(edict_t *self)
 		return 0;
 	int32_t view[3];
 	ai_view_org(self, view);
-	for (int k = 0; k < 3; k++)
-		view[k] /= SUB;
-	const qw_leaf *leaf = world_point_leaf(view);
+	const qw_leaf *leaf = eye_leaf(self, view);
 	int l = leaf ? leaf_index(leaf) - 1 : -1;
 	if (l < 0 || (uint32_t) (l >> 3) >= world.vis_rowbytes || !(check_pvs[l >> 3] & (1 << (l & 7))))
 		return 0;
@@ -691,20 +718,30 @@ static int row_has(const uint8_t *in, uint32_t rowbytes, int l)
 	}
 }
 
-/* the eye's leaf (the player's kept while its eye stays where it was) */
-static const qw_leaf *eye_leaf(const edict_t *e, const int32_t eye[3])
+/* the leaf lb in the PVS row of la, the eyes' leaves of self and of its
+   target (the PVS does not change: the same two leaves, the same answer):
+   the player's from check_pvs when the check took it from la, a monster's
+   last answer kept in its edict, else the row's walk */
+static int pvs_sees(edict_t *self, const qw_leaf *la, const qw_leaf *lb)
 {
-	static int32_t pl_eye[3] = { 0x7fffffff, 0, 0 };
-	static const qw_leaf *pl_leaf;
-	int32_t p[3] = { eye[0] / SUB, eye[1] / SUB, eye[2] / SUB };
-	if (e == ent_player && p[0] == pl_eye[0] && p[1] == pl_eye[1] && p[2] == pl_eye[2])
-		return pl_leaf;
-	const qw_leaf *l = world_point_leaf(p);
-	if (e == ent_player) {
-		__builtin_memcpy(pl_eye, p, sizeof pl_eye);
-		pl_leaf = l;
+	int l = leaf_index(lb) - 1;
+	uint32_t byte = (uint32_t) l >> 3;
+	if (self == ent_player) {
+		if (check_ok && la == check_leaf && byte < sizeof check_pvs)
+			return l < 0 || byte >= world.vis_rowbytes || ((check_pvs[byte] >> (l & 7)) & 1);
+	} else if (self->item_model >= 0 || self->masset >= 0) {
+		if (self->am.vis_from == la && self->am.vis_to == lb)
+			return self->am.vis_seen;
 	}
-	return l;
+	const qw_leaf *k = (const qw_leaf *) ((uintptr_t) la | 0x80000000u);
+	uint32_t row = k->vis & 0x00ffffffu;      /* (the top byte: the render list's id) */
+	int seen = !row || row_has((const uint8_t *) (row | 0x80000000u), world.vis_rowbytes, l);
+	if (self != ent_player && (self->item_model >= 0 || self->masset >= 0)) {
+		self->am.vis_from = la;
+		self->am.vis_to   = lb;
+		self->am.vis_seen = seen;
+	}
+	return seen;
 }
 
 int ai_visible(edict_t *self, edict_t *targ)
@@ -718,12 +755,8 @@ int ai_visible(edict_t *self, edict_t *targ)
 	   seen: Quake's answer without its trace (E1M3's crowd: the sight
 	   lines were a quarter of its ticks, porting-notes §72) */
 	const qw_leaf *la = eye_leaf(self, a), *lb = eye_leaf(targ, b);
-	if (la && lb) {
-		la = (const qw_leaf *) ((uintptr_t) la | 0x80000000u);
-		uint32_t row = la->vis & 0x00ffffffu;   /* (the top byte: the render list's id) */
-		if (row && !row_has((const uint8_t *) (row | 0x80000000u), world.vis_rowbytes, leaf_index(lb) - 1))
-			return 0;
-	}
+	if (la && lb && !pvs_sees(self, la, lb))
+		return 0;
 	TR_TAG(AI_TR_VISIBLE);
 	q_fixed f = traceline(0, 1, a, b, 1, self);
 	if (ai_trace_inopen && ai_trace_inwater)

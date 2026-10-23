@@ -9225,8 +9225,164 @@ with the same zone tables):
   pose, the movers' bitmap; the stream's sorted table lives on
   `next_wanted`'s stack, 768 B for a moment, not for good, and the two
   trigger lists share one walk, their next links in two rows).
+- **(3a) A point's leaf: in asm, and asked less** (the fight sampled again
+  after (T), `MONSTERS=3 MAP=E1M3 SAMPLE=1`: `world_point_leaf_from` had
+  become 11.9 % of its busy samples, (2a)'s sight lines asking it of both
+  eyes, from the root, every time):
+  - the eye's leaf kept: the player's for its eye's place (dropped with
+    the map: a new map's spawn could hold the old eye's place), a
+    monster's in its edict (the alias models' half of the leaves union,
+    `am`: unused past `leaves[0]` for them), keyed by the eye's place in
+    whole units and cleared when it is linked; `ai_checkclient` and the
+    check's own row take it too. 11.9 % -> 3.4 %;
+  - a sight line's PVS answer kept: a monster's last (its eye's leaf, its
+    target's, the bit: the same two leaves give the same answer), the
+    player's read in `check_pvs` when the check took that row from its
+    eye's leaf; else the row's walk;
+  - `engine/w_leaf.s`: the walk by hand. Both children read with the
+    plane, an axial plane's side one subtraction from the coordinate kept
+    shifted on the stack (no multiply), the child picked and its leaf bit
+    tested in the branches' delay slots (no load waits at the step's end):
+    34-40 cycles a node where the C took ~50. `world_point_leaf_from_c`
+    follows it (the C engine's); the bench's `wleafdiff` line compares
+    them on 4000 points a map, half walked from a random box's top node:
+    0 mismatches on START (and its interpreter), E1M3, E2M1; a walk 688 /
+    976 / 1319 cycles against the C's 825 / 1159 / 1533 (the timer's
+    reads included).
+  - The fight's busy samples -11.4 % (266951 -> 236489; the asm's share
+    57.2 -> 60.4 %, the C's 26.1 -> 15.4 %); every bench identical
+    (`WORLD_HZ=60` against the references; the release's room 57352 B).
+- **(3b) The touch walk in asm** (`engine/e_touch.s`, `touch_gather`):
+  e's box in registers (box16's floor / ceiling / int16, no trip through
+  the stack), the area nodes' stack in the frame, a slot's x span tested
+  first, its other loads in the branches' delay slots, four saved
+  registers where the C's prologue saved nine. The walk takes a list's
+  descriptor (`touch_walk_t`: its counts, heads, nexts, the slots and
+  their edicts; `p_defs.inc` TW_*, E_ABSMIN / E_ABSMAX, static-asserted).
+  `touch_gather_c` follows it (the C engine's); the bench's `touchdiff`
+  line walks both lists of 4000 boxes (half about a random trigger slot,
+  most of those reaching it) with both: 0 mismatches on START, E1M1,
+  E1M3 (and its interpreter); a walk 843 / 943 cycles against the C's
+  997 / 1103. The bench's slot count (`trigtests`) is the asm's own
+  (`ASM_BENCH`, a symbol the bench build defines for every asm file).
+- **The stream's wants of the edicts' sounds**: a pass walked every edict
+  for its five noises; a bitmap of those with a streamed one, made with
+  the lists (their noises are set when they spawn), is walked instead.
+  Every bench identical (`WORLD_HZ=60`); the release's room 57064 B.
+- **Two exact shortcuts in `engine/ents.c`**: a monster's step physics
+  is not called on a tick it has nothing to do (on the ground, flying or
+  swimming, no think due, still where its contents were taken: each part
+  of `ai_physics_step` would return at once; the crowd's tick -1.7 %);
+  `ents_model_frame` (the textures' alternates, each frame: every
+  animated chain's models looked for in the drawn brush models) starts
+  at the model's first entry, a table made with the lists, where it
+  walked the list from its start. Every bench identical (`WORLD_HZ=60`).
+- **(3c) The render lists' cull in asm** (`engine/e_seen.s`,
+  `ents_seen_streamed` / `ents_seen_items`): `monsters_render` and
+  `items_render` walked every streamed or item edict each frame, a call
+  to `ent_model_leaf` and its tests for each, though most are out of the
+  PVS. The asm gives the next position whose edict is in use, has its
+  model and a leaf the frame's PVS stamp marks (the leaf looked for
+  exactly where the C looked: the same leaves kept), the C draws that
+  one: a list pointer, the edict's address by shifts (x 392), its three
+  fields read together, the leaf's stamp read in a branch's delay slot
+  (with no leaf yet, a harmless read at address 6). `ents_seen_c`
+  follows it (the C engine's); the fight compares both lists each frame
+  (`seendiff`, untimed): 36867 walks, 0 mismatches. The cull ~0.55 % of
+  the fight's busy samples where the C's loops took 0.9 %.
+- **(3d) The edicts' tick walk in asm** (`engine/e_tick.s`,
+  `ents_tick_loop`): `ents_tick`'s loop over the active bitmap, its
+  dispatch by kind and its asleep test; the C keeps the tick's frame
+  (the player's touches, the half's mask, `force_retouch`, `game_dt`)
+  and calls it. Ten saved registers once a tick, the de Bruijn product's
+  latency spent clearing the bit and finding the table, the edict's
+  address by shifts, each field read again after any call (a call can
+  remove it, change its kind, move it), the bit cleared in memory (the
+  calls wake edicts), the word's bits the snapshot taken when it is
+  reached, as the C's. `ents_physics_pusher` and `ents_run_think` are
+  global for it, `ents_ctz_tab` too. The C loop is the C engine's
+  (`ents_tick_loop` there); GCC had inlined the physics' helpers into
+  `ents_tick` (4.6 KB): the release's room +720 B (57144 B). Every bench
+  identical (`WORLD_HZ=60`); at 30 the asm's runs are the C engine's
+  (`MONSTERS=1`, `MOVERS=1`, the crowd); the crowd's tick -0.9 %.
 
-## §73 — The frame cache's lookup in asm: a key word, a sentinel (2026-10-23)
+## §73 — Two crashes a bot's long runs found (2026-10-23)
+
+A local build with a bot at the pad (a demo video's, not committed) played
+START to E1M3 for long stretches on PCSX-Redux and DuckStation. Two crashes
+came out of it, neither of which a bench reaches.
+
+### 73.1 The o32 argument area in §72's asm frames
+
+`ents_tick_loop` (`engine/e_tick.s`) kept `ra` and `s0`-`s2` at 0-12 of its
+frame, and `ents_seen_*` (`engine/e_seen.s`) the same. Those 16 bytes are
+the o32 ABI's argument area: a callee may write its `a0`-`a3` there.
+`ents_run_think` jumps to the think as a tail call (`jr t9`, no frame of
+its own), so a think runs on the tick loop's frame. The bot's build keeps
+its `printf`s, and `execute_changelevel` ends in one: its varargs prologue
+wrote `a1`-`a3` (0 secrets, 6, 56 s) over the kept `s0`-`s2`. `s0` came
+back 0, and `ents_tick`'s `game_dt` store after the call (`sw -6984(s0)`)
+went to 0xffffe4b8 (PCSX-Redux's "write to unknown address" at E1M1's
+intermission). DuckStation ran the rodata at a later return. In the
+release, a think whose tail call ends in one of the eleven functions that
+write their caller's argument area could do the same (`demon_check_attack`
+and `vram_upload` write at 0, where `ra` was).
+
+Both frames now keep the 16 bytes free, as `r_world.s` and `zone.s` do:
+`ra` and the `s` registers above them, 16 bytes more of stack. The frames
+are otherwise the same (`MONSTERS=3 MAP=E1M3`: every line identical,
+`seendiff` 0 mismatches).
+
+An audit of the release's code checked every function's writes above
+its frame, through its tail calls, and every function that keeps
+registers in its own lowest 16 bytes while it calls:
+- `pmove_step` and its helpers (`engine/pmove.s`) and `r_render` keep
+  registers there;
+- none of their callees writes there today.
+
+### 73.2 The lights' node stamps at the frame count's wrap
+
+The walk's lit-block gate compares a node's `dlstamp` with the frame
+count, both 16 bits.
+- `r_frame` restarts the count at 1 past 65534 and clears the faces'
+  stamps, but it left the nodes' stamps.
+- So a node a light reached 65534 frames earlier passed the gate again,
+  18 minutes into a map (or less at 30 fps), with no light that frame.
+- `dr_light_rec`'s test runs at least once: it took the table's stale
+  first light.
+- When that sphere reached the record, `dl_light_record_asm` cleared the
+  block cache's entries from the table's start to its end in steps of 32
+  until the two met. With an empty table they never meet, and the loop
+  zeroed every 48th word of RAM, its own code included.
+
+The bot met it when it stood still and fired in one place (its muzzle
+flashes stamped the same nodes):
+- E1M2 crashed after 1120 s in the map (67200 frames);
+- E1M3 crashed after about 1216 s over its lives.
+
+The wrap now clears the nodes' stamps too: `world.nodes` holds them all,
+the zones patching only the nodes' face pointers. The cost is a loop over
+the nodes once every 65534 frames.
+- The bot then stood 10102 s in E1M2 (nine wraps) with no crash.
+- START's views are identical (`HASHONLY=1 scripts/dlcheck.sh`).
+
+### 73.3 A monster that never started
+
+`walkmonster_start` (`engine/monsters.c` `monster_start`) adds `random ()
+x 0.5` to the fresh edict's `nextthink`, 0. Quake's float is never 0
+there (and its `time` is 1.0 at the spawn). Here the share of
+`TICKS(50)` is 0 one time in 30 (`frand () x 30 >> 16`), and a think at 0
+never runs (`SV_RunThink`'s `thinktime <= 0`). So
+`walkmonster_start_go` never ran: the monster stood at its spawn, solid,
+`takedamage` 0, frozen for good. The bot met E1M2's first ogre like that
+in the corridor after a death's restart.
+
+The fix: a 0 is the first tick (1); 1..29 are unchanged (all due at once,
+as Quake's are). `MONSTERS=1` changes from its first line, the 60 ticks
+before the scenarios: a monster of E1M1's that the bench had frozen now
+starts, and the scenarios' random draws follow another course.
+
+## §74 — The frame cache's lookup in asm: a key word, a sentinel (2026-10-23)
 
 - **The ask** (§69's follow-up, on a branch of its own): make `mdl_frame`'s lookup cheaper, the frames unchanged.
   It walked 32 entries at 15 cycles each in PCSX's cost model (`lh`, two

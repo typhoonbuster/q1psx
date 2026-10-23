@@ -547,8 +547,13 @@ const qw_leaf *world_point_leaf(const int32_t pos[3])
 
 /* The descent of world_point_leaf from `at` (a node or a tagged leaf): the
    leaf it gives the root's, for a point inside the box world_box_topnode
-   took `at` from. */
-const qw_leaf *world_point_leaf_from(uint32_t at, const int32_t pos[3])
+   took `at` from. engine/w_leaf.s is the base; this C follows it: the C
+   engine's, and the bench's check (main.c bench_wleaf_diff). */
+#if Q1PSX_ENGINE_C
+#define world_point_leaf_from_c world_point_leaf_from
+#endif
+#if Q1PSX_ENGINE_C || defined(Q1PSX_BENCH)
+const qw_leaf *world_point_leaf_from_c(uint32_t at, const int32_t pos[3])
 {
 	int32_t p[3] = { pos[0] * QW_VSCALE, pos[1] * QW_VSCALE, pos[2] * QW_VSCALE };
 	while (!(at & 1)) {
@@ -562,3 +567,4 @@ const qw_leaf *world_point_leaf_from(uint32_t at, const int32_t pos[3])
 	}
 	return (const qw_leaf *) (at & ~1u);
 }
+#endif

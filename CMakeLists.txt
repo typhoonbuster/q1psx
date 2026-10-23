@@ -27,7 +27,10 @@ list(REMOVE_ITEM ENGINE_SOURCES ${PHYS_C_REFERENCE})
 # the base (docs/porting-notes.md §55): the physics (engine/clip.c,
 # pmove.c), the slow path (r_slow.c), the dynamic lights (dlight.c), the
 # brush models' cut (bmfrag.c), the places among a leaf's pieces (rlist.c
-# rl_order_c), an entity's matrices (rlist.c) and a model's frame (mdl.c).
+# rl_order_c), an entity's matrices (rlist.c), a model's frame (mdl.c), a
+# point's leaf (world.c world_point_leaf_from_c), the triggers' touch walk
+# (ents.c touch_gather_c), the render lists' cull (ents.c ents_seen_c) and
+# the edicts' tick walk (ents.c ents_tick_loop).
 # The world renderer (engine/r_world.s) has no C, written in asm from the
 # start: it stays. The frames are the asm's, hash for hash (scripts/bench.sh
 # ENGINE_C=1).
@@ -37,7 +40,9 @@ if(Q1PSX_ENGINE_C)
 		${PROJECT_SOURCE_DIR}/engine/clip.s ${PROJECT_SOURCE_DIR}/engine/pmove.s
 		${PROJECT_SOURCE_DIR}/engine/r_slow.s ${PROJECT_SOURCE_DIR}/engine/bmfrag.s
 		${PROJECT_SOURCE_DIR}/engine/rl_order.s ${PROJECT_SOURCE_DIR}/engine/ent_mat.s
-		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s ${PROJECT_SOURCE_DIR}/engine/mdl_frame.s)
+		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s ${PROJECT_SOURCE_DIR}/engine/w_leaf.s
+		${PROJECT_SOURCE_DIR}/engine/e_touch.s ${PROJECT_SOURCE_DIR}/engine/e_seen.s
+		${PROJECT_SOURCE_DIR}/engine/e_tick.s ${PROJECT_SOURCE_DIR}/engine/mdl_frame.s)
 	list(APPEND ENGINE_SOURCES ${PHYS_C_REFERENCE})
 	message(STATUS "q1psx: the C engine (the world renderer asm)")
 endif()
@@ -171,6 +176,8 @@ target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ZONE
 # boots straight into the bench scenarios, prints "bench ..." lines to stdout,
 # no debug overlay. See docs/architecture.md §9.
 option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
+# the bench's counters in the asm (engine/e_touch.s: the trigger slots tested)
+target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ASM_BENCH=$<BOOL:${Q1PSX_BENCH}>>)
 set(Q1PSX_BENCH_EFFECTS 1 CACHE STRING "Effects level the bench runs at (1 medium, 2 high)")
 set(Q1PSX_BENCH_SAMPLE 0 CACHE STRING "1: the bench samples the PC (engine/prof.c) over each view's frames")
 set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics checks only")

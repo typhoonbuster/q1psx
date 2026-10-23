@@ -1825,7 +1825,20 @@ followed by R0-R4.
     two 60ths, and a falling or thrown one drawn a 60th on between its
     moves. At 60 every bench is the previous commit's; at 30 the movers'
     ways the same, the crowd -6 % a tick and its worst tick -45 %.
-- **The frame cache's lookup in asm** (§69's follow-up). §73:
+- **Two crashes found by long runs** (2026-10-23, `docs/porting-notes.md`
+  §73):
+  - the §72 asm kept registers in the o32 argument area a callee may
+    write; a think run on the tick loop's frame by a tail call did, and
+    the demo build crashed at E1M1's intermission. The 16 bytes are now
+    kept free;
+  - the frame count's wrap cleared the faces' stamps but not the nodes'
+    light stamps, so 18 minutes into a map a node lit 65534 frames
+    earlier ran the light test on no light. A loop then zeroed RAM. The
+    wrap now clears those stamps too.
+  - one monster in 30 never started: Quake's spawn delay, random () x 0.5
+    s, came out as 0 ticks, and a think at 0 never runs. The monster
+    stood frozen, solid and unhurt. A 0 is now the first tick.
+- **The frame cache's lookup in asm** (§69's follow-up). §74:
   - the cache's entries by field, the keys together: asset << 16 | the
     frame stored, a sentinel past the last;
   - `engine/mdl_frame.s`: four keys a turn, each compare in the shadow

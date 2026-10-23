@@ -671,13 +671,10 @@ void items_render(void)
 {
 	uint16_t vis = (uint16_t) r_state.visframe;
 	int yaw = (game_tick_count % 216) * ANG_TURN / 216;   /* EF_ROTATE: 100 degrees a second (3.6 s a turn) */
-	for (int i = 0; i < ents_num_models; i++) {
-		edict_t *e = &edicts[ents_model_list[i]];
-		if (!e->inuse || e->item_model < 0)
-			continue;
-		const qw_leaf *leaf = ent_model_leaf(e);
-		if (!leaf || leaf->visframe != vis)
-			continue;
+	int n = ents_num_models;
+	for (int i = ents_seen_items(ents_model_list, n, 0, vis); i < n; i = ents_seen_items(ents_model_list, n, i + 1, vis)) {
+		edict_t *e = &edicts[ents_model_list[i]];   /* (in use, its model, its leaf in */
+		const qw_leaf *leaf = e->leaves[0];          /*  the PVS: e_seen.s) */
 		const qg_model *m = &world.models[e->item_model];
 		int32_t tmp[3];
 		uint16_t ang[3];

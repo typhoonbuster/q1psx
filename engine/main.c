@@ -980,6 +980,46 @@ static void bench_clip_diff(void)
 	       (unsigned) (cyc_root / (N / 4)), (unsigned) (cyc_node / (N / 4)));
 }
 
+/* w_leaf.s against world.c's C: the leaf of random points of the map's
+   box, from the root and from the top node of a random box around each
+   (as the bolts' and the edicts' walks start); the cycles of a walk */
+static void bench_wleaf_diff(void)
+{
+#if !Q1PSX_ENGINE_C
+	enum { N = 4000 };
+	int      bad = 0;
+	uint32_t cyc_asm = 0, cyc_c = 0;
+	for (int i = 0; i < N; i++) {
+		int32_t p[3], w[3];
+		rng_point(p, i & 1);                      /* (1/8 units; half in the open) */
+		for (int k = 0; k < 3; k++)
+			w[k] = p[k] / CLIP_SUB;
+		uint32_t at = (uint32_t) world.root;
+		if (i & 2) {
+			int32_t lo[3], hi[3];
+			for (int k = 0; k < 3; k++) {
+				int32_t r = (int32_t) (rng() % 64);
+				lo[k] = w[k] - r;
+				hi[k] = w[k] + r;
+			}
+			at = world_box_topnode(lo, hi);
+		}
+		uint32_t t0 = prof_now();
+		const qw_leaf *a = world_point_leaf_from(at, w);
+		uint32_t t1 = prof_now();
+		const qw_leaf *c = world_point_leaf_from_c(at, w);
+		uint32_t t2 = prof_now();
+		cyc_asm += prof_cycles(t0, t1);
+		cyc_c   += prof_cycles(t1, t2);
+		if (a != c && bad++ < 4)
+			printf("wleafdiff MISMATCH %d: from %08x at %d %d %d: asm %08x c %08x\n", i, (unsigned) at,
+			       (int) w[0], (int) w[1], (int) w[2], (unsigned) (uintptr_t) a, (unsigned) (uintptr_t) c);
+	}
+	printf("wleafdiff %d points (half from a box's top node): mismatches %d; cycles/walk asm %u c %u\n", N, bad,
+	       (unsigned) (cyc_asm / N), (unsigned) (cyc_c / N));
+#endif
+}
+
 /* pmove.s (on clip.s) against pmove.c (on clip.c): a random walk with
    random commands, turns, jumps, short noclip flights and a teleport to a
    random open spot every 300 ticks. Both run each tick from the same state;
@@ -2674,6 +2714,11 @@ static void bench_monsters(void)
 			run_frame(0, 0);
 			fsum += prof_stage[PROF_FRAME];
 			fdrawn += (uint32_t) monsters_drawn;
+#if !Q1PSX_ENGINE_C
+			if (!(t & 15))
+				ents_seen_check();                /* (e_seen.s against its C, untimed; a
+				                                     frame in 16: the samples' profile) */
+#endif
 			int max, used = ents_in_use(&max);
 			if (used > peak)
 				peak = used;
@@ -2694,6 +2739,9 @@ static void bench_monsters(void)
 		cmd.fire = 0;
 		prof_sample_stop();
 		prof_sample_print("fight");
+#if !Q1PSX_ENGINE_C
+		printf("seendiff %u walks: mismatches %u\n", (unsigned) ents_seen_checked, (unsigned) ents_seen_bad);
+#endif
 	}
 }
 
@@ -3060,6 +3108,10 @@ static void run_bench(void)
 	}
 	if (world_ok) {
 		bench_clip_diff();
+		bench_wleaf_diff();
+#if !Q1PSX_ENGINE_C
+		ents_touch_diff(4000);
+#endif
 		bench_pmove_diff();
 	}
 	for (uint32_t v = 0; Q1PSX_BENCH_VIEWS && world_ok && v < world.num_views && v < 16; v++) {

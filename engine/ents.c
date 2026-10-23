@@ -45,6 +45,8 @@ int      ents_first_spawn;
 
 static uint32_t active[ENT_WORDS];   /* edicts with a think or a move pending */
 static uint32_t pushers[ENT_WORDS];  /* the movers (MOVETYPE_PUSH): run every tick */
+static uint32_t noisy[ENT_WORDS];    /* the edicts with a streamed sound (their noises are
+                                        set when they spawn: ents_stream_wants' walk) */
 static int      lists_dirty;         /* an edict spawned or went: the lists */
 static uint16_t touch_list[512];     /* edicts with a touch (the player's pass) */
 static int      num_touch;
@@ -71,6 +73,8 @@ int             ents_num_models;
 uint16_t        ents_streamed_list[512];            /* the monsters, the streamed models */
 int             ents_num_streamed;
 static int      num_draw;
+static uint16_t *model_draw;         /* a brush model's first draw_list entry + 1, 0 none */
+static uint32_t  num_model_draw;     /* (world.num_bmodels: ents_model_frame's lookup) */
 static uint16_t vis_list[CLIP_MAX_BMODELS + 64];    /* those the PVS stamp sees */
 static int      num_vis;
 static uint16_t vis_list_stamp;
@@ -361,8 +365,9 @@ void ent_link(edict_t *e)
 		}
 	}
 	if (e->item_model >= 0 || e->masset >= 0) {   /* an alias model: drawn in its centre's leaf, */
-		e->leaves[0]  = 0;                        /* found when it is drawn (ent_model_leaf) */
-		e->num_leaves = 1;
+		e->leaves[0]   = 0;                       /* found when it is drawn (ent_model_leaf) */
+		e->am.eye_leaf = 0;
+		e->num_leaves  = 1;
 	} else if (e->draw && e->model) {
 		uint16_t idx[ENT_MAX_LEAVES];
 		e->num_leaves = (uint8_t) world_box_leaves(e->absmin, e->absmax, idx, ENT_MAX_LEAVES);
@@ -383,6 +388,57 @@ void ent_link(edict_t *e)
 	if (e->touch_slot >= 0 && touch_slots)
 		touch_relink(e);
 }
+
+/* engine/e_seen.s's C (it is the base): the C engine's, and the bench's
+   check (ents_seen_check) */
+#if Q1PSX_ENGINE_C || defined(Q1PSX_BENCH)
+static int ents_seen_c(const uint16_t *list, int n, int from, uint32_t vis, int items)
+{
+	for (int i = from; i < n; i++) {
+		edict_t *e = &edicts[list[i]];
+		if (!e->inuse || (items ? e->item_model < 0 : e->masset < 0))
+			continue;
+		const qw_leaf *leaf = ent_model_leaf(e);
+		if (leaf && leaf->visframe == vis)
+			return i;
+	}
+	return n;
+}
+#endif
+#if Q1PSX_ENGINE_C
+int ents_seen_streamed(const uint16_t *list, int n, int from, uint32_t vis)
+{
+	return ents_seen_c(list, n, from, vis, 0);
+}
+int ents_seen_items(const uint16_t *list, int n, int from, uint32_t vis)
+{
+	return ents_seen_c(list, n, from, vis, 1);
+}
+#elif defined(Q1PSX_BENCH)
+uint32_t ents_seen_checked, ents_seen_bad;
+/* both lists walked by the asm and by its C for the frame's stamp: the
+   same positions (the leaves found on the way are the same) */
+void ents_seen_check(void)
+{
+	uint32_t vis = (uint16_t) r_state.visframe;
+	for (int items = 0; items < 2; items++) {
+		const uint16_t *list = items ? ents_model_list : ents_streamed_list;
+		int n = items ? ents_num_models : ents_num_streamed;
+		for (int i = -1, j = -1;;) {
+			i = items ? ents_seen_items(list, n, i + 1, vis) : ents_seen_streamed(list, n, i + 1, vis);
+			j = ents_seen_c(list, n, j + 1, vis, items);
+			ents_seen_checked++;
+			if (i != j) {
+				if (ents_seen_bad++ < 4)
+					printf("seendiff MISMATCH list %d: asm %d c %d of %d\n", items, i, j, n);
+				break;
+			}
+			if (i >= n)
+				break;
+		}
+	}
+}
+#endif
 
 const qw_leaf *ent_model_leaf(edict_t *e)
 {
@@ -911,7 +967,9 @@ static void push_move(edict_t *pusher, int movetime)
 
 /* SV_Physics_Pusher, in 60ths: the tick's move (game_dt, host_frametime)
    up to the think's time, the think */
-static void physics_pusher(edict_t *e)
+void ents_physics_pusher(edict_t *e);   /* (e_tick.s calls them) */
+void ents_run_think(edict_t *e);
+void ents_physics_pusher(edict_t *e)
 {
 	int32_t oldltime  = e->ltime;
 	int32_t thinktime = e->nextthink;
@@ -934,7 +992,7 @@ static void physics_pusher(edict_t *e)
 }
 
 /* SV_RunThink */
-static void run_think(edict_t *e)
+void ents_run_think(edict_t *e)
 {
 	if (e->nextthink <= 0 || e->nextthink > ent_time)
 		return;
@@ -1029,16 +1087,22 @@ static void touch_relink(const edict_t *e)
 static void rebuild_lists(void)
 {
 	num_touch = num_draw = ents_num_models = ents_num_streamed = 0;
+	if (model_draw)
+		memset(model_draw, 0, num_model_draw * sizeof *model_draw);
 	memset(trig_head, 0, sizeof trig_head);
 	memset(trig_tail, 0, sizeof trig_tail);
 	memset(trig_count, 0, sizeof trig_count);
 	memset(pushers, 0, sizeof pushers);
+	memset(noisy, 0, sizeof noisy);
 	for (int i = 2; i < num_edicts; i++) {
 		edict_t *e = &edicts[i];
 		if (!e->inuse)
 			continue;
 		if (e->movetype == MOVETYPE_PUSH)
 			pushers[i >> 5] |= 1u << (i & 31);
+		if (e->noise >= SND_STREAM || e->noise1 >= SND_STREAM || e->noise2 >= SND_STREAM ||
+		    e->noise3 >= SND_STREAM || e->noise4 >= SND_STREAM)
+			noisy[i >> 5] |= 1u << (i & 31);
 		if (e->item_model >= 0 && ents_num_models < (int) (sizeof ents_model_list / sizeof ents_model_list[0]))
 			ents_model_list[ents_num_models++] = (uint16_t) i;
 		if ((e->masset >= 0 || e->mdef) &&
@@ -1053,8 +1117,11 @@ static void rebuild_lists(void)
 			touch_relink(e);
 		}
 		if (e->draw && e->model && e->num_leaves &&
-		    num_draw < (int) (sizeof draw_list / sizeof draw_list[0]))
+		    num_draw < (int) (sizeof draw_list / sizeof draw_list[0])) {
+			if (model_draw && (uint32_t) e->model < num_model_draw && !model_draw[e->model])
+				model_draw[e->model] = (uint16_t) (num_draw + 1);
 			draw_list[num_draw++] = (uint16_t) i;
+		}
 	}
 	lists_dirty = 0;
 	ents_relink = 1;
@@ -1099,13 +1166,28 @@ void ents_area_stats(void)
 /* SV_TouchLinks' walk: the trigger slots whose box the box of e reaches,
    area node by area node (Quake's order: clip.h), their edicts; touched
    after (the touches spawn, remove and move edicts: each one is tested
-   again when its turn comes). List 0: every slot (the player's walk); 1:
-   the monsters' list (another edict's: the slots whose touch can do
-   something to it, in the same order, a node with none of them pruned) */
+   again when its turn comes). The list walked: touch_walks[0], every slot
+   (the player's walk), or [1] the monsters' list (another edict's: the
+   slots whose touch can do something to it, in the same order, a node
+   with none of them pruned). engine/e_touch.s is the base; this C follows
+   it: the C engine's, and the bench's check (ents_touch_diff). */
 #define TOUCH_MAX 64
-static int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX], int list)
+typedef struct {
+	const uint16_t     *count, *head, *next;   /* the list's (trig_count[k]...) */
+	const touch_slot_t *slots;
+	const uint16_t     *list;                   /* touch_list */
+} touch_walk_t;
+_Static_assert(__builtin_offsetof(touch_walk_t, next) == 8 && __builtin_offsetof(touch_walk_t, list) == 16 &&
+               sizeof(touch_slot_t) == 16, "engine/p_defs.inc TW_*");
+static touch_walk_t touch_walks[2];
+int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX], const touch_walk_t *w);   /* e_touch.s */
+#if Q1PSX_ENGINE_C
+#define touch_gather_c touch_gather
+#endif
+#if Q1PSX_ENGINE_C || defined(Q1PSX_BENCH)
+int touch_gather_c(const edict_t *e, uint16_t out[TOUCH_MAX], const touch_walk_t *w)
 {
-	const uint16_t *count = trig_count[list], *head = trig_head[list], *next = touch_next[list];
+	const uint16_t *count = w->count, *head = w->head, *next = w->next;
 	int16_t eb[6];
 	box16(e, eb);
 	int n = 0;
@@ -1124,18 +1206,66 @@ static int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX], int list)
 				stack[sp++] = (uint8_t) (a + 1);     /* children[0]: the next node */
 		}
 		for (uint16_t l = head[a]; l; l = next[l - 1]) {
-			const int16_t *b = touch_slots[l - 1].box;
+			const int16_t *b = w->slots[l - 1].box;
 #ifdef Q1PSX_BENCH
 			ai_tr_n[AI_TR_OTHER]++;                   /* (the bench: the slots tested) */
 #endif
 			if (eb[0] > b[3] || eb[1] > b[4] || eb[2] > b[5] || eb[3] < b[0] || eb[4] < b[1] || eb[5] < b[2])
 				continue;
 			if (n < TOUCH_MAX)
-				out[n++] = touch_list[l - 1];
+				out[n++] = w->list[l - 1];
 		}
 	}
 	return n;
 }
+#endif
+
+#if defined(Q1PSX_BENCH) && !Q1PSX_ENGINE_C
+/* e_touch.s against its C: n random boxes (2 to 128 units across), half
+   in the map's box, half about a random trigger slot's box (most of
+   them reach it), each list walked by both; the hits, the mismatches,
+   the cycles of a walk */
+void ents_touch_diff(int n)
+{
+	if (!edicts || !touch_slots)
+		return;
+	if (lists_dirty)
+		rebuild_lists();
+	static edict_t probe;
+	uint32_t rng = 12345, hits = 0, bad = 0, cyc_asm = 0, cyc_c = 0;
+	const qw_node *r = world.root;
+	for (int i = 0; i < n; i++) {
+		rng = rng * 1103515245u + 12345u;
+		const int16_t *sb = (i & 1) && num_touch ? touch_slots[(rng >> 8) % (uint32_t) num_touch].box : 0;
+		for (int k = 0; k < 3; k++) {
+			rng = rng * 1103515245u + 12345u;
+			int32_t c = sb ? ((sb[k] + sb[k + 3]) / 2 + (int32_t) ((rng >> 8) % 65) - 32) * CLIP_SUB
+			               : (r->c[k] + (int32_t) ((rng >> 8) % (uint32_t) (2 * r->h[k] + 1)) - r->h[k]) *
+			                 (CLIP_SUB / QW_VSCALE);
+			rng = rng * 1103515245u + 12345u;
+			int32_t h = (int32_t) (8 + (rng >> 8) % 505);   /* 1 to 64 units, 1/8 units */
+			probe.absmin[k] = c - h;
+			probe.absmax[k] = c + h;
+		}
+		for (int list = 0; list < 2; list++) {
+			uint16_t a[TOUCH_MAX], c[TOUCH_MAX];
+			uint32_t t0 = prof_now();
+			int na = touch_gather(&probe, a, &touch_walks[list]);
+			uint32_t t1 = prof_now();
+			int nc = touch_gather_c(&probe, c, &touch_walks[list]);
+			uint32_t t2 = prof_now();
+			cyc_asm += prof_cycles(t0, t1);
+			cyc_c   += prof_cycles(t1, t2);
+			hits += (uint32_t) nc;
+			if ((na != nc || memcmp(a, c, (size_t) nc * sizeof *a)) && bad++ < 4)
+				printf("touchdiff MISMATCH %d list %d: asm %d c %d\n", i, list, na, nc);
+		}
+	}
+	printf("touchdiff %d boxes x 2 lists (%d slots): %u hits, mismatches %u; cycles/walk asm %u c %u\n", n,
+	       num_touch, (unsigned) hits, (unsigned) bad, (unsigned) (cyc_asm / (2 * (uint32_t) n)),
+	       (unsigned) (cyc_c / (2 * (uint32_t) n)));
+}
+#endif
 
 /* SV_TouchLinks: the SOLID_TRIGGER edicts the box of e overlaps, touched
    by it (the player each tick; a monster when it moves) */
@@ -1149,8 +1279,8 @@ void ents_touch_links(edict_t *e)
 	uint32_t t0 = prof_now();
 #endif
 	uint16_t hit[TOUCH_MAX];
-	int n = touch_slots ? touch_gather(e, hit, e != ent_player) : 0;   /* (another edict: the
-	                                                                      monsters' list) */
+	int n = touch_slots ? touch_gather(e, hit, &touch_walks[e != ent_player]) : 0;   /* (another
+	                                                                    edict: the monsters' list) */
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (t == e || !t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
@@ -1178,7 +1308,7 @@ static void touch_player(void)
 	if (p->solid == SOLID_NOT || !touch_slots)
 		return;
 	uint16_t hit[TOUCH_MAX];
-	int n = touch_gather(p, hit, 0);
+	int n = touch_gather(p, hit, &touch_walks[0]);
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (!t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
@@ -1193,10 +1323,71 @@ static void touch_player(void)
 
 /* the lowest set bit's index by a de Bruijn sequence (the edicts' active
    words): __builtin_ctz is libgcc's __ctzsi2 and its 256-byte table here */
-static const uint8_t ctz_tab[32] = {
+const uint8_t ents_ctz_tab[32] = {
 	0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
 	31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
 };
+
+/* ents_tick's walk (engine/e_tick.s is the base; this C follows it: the C
+   engine's): the edicts of the active bitmap this tick runs, each one's
+   physics by its kind; asleep, its bit cleared */
+#if Q1PSX_ENGINE_C
+void ents_tick_loop(uint32_t *act, const uint32_t *push, uint32_t half, int wdt)
+{
+	for (int w = 0; w < ENT_WORDS; w++) {
+		uint32_t bits = act[w] & (half | push[w]);
+		while (bits) {
+			int b = ents_ctz_tab[((bits & -bits) * 0x077cb531u) >> 27];   /* (not libgcc's __ctzsi2) */
+			bits &= bits - 1;
+			edict_t *e = &edicts[w * 32 + b];
+			if (e->inuse && ent_force_retouch && e->movetype != MOVETYPE_PUSH)
+				ents_touch_links(e);           /* force retouch even for stationary */
+			if (e->inuse) {
+				if (e->movetype == MOVETYPE_PUSH) {
+					game_dt = 1;
+					ents_physics_pusher(e);
+					game_dt = wdt;
+				} else if (e->mdef || e->masset >= 0) {   /* a monster, what it throws */
+					if (e->mdef && e->health <= 0 && ent_time - e->pain_finished >= 0)
+						ent_remove(e);                /* a body's end (monsters.h) */
+					else if (e->mdef && e->masset >= 0 && !stream_model(e->masset))
+						;                             /* its model not in: paused, nothing it
+						                                 does unseen (2026-10-19) */
+					else if (e->movetype == MOVETYPE_STEP) {
+						/* SV_Physics_Step but when it has nothing to do: on
+						   the ground (flying, swimming), no think due, still
+						   where its contents were taken (each of its parts
+						   would return at once) */
+						if (!(e->flags & (FL_ONGROUND | FL_FLY | FL_SWIM)) ||
+						    (e->nextthink > 0 && e->nextthink <= ent_time) || !e->watertype ||
+						    e->origin[0] != e->water_at[0] || e->origin[1] != e->water_at[1] ||
+						    e->origin[2] != e->water_at[2])
+							ai_physics_step(e);
+					}
+					else if (e->movetype >= MOVETYPE_FLY && e->movetype != MOVETYPE_PUSH &&
+					         e->movetype != MOVETYPE_NOCLIP)
+						ai_physics_toss(e);
+					else
+						ents_run_think(e);
+				} else {
+					ents_run_think(e);                 /* SV_Physics_Toss: the think, then the move */
+					if (e->inuse && e->movetype == MOVETYPE_TOSS)
+						items_physics(e);
+				}
+			}
+			/* asleep: nothing to think, nothing moving (a monster or what
+			   it throws keeps falling while off the ground) */
+			if (!e->inuse || (e->nextthink <= 0 && !e->move_ticks &&
+			                  !((e->mdef || e->masset >= 0) && e->movetype >= MOVETYPE_STEP &&
+			                    e->movetype != MOVETYPE_PUSH && !(e->flags & FL_ONGROUND)) &&
+			                  !(e->mdef && e->health <= 0)))   /* (a body: till its end) */
+				act[w] &= ~(1u << b);
+		}
+	}
+}
+#else
+void ents_tick_loop(uint32_t *act, const uint32_t *push, uint32_t half, int wdt);   /* e_tick.s */
+#endif
 
 /* SV_Physics, a tick: the player's touches, then the edicts in their order.
    The world's rate (game_world_hz): at 60, every edict each tick; at 30,
@@ -1218,47 +1409,7 @@ void ents_tick(void)
 	if (ent_force_retouch > 0 && (wdt == 1 || !(ent_time & 1)))
 		ent_force_retouch--;                  /* (at 30: a count of both halves' ticks) */
 	game_dt = wdt;
-	for (int w = 0; w < ENT_WORDS; w++) {
-		uint32_t bits = active[w] & (half | pushers[w]);
-		while (bits) {
-			int b = ctz_tab[((bits & -bits) * 0x077cb531u) >> 27];   /* (not libgcc's __ctzsi2) */
-			bits &= bits - 1;
-			edict_t *e = &edicts[w * 32 + b];
-			if (e->inuse && ent_force_retouch && e->movetype != MOVETYPE_PUSH)
-				ents_touch_links(e);           /* force retouch even for stationary */
-			if (e->inuse) {
-				if (e->movetype == MOVETYPE_PUSH) {
-					game_dt = 1;
-					physics_pusher(e);
-					game_dt = wdt;
-				} else if (e->mdef || e->masset >= 0) {   /* a monster, what it throws */
-					if (e->mdef && e->health <= 0 && ent_time - e->pain_finished >= 0)
-						ent_remove(e);                /* a body's end (monsters.h) */
-					else if (e->mdef && e->masset >= 0 && !stream_model(e->masset))
-						;                             /* its model not in: paused, nothing it
-						                                 does unseen (2026-10-19) */
-					else if (e->movetype == MOVETYPE_STEP)
-						ai_physics_step(e);
-					else if (e->movetype >= MOVETYPE_FLY && e->movetype != MOVETYPE_PUSH &&
-					         e->movetype != MOVETYPE_NOCLIP)
-						ai_physics_toss(e);
-					else
-						run_think(e);
-				} else {
-					run_think(e);                 /* SV_Physics_Toss: the think, then the move */
-					if (e->inuse && e->movetype == MOVETYPE_TOSS)
-						items_physics(e);
-				}
-			}
-			/* asleep: nothing to think, nothing moving (a monster or what
-			   it throws keeps falling while off the ground) */
-			if (!e->inuse || (e->nextthink <= 0 && !e->move_ticks &&
-			                  !((e->mdef || e->masset >= 0) && e->movetype >= MOVETYPE_STEP &&
-			                    e->movetype != MOVETYPE_PUSH && !(e->flags & FL_ONGROUND)) &&
-			                  !(e->mdef && e->health <= 0)))   /* (a body: till its end) */
-				active[w] &= ~(1u << b);
-		}
-	}
+	ents_tick_loop(active, pushers, half, wdt);
 	game_dt = 1;
 	sync_player();
 }
@@ -1306,6 +1457,12 @@ Q_COLD void ents_load(void)
 	touch_next[1] = touch_next[0] ? touch_next[0] + max_touch : 0;
 	if (!touch_slots || !touch_next[0])
 		max_touch = 0;
+	for (int k = 0; k < 2; k++)
+		touch_walks[k] = (touch_walk_t) { trig_count[k], trig_head[k], touch_next[k], touch_slots, touch_list };
+	num_model_draw = world.num_bmodels;
+	model_draw = num_model_draw ? mem_level_alloc(num_model_draw * sizeof *model_draw) : 0;
+	if (model_draw)
+		memset(model_draw, 0, num_model_draw * sizeof *model_draw);
 }
 
 /* the edict for a cooked entity: the fields every class takes (ED_ParseEdict) */
@@ -1470,7 +1627,13 @@ int ents_check(const char *where)
 
 int ents_model_frame(int model)
 {
-	for (int i = 0; i < num_draw; i++) {
+	int i = 0;                                    /* the first draw_list entry of the */
+	if (model_draw && model > 0 && (uint32_t) model < num_model_draw) {   /* model (each frame: */
+		i = model_draw[model] - 1;                /* the textures' alternates, anim.c) */
+		if (i < 0 || i >= num_draw)
+			return 0;
+	}
+	for (; i < num_draw; i++) {
 		const edict_t *e = &edicts[draw_list[i]];
 		if (e->model == model && e->inuse && e->draw)
 			return e->frame;
@@ -1670,24 +1833,25 @@ void ents_stream_wants(void)
 	monsters_stream_wants();
 	/* the entities' streamed sounds (a door's, a plat's, a trigger's, an
 	   item's), by their box centre's distance (Chebyshev, world units) */
-	for (int i = 2; i < num_edicts; i++) {
-		const edict_t *e = &edicts[i];
-		if (!e->inuse || (e->noise < SND_STREAM && e->noise1 < SND_STREAM && e->noise2 < SND_STREAM &&
-		                  e->noise3 < SND_STREAM && e->noise4 < SND_STREAM))
-			continue;
-		int32_t c[3];
-		ent_centre(e, c);
-		uint32_t d = 0;
-		for (int k = 0; k < 3; k++) {
-			int32_t v = c[k] - stream_origin[k];
-			uint32_t x = (uint32_t) (v < 0 ? -v : v);
-			if (x > d) d = x;
+	for (int w = 0; w < ENT_WORDS; w++) {
+		for (uint32_t bits = noisy[w]; bits; bits &= bits - 1) {
+			const edict_t *e = &edicts[w * 32 + ents_ctz_tab[((bits & -bits) * 0x077cb531u) >> 27]];
+			if (!e->inuse)
+				continue;
+			int32_t c[3];
+			ent_centre(e, c);
+			uint32_t d = 0;
+			for (int k = 0; k < 3; k++) {
+				int32_t v = c[k] - stream_origin[k];
+				uint32_t x = (uint32_t) (v < 0 ? -v : v);
+				if (x > d) d = x;
+			}
+			d /= CLIP_SUB;
+			const int16_t n[5] = { e->noise, e->noise1, e->noise2, e->noise3, e->noise4 };
+			for (int k = 0; k < 5; k++)
+				if (n[k] >= SND_STREAM)
+					stream_want(n[k] - SND_STREAM, d);
 		}
-		d /= CLIP_SUB;
-		const int16_t n[5] = { e->noise, e->noise1, e->noise2, e->noise3, e->noise4 };
-		for (int k = 0; k < 5; k++)
-			if (n[k] >= SND_STREAM)
-				stream_want(n[k] - SND_STREAM, d);
 	}
 	game_stream_wants();
 }

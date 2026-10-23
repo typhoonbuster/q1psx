@@ -248,6 +248,12 @@ Q_COLD static void flymonster_start_go(edict_t *self)
 static void monster_start(edict_t *self)
 {
 	self->nextthink += (int32_t) (frand() * TICKS(50) >> 16);
+	if (self->nextthink <= 0)                /* (Quake's random () x 0.5 seconds is
+	                                            never 0, its share of our ticks is, one
+	                                            time in 30: a think at 0 never runs, the
+	                                            monster stood there for good, solid, not
+	                                            hurt; the first tick) */
+		self->nextthink = 1;
 	self->think = self->mdef->fly ? flymonster_start_go : walkmonster_start_go;
 	ent_wake(self);
 	ent_total_monsters++;
@@ -530,13 +536,11 @@ void monsters_render(void)
 #ifdef Q1PSX_BENCH
 	monsters_drawn = 0;
 #endif
-	for (int i = 0; i < ents_num_streamed; i++) {
-		edict_t *e = &edicts[ents_streamed_list[i]];
-		if (!e->inuse || e->masset < 0)
-			continue;
-		const qw_leaf *leaf = ent_model_leaf(e);
-		if (!leaf || leaf->visframe != vis)
-			continue;
+	int n = ents_num_streamed;
+	for (int i = ents_seen_streamed(ents_streamed_list, n, 0, vis); i < n;
+	     i = ents_seen_streamed(ents_streamed_list, n, i + 1, vis)) {
+		edict_t *e = &edicts[ents_streamed_list[i]];   /* (in use, its model, its leaf */
+		const qw_leaf *leaf = e->leaves[0];             /*  in the PVS: e_seen.s) */
 		const qst_model *m = stream_model(e->masset);
 		int32_t tmp[3];
 		uint16_t ang[3];

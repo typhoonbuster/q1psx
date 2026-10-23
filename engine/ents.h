@@ -74,7 +74,18 @@ struct edict_s {
 	int16_t  angle;          /* the map's `angle`, degrees (-1 up, -2 down)    */
 	int16_t  mangle[3];      /* degrees: pitch, yaw, roll                      */
 	int16_t  pad0;
-	const qw_leaf *leaves[ENT_MAX_LEAVES];
+	union {
+		const qw_leaf *leaves[ENT_MAX_LEAVES];   /* a brush model's: the leaves its box
+		                                            touches (num_leaves of them) */
+		struct {             /* an alias model's (item_model or masset >= 0: num_leaves 1) */
+			const qw_leaf *leaf;       /* leaves[0]: its centre's leaf, found when drawn */
+			const qw_leaf *eye_leaf;   /* its eye's leaf, at eye_key (engine/ai.c eye_leaf;
+			                              0 none: cleared when it is linked) */
+			int32_t eye_key[2];        /* that eye in whole units: x & 0xffff | y << 16, z */
+			const qw_leaf *vis_from, *vis_to;   /* its last PVS question (engine/ai.c */
+			int32_t vis_seen;                   /* pvs_sees): the eyes' leaves, the answer */
+		} am;
+	};
 	uint32_t topnode;        /* a drawn brush model's: world_box_topnode of the
 	                            points camera_side_leaf may take (ents.c)     */
 	int32_t  origin[3];      /* 1/CLIP_SUB units                               */
@@ -140,6 +151,16 @@ struct edict_s {
 	int32_t  item_model;     /* an item's model (formats/qgame.h QGM_*), -1 none */
 };
 
+_Static_assert(__builtin_offsetof(edict_t, absmin) == 112 && __builtin_offsetof(edict_t, absmax) == 124 &&
+               __builtin_offsetof(edict_t, inuse) == 0 && __builtin_offsetof(edict_t, leaves) == 28 &&
+               __builtin_offsetof(edict_t, masset) == 370 && __builtin_offsetof(edict_t, item_model) == 388 &&
+               sizeof(edict_t) == 392, "engine/p_defs.inc E_*, engine/e_seen.s (x 392)");
+_Static_assert(__builtin_offsetof(edict_t, movetype) == 3 && __builtin_offsetof(edict_t, origin) == 64 &&
+               __builtin_offsetof(edict_t, mdef) == 160 && __builtin_offsetof(edict_t, pain_finished) == 188 &&
+               __builtin_offsetof(edict_t, watertype) == 216 && __builtin_offsetof(edict_t, water_at) == 228 &&
+               __builtin_offsetof(edict_t, move_ticks) == 252 && __builtin_offsetof(edict_t, nextthink) == 256 &&
+               __builtin_offsetof(edict_t, health) == 324 && __builtin_offsetof(edict_t, flags) == 376,
+               "engine/p_defs.inc E_* (engine/e_tick.s)");
 _Static_assert(__builtin_offsetof(edict_t, maxs) == __builtin_offsetof(edict_t, mins) + 12,
                "the box's 6 words (rlist.h rl_add_model)");
 
@@ -193,6 +214,12 @@ void     ent_setsize(edict_t *e, const int32_t mins[3], const int32_t maxs[3]);
 void     ent_setorigin(edict_t *e, const int32_t org[3]);
 const qw_leaf *ent_model_leaf(edict_t *e);      /* an alias model's: its centre's leaf (NULL:
                                                    outside), found once it is drawn */
+/* the next position from `from` in an alias models' list (ents_streamed_list /
+   ents_model_list, n long) whose edict is in use, has its model (masset /
+   item_model) and a centre's leaf the frame's PVS stamp `vis` marks; n if
+   none (engine/e_seen.s) */
+int ents_seen_streamed(const uint16_t *list, int n, int from, uint32_t vis);
+int ents_seen_items(const uint16_t *list, int n, int from, uint32_t vis);
 const int32_t *ents_draw_pose(const edict_t *e, int32_t tmp[3], uint16_t ang[3]);
                                                 /* where it is drawn (its origin or tmp), its
                                                    angles: a 60th on, between two moves of
@@ -278,6 +305,9 @@ int  ents_num_touch(void);             /* the touch list's length (the bench's) 
 int  ents_in_use(int *max);            /* the edicts in use, *max the pool's */
 #endif
 void ents_area_stats(void);            /* the area nodes' lists (the bench's) */
+void ents_touch_diff(int n);           /* the touch walk's asm against its C (the bench's) */
+void ents_seen_check(void);            /* the render lists' cull, asm against C (the bench's) */
+extern uint32_t ents_seen_checked, ents_seen_bad;
 #endif
 
 #endif

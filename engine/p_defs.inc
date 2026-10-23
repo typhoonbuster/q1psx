@@ -176,3 +176,27 @@
 .set MV_MISSILE,    32
 .set MV_ROOT0,      36     # the next hull-0 sweep's start node (one sweep), 0 the root
 .set MV_SIGHT,      40     # the next sweep a line of sight's (one sweep)
+
+# ---- edict_t (engine/ents.h) and a trigger list's walk (engine/ents.c
+# touch_walk_t, engine/e_touch.s) -------------------------------------------------
+.set E_INUSE,        0     # uint8
+.set E_MOVETYPE,     3     # uint8 MOVETYPE_*
+.set E_LEAVES,      28     # const qw_leaf *[8]: an alias model's centre leaf first
+.set E_ORIGIN,      64     # int32[3], 1/8 units
+.set E_ABSMIN,     112     # int32[3], 1/8 units, a unit wider (SV_LinkEdict)
+.set E_ABSMAX,     124
+.set E_MDEF,       160     # const mdef_s *: a monster's kind, 0 none
+.set E_PAIN_FINISHED, 188  # int32 ticks (a monster's: a body's end)
+.set E_WATERTYPE,  216     # int8 (a monster's)
+.set E_WATER_AT,   228     # int32[3] (a monster's: where its contents were taken)
+.set E_MOVE_TICKS, 252     # int32
+.set E_NEXTTHINK,  256     # int32 ticks, <= 0 none
+.set E_HEALTH,     324     # int16
+.set E_MASSET,     370     # int16: a streamed model, -1 none
+.set E_FLAGS,      376     # uint32 FL_*
+.set E_ITEM_MODEL, 388     # int32: an item's model, -1 none
+.set TW_COUNT,       0     # uint16 *: the slots linked in each area node's subtree
+.set TW_HEAD,        4     # uint16 *: each node's first slot + 1, 0 none
+.set TW_NEXT,        8     # uint16 *: a slot's next + 1, 0 the end
+.set TW_SLOTS,      12     # touch_slot_t * (16 B: int16 box[6] first, whole units)
+.set TW_LIST,       16     # uint16 *: a slot's edict
