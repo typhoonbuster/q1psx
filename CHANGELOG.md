@@ -1825,3 +1825,16 @@ followed by R0-R4.
     two 60ths, and a falling or thrown one drawn a 60th on between its
     moves. At 60 every bench is the previous commit's; at 30 the movers'
     ways the same, the crowd -6 % a tick and its worst tick -45 %.
+- **The frame cache's lookup in asm** (§69's follow-up). §73:
+  - the cache's entries by field, the keys together: asset << 16 | the
+    frame stored, a sentinel past the last;
+  - `engine/mdl_frame.s`: four keys a turn, each compare in the shadow
+    of the next load (4.5 cycles an entry, 15 before); a miss, a tail
+    jump to `mdl_expand_new` (§69's placement, unchanged). The C engine
+    builds the same key and sentinel in C;
+  - a hit in the E1M3 fight 324 -> 134 cycles (the C's sentinel loop:
+    210), mdl_frame 665 -> 339 cycles a frame; the frames identical to
+    master's (the views, the game bench, the monsters'), the asm checked
+    by the C call by call (8878 calls, 0 mismatches);
+  - the fight -0.048 %, the game bench -85..-1435 cycles a frame; the
+    table +16 B.

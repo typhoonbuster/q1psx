@@ -37,7 +37,7 @@ if(Q1PSX_ENGINE_C)
 		${PROJECT_SOURCE_DIR}/engine/clip.s ${PROJECT_SOURCE_DIR}/engine/pmove.s
 		${PROJECT_SOURCE_DIR}/engine/r_slow.s ${PROJECT_SOURCE_DIR}/engine/bmfrag.s
 		${PROJECT_SOURCE_DIR}/engine/rl_order.s ${PROJECT_SOURCE_DIR}/engine/ent_mat.s
-		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s)
+		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s ${PROJECT_SOURCE_DIR}/engine/mdl_frame.s)
 	list(APPEND ENGINE_SOURCES ${PHYS_C_REFERENCE})
 	message(STATUS "q1psx: the C engine (the world renderer asm)")
 endif()

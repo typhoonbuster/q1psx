@@ -28,8 +28,13 @@ void mdl_new_frame(void);
 
 /* the pool of frame `frame` of the resident model `a` (its header m),
    expanded: NULL when the cache cannot take it this frame (no gap for it
-   between the expansions this frame draws, or every entry drawn) */
+   between the expansions this frame draws, or every entry drawn).
+   engine/mdl_frame.s (the C engine: engine/mdl.c's) */
 const qw_vert *mdl_frame(int a, const qst_model *m, int frame);
+
+/* mdl_frame's miss: frame f (stored) of model a, not in the cache: its
+   bytes, its entry, its expansion */
+const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f);
 
 /* engine/mdl_expand.s: n vertex words into qw_vert's: x | y << 16, then
    z | normal << 16 (x, y, z shifted left by `shift` in the second) */
