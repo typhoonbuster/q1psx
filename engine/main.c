@@ -106,7 +106,7 @@ static void apply_settings(void)
 
 static void stick(int *x, int *y)
 {
-	int m = (int) q_isqrt64((uint64_t) (*x * *x + *y * *y));
+	int m = (int) q_isqrt32((uint32_t) (*x * *x + *y * *y));
 	if (m <= STICK_DEAD) {
 		*x = *y = 0;
 		return;

@@ -209,7 +209,7 @@ static void zombie_fire_grenade(edict_t *self, int sf, int sr, int su)
 		d[k] = self->enemy->origin[k] - org[k];
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
 	for (int k = 0; k < 3; k++)
-		v[k] = len ? (int32_t) q_div64_32((int64_t) d[k] * 600, len) : 0;
+		v[k] = len ? d[k] * 600 / len : 0;
 	v[2] = 200;
 	game_monster_missile(MM_ZOMGIB, self, org, v, monster_asset(self, 2), s_z_hit, s_z_miss);
 }

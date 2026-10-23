@@ -173,7 +173,7 @@ static void ogre_fire_grenade(edict_t *self)
 		d[k] = self->enemy->origin[k] - self->origin[k];
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
 	for (int k = 0; k < 3; k++)
-		v[k] = len ? (int32_t) q_div64_32((int64_t) d[k] * 600, len) : 0;
+		v[k] = len ? d[k] * 600 / len : 0;
 	v[2] = 200;
 	game_monster_missile(MM_GRENADE, self, self->origin, v, -1, SND_NONE, SND_NONE);
 }

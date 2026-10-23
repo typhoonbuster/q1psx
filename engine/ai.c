@@ -1187,8 +1187,8 @@ static int clip_velocity(const int32_t in[3], const int16_t n[3], int32_t out[3]
 		blocked |= 1;                     /* floor */
 	if (!n[2])
 		blocked |= 2;                     /* step */
-	int32_t backoff = (int32_t) (((int64_t) in[0] * n[0] + (int64_t) in[1] * n[1] +
-	                              (int64_t) in[2] * n[2]) * over2 / 2 >> 12);
+	int32_t backoff = (in[0] * n[0] + in[1] * n[1] + in[2] * n[2]) * over2 / 2 >> 12;   /* (32 bits:
+	                                     |in| under 7200, |n| 4096: the sums under 2^27) */
 	for (int i = 0; i < 3; i++) {
 		out[i] = in[i] - (n[i] * backoff >> 12);
 		if (out[i] > -1 && out[i] < 1)
@@ -1236,7 +1236,7 @@ static int fly_move(edict_t *ent)
 			break;
 		for (int i = 0; i < 3; i++) {
 			int32_t m = tick_move(ent->velocity[i], &acc[i]);
-			end[i] = ent->origin[i] + (int32_t) ((int64_t) m * time_left >> 12);
+			end[i] = ent->origin[i] + (m * time_left >> 12);
 		}
 		trace_t tr;
 		ent_trace(ent, ent->origin, end, 0, &tr);
@@ -1264,7 +1264,7 @@ static int fly_move(edict_t *ent)
 		impact(ent, hit ? hit : ent_world);   /* run the impact function */
 		if (!ent->inuse)
 			break;                        /* removed by the impact function */
-		time_left -= (int32_t) ((int64_t) time_left * tr.fraction >> 12);
+		time_left -= time_left * tr.fraction >> 12;
 		if (numplanes >= 5) {             /* this shouldn't really happen */
 			__builtin_memset(ent->velocity, 0, sizeof ent->velocity);
 			return 3;
@@ -1279,8 +1279,7 @@ static int fly_move(edict_t *ent)
 			int16_t n[3] = { (int16_t) planes[i][0], (int16_t) planes[i][1], (int16_t) planes[i][2] };
 			clip_velocity(original, n, nv, 2);
 			for (j = 0; j < numplanes; j++)
-				if (j != i && (int64_t) nv[0] * planes[j][0] + (int64_t) nv[1] * planes[j][1] +
-				              (int64_t) nv[2] * planes[j][2] < 0)
+				if (j != i && nv[0] * planes[j][0] + nv[1] * planes[j][1] + nv[2] * planes[j][2] < 0)
 					break;                /* not ok */
 			if (j == numplanes)
 				break;
@@ -1296,15 +1295,13 @@ static int fly_move(edict_t *ent)
 				(planes[0][1] * planes[1][2] - planes[0][2] * planes[1][1]) >> 12,
 				(planes[0][2] * planes[1][0] - planes[0][0] * planes[1][2]) >> 12,
 				(planes[0][0] * planes[1][1] - planes[0][1] * planes[1][0]) >> 12 };
-			int32_t d = (int32_t) (((int64_t) dir[0] * ent->velocity[0] + (int64_t) dir[1] * ent->velocity[1] +
-			                        (int64_t) dir[2] * ent->velocity[2]) >> 12);
+			int32_t d = (dir[0] * ent->velocity[0] + dir[1] * ent->velocity[1] + dir[2] * ent->velocity[2]) >> 12;
 			for (int k = 0; k < 3; k++)
 				ent->velocity[k] = dir[k] * d >> 12;
 		}
 		/* if velocity is against the original velocity, stop dead to avoid
 		   tiny occilations in sloping corners */
-		if ((int64_t) ent->velocity[0] * primal[0] + (int64_t) ent->velocity[1] * primal[1] +
-		    (int64_t) ent->velocity[2] * primal[2] <= 0) {
+		if (ent->velocity[0] * primal[0] + ent->velocity[1] * primal[1] + ent->velocity[2] * primal[2] <= 0) {
 			__builtin_memset(ent->velocity, 0, sizeof ent->velocity);
 			return blocked;
 		}
@@ -1397,7 +1394,7 @@ void ai_physics_toss(edict_t *ent)
 		ent->ang[k] = (uint16_t) (ent->ang[k] + ent->avel[k] * 65536 / 360 * game_dt / GAME_HZ);
 	int32_t move[3];
 	for (int k = 0; k < 3; k++)
-		move[k] = (int32_t) ((int64_t) ent->velocity[k] * SUB * game_dt / GAME_HZ);
+		move[k] = ent->velocity[k] * SUB * game_dt / GAME_HZ;   /* (capped: 32 bits) */
 	trace_t tr;
 	ai_push_entity(ent, move, &tr);
 	if (ent->trail && ent->inuse)             /* (the client's: its model's trail) */

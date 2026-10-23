@@ -167,7 +167,7 @@ void level_think(const game_cmd_t *cmd)
 	exit_intermission();
 }
 
-void level_spawn(edict_t *e, const qw_ent *q)
+Q_COLD void level_spawn(edict_t *e, const qw_ent *q)
 {
 	(void) q;
 	switch (e->class) {

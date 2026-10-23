@@ -80,7 +80,7 @@ static void vnormalize(const int32_t v[3], int32_t out[3])
 {
 	int32_t l = vlen(v);
 	for (int k = 0; k < 3; k++)
-		out[k] = l ? (int32_t) q_div64_32((int64_t) v[k] * 4096, l) : 0;
+		out[k] = l ? v[k] * 4096 / l : 0;              /* (|v| under 2^16: 32 bits) */
 }
 
 /* Quake's vectoangles: yaw and pitch (positive up) of a direction */
@@ -131,7 +131,7 @@ static uint16_t   part_active, part_free;   /* the lists' heads, index + 1 (R_Cl
 /* u/s -> particle velocity */
 static int32_t pvel(int32_t ups)
 {
-	return (int32_t) (((int64_t) ups * SUB * 256) / GAME_HZ);
+	return ups * SUB * 256 / GAME_HZ;                /* (32 bits: |ups| under 10^6) */
 }
 
 #define PGRAV ((800 * SUB * 256) / (GAME_HZ * GAME_HZ) / 20)   /* r_part.c: gravity x 0.05 */
@@ -210,7 +210,7 @@ static const qw_leaf *leaf_at(const int32_t org[3]);
 void game_lava_splash(const int32_t org[3])
 {
 	const qw_leaf *leaf = leaf_at(org);
-	int side = (int) q_isqrt64((uint64_t) fx_count(64)), lo = -side / 2;
+	int side = (int) q_isqrt32((uint32_t) fx_count(64)), lo = -side / 2;
 	for (int i = lo; i < lo + side; i++)
 		for (int j = lo; j < lo + side; j++) {
 			particle_t *p = particle_new();
@@ -1219,7 +1219,7 @@ static void fire_bullets(int count, const int32_t dir0[3], int32_t spread_x, int
 		int32_t cx = crandom(4096) * spread_x >> 12, cy = crandom(4096) * spread_y >> 12;
 		for (int k = 0; k < 3; k++) {
 			dir[k] = dir0[k] + (cx * r[k] >> 12) + (cy * u[k] >> 12);
-			end[k] = src[k] + (int32_t) ((int64_t) dir[k] * 2048 * SUB / 4096);
+			end[k] = src[k] + dir[k] * (2048 * SUB / 4096);
 		}
 		trace_t tr;
 		edict_t *hit = shot_trace(src, end, &tr);
@@ -1933,7 +1933,7 @@ static struct {
 
 /* SetChangeParms: the keys and powerups go, the health within 50 .. 100,
    at least 25 shells */
-void game_save_parms(void)
+Q_COLD void game_save_parms(void)
 {
 	if (pl.health <= 0) {
 		game_new_parms();
@@ -1952,7 +1952,7 @@ void game_save_parms(void)
 }
 
 /* SetNewParms: the axe, the shotgun, 25 shells, 100 health */
-void game_new_parms(void)
+Q_COLD void game_new_parms(void)
 {
 	memset(&parms, 0, sizeof parms);
 	parms.valid  = 1;
@@ -2046,7 +2046,7 @@ void game_restart_level(void)
 
 /* ---------------------------------------------------------------- player -- */
 
-void game_init(void)
+Q_COLD void game_init(void)
 {
 	memset(&pl, 0, sizeof pl);
 	memset(projs, 0, sizeof projs);
@@ -2315,8 +2315,7 @@ void game_tick(const game_cmd_t *cmd)
 /* V_CalcBob, in 1/SUB units: cl_bob 0.02, cycle 0.6 s, up 0.5 */
 static int calc_bob(void)
 {
-	int32_t speed = (int32_t) q_isqrt64((uint64_t) ((int64_t) pl.pm.vel[0] * pl.pm.vel[0] +
-	                                               (int64_t) pl.pm.vel[1] * pl.pm.vel[1]));
+	int32_t speed = (int32_t) q_isqrt32((uint32_t) (pl.pm.vel[0] * pl.pm.vel[0] + pl.pm.vel[1] * pl.pm.vel[1]));
 	int32_t bob = speed * SUB * 2 / 100;                    /* units x 0.02, in 1/SUB */
 	int     cycle = game_tick_count % TICKS(60);
 	int32_t s = r_sin(cycle * ANG_TURN / TICKS(60));

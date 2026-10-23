@@ -5,6 +5,7 @@
 #include <psxpad.h>
 #include <hwregs_c.h>
 
+#include "mem.h"
 #include "pad.h"
 
 static uint8_t pad_buf[2][34];
@@ -274,7 +275,7 @@ static void driver_stop(void)
 	VSync(0);                              /* a poll in flight ends with the vblank */
 }
 
-void pad_init(void)
+Q_COLD void pad_init(void)
 {
 	pad_buf[0][0] = pad_buf[1][0] = 0xff;   /* "no data" until the first poll */
 	attempts = 1;

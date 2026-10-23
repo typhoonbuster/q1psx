@@ -129,7 +129,7 @@ static void dog_jump_touch(edict_t *self)
 	edict_t *other = ent_other;
 	if (other && other->takedamage) {
 		const int32_t *v = self->velocity;
-		if ((int64_t) v[0] * v[0] + (int64_t) v[1] * v[1] + (int64_t) v[2] * v[2] > 300 * 300)
+		if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] > 300 * 300)   /* (capped at 2000: 32 bits) */
 			ent_damage_x256(other, self, self, 10 * 256 + (int) (frand() * 10 * 256 >> 16));
 	}
 	if (!ai_check_bottom(self)) {

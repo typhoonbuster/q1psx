@@ -130,8 +130,8 @@ static void fire_bullets(edict_t *self, int shotcount, const int32_t dir[3], int
 	int      multi_damage = 0;
 	while (shotcount-- > 0) {
 		int32_t d[3], end[3], org[3];
-		int32_t cx = (int32_t) ((int64_t) crand() * spread >> 16);   /* x4096 */
-		int32_t cy = (int32_t) ((int64_t) crand() * spread >> 16);
+		int32_t cx = crand() * spread >> 16;   /* x4096 (32 bits: |spread| under 4096) */
+		int32_t cy = crand() * spread >> 16;
 		d[0] = dir[0];
 		d[1] = dir[1] - cx;              /* + crandom () x spread_x x v_right (0 -1 0) */
 		d[2] = dir[2] + cy;              /* + crandom () x spread_y x v_up (0 0 1) */

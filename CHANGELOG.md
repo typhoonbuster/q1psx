@@ -1885,4 +1885,8 @@ followed by R0-R4.
   - the edict 392 → 384 bytes (the secret door's start in its unused
     `pos1`, the asm's multiply two shifts and an add), the projectile
     96 → 80, its move's product in 32 bits: the same game, its frames
-    −0.025..−0.12 %; the release's stack room 86200 B.
+    −0.025..−0.12 %; the release's stack room 86200 B;
+  - 32-bit products wherever the values are bounded (the monsters'
+    physics and attacks, the movers, `vnormalize`), more cold code:
+    −4.4 KB of code, the same game (the monsters' scenarios line for
+    line); the release's stack room 90616 B (master 57016: +33.6 KB).

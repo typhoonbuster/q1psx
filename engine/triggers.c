@@ -101,8 +101,7 @@ static void multi_touch(edict_t *self)
 		f[0] = cp * r_cos(y) >> 12;
 		f[1] = cp * r_sin(y) >> 12;
 		f[2] = -r_sin(p);
-		if ((int64_t) f[0] * self->movedir[0] + (int64_t) f[1] * self->movedir[1] +
-		    (int64_t) f[2] * self->movedir[2] < 0)
+		if (f[0] * self->movedir[0] + f[1] * self->movedir[1] + f[2] * self->movedir[2] < 0)
 			return;                               /* not facing the right way */
 	}
 	self->enemy = ent_other;

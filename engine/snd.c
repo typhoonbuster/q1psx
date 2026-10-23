@@ -186,7 +186,7 @@ static void voice_start(int v, const sfx_t *q, int left, int right, int skip)
 	SpuSetKey(1, 1u << v);
 }
 
-void snd_init(void)
+Q_COLD void snd_init(void)
 {
 	SpuInit();
 	memset(voice_in, 0xff, sizeof voice_in);

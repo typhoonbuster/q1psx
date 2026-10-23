@@ -72,7 +72,7 @@ static void list_track(const char *name, uint32_t lba, uint32_t size)
 		track_lba[t] = lba;
 }
 
-void music_init(void)
+Q_COLD void music_init(void)
 {
 	memset(track_lba, 0, sizeof track_lba);
 	cd_list_dir("\\MUSIC", list_track);

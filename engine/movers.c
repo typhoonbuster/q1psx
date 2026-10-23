@@ -36,16 +36,16 @@
 #define WORLDTYPE_BASE     2
 
 /* pos1 + movedir x (|movedir . size| - lip): the travel of a door / button */
-static void travel_end(edict_t *self)
+Q_COLD static void travel_end(edict_t *self)
 {
-	int64_t d = 0;
+	int32_t d = 0;
 	for (int k = 0; k < 3; k++)
-		d += (int64_t) self->movedir[k] * (self->maxs[k] - self->mins[k]);   /* x4096, 1/8 units */
+		d += self->movedir[k] * (self->maxs[k] - self->mins[k]);   /* x4096, 1/8 units (under 2^30) */
 	if (d < 0)
 		d = -d;
-	int32_t dist = (int32_t) (d / 4096) - self->lip * CLIP_SUB;
+	int32_t dist = d / 4096 - self->lip * CLIP_SUB;
 	for (int k = 0; k < 3; k++)
-		self->pos2[k] = self->pos1[k] + (int32_t) ((int64_t) self->movedir[k] * dist / 4096);
+		self->pos2[k] = self->pos1[k] + self->movedir[k] * dist / 4096;
 }
 
 static void sound_of(edict_t *self, int16_t *slot, const char *name)
@@ -238,7 +238,7 @@ static int entities_touching(const edict_t *e1, const edict_t *e2)
 /* LinkDoors: touching doors move together; the first is the master
    (owner), enemy chains them in a loop; the master gets a field unless it
    is shot, fired or locked */
-static void link_doors(edict_t *self)
+Q_COLD static void link_doors(edict_t *self)
 {
 	if (self->enemy)
 		return;                                   /* already linked by another door */
@@ -354,10 +354,10 @@ static void secret_vectors(const edict_t *self, int32_t f[3], int32_t r[3], int3
 
 static int32_t fabs_dot_size(const int32_t v[3], const edict_t *self)   /* 1/8 units */
 {
-	int64_t d = 0;
+	int32_t d = 0;
 	for (int k = 0; k < 3; k++)
-		d += (int64_t) v[k] * (self->maxs[k] - self->mins[k]);
-	return (int32_t) ((d < 0 ? -d : d) / 4096);
+		d += v[k] * (self->maxs[k] - self->mins[k]);   /* (under 2^30) */
+	return (d < 0 ? -d : d) / 4096;
 }
 
 /* fd_secret_use's two moves' ends: aside (or down), then back */
@@ -373,10 +373,10 @@ static void secret_dests(const edict_t *self, int32_t dest1[3], int32_t dest2[3]
 		length = fabs_dot_size(f, self);
 	for (int k = 0; k < 3; k++) {
 		if (self->spawnflags & SECRET_1ST_DOWN)
-			dest1[k] = self->origin[k] - (int32_t) ((int64_t) u[k] * width / 4096);
+			dest1[k] = self->origin[k] - u[k] * width / 4096;
 		else
-			dest1[k] = self->origin[k] + (int32_t) ((int64_t) r[k] * width * temp / 4096);
-		dest2[k] = dest1[k] + (int32_t) ((int64_t) f[k] * length / 4096);
+			dest1[k] = self->origin[k] + r[k] * width * temp / 4096;
+		dest2[k] = dest1[k] + f[k] * length / 4096;
 	}
 }
 
@@ -705,7 +705,7 @@ static void train_next(edict_t *self)
 	sub_calc_move(self, dest, self->speed, train_wait);
 }
 
-static void func_train_find(edict_t *self)
+Q_COLD static void func_train_find(edict_t *self)
 {
 	edict_t *targ = ent_find(0, self->target);
 	if (!targ) {

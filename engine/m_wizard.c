@@ -180,7 +180,7 @@ static void wiz_fast_fire(edict_t *self)
 		}
 		int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
 		for (int k = 0; k < 3; k++)
-			vec[k] = len ? (int32_t) q_div64_32((int64_t) d[k] * 600, len) : 0;
+			vec[k] = len ? d[k] * 600 / len : 0;
 		ent_sound(self, CHAN_WEAPON, s_wattack, 255, ATTN_NORM);
 		game_monster_missile(MM_WIZSPIKE, owner, self->origin, vec, monster_asset(owner, 2), s_hit, SND_NONE);
 	}

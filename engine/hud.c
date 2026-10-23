@@ -8,6 +8,7 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "mem.h"
 #include "q_fmt.h"
 #include "render.h"
 #include "ui.h"
@@ -66,7 +67,7 @@ static void *hud_alloc(int bytes)
 	return p;
 }
 
-void hud_set_style(int s)
+Q_COLD void hud_set_style(int s)
 {
 	if (s != style)
 		hud_invalidate();

@@ -84,7 +84,7 @@ static void clear_model(edict_t *e)
    where the box's would be (SV_HullForEntity: offset = the hull's mins -
    the box's, the trace from origin - offset); 0 if it fell out of the
    level */
-static int drop_to_floor(edict_t *e)
+Q_COLD static int drop_to_floor(edict_t *e)
 {
 	static const int32_t hmin[3] = { -16 * CLIP_SUB, -16 * CLIP_SUB, -24 * CLIP_SUB };
 	int32_t off[3], start[3], end[3];
@@ -113,7 +113,7 @@ static int drop_to_floor(edict_t *e)
 }
 
 /* PlaceItem: on the floor, touchable */
-static void place_item(edict_t *self)
+Q_COLD static void place_item(edict_t *self)
 {
 	self->flags   |= FL_ITEM;                     /* make extra wide */
 	self->solid    = SOLID_TRIGGER;
@@ -259,7 +259,7 @@ static void armor_touch(edict_t *self)
 	sub_use_targets(self);
 }
 
-static void item_armor(edict_t *self, int qim)
+Q_COLD static void item_armor(edict_t *self, int qim)
 {
 	self->touch = armor_touch;
 	set_model(self, qim);
@@ -302,7 +302,7 @@ static void weapon_touch(edict_t *self)
 	taken(self);
 }
 
-static void weapon_item(edict_t *self, int qim)
+Q_COLD static void weapon_item(edict_t *self, int qim)
 {
 	self->touch = weapon_touch;
 	set_model(self, qim);
@@ -335,7 +335,7 @@ static void ammo_touch(edict_t *self)
 	taken(self);
 }
 
-static void ammo_item(edict_t *self, int ammo, int small_qim, int big_qim, int small_n, int big_n)
+Q_COLD static void ammo_item(edict_t *self, int ammo, int small_qim, int big_qim, int small_n, int big_n)
 {
 	self->touch = ammo_touch;
 	int big = self->spawnflags & WEAPON_BIG2;
@@ -363,7 +363,7 @@ static void key_touch(edict_t *self)
 	taken(self);
 }
 
-static void item_key(edict_t *self, int gold)
+Q_COLD static void item_key(edict_t *self, int gold)
 {
 	static const char *const names[2][3] = {
 		{ "silver key", "silver runekey", "silver keycard" },
@@ -430,7 +430,7 @@ static void powerup_touch(edict_t *self)
 	sub_use_targets(self);
 }
 
-static void powerup_item(edict_t *self, int qim, uint32_t it, const char *name, const char *noise)
+Q_COLD static void powerup_item(edict_t *self, int qim, uint32_t it, const char *name, const char *noise)
 {
 	self->touch   = powerup_touch;
 	self->items   = it;

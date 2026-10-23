@@ -9732,3 +9732,43 @@ starts, and the scenarios' random draws follow another course.
 - **The game bench** (`BENCH_GAME=1`): every line as before (polygons,
   packets), frame cycles −0.025 % (9 of the 10 views lower).
 - **The release**: the stack's room 86200 B (master 57016).
+
+### 77.5 Products in 32 bits where the values are bounded
+
+A product of int64s expands into a long sequence on the R3000 (the high
+words' partial products): each one in C costs tens of instructions of
+code, and cycles. Where the operands are bounded, the product fits 32
+bits and the result is the same: C's division truncates toward zero as
+`q_div64_32` does, and an arithmetic shift is the same in both. Changed:
+
+- **The monsters' physics** (`engine/ai.c`): SV_FlyMove's and
+  ClipVelocity's dot products, the move's end and time left, the toss's
+  move. The velocity is capped at 2000 a component before each move
+  (`check_velocity`), and a clip or a crease never lengthens it. Every
+  product stays under 2·10^8.
+- **The attacks**: the monsters' missiles' directions (`d × 600 / len`
+  and the like: a distance under 65536 sub-units), the soldier's spread,
+  the boss's lead, the dog's and the fiend's leap speed test.
+- **The movers' travel and the secret door's stops** (sums under 2^30),
+  a trigger's facing test, `vnormalize` (vectors under 2^16), the view's
+  bob, the particles' speeds, a shot's end.
+- **Kept in 64 bits**, where a value can overflow: the lengths of
+  vectors between two places (squares over 2^32), a damage's push (a
+  telefrag's 50000 × 8 × 4096), the armour's share with the quad, the
+  monsters' spread from `crand` × 100 × a vector, a mover's place along
+  a long way.
+
+The release's stack room: 86200 → 90184 B (−3984 B of code).
+
+- **More cold code** (`Q_COLD`, §60's -Os in its own section): what runs
+  at a spawn, a level's start or the boot but was outside the marked
+  functions: the items' spawns and drop to the floor, the doors' link,
+  the trains' first stop, a trigger's setup and direction, a door's
+  travel, the level's spawn, the parms, the boot's inits, the HUD's
+  style. −432 B, nothing per frame.
+- **Checked**:
+  - `MONSTERS=1` on E1M1, E1M3 and E1M7 (each kind's scenarios, the
+    boss), against the sources before 77.5: every state line the same,
+    but for a stream's read count at one line on E1M7 (48 against 47:
+    when a read ends follows the cycles);
+  - the release's stack room is 90616 B.

@@ -534,7 +534,7 @@ void sub_remove(edict_t *self)
 /* ------------------------------------------------------------- subs.qc -- */
 
 /* SetMovedir: the map's angle, -1 up, -2 down; the angles zeroed */
-void set_movedir(edict_t *self)
+Q_COLD void set_movedir(edict_t *self)
 {
 	if (self->angle == -1) {
 		self->movedir[0] = 0; self->movedir[1] = 0; self->movedir[2] = 4096;
@@ -550,7 +550,7 @@ void set_movedir(edict_t *self)
 }
 
 /* InitTrigger: a one-way trigger's direction, its box, unseen */
-void init_trigger(edict_t *self)
+Q_COLD void init_trigger(edict_t *self)
 {
 	if (self->angle)
 		set_movedir(self);
