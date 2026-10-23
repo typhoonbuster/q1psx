@@ -101,8 +101,18 @@ typedef struct {
 	bmf_v    v[BMF_CORNERS];
 } bmf_pend;
 
+#if Q1PSX_ENGINE_C
 bmf_piece bmf_pieces[BMF_PIECES];
 bmf_pend  bmf_pending[BMF_STACK];
+#else
+/* in the slow path's pool (engine/r_slow.s defines them there): only
+   r_frame's drawing uses that pool, after every cut of the frame
+   (ents_render_bmodels) (docs/porting-notes.md §77) */
+extern bmf_piece bmf_pieces[BMF_PIECES];
+extern bmf_pend  bmf_pending[BMF_STACK];
+_Static_assert(sizeof(bmf_piece) * BMF_PIECES == 9728 && sizeof(bmf_pend) * BMF_STACK == 3648,
+               "engine/r_slow.s: bmf_pieces, bmf_pending");
+#endif
 int       bmf_cut_overflow;
 uint32_t  bmf_cut_pieces;
 

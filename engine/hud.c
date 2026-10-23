@@ -8,6 +8,7 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "q_fmt.h"
 #include "render.h"
 #include "ui.h"
 #include "vid.h"
@@ -275,11 +276,11 @@ static void solo_scoreboard(void)
 	char str[48];
 	int secs = (game_tick_count - level_start_tick) / GAME_HZ;
 	ui_begin();
-	snprintf(str, sizeof str, "Monsters:%3d /%3d", level_killed_monsters(), level_total_monsters());
+	q_snprintf(str, sizeof str, "Monsters:%3d /%3d", level_killed_monsters(), level_total_monsters());
 	ui_text(8, 216 + 4, str);
-	snprintf(str, sizeof str, "Secrets :%3d /%3d", level_found_secrets(), level_total_secrets());
+	q_snprintf(str, sizeof str, "Secrets :%3d /%3d", level_found_secrets(), level_total_secrets());
 	ui_text(8, 216 + 12, str);
-	snprintf(str, sizeof str, "Time :%3d:%d%d", secs / 60, secs % 60 / 10, secs % 10);
+	q_snprintf(str, sizeof str, "Time :%3d:%d%d", secs / 60, secs % 60 / 10, secs % 10);
 	ui_text(184, 216 + 4, str);
 	const char *name = world.title ? world.title : "";
 	ui_text(232 - (int) strlen(name) * 4, 216 + 12, name);

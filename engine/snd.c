@@ -9,6 +9,7 @@
 #include "game.h"
 #include "mem.h"
 #include "music.h"
+#include "q_fmt.h"
 #include "qsound.h"
 #include "render.h"
 #include "snd.h"
@@ -204,7 +205,7 @@ void snd_init(void)
 Q_COLD int snd_load_bank(const char *map)
 {
 	char name[24];
-	snprintf(name, sizeof name, "\\MAPS\\%s.SND;1", map);
+	q_snprintf(name, sizeof name, "\\MAPS\\%s.SND;1", map);
 	bank_n = statics_n = cd_track = 0;
 	for (int i = 0; i < S_COUNT; i++)
 		named[i] = -1;

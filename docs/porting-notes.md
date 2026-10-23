@@ -9626,3 +9626,81 @@ starts, and the scenarios' random draws follow another course.
 - **The release's room for the stack**: 57016 → 54216 bytes (code
   +2.8 KB: the aim 936 B, the dead body's toss in game_tick, the
   physics' asm).
+
+## §77 — The RAM, the cycles kept: what was never used, what is never used at once (2026-10-23)
+
+- **The ask**: a pass to save RAM while keeping the CPU cycles; every byte
+  counts. It runs on the branch of §75-§76.
+- **Where it stands**:
+  - the release's room for the stack (scripts/ramcheck.sh) was 57016 B on
+    master 1afdae4, and 54216 B after §76's code;
+  - the level arena (1243 KB) holds the world, the edicts and the stream's
+    pool, which takes what the others leave.
+
+### 77.1 Static RAM: the executable and its BSS
+
+- **The particle pool, 512 → 256** (−10240 B). The ultra effects level
+  had the 512. §52 left only medium and high in the Graphics page
+  (`QL_EFFECT_MASK`), both on 256. The pool's size is now a constant.
+- **libc's vsnprintf out** (−4120 B of code, +1056 B of `q_snprintf`).
+  The SDK's printf is the BIOS's (a 12-byte stub), so only our own
+  snprintf pulled in the 4 KB formatter. `engine/q_fmt.c` does the
+  screen's needs:
+  - %d %u %x %s %c and %%, a width, the '-' and '0' flags;
+  - C99's return value (the overlay's lines add them).
+
+  52 calls changed. A host test against libc's snprintf matched on the
+  formats in use, edges included (truncation, negatives, zeros): 0
+  mismatches.
+- **Work areas never in use at once share one block** (−17472 B), the
+  slow path's (`r_slow.s`: the pool, the view entries, the midpoint
+  table, 17600 B):
+  - the brush models' cut (`bmf_pieces`, `bmf_pending`: 13376 B), which
+    runs in `ents_render_bmodels` before `r_frame` draws;
+  - a pusher's moved edicts and their old origins (`ents_moved`,
+    `ents_moved_from`: 4096 B), used within one pusher's move in the
+    tick.
+
+  `slow_poly` keeps nothing in the block from one polygon to the next
+  but one thing: entries 0..2's key words, never written, so 0 (a
+  corner is no midpoint's). Entry 3's is cleared by each polygon, a
+  midpoint table slot is believed only for an entry this polygon wrote,
+  and the view entries are written before they are read. So the others
+  start at +96, past those three keys. They are aliases defined in
+  r_slow.s (`.set`), the C sides `extern`; the C engine (no r_slow.s)
+  keeps its own arrays. §60 had listed this sharing as left.
+- **The release**: the stack's room 54216 → 85496 B. Against master,
+  +28480 B, §76's code paid for.
+
+### 77.2 The level arena: the edicts' pool cut after the spawn
+
+- `ents_load` sized the pool for every entity of the map plus 96 spare
+  (ENT_SPARE: those the QC spawns in play). But the entities not on the
+  skill and the unknown ones never take a slot, and a removed one
+  leaves a hole for the spares.
+- The pool is now the arena's last allocation (`ents_load`). After the
+  first spawn, `ents_trim` keeps the slots used and ENT_SPARE free ones,
+  counting the holes, and gives the rest back: the stream's pool, which
+  follows (`stream_map_start`), takes it.
+- The free slots stay ENT_SPARE at the least, as the design wants.
+  E1M3's crowd (`MONSTERS=3`: 47 monsters, a minute of fight, gibs)
+  peaked at 306 of 389 (§61 saw 320 of 462).
+- **The stream's pool**: +11.4 KB on average over the 32 maps (0 on
+  START, +22 on E1M3, +28 on E4M6).
+
+### 77.3 Checking
+
+- **The 128 spawn views** (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`, against
+  master built beside, run one after the other: two builds sharing the
+  cooked files must not cook at once): every `H` and `Q` line identical.
+  Frame cycles +0.0069 % (64 views up, 54 down, typically ±463: the code
+  moved in the 4 KB instruction cache). The entities' share is
+  −2233 cycles in all, the drawing's +5327, and the drawing's code is
+  unchanged.
+- **The movers** (`MOVERS=1`): E1M6's and E1M3's hashes are master's.
+  E3M4's differs by one quad (+40 B of packets) with 306 vblanks against
+  308 and its worst frame 2.04 M cycles against 2.46 M. Run without the
+  pool's cut, it is master's again (fdd33021): the larger stream's pool
+  keeps a model resident.
+- **The crowd** (`MONSTERS=3 MAP=E1M3`): no edict refused, the stack
+  63 KB never reached.

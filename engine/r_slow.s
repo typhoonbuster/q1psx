@@ -71,6 +71,18 @@
 	.align  4
 r_slow_pool:
 	.space  POOL_N * 32
+# What else works in this block (the pool, the view entries, the midpoint
+# table: 17600 B) outside slow_poly's calls, which keep nothing in it from
+# one polygon to the next but entries 0..2's key words (never written: 0,
+# no midpoint's), left alone from +96 on: the brush models' cut
+# (engine/bmfrag.c: its pieces and pending back pieces, during
+# ents_render_bmodels, before r_frame draws) and a pusher's moved edicts
+# (engine/ents.c, during the tick). docs/porting-notes.md §77.
+	.global bmf_pieces, bmf_pending, ents_moved_from, ents_moved
+	.set    bmf_pieces, r_slow_pool + 96         # 64 x 152 B
+	.set    bmf_pending, bmf_pieces + 9728       # 24 x 152 B
+	.set    ents_moved_from, bmf_pending + 3648  # 256 x 12 B
+	.set    ents_moved, ents_moved_from + 3072   # 256 x 4 B, to 17568 of 17600
 r_slow_view:                             # clip path: view x, y, z of pool entries
 	.space  6 * 32                       # 0..5, at VIEW_OFS from each (32 B apart)
 r_slow_hash:                             # (HASH_OFS from the pool: v1-relative)

@@ -31,6 +31,7 @@ static edict_t *clip_owner[CLIP_MAX_BMODELS];   /* the edict of each clip entry 
 edict_t *edicts;
 int      num_edicts;
 static int max_edicts;
+static uint32_t edicts_mark;         /* the level arena's top before the pool (ents_trim) */
 
 edict_t *ent_other, *ent_activator, *ent_damage_attacker;
 int32_t  ent_time;
@@ -900,8 +901,17 @@ static void push_move(edict_t *pusher, int movetime)
 	/* the other edicts: a monster, a dropped pack, a gib riding it or in
 	   its way, pushed along; one stuck blocks it (every one moved put
 	   back), a corpse or a trigger in the way flattened, a point left */
-	static edict_t *moved[256];
-	static int32_t  moved_from[256][3];
+#if Q1PSX_ENGINE_C
+	static edict_t *ents_moved[256];
+	static int32_t  ents_moved_from[256][3];
+#else
+	/* in the slow path's pool (engine/r_slow.s defines them there), free
+	   during the tick (docs/porting-notes.md §77) */
+	extern edict_t *ents_moved[256];
+	extern int32_t  ents_moved_from[256][3];
+#endif
+	edict_t **moved = ents_moved;
+	int32_t (*moved_from)[3] = ents_moved_from;
 	int nmoved = 0;
 	for (int i = 2; i < num_edicts; i++) {
 		edict_t *c = &edicts[i];
@@ -1445,11 +1455,6 @@ Q_COLD void ents_load(void)
 	max_edicts = (int) world.num_ents + 2 + ENT_SPARE;
 	if (max_edicts > ENT_WORDS * 32)
 		max_edicts = ENT_WORDS * 32;
-	edicts = mem_level_alloc((uint32_t) max_edicts * sizeof *edicts);
-	if (!edicts) {
-		printf("ents: no room for %d edicts\n", max_edicts);
-		max_edicts = 0;
-	}
 	max_touch = max_edicts < (int) (sizeof touch_list / sizeof touch_list[0]) ? max_edicts
 	          : (int) (sizeof touch_list / sizeof touch_list[0]);
 	touch_slots   = max_touch ? mem_level_alloc((uint32_t) max_touch * sizeof *touch_slots) : 0;
@@ -1463,6 +1468,36 @@ Q_COLD void ents_load(void)
 	model_draw = num_model_draw ? mem_level_alloc(num_model_draw * sizeof *model_draw) : 0;
 	if (model_draw)
 		memset(model_draw, 0, num_model_draw * sizeof *model_draw);
+	/* the edicts last: ents_trim gives back their unused end */
+	edicts_mark = mem_level_mark();
+	edicts = mem_level_alloc((uint32_t) max_edicts * sizeof *edicts);
+	if (!edicts) {
+		printf("ents: no room for %d edicts\n", max_edicts);
+		max_edicts = 0;
+	}
+}
+
+/* The map spawned: the pool kept to its slots and to room for ENT_SPARE
+   edicts spawned in play, counting the slots its entities left free (those
+   that removed themselves; the ones not on this skill and the unknown ones
+   took none). The rest of the arena goes back: the stream's pool follows
+   (the edicts are the arena's last allocation, ents_load). The free slots
+   are as many as before at the least, ENT_SPARE (docs/porting-notes.md
+   §77). */
+Q_COLD void ents_trim(void)
+{
+	if (!edicts)
+		return;
+	int holes = 0;
+	for (int i = 2; i < num_edicts; i++)
+		holes += !edicts[i].inuse;
+	int want = num_edicts + (holes < ENT_SPARE ? ENT_SPARE - holes : 0);
+	uint32_t end = edicts_mark + (((uint32_t) max_edicts * sizeof *edicts + 15u) & ~15u);
+	if (want >= max_edicts || mem_level_mark() != end)
+		return;
+	printf("ents: pool %d -> %d edicts (%d free among the map's %d)\n", max_edicts, want, holes, num_edicts);
+	max_edicts = want;
+	mem_level_release(edicts_mark + (((uint32_t) want * sizeof *edicts + 15u) & ~15u));
 }
 
 /* the edict for a cooked entity: the fields every class takes (ED_ParseEdict) */

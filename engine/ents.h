@@ -193,6 +193,10 @@ void ents_load(void);
    `first`: the map was just loaded (else the level restarts) */
 void ents_spawn(int first);
 
+/* after the map's first spawn, before anything else takes from the level
+   arena: the edict pool cut to the map's slots and ENT_SPARE free ones */
+void ents_trim(void);
+
 /* one tick, after the player's physics: the player's touches, then the
    edicts' physics and thinks (SV_Physics's order) */
 void ents_tick(void);

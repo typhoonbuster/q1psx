@@ -5,6 +5,7 @@
 #include "dlight.h"
 #include "mem.h"
 #include "prof.h"
+#include "q_fmt.h"
 #include "render.h"
 #include "world.h"
 
@@ -332,7 +333,7 @@ void dl_check_record(qw_record *q, const qw_node *node)
 		int far = cx > cy ? cx : cy;
 		if (cz > far) far = cz;
 		if (far - q->sr >= l->rmm) {
-			snprintf(why + strlen(why), sizeof why - strlen(why), " L%d far-sr %d >= rmm %d;", i, far - q->sr, l->rmm);
+			q_snprintf(why + strlen(why), sizeof why - strlen(why), " L%d far-sr %d >= rmm %d;", i, far - q->sr, l->rmm);
 			continue;
 		}
 		int32_t d = pl->type < 3
@@ -341,7 +342,7 @@ void dl_check_record(qw_record *q, const qw_node *node)
 		d >>= 12;
 		int rad = l->radius - (d < 0 ? -d : d);
 		int cutoff = rad - l->minlight;
-		snprintf(why + strlen(why), sizeof why - strlen(why), " L%d type %d d %d cutoff %d;", i, pl->type, (int) d, cutoff);
+		q_snprintf(why + strlen(why), sizeof why - strlen(why), " L%d type %d d %d cutoff %d;", i, pl->type, (int) d, cutoff);
 		if (cutoff < 0)
 			continue;
 		lit = 1;

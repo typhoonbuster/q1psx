@@ -18,6 +18,7 @@
 #include "mem.h"
 #include "music.h"
 #include "prof.h"
+#include "q_fmt.h"
 #include "qsound.h"
 #include "qtex.h"
 #include "snd.h"
@@ -153,7 +154,7 @@ static int stream_level = -1;   /* the model level whose STREAM_<n>.DAT is read 
 static int load_directory(int level)
 {
 	char name[24];
-	snprintf(name, sizeof name, "\\STREAM_%d.DAT;1", level);
+	q_snprintf(name, sizeof name, "\\STREAM_%d.DAT;1", level);
 	uint32_t lba;
 	if (!cd_find(name, &lba, NULL)) {
 		printf("stream: no %s on the disc\n", name);

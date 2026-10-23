@@ -5,6 +5,7 @@
 
 #include "cd.h"
 #include "gdata.h"
+#include "q_fmt.h"
 #include "world.h"
 #include "mem.h"
 #include "qtex.h"
@@ -18,7 +19,7 @@ qw_vert *gd_view_pool;
 static const uint8_t *gdata_file(int level, uint32_t *size)
 {
 	char name[20];
-	snprintf(name, sizeof name, "\\GAME_%d.DAT;1", level);
+	q_snprintf(name, sizeof name, "\\GAME_%d.DAT;1", level);
 	const uint8_t *f = cd_load(name, size, NULL);
 	const qg_header *h = (const qg_header *) f;
 	if (!f || *size < sizeof(qg_header) || memcmp(f, QGAME_MAGIC, 4)) {

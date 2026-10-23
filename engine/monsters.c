@@ -13,6 +13,7 @@
 #include "hud.h"
 #include "mem.h"
 #include "monsters.h"
+#include "q_fmt.h"
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
@@ -391,7 +392,7 @@ static void backpack_touch(edict_t *self)
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
 	char s[80];
-	int n = snprintf(s, sizeof s, "You get ");
+	int n = q_snprintf(s, sizeof s, "You get ");
 	int acount = 0;
 	static const char *const names[AMMO_COUNT] = { " shells", " nails", " rockets", " cells" };
 	const int amounts[AMMO_COUNT] = { self->ammo_shells, self->ammo_nails, self->ammo_rockets, self->ammo_cells };
@@ -403,7 +404,7 @@ static void backpack_touch(edict_t *self)
 	if (pl.ammo[AMMO_CELLS] > 100)   pl.ammo[AMMO_CELLS] = 100;
 	for (int a = 0; a < AMMO_COUNT; a++)
 		if (amounts[a] && n < (int) sizeof s)
-			n += snprintf(s + n, sizeof s - (size_t) n, "%s%d%s", acount++ ? ", " : "", amounts[a], names[a]);
+			n += q_snprintf(s + n, sizeof s - (size_t) n, "%s%d%s", acount++ ? ", " : "", amounts[a], names[a]);
 	hud_notify(s);
 	snd_start(ENT_PLAYER, CHAN_ITEM, S_LOCK4, pl.pm.pos, 255, ATTN_NORM);
 	game_bonus_flash();

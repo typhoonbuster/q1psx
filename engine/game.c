@@ -105,14 +105,15 @@ static const uint8_t ramp3[8] = { 0x6d, 0x6b, 6, 5, 4, 3, 3, 3 };
 
 enum { PT_STATIC, PT_GRAV, PT_SLOWGRAV, PT_FIRE, PT_EXPLODE, PT_EXPLODE2 };
 
-#define MAX_PARTICLES 512   /* the ultra effects' pool; the others use 256 */
+#define MAX_PARTICLES 256   /* the pool at every effects level offered (medium, high:
+                               QL_EFFECT_MASK); the ultra level's 512 left with §52 */
 #define PV_SHIFT 8       /* particle velocity: 1/SUB units per tick x 256 */
 
 /* The effects level (formats/qlevels.h): the particles each effect makes,
    in eighths of the port's own counts (high: 8; Quake's are several times
    those, r_part.c's 2048-particle pool), a rocket's or a grenade's trail
-   every tick or every 2nd / 4th, and the pool. */
-static int fx_scale = 8, fx_trail_mask, fx_trail_n, part_cap = 256;
+   every tick or every 2nd / 4th. */
+static int fx_scale = 8, fx_trail_mask, fx_trail_n;
 
 typedef struct {
 	int32_t org[3];        /* 1/SUB units                                  */
@@ -140,8 +141,8 @@ static void particles_clear(void)
 {
 	part_active = 0;
 	part_free   = 1;
-	for (int i = 0; i < part_cap; i++)
-		particles[i].next = (uint16_t) (i + 2 <= part_cap ? i + 2 : 0);
+	for (int i = 0; i < MAX_PARTICLES; i++)
+		particles[i].next = (uint16_t) (i + 2 <= MAX_PARTICLES ? i + 2 : 0);
 }
 
 void game_set_effects(int level)
@@ -152,11 +153,6 @@ void game_set_effects(int level)
 		level = QL_HIGH;
 	fx_scale      = scale[level];
 	fx_trail_mask = trail[level];
-	int cap = level == QL_ULTRA ? MAX_PARTICLES : 256;
-	if (cap != part_cap) {                   /* (the pool's size: those alive go) */
-		part_cap = cap;
-		particles_clear();
-	}
 }
 
 /* an effect's count at the level (at least one when the port makes any) */

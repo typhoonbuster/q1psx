@@ -13,6 +13,7 @@
 #include "level.h"
 #include "mem.h"
 #include "music.h"
+#include "q_fmt.h"
 #include "render.h"
 #include "snd.h"
 #include "world.h"
@@ -111,7 +112,7 @@ static void changelevel_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
-	snprintf(nextmap, sizeof nextmap, "%s", world_string(self->map));
+	q_snprintf(nextmap, sizeof nextmap, "%s", world_string(self->map));
 	sub_use_targets(self);
 	if (self->spawnflags & NO_INTERMISSION) {
 		goto_next_map();

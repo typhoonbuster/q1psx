@@ -32,6 +32,7 @@
 #include "mem.h"
 #include "monsters.h"
 #include "music.h"
+#include "q_fmt.h"
 #include "snd.h"
 #include "pad.h"
 #include "clip.h"
@@ -245,9 +246,9 @@ Q_COLD static void loading_screen(uint32_t done, uint32_t total)
 	char line[48];
 	int  fill = total ? (int) (done * BW / total) : 0;   /* < 2 MB: no overflow */
 
-	snprintf(line, sizeof line, "loading %s", world_map_name(load_map));
+	q_snprintf(line, sizeof line, "loading %s", world_map_name(load_map));
 	vid_text(BX, BY - 16, line);
-	snprintf(line, sizeof line, "%3d %%", total ? (int) (done * 100 / total) : 0);
+	q_snprintf(line, sizeof line, "%3d %%", total ? (int) (done * 100 / total) : 0);
 	vid_text(BX + BW - 40, BY + BH + 8, line);
 	ui_rect(BX + 1, BY + 1, fill > BW - 2 ? BW - 2 : fill, BH - 2, 230, 170, 60);  /* bar */
 	ui_rect(BX, BY, BW, BH, 70, 74, 90);                                        /* frame */
@@ -288,6 +289,7 @@ Q_COLD static int load_level(int map)
 		ents_load();                            /* the map's entities */
 		monsters_map_start();
 		ents_spawn(1);
+		ents_trim();                            /* (the edicts' unused end back: the stream's) */
 		bmf_reserve();                          /* (their pieces' room, the cook's: before
 		                                           the stream's) */
 		game_ws_sync();                         /* (the 2D gun's packets asked for: first) */
@@ -368,20 +370,20 @@ static void draw_overlay(void)
 	char line[384], sticks[40] = "";
 
 	if (pad.analog)                    /* raw, before the dead zone */
-		snprintf(sticks, sizeof sticks, "\nsticks L %4d %4d  R %4d %4d", pad.lx, pad.ly, pad.rx, pad.ry);
+		q_snprintf(sticks, sizeof sticks, "\nsticks L %4d %4d  R %4d %4d", pad.lx, pad.ly, pad.rx, pad.ry);
 
 	char levels[24] = "no world";               /* textures, geometry, models, effects */
 	if (world_ok)
-		snprintf(levels, sizeof levels, "T%d G%d M%d E%d", world.level[QL_TEXTURES], world.level[QL_GEOMETRY],
+		q_snprintf(levels, sizeof levels, "T%d G%d M%d E%d", world.level[QL_TEXTURES], world.level[QL_GEOMETRY],
 		         world.level[QL_MODELS], settings.level[QL_EFFECTS]);
-	int n = snprintf(line, sizeof line,
+	int n = q_snprintf(line, sizeof line,
 	         "q1psx  %s %s  ~%u fps\n"
 	         "frame %6u cyc  gpu wait %u  arena %u KB\n",
 	         world_map_name(map_index), levels,
 	         vid_stats.vbl ? 60 / vid_stats.vbl : 60,
 	         prof_stage[PROF_FRAME], vid_stats.sync_cycles, mem_level_used() / 1024);
 #if Q1PSX_PROFILE   /* the renderer's counters / stage timers (release: none) */
-	n += snprintf(line + n, sizeof line - n,
+	n += q_snprintf(line + n, sizeof line - n,
 	         "walk %u  mark %u  faces %u\n"
 	         "nodes %u recs %u verts %u\n"
 	         "polys %u  near %u  ",
@@ -389,7 +391,7 @@ static void draw_overlay(void)
 	         prof_count[PROF_N_NODES], prof_count[PROF_N_BLOCKS], prof_count[PROF_N_VERTS],
 	         prof_count[PROF_N_POLYS], prof_count[PROF_N_SLOW]);
 #endif
-	snprintf(line + n, sizeof line - n,
+	q_snprintf(line + n, sizeof line - n,
 	         "%u B%s\n"
 	         "warp T %d (from %d)  ~%u tris%s\n"
 	         "pos %d %d %d  sim %u  items %d\n"
@@ -571,7 +573,7 @@ static void opt_draw(void)
 	for (int o = 0; o < SET_ROWS; o++) {
 		settings_value(o, val, sizeof val);
 		int x = 16 + (o % 2) * 152, y = 128 + (o / 2) * 10;
-		snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
+		q_snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
 		vid_text(x, y, line);
 		if (o == opt_sel)
 			ui_rect(x - 4, y - 1, 148, 10, 60, 70, 120);
@@ -633,11 +635,11 @@ static void mapmenu_frame(void)
 	}
 
 	char line[48];
-	snprintf(line, sizeof line, "Q1PSX maps (%d)  in game: SELECT+START", n);
+	q_snprintf(line, sizeof line, "Q1PSX maps (%d)  in game: SELECT+START", n);
 	vid_text(16, 6, line);
 	for (int m = 0; m < n; m++) {
 		int x = 24 + (m / MENU_ROWS) * 100, y = 18 + (m % MENU_ROWS) * 10;
-		snprintf(line, sizeof line, "%s%s", world_map_name(m), map_tag(m));
+		q_snprintf(line, sizeof line, "%s%s", world_map_name(m), map_tag(m));
 		vid_text(x, y, line);
 		if (m == menu_sel)
 			ui_rect(x - 4, y - 1, 96, 10, 60, 70, 120);
@@ -1283,7 +1285,7 @@ static void bench_view_ticks(const char *view)
 			cam.roll = 0;
 			for (int i = 0; i < 2; i++)
 				run_frame(0, 0);
-			snprintf(name, sizeof name, "%st%d", view, t);
+			q_snprintf(name, sizeof name, "%st%d", view, t);
 			printf("D %s\n", name);
 			ents_debug = 1;
 			run_frame(0, BENCH_DUMP);
@@ -1482,7 +1484,7 @@ static void bench_maps(void)
 				pl.pm.pos[2] -= 22 * CLIP_SUB;
 				stream_preload_at(pl.pm.pos);
 			}
-			snprintf(names[v & 3], sizeof names[0], "%s.v%u", world_map_name(m), v);
+			q_snprintf(names[v & 3], sizeof names[0], "%s.v%u", world_map_name(m), v);
 			bench_acc_t acc;
 			bench_reset(&acc, names[v & 3]);
 			for (int i = 0; i < 4; i++)
@@ -1647,7 +1649,7 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 		       (int) e->origin[0] / 8, (int) e->origin[1] / 8, (int) e->origin[2] / 8, e->item_model, e->masset);
 		if (ents_free_spot(e, mn, mx)) {
 			ents_look_at(c);
-			snprintf(name, sizeof name, "i%s_%d", map, e->class);
+			q_snprintf(name, sizeof name, "i%s_%d", map, e->class);
 			ents_dump(name);
 		}
 		if (!e->touch)
@@ -1662,7 +1664,7 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 	pl.items |= IT_QUAD;
 	game_powerup(IT_QUAD);
 	ents_ticks(2, cmd);
-	snprintf(name, sizeof name, "i%s_quad", map);
+	q_snprintf(name, sizeof name, "i%s_quad", map);
 	ents_dump(name);
 	ents_ticks(27 * 60, cmd);
 	printf("quad after 27 s: items %08x\n", (unsigned) pl.items);
@@ -1673,7 +1675,7 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 	int32_t from[3] = { pl.pm.pos[0] + 64 * CLIP_SUB, pl.pm.pos[1], pl.pm.pos[2] };
 	game_damage_player(30, from);
 	ents_ticks(1, cmd);
-	snprintf(name, sizeof name, "i%s_hurt", map);
+	q_snprintf(name, sizeof name, "i%s_hurt", map);
 	ents_dump(name);
 	pl.health = 100;
 }
@@ -1993,7 +1995,7 @@ static void bench_movers(void)
 		ent_activator = ent_player;                   /* started (a train without a name runs) */
 		if (e->use)
 			e->use(e);
-		snprintf(names[ti], sizeof names[ti], "mv.%s.%d", map, e->model);
+		q_snprintf(names[ti], sizeof names[ti], "mv.%s.%d", map, e->model);
 		bench_acc_t acc;
 		bench_reset(&acc, names[ti]);
 		uint32_t moved = 0, cut_frames = 0, cuts = 0, given_up = 0, cyc = 0, cyc_max = 0, pieces = 0;
@@ -2166,7 +2168,7 @@ static void bench_tick_cost(void)
 		printf("bench tick %s: %u cycles a tick on average, %u at worst (tick %d)\n", what[k],
 		       (unsigned) (total / 120), (unsigned) worst, worst_t);
 		static char sname[3][12];
-		snprintf(sname[k], sizeof sname[k], "tick_%s", what[k]);
+		q_snprintf(sname[k], sizeof sname[k], "tick_%s", what[k]);
 		prof_sample_print(sname[k]);
 	}
 	game_active = 0;
@@ -2221,7 +2223,7 @@ static void bench_tick_rates(void)
 		       tick_rates[r], (int) (apex - start[2]) / CLIP_SUB, ticks, game_tick_count - t0,
 		       (unsigned) (cyc / 300));
 		static char rname[5][8];
-		snprintf(rname[r], sizeof rname[r], "rate%d", tick_rates[r]);
+		q_snprintf(rname[r], sizeof rname[r], "rate%d", tick_rates[r]);
 		prof_sample_print(rname[r]);
 	}
 	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
@@ -2241,7 +2243,7 @@ static void bench_walk(void)
 		game_active = 1;
 		game_world_hz = rates[r];
 		static char name[2][12];
-		snprintf(name[r], sizeof name[r], "walk%d", rates[r]);
+		q_snprintf(name[r], sizeof name[r], "walk%d", rates[r]);
 		bench_acc_t acc;
 		bench_reset(&acc, name[r]);
 		uint32_t sim = 0, total = 0, worst = 0, vbls[4] = { 0, 0, 0, 0 };
@@ -2315,7 +2317,7 @@ static void bench_game(void)
 		for (int i = 0; i < (w == W_LIGHTNING ? 1 : 6); i++)   /* (the beam lasts 0.2 s) */
 			game_tick(&cmd);
 		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
-		snprintf(names[w], sizeof names[w], w < W_COUNT ? "g%s" : w == W_COUNT ? "ghud1" : "ghud2",
+		q_snprintf(names[w], sizeof names[w], w < W_COUNT ? "g%s" : w == W_COUNT ? "ghud1" : "ghud2",
 		         w < W_COUNT ? wname[w] : "");
 		bench_acc_t acc;
 		bench_reset(&acc, names[w]);
@@ -2356,7 +2358,7 @@ static void bench_game(void)
 			       (int) pl.pm.pos[0], (int) pl.pm.pos[1], (int) pl.pm.pos[2],
 			       (int) cam.pos[0], (int) cam.pos[1], (int) cam.pos[2], cam.yaw, cam.pitch, cam.roll);
 			if (t >= 18 && t % 6 == 0 && (t - 18) / 6 < 8) {
-				snprintf(wn[(t - 18) / 6], sizeof wn[0], "gwalk%d", (t - 18) / 6);
+				q_snprintf(wn[(t - 18) / 6], sizeof wn[0], "gwalk%d", (t - 18) / 6);
 				printf("D %s\n", wn[(t - 18) / 6]);
 				run_frame(0, BENCH_DUMP);
 			}
@@ -2552,7 +2554,7 @@ static void bench_monsters(void)
 			e->use(e);
 		}
 		char name[32];
-		snprintf(name, sizeof name, "m%s_%d_a", mapname, k);
+		q_snprintf(name, sizeof name, "m%s_%d_a", mapname, k);
 		mon_log("start", e);
 		for (int t = 0; t < 8; t++) {             /* the stream's reads, while the frames run */
 			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
@@ -2574,7 +2576,7 @@ static void bench_monsters(void)
 
 			}
 			if (t == 150) {
-				snprintf(name, sizeof name, "m%s_%d_b", mapname, k);
+				q_snprintf(name, sizeof name, "m%s_%d_b", mapname, k);
 				ents_dump(name);
 			}
 			if (pl.dead)
@@ -2602,7 +2604,7 @@ static void bench_monsters(void)
 			bench_stream_frames();
 		}
 		mon_log("dead", e);
-		snprintf(name, sizeof name, "m%s_%d_c", mapname, k);
+		q_snprintf(name, sizeof name, "m%s_%d_c", mapname, k);
 		ents_look_at(e->origin);
 		{                                         /* down at the body */
 			int32_t dz = pl.pm.pos[2] + pl.viewheight - e->origin[2] + 16 * CLIP_SUB;
@@ -2617,7 +2619,7 @@ static void bench_monsters(void)
 			game_tick(&cmd);
 			bench_stream_frames();
 		}
-		snprintf(name, sizeof name, "m%s_%d_d", mapname, k);
+		q_snprintf(name, sizeof name, "m%s_%d_d", mapname, k);
 		if (e->inuse)
 			ents_dump(name);
 		while (e->inuse && ent_time < end + 2) {
@@ -3122,7 +3124,7 @@ static void run_bench(void)
 		cam.yaw    = vw->yaw * ANG_TURN / 360;
 		cam.pitch  = vw->pitch * ANG_TURN / 360;
 		cam.roll   = 0;
-		snprintf(names[v], sizeof names[v], "view%u", v);
+		q_snprintf(names[v], sizeof names[v], "view%u", v);
 
 		bench_acc_t acc;
 		bench_reset(&acc, names[v]);

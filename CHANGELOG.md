@@ -1872,3 +1872,13 @@ followed by R0-R4.
     the double-barrelled shotgun's name;
   - costs: about 1.6 k cycles a walking tick (the edge trace), 2.8 KB of
     code.
+- **The RAM, the cycles kept** (2026-10-23, `docs/porting-notes.md` §77):
+  - the release's stack room 57016 → 85496 B against master (+28.5 KB):
+    the particle pool 512 → 256 (the ultra level is gone), libc's
+    vsnprintf replaced by a 1 KB `q_snprintf`, the brush models' cut and
+    a pusher's lists inside the slow path's block (never in use at once);
+  - the level arena: the edict pool cut to the map's slots and 96 free
+    after the spawn, the rest to the stream's pool (+11.4 KB a map on
+    average, +28 KB at most);
+  - the 128 views' display lists identical, frame cycles +0.007 % (the
+    instruction cache's placement).

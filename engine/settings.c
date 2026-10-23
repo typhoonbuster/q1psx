@@ -3,6 +3,7 @@
 #include "dlight.h"
 #include "game.h"
 #include "hud.h"
+#include "q_fmt.h"
 #include "render.h"
 #include "settings.h"
 #include "snd.h"
@@ -88,12 +89,12 @@ void settings_step(int row, int d)
 void settings_value(int row, char *buf, int size)
 {
 	switch (row) {
-	case SET_EFFECTS:  snprintf(buf, size, "%s", level_name[settings.level[QL_EFFECTS]]); break;
-	case SET_DITHER:   snprintf(buf, size, "%s", settings.dither ? "on" : "off"); break;
-	case SET_HUD:      snprintf(buf, size, "%s", hud_style_name[settings.hud]); break;
-	case SET_DLIGHTS:  snprintf(buf, size, "%s", settings.dlights ? "on" : "off"); break;
-	case SET_FPS:      snprintf(buf, size, "%d fps", fps_caps[settings.fps_cap]); break;
-	default:           snprintf(buf, size, "%d Hz", tick_rates[settings.tick]); break;
+	case SET_EFFECTS:  q_snprintf(buf, size, "%s", level_name[settings.level[QL_EFFECTS]]); break;
+	case SET_DITHER:   q_snprintf(buf, size, "%s", settings.dither ? "on" : "off"); break;
+	case SET_HUD:      q_snprintf(buf, size, "%s", hud_style_name[settings.hud]); break;
+	case SET_DLIGHTS:  q_snprintf(buf, size, "%s", settings.dlights ? "on" : "off"); break;
+	case SET_FPS:      q_snprintf(buf, size, "%d fps", fps_caps[settings.fps_cap]); break;
+	default:           q_snprintf(buf, size, "%d Hz", tick_rates[settings.tick]); break;
 	}
 }
 

@@ -5,6 +5,7 @@
 
 #include "cd.h"
 #include "mem.h"
+#include "q_fmt.h"
 #include "qtex.h"
 #include "world.h"
 #include "zone.h"
@@ -295,9 +296,9 @@ Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn p
 
 	char name[24], tex_name[24], mdl_name[24];
 	uint32_t tex_size = 0, wld_size = 0, mdl_size = 0;
-	snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_T%d.TX4;1", disc_maps[map], tex);
-	snprintf(name, sizeof name, "\\MAPS\\%s_G%d.WLD;1", disc_maps[map], geo);
-	snprintf(mdl_name, sizeof mdl_name, "\\MAPS\\%s_M%d.MDL;1", disc_maps[map], models);
+	q_snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_T%d.TX4;1", disc_maps[map], tex);
+	q_snprintf(name, sizeof name, "\\MAPS\\%s_G%d.WLD;1", disc_maps[map], geo);
+	q_snprintf(mdl_name, sizeof mdl_name, "\\MAPS\\%s_M%d.MDL;1", disc_maps[map], models);
 	load_progress = progress;
 	if (progress) {
 		cd_exists(tex_name, &tex_size);

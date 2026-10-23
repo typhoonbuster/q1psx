@@ -21,6 +21,7 @@
 #include "hud.h"
 #include "level.h"
 #include "mem.h"
+#include "q_fmt.h"
 #include "render.h"
 #include "rlist.h"
 #include "snd.h"
@@ -192,7 +193,7 @@ static void health_touch(edict_t *self)
 		return;
 	}
 	char s[32];
-	snprintf(s, sizeof s, "You receive %d health", (int) self->aflag);
+	q_snprintf(s, sizeof s, "You receive %d health", (int) self->aflag);
 	hud_notify(s);
 	ent_sound(ent_player, CHAN_ITEM, self->noise, 255, ATTN_NORM);
 	bonus();
@@ -292,7 +293,7 @@ static void weapon_touch(edict_t *self)
 	default: return;
 	}
 	char s[48];
-	snprintf(s, sizeof s, "You got the %s", name);
+	q_snprintf(s, sizeof s, "You got the %s", name);
 	hud_notify(s);
 	snd_start(ENT_PLAYER, CHAN_ITEM, S_PKUP, pl.pm.pos, 255, ATTN_NORM);
 	bonus();
@@ -324,7 +325,7 @@ static void ammo_touch(edict_t *self)
 	bound_ammo();
 	static const char *const name[AMMO_COUNT] = { "shells", "nails", "rockets", "cells" };
 	char s[32];
-	snprintf(s, sizeof s, "You got the %s", name[a]);
+	q_snprintf(s, sizeof s, "You got the %s", name[a]);
 	hud_notify(s);
 	snd_start(ENT_PLAYER, CHAN_ITEM, S_LOCK4, pl.pm.pos, 255, ATTN_NORM);
 	bonus();
@@ -354,7 +355,7 @@ static void key_touch(edict_t *self)
 	if (pl.items & self->items)
 		return;
 	char s[48];
-	snprintf(s, sizeof s, "You got the %s", self->netname);
+	q_snprintf(s, sizeof s, "You got the %s", self->netname);
 	hud_notify(s);
 	ent_sound(ent_player, CHAN_ITEM, self->noise, 255, ATTN_NORM);
 	bonus();
@@ -416,7 +417,7 @@ static void powerup_touch(edict_t *self)
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
 	char s[48];
-	snprintf(s, sizeof s, "You got the %s", self->netname);
+	q_snprintf(s, sizeof s, "You got the %s", self->netname);
 	hud_notify(s);
 	ent_sound(ent_player, CHAN_VOICE, self->noise, 255, ATTN_NORM);
 	bonus();
