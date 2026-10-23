@@ -108,8 +108,12 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);
 /* The same descent from a node (or a tagged leaf) world_box_topnode gave,
-   for a point inside its box. */
+   for a point inside its box (engine/w_leaf.s; the bench's C:
+   world_point_leaf_from_c). */
 const qw_leaf *world_point_leaf_from(uint32_t at, const int32_t pos[3]);
+#if defined(Q1PSX_BENCH) && !Q1PSX_ENGINE_C
+const qw_leaf *world_point_leaf_from_c(uint32_t at, const int32_t pos[3]);
+#endif
 /* The deepest node (or tagged leaf) holding the whole box (world units,
    inclusive) on its side of every plane above it. */
 uint32_t world_box_topnode(const int32_t mins[3], const int32_t maxs[3]);

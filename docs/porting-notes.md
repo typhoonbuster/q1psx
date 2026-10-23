@@ -9225,3 +9225,30 @@ with the same zone tables):
   pose, the movers' bitmap; the stream's sorted table lives on
   `next_wanted`'s stack, 768 B for a moment, not for good, and the two
   trigger lists share one walk, their next links in two rows).
+- **(3a) A point's leaf: in asm, and asked less** (the fight sampled again
+  after (T), `MONSTERS=3 MAP=E1M3 SAMPLE=1`: `world_point_leaf_from` had
+  become 11.9 % of its busy samples, (2a)'s sight lines asking it of both
+  eyes, from the root, every time):
+  - the eye's leaf kept: the player's for its eye's place (dropped with
+    the map: a new map's spawn could hold the old eye's place), a
+    monster's in its edict (the alias models' half of the leaves union,
+    `am`: unused past `leaves[0]` for them), keyed by the eye's place in
+    whole units and cleared when it is linked; `ai_checkclient` and the
+    check's own row take it too. 11.9 % -> 3.4 %;
+  - a sight line's PVS answer kept: a monster's last (its eye's leaf, its
+    target's, the bit: the same two leaves give the same answer), the
+    player's read in `check_pvs` when the check took that row from its
+    eye's leaf; else the row's walk;
+  - `engine/w_leaf.s`: the walk by hand. Both children read with the
+    plane, an axial plane's side one subtraction from the coordinate kept
+    shifted on the stack (no multiply), the child picked and its leaf bit
+    tested in the branches' delay slots (no load waits at the step's end):
+    34-40 cycles a node where the C took ~50. `world_point_leaf_from_c`
+    follows it (the C engine's); the bench's `wleafdiff` line compares
+    them on 4000 points a map, half walked from a random box's top node:
+    0 mismatches on START (and its interpreter), E1M3, E2M1; a walk 688 /
+    976 / 1319 cycles against the C's 825 / 1159 / 1533 (the timer's
+    reads included).
+  - The fight's busy samples -11.4 % (266951 -> 236489; the asm's share
+    57.2 -> 60.4 %, the C's 26.1 -> 15.4 %); every bench identical
+    (`WORLD_HZ=60` against the references; the release's room 57352 B).

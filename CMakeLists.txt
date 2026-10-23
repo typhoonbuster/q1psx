@@ -27,7 +27,8 @@ list(REMOVE_ITEM ENGINE_SOURCES ${PHYS_C_REFERENCE})
 # the base (docs/porting-notes.md §55): the physics (engine/clip.c,
 # pmove.c), the slow path (r_slow.c), the dynamic lights (dlight.c), the
 # brush models' cut (bmfrag.c), the places among a leaf's pieces (rlist.c
-# rl_order_c), an entity's matrices (rlist.c) and a model's frame (mdl.c).
+# rl_order_c), an entity's matrices (rlist.c), a model's frame (mdl.c) and
+# a point's leaf (world.c world_point_leaf_from_c).
 # The world renderer (engine/r_world.s) has no C, written in asm from the
 # start: it stays. The frames are the asm's, hash for hash (scripts/bench.sh
 # ENGINE_C=1).
@@ -37,7 +38,7 @@ if(Q1PSX_ENGINE_C)
 		${PROJECT_SOURCE_DIR}/engine/clip.s ${PROJECT_SOURCE_DIR}/engine/pmove.s
 		${PROJECT_SOURCE_DIR}/engine/r_slow.s ${PROJECT_SOURCE_DIR}/engine/bmfrag.s
 		${PROJECT_SOURCE_DIR}/engine/rl_order.s ${PROJECT_SOURCE_DIR}/engine/ent_mat.s
-		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s)
+		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s ${PROJECT_SOURCE_DIR}/engine/w_leaf.s)
 	list(APPEND ENGINE_SOURCES ${PHYS_C_REFERENCE})
 	message(STATUS "q1psx: the C engine (the world renderer asm)")
 endif()

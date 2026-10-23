@@ -74,7 +74,18 @@ struct edict_s {
 	int16_t  angle;          /* the map's `angle`, degrees (-1 up, -2 down)    */
 	int16_t  mangle[3];      /* degrees: pitch, yaw, roll                      */
 	int16_t  pad0;
-	const qw_leaf *leaves[ENT_MAX_LEAVES];
+	union {
+		const qw_leaf *leaves[ENT_MAX_LEAVES];   /* a brush model's: the leaves its box
+		                                            touches (num_leaves of them) */
+		struct {             /* an alias model's (item_model or masset >= 0: num_leaves 1) */
+			const qw_leaf *leaf;       /* leaves[0]: its centre's leaf, found when drawn */
+			const qw_leaf *eye_leaf;   /* its eye's leaf, at eye_key (engine/ai.c eye_leaf;
+			                              0 none: cleared when it is linked) */
+			int32_t eye_key[2];        /* that eye in whole units: x & 0xffff | y << 16, z */
+			const qw_leaf *vis_from, *vis_to;   /* its last PVS question (engine/ai.c */
+			int32_t vis_seen;                   /* pvs_sees): the eyes' leaves, the answer */
+		} am;
+	};
 	uint32_t topnode;        /* a drawn brush model's: world_box_topnode of the
 	                            points camera_side_leaf may take (ents.c)     */
 	int32_t  origin[3];      /* 1/CLIP_SUB units                               */

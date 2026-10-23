@@ -361,8 +361,9 @@ void ent_link(edict_t *e)
 		}
 	}
 	if (e->item_model >= 0 || e->masset >= 0) {   /* an alias model: drawn in its centre's leaf, */
-		e->leaves[0]  = 0;                        /* found when it is drawn (ent_model_leaf) */
-		e->num_leaves = 1;
+		e->leaves[0]   = 0;                       /* found when it is drawn (ent_model_leaf) */
+		e->am.eye_leaf = 0;
+		e->num_leaves  = 1;
 	} else if (e->draw && e->model) {
 		uint16_t idx[ENT_MAX_LEAVES];
 		e->num_leaves = (uint8_t) world_box_leaves(e->absmin, e->absmax, idx, ENT_MAX_LEAVES);
