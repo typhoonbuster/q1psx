@@ -9269,3 +9269,11 @@ with the same zone tables):
   for its five noises; a bitmap of those with a streamed one, made with
   the lists (their noises are set when they spawn), is walked instead.
   Every bench identical (`WORLD_HZ=60`); the release's room 57064 B.
+- **Two exact shortcuts in `engine/ents.c`**: a monster's step physics
+  is not called on a tick it has nothing to do (on the ground, flying or
+  swimming, no think due, still where its contents were taken: each part
+  of `ai_physics_step` would return at once; the crowd's tick -1.7 %);
+  `ents_model_frame` (the textures' alternates, each frame: every
+  animated chain's models looked for in the drawn brush models) starts
+  at the model's first entry, a table made with the lists, where it
+  walked the list from its start. Every bench identical (`WORLD_HZ=60`).

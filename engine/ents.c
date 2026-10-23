@@ -73,6 +73,8 @@ int             ents_num_models;
 uint16_t        ents_streamed_list[512];            /* the monsters, the streamed models */
 int             ents_num_streamed;
 static int      num_draw;
+static uint16_t *model_draw;         /* a brush model's first draw_list entry + 1, 0 none */
+static uint32_t  num_model_draw;     /* (world.num_bmodels: ents_model_frame's lookup) */
 static uint16_t vis_list[CLIP_MAX_BMODELS + 64];    /* those the PVS stamp sees */
 static int      num_vis;
 static uint16_t vis_list_stamp;
@@ -1032,6 +1034,8 @@ static void touch_relink(const edict_t *e)
 static void rebuild_lists(void)
 {
 	num_touch = num_draw = ents_num_models = ents_num_streamed = 0;
+	if (model_draw)
+		memset(model_draw, 0, num_model_draw * sizeof *model_draw);
 	memset(trig_head, 0, sizeof trig_head);
 	memset(trig_tail, 0, sizeof trig_tail);
 	memset(trig_count, 0, sizeof trig_count);
@@ -1060,8 +1064,11 @@ static void rebuild_lists(void)
 			touch_relink(e);
 		}
 		if (e->draw && e->model && e->num_leaves &&
-		    num_draw < (int) (sizeof draw_list / sizeof draw_list[0]))
+		    num_draw < (int) (sizeof draw_list / sizeof draw_list[0])) {
+			if (model_draw && (uint32_t) e->model < num_model_draw && !model_draw[e->model])
+				model_draw[e->model] = (uint16_t) (num_draw + 1);
 			draw_list[num_draw++] = (uint16_t) i;
+		}
 	}
 	lists_dirty = 0;
 	ents_relink = 1;
@@ -1307,8 +1314,17 @@ void ents_tick(void)
 					else if (e->mdef && e->masset >= 0 && !stream_model(e->masset))
 						;                             /* its model not in: paused, nothing it
 						                                 does unseen (2026-10-19) */
-					else if (e->movetype == MOVETYPE_STEP)
-						ai_physics_step(e);
+					else if (e->movetype == MOVETYPE_STEP) {
+						/* SV_Physics_Step but when it has nothing to do: on
+						   the ground (flying, swimming), no think due, still
+						   where its contents were taken (each of its parts
+						   would return at once) */
+						if (!(e->flags & (FL_ONGROUND | FL_FLY | FL_SWIM)) ||
+						    (e->nextthink > 0 && e->nextthink <= ent_time) || !e->watertype ||
+						    e->origin[0] != e->water_at[0] || e->origin[1] != e->water_at[1] ||
+						    e->origin[2] != e->water_at[2])
+							ai_physics_step(e);
+					}
 					else if (e->movetype >= MOVETYPE_FLY && e->movetype != MOVETYPE_PUSH &&
 					         e->movetype != MOVETYPE_NOCLIP)
 						ai_physics_toss(e);
@@ -1378,6 +1394,10 @@ Q_COLD void ents_load(void)
 		max_touch = 0;
 	for (int k = 0; k < 2; k++)
 		touch_walks[k] = (touch_walk_t) { trig_count[k], trig_head[k], touch_next[k], touch_slots, touch_list };
+	num_model_draw = world.num_bmodels;
+	model_draw = num_model_draw ? mem_level_alloc(num_model_draw * sizeof *model_draw) : 0;
+	if (model_draw)
+		memset(model_draw, 0, num_model_draw * sizeof *model_draw);
 }
 
 /* the edict for a cooked entity: the fields every class takes (ED_ParseEdict) */
@@ -1542,7 +1562,13 @@ int ents_check(const char *where)
 
 int ents_model_frame(int model)
 {
-	for (int i = 0; i < num_draw; i++) {
+	int i = 0;                                    /* the first draw_list entry of the */
+	if (model_draw && model > 0 && (uint32_t) model < num_model_draw) {   /* model (each frame: */
+		i = model_draw[model] - 1;                /* the textures' alternates, anim.c) */
+		if (i < 0 || i >= num_draw)
+			return 0;
+	}
+	for (; i < num_draw; i++) {
 		const edict_t *e = &edicts[draw_list[i]];
 		if (e->model == model && e->inuse && e->draw)
 			return e->frame;
