@@ -29,18 +29,35 @@ LOG=${LOG:-"$ROOT/build/headless.log"}
 CRASH='break 0x|Unrecoverable|Exception|PANIC|Sys_Error|panic|Program counter|=== halting ==='
 
 mkdir -p "$(dirname "$LOG")"
-: > "$LOG"
 # stdout to a file is block-buffered by the emulator; force line buffering so
 # the stop pattern is seen while it runs.
-stdbuf -oL -eL "$EMU" -no-ui -stdout ${EMU_ARGS:-} -loadiso "$IMG" -run > "$LOG" 2>&1 &
-PID=$!
+start_emu() {
+	: > "$LOG"
+	stdbuf -oL -eL "$EMU" -no-ui -stdout ${EMU_ARGS:-} -loadiso "$IMG" -run > "$LOG" 2>&1 &
+	PID=$!
+}
+start_emu
 
+# The AppImage sometimes finds no BIOS at all (its own OpenBIOS fallback
+# unreadable: "No BIOS loaded, emulation halted") and then waits forever:
+# a run that says so is started again, three times at most.
+NOBIOS='No BIOS loaded'
+retries=3
 status=0
 [ -n "$STOP" ] && status=2
 for _ in $(seq 1 "$SECS"); do
 	sleep 1
 	if [ -n "$STOP" ] && grep -qE "$STOP" "$LOG"; then status=0; break; fi
 	if grep -qE "$CRASH" "$LOG"; then status=1; break; fi
+	if [ "$retries" -gt 0 ] && grep -q "$NOBIOS" "$LOG"; then
+		kill "$PID" 2>/dev/null
+		wait "$PID" 2>/dev/null
+		retries=$((retries - 1))
+		echo "headless: no BIOS loaded, the emulator started again" >&2
+		sleep 2
+		start_emu
+		continue
+	fi
 	kill -0 "$PID" 2>/dev/null || break
 done
 
