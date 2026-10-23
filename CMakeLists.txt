@@ -198,6 +198,7 @@ set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map
 set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the game run this many ticks, a picture every 8")
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
+set(Q1PSX_BENCH_WARPDYN 0 CACHE STRING "1: the views with the game's dynamic warp control (T its floor), the T each ends at printed")
 set(Q1PSX_BENCH_GPUTIME 0 CACHE STRING "1: each frame's display list drawn alone, the CPU waiting: the bench lines' gpu= (an emulator that counts the GPU's time: DuckStation)")
 set(Q1PSX_BENCH_RES 0 CACHE STRING "The 3D view's internal resolution the bench renders with: engine/render.c r_res_table's index (0: 320, the screen's)")
 set(Q1PSX_BENCH_WORLD_HZ 30 CACHE STRING "The world's tick rate the bench runs at: 60 or 30 (the game's default; the player's: 60)")
@@ -218,7 +219,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
 		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS} Q1PSX_BENCH_ZONES=${Q1PSX_BENCH_ZONES}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ} Q1PSX_BENCH_RES=${Q1PSX_BENCH_RES}
-		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME})
+		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN})
 	if(Q1PSX_BENCH_VIEW)
 		# groups of five numbers, one definition with no spaces (a quoted string
 		# with spaces does not survive the generator's command line)

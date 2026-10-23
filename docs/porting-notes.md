@@ -9957,3 +9957,38 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
   They pass a few more polygons the slow path then keeps whole (54 → 103
   over START's 12 views). That is cheaper than the octagon in every
   careful polygon.
+
+### 79.2 The warp's control: no warp spent for nothing
+
+- **What it did**: the dynamic control (§19.4) raises T by a quarter on
+  each frame over 7/8 of the cap's vblanks, up to 32 px, and lowers it by
+  1 px after 4 frames with room. A view that misses the vblank even at
+  32 px stayed at 32: the most warp, at 30 fps all the same.
+- **Now** (`r_warp_feedback`, `r_warp.more`): 30 frames in a row at 32 px
+  missing the vblanks aimed at (the cap's, a load's and a view's first
+  frames aside) make the control aim at one vblank more, from the floor.
+  The view is drawn at 4 px, at the frame rate it gets anyway.
+  - It aims at the cap's vblanks again when a frame at the floor is
+    lighter than the first one there by what 32 px lacked.
+  - It also tries again after 128 frames, then 256, up to 1024 when the
+    tries fail.
+  - A map's start resets it.
+- **Measured** (`WARPDYN=1`, the bench's new option: the game's control,
+  each view's last T printed):
+  - START's 12 views (68 frames each): the view no T fits (view 0) went
+    from T 32 to 4 at the same 2 vblanks, and the next view from 14 to 5
+    (it no longer comes down from 32); the others are the same;
+  - the 128 views (20 frames each): line for line the old control's
+    (mean 1.031 vblanks, 4 over one, mean T 28.3). That T is mostly left
+    over from the views before: it comes down 1 px every 4 frames.
+- **Tried and left out**:
+  - aiming one vblank more after 8 frames, not 30: a load's or a view's
+    first frames passed for a view no T fits. 8 views over a vblank
+    against 4, mean T 20.1 against 28.3;
+  - raising T by a half on a missed vblank (a quarter otherwise): no
+    change on these benches, whose views start at the T the ones before
+    left.
+- **The floor stays at 4 px**: the control gets 124 of the 128 spawn views
+  to a vblank by itself. A higher floor would add warp everywhere, and
+  frames only where T is still climbing. The views it cannot fit need
+  fewer cycles at any T: §79.3.

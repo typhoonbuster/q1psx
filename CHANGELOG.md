@@ -1919,3 +1919,10 @@ followed by R0-R4.
   the C the same; START's 12 views −15 % triangles, frames −1.85 %; the
   128 views −1.04 %, 24 → 22 over a vblank; the C engine's frames the
   asm's.
+- **The warp's control spends no warp for nothing** (2026-10-24,
+  `docs/porting-notes.md` §79.2): a view that misses its vblanks even at
+  32 px for 30 frames is drawn at the floor (4 px) with a vblank more, as
+  it takes it anyway; back to the cap's when lighter, or tried again after
+  128 frames and more; START's heavy view T 32 → 4 at the same 30 fps, the
+  128 views line for line; bench: `WARPDYN=1` (the game's control, each
+  view's T printed).

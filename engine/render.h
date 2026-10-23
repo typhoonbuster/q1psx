@@ -130,7 +130,11 @@ void r_bind_world(void);
      R_WARP_DYNAMIC  T rises for the next frames when a frame overruns its
                      NTSC frame (CPU time or a missed vblank), and falls back
                      to the chosen T, its floor, once frames have room again
-                     (the game's, from 4 px: engine/settings.h). */
+                     (the game's, from 4 px: engine/settings.h). A view the
+                     largest T cannot fit in the frame rate cap's vblanks
+                     takes one more instead, at the floor (no warp spent for
+                     nothing), until it is lighter by what that T lacked
+                     (docs/porting-notes.md §79.2). */
 enum { R_WARP_FIXED, R_WARP_DYNAMIC, R_WARP_MODES };
 #define R_WARP_T_MAX 32       /* px: the dynamic mode stops raising T there */
 
@@ -141,6 +145,14 @@ typedef struct {
 	uint32_t tris;           /* the last frame's world triangles (estimate:
 	                            the debug overlay's)                        */
 	int      calm;           /* frames in a row with room to spare          */
+	int      more;           /* vblanks over the cap's share it aims at      */
+	uint32_t ref;            /* the frame's cycles at the floor once `more`
+	                            rose (0: not yet seen)                       */
+	uint32_t shortfall;      /* what the largest T lacked then, cycles       */
+	int      stuck;          /* frames in a row the largest T missed them    */
+	int      probe;          /* frames at the floor since `more` rose        */
+	int      wait;           /* frames before the share is tried again (doubles
+	                            at each try that fails, from WARP_PROBE)     */
 } r_warp_t;
 
 extern r_warp_t r_warp;

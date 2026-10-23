@@ -133,6 +133,9 @@ int r_atan2(int32_t y, int32_t x)
 /* ------------------------------------------------------------------ warp -- */
 
 r_warp_t r_warp;
+#define WARP_PROBE  128      /* frames at the floor with a vblank more before the
+                                cap's share is tried again (r_warp_feedback); it
+                                doubles at each try that fails, up to x 8 */
 
 /* The record bound's k = sqrt(560 / T) (x16), T = 1 .. R_WARP_T_MAX: with
    the record's nearest depth z_m = z - rho and radius rho, any edge inside
@@ -168,25 +171,69 @@ void r_set_warp(int mode, int t_px)
 {
 	r_warp.mode = mode;
 	r_warp.t    = t_px;
-	r_warp.calm = 0;
+	r_warp.calm  = 0;
+	r_warp.more  = 0;
+	r_warp.ref   = 0;
+	r_warp.stuck = 0;
+	r_warp.wait  = WARP_PROBE;
 	warp_apply(t_px);
 }
 
 /* An NTSC frame of CPU time, and the marks around it: above WARP_HIGH (or
    past a vblank) T rises by a quarter at once; it comes down one pixel at a
-   time after WARP_CALM frames below WARP_LOW, so it does not oscillate. */
+   time after WARP_CALM frames below WARP_LOW, so it does not oscillate.
+   The marks are for the vblanks aimed at: the cap's share, and `more` when
+   a frame at R_WARP_T_MAX missed them all the same (the view then drawn at
+   the floor with a vblank more, as it would take that vblank anyway); back
+   to the share once a frame at the floor is lighter than the first one
+   there by what R_WARP_T_MAX lacked. */
 #define WARP_FRAME  (33868800 / 60)
 #define WARP_HIGH   (WARP_FRAME * 7 / 8)
 #define WARP_LOW    (WARP_FRAME * 3 / 4)
 #define WARP_CALM   4
+#define WARP_STUCK  30       /* frames in a row at R_WARP_T_MAX missing the vblanks
+                                aimed at before a vblank more: a view that cannot
+                                make them (a load's or a view's first frames miss
+                                them for a while) */
 
 void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 {
 	if (r_warp.mode != R_WARP_DYNAMIC)
 		return;
-	int over = vbl > share || frame_cycles > WARP_HIGH * share;   /* (against the frame */
-	int room = vbl <= share && frame_cycles < WARP_LOW * share;   /*  rate cap's share) */
 	int t = r_warp.t_eff;
+	if (r_warp.more && t <= r_warp.t) {           /* (at the floor: like for like) */
+		if (!r_warp.ref) {
+			r_warp.ref   = frame_cycles;
+			r_warp.probe = 0;
+		} else if (frame_cycles + r_warp.shortfall < r_warp.ref) {
+			r_warp.more--;                        /* lighter: the vblank less again */
+			r_warp.ref  = 0;
+			r_warp.wait = WARP_PROBE;
+		} else if (++r_warp.probe >= r_warp.wait) {
+			r_warp.more--;                        /* a while: tried again, and if it */
+			r_warp.ref  = 0;                      /*  fails, twice as long next time */
+			if (r_warp.wait < WARP_PROBE * 8)
+				r_warp.wait *= 2;
+		}
+	}
+	uint32_t aim = share + (uint32_t) r_warp.more;
+	int over = vbl > aim || frame_cycles > WARP_HIGH * aim;   /* (against the vblanks */
+	int room = vbl <= aim && frame_cycles < WARP_LOW * aim;   /*  aimed at) */
+	if (vbl > aim && t >= R_WARP_T_MAX) {         /* the largest T missed them too */
+		uint32_t s = frame_cycles > WARP_FRAME * aim ? frame_cycles - WARP_FRAME * aim : WARP_FRAME / 16;
+		if (!r_warp.stuck || s < r_warp.shortfall)
+			r_warp.shortfall = s;                 /* (the least, over the frames) */
+		if (++r_warp.stuck >= WARP_STUCK) {
+			r_warp.more++;
+			r_warp.ref   = 0;
+			r_warp.calm  = 0;
+			r_warp.stuck = 0;
+			warp_apply(r_warp.t);
+			return;
+		}
+	} else {
+		r_warp.stuck = 0;
+	}
 	if (over) {
 		t += t >= 4 ? t / 4 : 1;
 		r_warp.calm = 0;
@@ -468,6 +515,10 @@ Q_COLD void r_init(void)
 
 void r_bind_world(void)
 {
+	r_warp.more  = 0;                         /* (a new map: the cap's share again) */
+	r_warp.ref   = 0;
+	r_warp.stuck = 0;
+	r_warp.wait  = WARP_PROBE;
 	r_state.root          = (uint32_t) world.root & 0x00ffffffu;   /* KUSEG, as the children */
 	r_state.face_visframe = (uint32_t) world.face_visframe;
 	r_state.leaves        = (uint32_t) world.leaves;

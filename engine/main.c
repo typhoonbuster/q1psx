@@ -85,6 +85,10 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #define Q1PSX_BENCH_RES  0                     /* the 3D view's resolution, r_res_table's
                                                   index (RES= scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_WARPDYN
+#define Q1PSX_BENCH_WARPDYN 0                  /* 1: the game's dynamic warp control, T
+                                                  its floor (WARPDYN= scripts/bench.sh) */
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
@@ -92,7 +96,7 @@ static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
 	r_set_res(Q1PSX_BENCH_RES);
-	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T);
+	r_set_warp(Q1PSX_BENCH_WARPDYN ? R_WARP_DYNAMIC : R_WARP_FIXED, Q1PSX_BENCH_T);
 	vid_set_dither(1);
 	settings.level[QL_EFFECTS] = Q1PSX_BENCH_EFFECTS;
 	game_set_effects(Q1PSX_BENCH_EFFECTS);
@@ -1501,6 +1505,8 @@ static void bench_maps(void)
 			}
 			prof_sample_stop();
 			bench_print(&acc);
+			if (Q1PSX_BENCH_WARPDYN)
+				printf("warp %s T %d more %d\n", names[v & 3], r_warp.t_eff, r_warp.more);
 			prof_sample_print(names[v & 3]);
 			printf("D %s\n", names[v & 3]);
 			ents_debug = 1;                     /* (the models drawn, by name) */
@@ -3140,6 +3146,8 @@ static void run_bench(void)
 			bench_add(&acc, vid_stats.vbl);
 		}
 		bench_print(&acc);
+		if (Q1PSX_BENCH_WARPDYN)
+			printf("warp %s T %d more %d\n", names[v], r_warp.t_eff, r_warp.more);
 		printf("D view %u\n", v);
 		run_frame(0, BENCH_DUMP);
 	}
