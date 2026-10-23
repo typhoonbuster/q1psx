@@ -1881,4 +1881,8 @@ followed by R0-R4.
     after the spawn, the rest to the stream's pool (+11.4 KB a map on
     average, +28 KB at most);
   - the 128 views' display lists identical, frame cycles +0.007 % (the
-    instruction cache's placement).
+    instruction cache's placement);
+  - the edict 392 → 384 bytes (the secret door's start in its unused
+    `pos1`, the asm's multiply two shifts and an add), the projectile
+    96 → 80, its move's product in 32 bits: the same game, its frames
+    −0.025..−0.12 %; the release's stack room 86200 B.

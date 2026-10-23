@@ -55,10 +55,8 @@ ents_seen_streamed:
 1:	beq     $s0, $s1, 9f                 # past the list
 	lhu     $t0, 0($s0)                  # (delay) the edict's index
 	addiu   $s0, $s0, 2
-	sll     $t1, $t0, 8                  # x 392 (sizeof (edict_t)): 256 + 128 + 8
-	sll     $t2, $t0, 7
-	sll     $t0, $t0, 3
-	addu    $t1, $t1, $t2
+	sll     $t1, $t0, 8                  # x 384 (sizeof (edict_t)): 256 + 128
+	sll     $t0, $t0, 7
 	addu    $t0, $t1, $t0
 	addu    $a0, $s5, $t0                # e
 	lbu     $t0, E_INUSE($a0)

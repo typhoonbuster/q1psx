@@ -9704,3 +9704,31 @@ starts, and the scenarios' random draws follow another course.
   keeps a model resident.
 - **The crowd** (`MONSTERS=3 MAP=E1M3`): no edict refused, the stack
   63 KB never reached.
+
+### 77.4 Narrower: the edict, the projectile, a 64-bit product
+
+- **The edict, 392 → 384 bytes.** `oldorigin` was the secret door's
+  alone, and it has no `pos1`: the two share their words in the mover's
+  part of the union. 4 bytes of padding take it to 384, which the asm's
+  walks multiply by in two shifts and an add (`e_tick.s`, `e_seen.s`: 256
+  + 128; 392 took three shifts and two adds). The `E_*` offsets past it
+  moved 12 bytes down (`p_defs.inc`, the static asserts).
+  - The level arena gives 8 bytes an edict more to the stream's pool.
+  - `MOVERS=1`: every line as before, the entities' share −613..−921
+    cycles a frame.
+  - `MONSTERS=3 MAP=E1M3`: every fight line as before, the fight's frames
+    −0.12 %, the entities' tick −149 cycles.
+- **The projectile, 96 → 80 bytes** (−768 B):
+  - its type, ground, frame and landing flags are bytes;
+  - its blast's damage, its model and its sounds are halfwords;
+  - its angles stay whole words. In halfwords GCC merged the pitch's and
+    the roll's updates into one word with sign extensions (2-4
+    instructions a spinning projectile a tick), and the yaw's light
+    bucket divides it.
+- **The projectile's move in 32 bits.** `vel x 8 x 1092 x dt >> 16` was
+  an int64 product: about 25 instructions an axis a tick. Under 40000
+  units/s it fits 32 bits, and the arithmetic shift is the same: the
+  same result.
+- **The game bench** (`BENCH_GAME=1`): every line as before (polygons,
+  packets), frame cycles −0.025 % (9 of the 10 views lower).
+- **The release**: the stack's room 86200 B (master 57016).

@@ -89,7 +89,6 @@ struct edict_s {
 	uint32_t topnode;        /* a drawn brush model's: world_box_topnode of the
 	                            points camera_side_leaf may take (ents.c)     */
 	int32_t  origin[3];      /* 1/CLIP_SUB units                               */
-	int32_t  oldorigin[3];
 	int32_t  mins[3], maxs[3];       /* the box, local                          */
 	int32_t  absmin[3], absmax[3];   /* in the world, a unit wider (SV_LinkEdict) */
 	int32_t  velocity[3];    /* units per second (a pusher's: its travel's)    */
@@ -101,7 +100,12 @@ struct edict_s {
 	                                E1M3: a bus error, DuckStation frozen) */
 	union {
 		struct {             /* a mover's (movers.c, subs.qc's SUB_CalcMove)   */
-			int32_t pos1[3], pos2[3];        /* the mover's ends                */
+			union {
+				int32_t pos1[3];             /* the mover's ends                */
+				int32_t oldorigin[3];        /* (the secret door's start: it has no
+				                                pos1) */
+			};
+			int32_t pos2[3];
 			int32_t dest1[3], dest2[3];      /* the secret door's stops         */
 			int32_t finaldest[3];
 			int32_t move_from[3];  /* SUB_CalcMove, exact in ticks: the position at  */
@@ -149,17 +153,18 @@ struct edict_s {
 	int32_t  aflag;          /* an item's amount (ammo, health, armor value)   */
 	int32_t  item_extra;     /* an item's second value (healtype, armortype x100, weapon) */
 	int32_t  item_model;     /* an item's model (formats/qgame.h QGM_*), -1 none */
+	int32_t  pad1;           /* (to 384 bytes: the asm's x 384 is two shifts and an add) */
 };
 
-_Static_assert(__builtin_offsetof(edict_t, absmin) == 112 && __builtin_offsetof(edict_t, absmax) == 124 &&
+_Static_assert(__builtin_offsetof(edict_t, absmin) == 100 && __builtin_offsetof(edict_t, absmax) == 112 &&
                __builtin_offsetof(edict_t, inuse) == 0 && __builtin_offsetof(edict_t, leaves) == 28 &&
-               __builtin_offsetof(edict_t, masset) == 370 && __builtin_offsetof(edict_t, item_model) == 388 &&
-               sizeof(edict_t) == 392, "engine/p_defs.inc E_*, engine/e_seen.s (x 392)");
+               __builtin_offsetof(edict_t, masset) == 358 && __builtin_offsetof(edict_t, item_model) == 376 &&
+               sizeof(edict_t) == 384, "engine/p_defs.inc E_*, engine/e_seen.s (x 384)");
 _Static_assert(__builtin_offsetof(edict_t, movetype) == 3 && __builtin_offsetof(edict_t, origin) == 64 &&
-               __builtin_offsetof(edict_t, mdef) == 160 && __builtin_offsetof(edict_t, pain_finished) == 188 &&
-               __builtin_offsetof(edict_t, watertype) == 216 && __builtin_offsetof(edict_t, water_at) == 228 &&
-               __builtin_offsetof(edict_t, move_ticks) == 252 && __builtin_offsetof(edict_t, nextthink) == 256 &&
-               __builtin_offsetof(edict_t, health) == 324 && __builtin_offsetof(edict_t, flags) == 376,
+               __builtin_offsetof(edict_t, mdef) == 148 && __builtin_offsetof(edict_t, pain_finished) == 176 &&
+               __builtin_offsetof(edict_t, watertype) == 204 && __builtin_offsetof(edict_t, water_at) == 216 &&
+               __builtin_offsetof(edict_t, move_ticks) == 240 && __builtin_offsetof(edict_t, nextthink) == 244 &&
+               __builtin_offsetof(edict_t, health) == 312 && __builtin_offsetof(edict_t, flags) == 364,
                "engine/p_defs.inc E_* (engine/e_tick.s)");
 _Static_assert(__builtin_offsetof(edict_t, maxs) == __builtin_offsetof(edict_t, mins) + 12,
                "the box's 6 words (rlist.h rl_add_model)");

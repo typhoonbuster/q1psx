@@ -373,25 +373,27 @@ enum { PJ_FREE, PJ_SPIKE, PJ_SSPIKE, PJ_GRENADE, PJ_ROCKET, PJ_EXPLOSION, PJ_BEA
 #define MAX_PROJ 48
 
 typedef struct {
-	int      type;
+	uint8_t  type;
+	uint8_t  onground;
+	uint8_t  frame;
+	uint8_t  landed;       /* a zombie's gib that missed: its next touch ends it */
 	int32_t  org[3];       /* 1/SUB units                                  */
 	int32_t  vel[3];       /* u/s                                          */
 	int32_t  end[3];       /* a beam's far end                             */
 	int      yaw, pitch, roll;
+	int16_t  dmg;          /* a grenade's blast: 120, an ogre's 40         */
+	int16_t  masset;       /* a monster's missile's streamed model         */
 	int      grav_acc;
-	int      onground;
 	int      die;          /* tick                                         */
 	int      frame_tick;   /* an explosion: when its frame advances        */
-	int      frame;
-	int      dmg;          /* a grenade's blast: 120, an ogre's 40         */
-	int      landed;       /* a zombie's gib that missed: its next touch ends it */
-	int16_t  masset;       /* a monster's missile's streamed model         */
 	int16_t  s1, s2;       /* its sounds (bank): a gib's hit and miss, a
 	                          wizard's spike's hit                          */
 	edict_t *owner;        /* what fired it: NULL the player, else a monster
 	                          or a trap (its box passed, the damage its)   */
 	const qw_leaf *leaf;
 } proj_t;
+
+_Static_assert(sizeof(proj_t) == 80, "proj_t: 80 bytes");
 
 static proj_t projs[MAX_PROJ];
 static int    proj_top;                /* past the highest slot in use: the loops' bound */
@@ -516,8 +518,8 @@ static void proj_move(proj_t *p)
 		p->roll += DEG(300) / GAME_HZ * game_dt;
 	}
 	int32_t end[3];
-	for (int k = 0; k < 3; k++)                       /* x 8 dt / 60 */
-		end[k] = p->org[k] + (int32_t) (((int64_t) p->vel[k] * SUB * 1092 * game_dt) >> 16);
+	for (int k = 0; k < 3; k++)                       /* x 8 dt / 60 (in 32 bits: under */
+		end[k] = p->org[k] + ((p->vel[k] * SUB * 1092 * game_dt) >> 16);   /* 40000 u/s) */
 	trace_t tr;
 	proj_trace(p, end, &tr);
 	int hit = tr.fraction < Q_FIX_ONE || tr.startsolid;

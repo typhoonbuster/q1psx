@@ -83,10 +83,8 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 	lbu     $t2, 0($t2)                  # its bit's number
 	lui     $t1, %hi(ent_force_retouch)
 	addu    $t2, $s5, $t2                # its index
-	sll     $t3, $t2, 8                  # x 392 (sizeof (edict_t)): 256 + 128 + 8
-	sll     $t4, $t2, 7
-	sll     $t2, $t2, 3
-	addu    $t3, $t3, $t4
+	sll     $t3, $t2, 8                  # x 384 (sizeof (edict_t)): 256 + 128
+	sll     $t2, $t2, 7
 	addu    $t2, $t3, $t2
 	addu    $s7, $s6, $t2                # e
 	lbu     $t0, E_INUSE($s7)
