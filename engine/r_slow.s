@@ -129,6 +129,49 @@ sp_ctab:                                 # children by split mask (1..7)
 	sltu    \out, \out, $v0              # 1: short and under: no split
 .endm
 
+# REFINE xa, ya, za, zta, xb, yb, zb, ztb, bit: an edge NOSPLIT marked (bit
+# set in s3) stays whole when its screen length as max + 3/8 min of |dx|,
+# |dy| (3 % under to 7 % over the true one: |dx| + |dy| was up to 41 % over,
+# on a diagonal) passes the same test: (max + 3/8 min) |dz| <= zta + ztb;
+# over the span (|dx| + |dy| > SPAN: the GPU's) it splits all the same.
+# Clobbers at, v0, t9.
+.macro REFINE xa, ya, za, zta, xb, yb, zb, ztb, bit
+	andi    $at, $s3, \bit
+	beqz    $at, 9f                      # (not marked: whole already)
+	subu    $at, \xa, \xb
+	bgez    $at, 1f
+	subu    $v0, \ya, \yb
+	subu    $at, $zero, $at              # |dx|
+1:	bgez    $v0, 2f
+	nop
+	subu    $v0, $zero, $v0              # |dy|
+2:	addu    $t9, $at, $v0
+	sltiu   $t9, $t9, SPAN + 1
+	beqz    $t9, 9f                      # over the span: it splits
+	sltu    $t9, $at, $v0
+	beqz    $t9, 3f                      # at the max, v0 the min
+	nop
+	xor     $at, $at, $v0
+	xor     $v0, $v0, $at
+	xor     $at, $at, $v0
+3:	sll     $t9, $v0, 1
+	addu    $t9, $t9, $v0
+	sra     $t9, $t9, 3
+	addu    $at, $at, $t9                # max + 3/8 min
+	subu    $v0, \za, \zb
+	bgez    $v0, 4f
+	nop
+	subu    $v0, $zero, $v0              # |dz|
+4:	mult    $at, $v0
+	addu    $t9, \zta, \ztb              # T2 (za + zb)
+	mflo    $at
+	sltu    $at, $t9, $at                # 1: over all the same: it splits
+	bnez    $at, 9f
+	nop
+	xori    $s3, $s3, \bit               # under: whole
+9:
+.endm
+
 # PUSHW off, ra, rb, rc: triangle (pool indices) at depth t9 (<< 27) into the
 # stack word off(a3); the caller moves a3. Clobbers v0, at.
 .macro PUSHW off, ra, rb, rc
@@ -445,7 +488,7 @@ sp_o_bounds:
 	sll     $at, $at, 2                  # (t2: sp_emit's arena test, r_frame
 	or      $s3, $s3, $at                #  leaves 40 bytes over s7 for it)
 	xori    $s3, $s3, 7                  # split: bit 0 p0-p1, 1 p1-p2, 2 p2-p0
-	bnez    $s3, sp_split
+	bnez    $s3, sp_refine               # (the marked edges by their length)
 	lui     $t9, CODE_GT3 >> 16          # (sp_emit's; sp_split's t9 is its own)
 
 	# ---- a leaf: one POLY_GT3 (a0 / a1 / a2 = its pool entries; t2 = 1 if
@@ -483,6 +526,18 @@ sp_emit:
 	addiu   $s6, $s6, 40
 
 	# ---- split: the midpoints, then the children ---------------------------
+	# the edges NOSPLIT marked, by their length (REFINE): those under the
+	# threshold stay whole; none left, a leaf (t2 and t9 sp_emit's again)
+sp_refine:
+	lw      $t2, PV_Z($a0)               # z0 (t2 held the arena's test)
+	REFINE  $t0, $t1, $t2, $s0, $t3, $t4, $t5, $s5, 1   # p0-p1
+	REFINE  $t3, $t4, $t5, $s5, $t6, $t7, $s1, $ra, 2   # p1-p2
+	REFINE  $t6, $t7, $s1, $ra, $t0, $t1, $t2, $s0, 4   # p2-p0
+	bnez    $s3, sp_split
+	sltu    $t2, $s7, $s6                # (sp_emit's arena test)
+	b       sp_emit
+	lui     $t9, CODE_GT3 >> 16
+
 sp_split:                                # s3 = mask, s2 = the triangle
 	sltiu   $at, $s4, POOL_N - 2         # the pool nearly full: a forced leaf
 	beqz    $at, sp_leaf_max

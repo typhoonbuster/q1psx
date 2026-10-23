@@ -1912,3 +1912,10 @@ followed by R0-R4.
   vertex light, the liquids, the leaves' light for the models; the
   dynamic lights follow (`DL_GAIN`: the models' × 53/32, the world's
   vertices' × 53/128 in the asm and the C). Every map cooked again.
+- **The split test by the edge's length** (2026-10-24,
+  `docs/porting-notes.md` §79.1): the slow path's warp test measures an
+  edge as max + 3/8 min of |dx|, |dy| (was |dx| + |dy|, up to 41 % over on
+  a diagonal): the asm re-tests the edges |dx| + |dy| marks (`REFINE`),
+  the C the same; START's 12 views −15 % triangles, frames −1.85 %; the
+  128 views −1.04 %, 24 → 22 over a vblank; the C engine's frames the
+  asm's.

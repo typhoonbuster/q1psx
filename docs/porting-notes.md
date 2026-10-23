@@ -9909,3 +9909,51 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
   alone, the CPU waiting, and the bench lines get `gpu=avg/max`. Only an
   emulator that counts the GPU's time gives a figure: DuckStation, on
   the bench's `.cue`. PCSX-Redux draws at once and gives 0.
+
+## §79 — The CPU's pass: the split test, the warp's control, the cook (2026-10-24)
+
+- **Why**: the game is CPU-bound (§78.3: the GPU at most 62 % of a 60 Hz
+  frame, the CPU up to 143 %). Three steps, on one
+  branch: a tighter estimate of the warp (the slow path's splits), the
+  warp's floor or its dynamic control, then fewer vertices from the cook.
+- **Where the CPU goes** (START's views, PCSX-Redux's PC sampler, by
+  label): in the slow path, the edge tests themselves (three multiplies a
+  triangle) lead, then a triangle's pop and loads. The midpoints'
+  divisions come far behind (2.7 % of the samples). The polygons that enter
+  the slow path and leave unsplit are few: 0-10 a view, so the record's
+  and the polygon's gates are close to exact.
+
+### 79.1 The edge's length
+
+- The split test bounded an edge's screen length by |dx| + |dy|, which is
+  up to 41 % over on a diagonal. Perspective makes most of a near floor's
+  and ceiling's edges diagonal on screen, so they split more often than
+  their warp warrants.
+- Now the length is max + 3/8 min of |dx|, |dy|: an octagon within 3 %
+  under and 7 % over the true length. The threshold is T px of
+  displacement in every direction; a diagonal was held to about 1.4 times
+  stricter than an axis.
+- **The asm**: NOSPLIT still tests |dx| + |dy| (the cheap bound: no split
+  there is no split by the true length either). An edge it marks goes to
+  `REFINE` (`sp_refine`, before `sp_split`): the octagon, the multiply,
+  the same threshold. The C's `split_edge` takes the octagon directly. The
+  splits are the same, as the octagon never exceeds |dx| + |dy|.
+- **Measured** (T 4):
+  - START's 12 views: the slow path's triangles 4201 → 3585 (−15 %), the
+    frames −1.85 % (the heavy views −2.4 to −4.5 %, the light ones up to
+    +2.8 %: REFINE's cost on views whose splits stay);
+  - the 128 views: −1.04 %, 77 faster and 51 slower; the views over a
+    vblank 24 → 22;
+  - the C engine's frames are the asm's (128 of 128 `H` lines).
+- **Tried and left out**:
+  - the screen's midpoint (u, v and z perspective-correct there) instead
+    of the 3D midpoint: +6 % triangles and +59 % pieces off screen. The
+    3D midpoint lies nearer the far end, which suits the near geometry
+    running off the screen;
+  - REFINE skipping the edges within 1/8 of an axis (their octagon within
+    7 % of |dx| + |dy|): its check cost more than the multiplies it
+    saved (−1.40 % against −1.85 %).
+- **The gates** (the record's sphere, CAREFUL's box) keep |dx| + |dy|.
+  They pass a few more polygons the slow path then keeps whole (54 → 103
+  over START's 12 views). That is cheaper than the octagon in every
+  careful polygon.

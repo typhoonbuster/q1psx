@@ -21,9 +21,12 @@
  *
  * Then both subdivide in screen space. An edge splits when its affine error
  * exceeds the threshold, or when it is too long for the GPU:
- *     (|dx| + |dy|) * |za - zb| > T2 * (za + zb),   T2 = 2 x threshold (px)
+ *     |ds| * |za - zb| > T2 * (za + zb),   T2 = 2 x threshold (px)
+ *     |ds| = max(|dx|, |dy|) + 3/8 min(|dx|, |dy|)
  * (the midpoint's screen displacement between affine and perspective is
- * |ds| * |za - zb| / (2 (za + zb)), and |dx| + |dy| bounds |ds|). The
+ * |ds| * |za - zb| / (2 (za + zb)); the octagon's |ds| is within 3 % under
+ * and 7 % over the true length, |dx| + |dy| up to 41 % over), or
+ * |dx| + |dy| > SPAN. The
  * decision and the midpoint depend on the edge's two ends only, and every
  * vertex an edge can share with another polygon comes from the same cache
  * value, so neighbours split shared edges identically: no T-junction, no
@@ -198,13 +201,18 @@ static int32_t iabs(int32_t v)
 	return v < 0 ? -v : v;
 }
 
-/* Split decision for one edge, from that edge alone (see the header); the
-   products wrap and compare unsigned, as the asm's */
+/* Split decision for one edge, from that edge alone (see the header): its
+   screen length as max + 3/8 min of |dx|, |dy| (the asm's NOSPLIT tests
+   |dx| + |dy| first, then REFINE the marked edges: the same split, as
+   that length never exceeds |dx| + |dy|); the products compare unsigned,
+   as the asm's */
 static int split_edge(const sv_t *p, const sv_t *q)
 {
-	int32_t l = iabs(p->sx - q->sx) + iabs(p->sy - q->sy);
-	if (l > SPAN)
+	int32_t ax = iabs(p->sx - q->sx), ay = iabs(p->sy - q->sy);
+	if (ax + ay > SPAN)
 		return 1;
+	int32_t mx = ax < ay ? ay : ax, mn = ax < ay ? ax : ay;
+	int32_t l = mx + (3 * mn >> 3);
 	return (uint32_t) (l * iabs(p->z - q->z)) > (uint32_t) t2 * (uint32_t) p->z + (uint32_t) t2 * (uint32_t) q->z;
 }
 
