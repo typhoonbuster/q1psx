@@ -9443,9 +9443,13 @@ starts, and the scenarios' random draws follow another course.
   - §69's host harness on the new C: every pool it returned is
     master's, call by call (five workloads, millions of calls); never a
     refusal with room, never an overwrite;
-  - hazcheck clean.
-- **RAM:** the table +16 B (the sentinel's 4 words). The stack room:
-  release 57768 -> 57704 B, default 45240 -> 45176.
+  - hazcheck clean;
+  - after the merge with master af8e353 (§73's crashes, the asm walks),
+    against its runs: 128 of 128 views, 23 of 23, E1M8's 12 of 12, the
+    interpreter's and the C engine's 11 of 11, 0 refusals, the asm by
+    the C 8819 calls with 0 mismatches; the fight -0.044 %.
+- **RAM:** the table +16 B (the sentinel's 4 words). The stack room on
+  af8e353: release 57080 -> 57016 B, default 44568 -> 44504.
 - **Left:**
   - eight keys a turn: ~4.25 an entry, more landing code;
   - a hint per asset (the entry its last hit took, a byte an asset):
