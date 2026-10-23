@@ -9277,3 +9277,16 @@ with the same zone tables):
   animated chain's models looked for in the drawn brush models) starts
   at the model's first entry, a table made with the lists, where it
   walked the list from its start. Every bench identical (`WORLD_HZ=60`).
+- **(3c) The render lists' cull in asm** (`engine/e_seen.s`,
+  `ents_seen_streamed` / `ents_seen_items`): `monsters_render` and
+  `items_render` walked every streamed or item edict each frame, a call
+  to `ent_model_leaf` and its tests for each, though most are out of the
+  PVS. The asm gives the next position whose edict is in use, has its
+  model and a leaf the frame's PVS stamp marks (the leaf looked for
+  exactly where the C looked: the same leaves kept), the C draws that
+  one: a list pointer, the edict's address by shifts (x 392), its three
+  fields read together, the leaf's stamp read in a branch's delay slot
+  (with no leaf yet, a harmless read at address 6). `ents_seen_c`
+  follows it (the C engine's); the fight compares both lists each frame
+  (`seendiff`, untimed): 36867 walks, 0 mismatches. The cull ~0.55 % of
+  the fight's busy samples where the C's loops took 0.9 %.

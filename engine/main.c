@@ -2714,6 +2714,9 @@ static void bench_monsters(void)
 			run_frame(0, 0);
 			fsum += prof_stage[PROF_FRAME];
 			fdrawn += (uint32_t) monsters_drawn;
+#if !Q1PSX_ENGINE_C
+			ents_seen_check();                    /* (e_seen.s against its C, untimed) */
+#endif
 			int max, used = ents_in_use(&max);
 			if (used > peak)
 				peak = used;
@@ -2734,6 +2737,9 @@ static void bench_monsters(void)
 		cmd.fire = 0;
 		prof_sample_stop();
 		prof_sample_print("fight");
+#if !Q1PSX_ENGINE_C
+		printf("seendiff %u walks: mismatches %u\n", (unsigned) ents_seen_checked, (unsigned) ents_seen_bad);
+#endif
 	}
 }
 

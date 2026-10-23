@@ -179,8 +179,12 @@
 
 # ---- edict_t (engine/ents.h) and a trigger list's walk (engine/ents.c
 # touch_walk_t, engine/e_touch.s) -------------------------------------------------
+.set E_INUSE,        0     # uint8
+.set E_LEAVES,      28     # const qw_leaf *[8]: an alias model's centre leaf first
 .set E_ABSMIN,     112     # int32[3], 1/8 units, a unit wider (SV_LinkEdict)
 .set E_ABSMAX,     124
+.set E_MASSET,     370     # int16: a streamed model, -1 none
+.set E_ITEM_MODEL, 388     # int32: an item's model, -1 none
 .set TW_COUNT,       0     # uint16 *: the slots linked in each area node's subtree
 .set TW_HEAD,        4     # uint16 *: each node's first slot + 1, 0 none
 .set TW_NEXT,        8     # uint16 *: a slot's next + 1, 0 the end

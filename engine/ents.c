@@ -389,6 +389,57 @@ void ent_link(edict_t *e)
 		touch_relink(e);
 }
 
+/* engine/e_seen.s's C (it is the base): the C engine's, and the bench's
+   check (ents_seen_check) */
+#if Q1PSX_ENGINE_C || defined(Q1PSX_BENCH)
+static int ents_seen_c(const uint16_t *list, int n, int from, uint32_t vis, int items)
+{
+	for (int i = from; i < n; i++) {
+		edict_t *e = &edicts[list[i]];
+		if (!e->inuse || (items ? e->item_model < 0 : e->masset < 0))
+			continue;
+		const qw_leaf *leaf = ent_model_leaf(e);
+		if (leaf && leaf->visframe == vis)
+			return i;
+	}
+	return n;
+}
+#endif
+#if Q1PSX_ENGINE_C
+int ents_seen_streamed(const uint16_t *list, int n, int from, uint32_t vis)
+{
+	return ents_seen_c(list, n, from, vis, 0);
+}
+int ents_seen_items(const uint16_t *list, int n, int from, uint32_t vis)
+{
+	return ents_seen_c(list, n, from, vis, 1);
+}
+#elif defined(Q1PSX_BENCH)
+uint32_t ents_seen_checked, ents_seen_bad;
+/* both lists walked by the asm and by its C for the frame's stamp: the
+   same positions (the leaves found on the way are the same) */
+void ents_seen_check(void)
+{
+	uint32_t vis = (uint16_t) r_state.visframe;
+	for (int items = 0; items < 2; items++) {
+		const uint16_t *list = items ? ents_model_list : ents_streamed_list;
+		int n = items ? ents_num_models : ents_num_streamed;
+		for (int i = -1, j = -1;;) {
+			i = items ? ents_seen_items(list, n, i + 1, vis) : ents_seen_streamed(list, n, i + 1, vis);
+			j = ents_seen_c(list, n, j + 1, vis, items);
+			ents_seen_checked++;
+			if (i != j) {
+				if (ents_seen_bad++ < 4)
+					printf("seendiff MISMATCH list %d: asm %d c %d of %d\n", items, i, j, n);
+				break;
+			}
+			if (i >= n)
+				break;
+		}
+	}
+}
+#endif
+
 const qw_leaf *ent_model_leaf(edict_t *e)
 {
 	if (!e->leaves[0]) {
