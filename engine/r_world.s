@@ -33,6 +33,46 @@
 	.include "inline_s.inc"
 	.include "r_defs.inc"
 
+# The far polygons' screen bounds (CAREFUL's other exits, below): each test's
+# "lui v0, 240" and "lui v0, 320" as a pair in this table (their offsets in
+# r_render), which render.c r_set_res patches to a smaller target's rows
+# and width (the 3D view's internal resolution, docs/porting-notes.md §78).
+# FARSITE in each.
+	.pushsection .rodata.r_far_sites, "a", @progbits
+	.align  1
+	.global r_far_sites
+r_far_sites:
+	.popsection
+
+.macro FARSITE rows, cols
+	.pushsection .rodata.r_far_sites, "a", @progbits
+	.hword  \rows - r_render, \cols - r_render
+	.popsection
+.endm
+
+# The frustum's vertical planes (FRUSTUM's boxes, the records' and the
+# sorted models' spheres): 3z -+ 4y, the spheres 8 r from them. A target
+# whose pixels are not square (256 x 224) takes the view's y row x b
+# (render.c r_set_view, b up to 7/6): r_set_res then makes them 7z -+ 8y,
+# the spheres 24 r from them (rho x 16: the sphere an ellipsoid, its reach
+# sqrt(64 b^2 + 49) x 1.5 r = 17.5 r at most). YSITE puts an instruction's
+# offset in r_render in this table, its kind in the low bits: 0 sll 2 (4y) or 3 (8y),
+# 1 sll 1 or 3 (the 3z's or 7z's first), 2 addu or subu (its second), 3
+# sll t5, t3, 3 (8 r) or sll t5, t7, 4 (24 r: t7 = rho there).
+	.pushsection .rodata.r_ysites, "a", @progbits
+	.align  1
+	.global r_ysites
+r_ysites:
+	.popsection
+
+.macro YSITE at, kind                   # (none in a R_YSLOPE 5 build: render.c
+.if R_YSLOPE == 4                        #  then has no 256 x 224)
+	.pushsection .rodata.r_ysites, "a", @progbits
+	.hword  \at - r_render + \kind
+	.popsection
+.endif
+.endm
+
 # FRUSTUM cull: test the box whose centre / half extents are in V0 / V1
 # (vertex units; loaded by the caller at least two instructions back) against
 # the frustum planes still set in s2. A plane's bit is cleared once the box is
@@ -51,26 +91,38 @@
 	mfc2    $t0, C2_IR1                  # x
 	mfc2    $t1, C2_IR2                  # y
 	mfc2    $t2, C2_IR3                  # z
+.Lfy\@:
 	sll     $v0, $t1, 2                  # 4y
 	MVMVA   1, 1, 1, 3, 0                # IR = |rot| * half extents
+.Lfz\@:
 	sll     $a1, $t2, 1
 .if R_YSLOPE == 5
 	addu    $v0, $v0, $t1                # 5y (a 192-row viewport: R_YSLOPE)
 .endif
+.Lfz2\@:
 	addu    $a1, $a1, $t2                # 3z
 	\s2a
 	\s2b
 	mfc2    $t3, C2_IR1                  # rx
 	mfc2    $t4, C2_IR2                  # ry
 	mfc2    $t5, C2_IR3                  # rz
+.Lfry\@:
 	sll     $t7, $t4, 2                  # 4 ry
 	addu    $t6, $t5, $t3                # rz + rx: radius for left/right
+.Lfrz\@:
 	sll     $t9, $t5, 1
 .if R_YSLOPE == 5
 	addu    $t7, $t7, $t4                # 5 ry
 .endif
+.Lfrz2\@:
 	addu    $t9, $t9, $t5
 	addu    $t7, $t7, $t9                # 3 rz + 4 ry: radius for top/bottom
+	YSITE   .Lfy\@, 0
+	YSITE   .Lfz\@, 1
+	YSITE   .Lfz2\@, 2
+	YSITE   .Lfry\@, 0
+	YSITE   .Lfrz\@, 1
+	YSITE   .Lfrz2\@, 2
 	beqz    $at, 1f
 	andi    $at, $s2, 2
 	subu    $t3, $t2, $t0                # right: z - x
@@ -724,6 +776,7 @@
 	bltz    $t9, \q\()_quad_off         # all y < 0
 	andi    $t9, $t9, 0x8000
 	bnez    $t9, \q\()_quad_off         # all x < 0
+\q\()_fq_r:
 	lui     $v0, 240
 	subu    $t9, $t0, $v0
 	subu    $v1, $t1, $v0
@@ -733,7 +786,9 @@
 	subu    $v1, $t7, $v0
 	or      $t9, $t9, $v1
 	bgez    $t9, \q\()_quad_off         # all y >= 240
+\q\()_fq_c:
 	lui     $v0, 320
+	FARSITE \q\()_fq_r, \q\()_fq_c
 	sll     $t0, $t0, 16
 	sll     $t1, $t1, 16
 	sll     $t2, $t2, 16
@@ -755,6 +810,7 @@
 	lw      $t0, SP_SXY($t3)
 	lw      $t1, SP_SXY($t4)
 	lw      $t2, SP_SXY($t5)
+\q\()_ft_r:
 	lui     $v0, 240
 	and     $t9, $t0, $t1
 	and     $t9, $t9, $t2
@@ -767,7 +823,9 @@
 	subu    $v1, $t2, $v0
 	or      $t9, $t9, $v1
 	bgez    $t9, \q\()_tri_off          # all y >= 240
+\q\()_ft_c:
 	lui     $v0, 320
+	FARSITE \q\()_ft_r, \q\()_ft_c
 	sll     $t0, $t0, 16
 	sll     $t1, $t1, 16
 	sll     $t2, $t2, 16
@@ -940,14 +998,22 @@
 	addu    $t6, $t4, $t0                # left: z + x
 	addu    $t6, $t6, $t5
 	bltz    $t6, \p\()_cull
+\p\()_ys_r:
 	sll     $t5, $t3, 3                  # 8 r
+\p\()_ys_z:
 	sll     $t6, $t4, 1
+\p\()_ys_z2:
 	addu    $t6, $t6, $t4                # 3z
+\p\()_ys_y:
 	sll     $t0, $t1, 2                  # 4y
 .if R_YSLOPE == 5
 	addu    $t5, $t5, $t3                # 9 r: |n| = sqrt(34) x 1.5 = 8.75
 	addu    $t0, $t0, $t1                # 5y (a 192-row viewport: R_YSLOPE)
 .endif
+	YSITE   \p\()_ys_r, 3
+	YSITE   \p\()_ys_z, 1
+	YSITE   \p\()_ys_z2, 2
+	YSITE   \p\()_ys_y, 0
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, \p\()_cull
@@ -1305,8 +1371,11 @@ r_render:
 	sw      $t4, SP_SZCLIP($t8)          # (= 96 = R_SZ_FAST: r_slow.c SZ_CLIP)
 	li      $t4, 48
 	sw      $t4, SP_ZNEAR($t8)           # (8 world units: r_slow.c ZNEAR)
+	.global r_o_hshift
+r_o_hshift:
 	li      $t4, 5
-	sw      $t4, SP_HSHIFT($t8)          # (the GTE's H, 160 = 5 << 5: render.c R_SCREEN_H)
+	sw      $t4, SP_HSHIFT($t8)          # (the GTE's H, 160 = 5 << 5: render.c R_SCREEN_H;
+	                                     #  r_set_res patches the shift, the mul in sp_proj)
 	andi    $t0, $t0, 0xffff
 	sll     $t1, $t1, 16
 	or      $t0, $t0, $t1
@@ -2595,14 +2664,22 @@ ds_rec:
 	addu    $t6, $t4, $t0                # left: z + x
 	addu    $t6, $t6, $t5
 	bltz    $t6, ds_cull
+ds_ys_r:
 	sll     $t5, $t3, 3                  # 8 r
+ds_ys_z:
 	sll     $t6, $t4, 1
+ds_ys_z2:
 	addu    $t6, $t6, $t4                # 3z
+ds_ys_y:
 	sll     $t0, $t1, 2                  # 4y
 .if R_YSLOPE == 5
 	addu    $t5, $t5, $t3                # 9 r
 	addu    $t0, $t0, $t1                # 5y
 .endif
+	YSITE   ds_ys_r, 3
+	YSITE   ds_ys_z, 1
+	YSITE   ds_ys_z2, 2
+	YSITE   ds_ys_y, 0
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, ds_cull
@@ -2772,6 +2849,7 @@ ds_tri_far:
 	lw      $t0, SP_SXY($t3)
 	lw      $t1, SP_SXY($t4)
 	lw      $t2, SP_SXY($t5)
+ds_ft_r:
 	lui     $v0, 240
 	and     $t9, $t0, $t1
 	and     $t9, $t9, $t2
@@ -2784,7 +2862,9 @@ ds_tri_far:
 	subu    $v1, $t2, $v0
 	or      $t9, $t9, $v1
 	bgez    $t9, ds_tri_off              # all y >= 240
+ds_ft_c:
 	lui     $v0, 320
+	FARSITE ds_ft_r, ds_ft_c
 	sll     $t0, $t0, 16
 	sll     $t1, $t1, 16
 	sll     $t2, $t2, 16
@@ -3304,3 +3384,12 @@ ep_back:                                 # (ei_next's own work here)
 	.section .rodata.mp_all, "a", @progbits
 mp_all:                                  # mark_pvs: the row of a leaf without one
 	.byte   0xff
+
+	.pushsection .rodata.r_far_sites, "a", @progbits
+	.global r_far_sites_end
+r_far_sites_end:
+	.popsection
+	.pushsection .rodata.r_ysites, "a", @progbits
+	.global r_ysites_end
+r_ysites_end:
+	.popsection

@@ -77,6 +77,11 @@ typedef struct {
 	                                 farther on an axis is not marked          */
 	uint32_t fragpool;       /* +220 qw_vert *: the brush models' pieces'
 	                                 vertices (bmfrag.c)                       */
+	int16_t  yrow[4];        /* +224 rot's y row, and tr's y below, unscaled:
+	                                 a target whose pixels are not square has
+	                                 rot's scaled (r_set_view); the C's
+	                                 frustum tests read these (C only)        */
+	int32_t  ytr;            /* +232                                          */
 } r_state_t;
 
 extern r_state_t r_state;
@@ -87,6 +92,25 @@ void r_init(void);
    original status bar (192). Sets the GTE's projection centre. */
 void r_set_viewport(int rows);
 int  r_viewport_rows(void);
+
+/* The 3D view's internal resolution (the Graphics page's): below 320 x 240,
+   the world, its models, the particles and the gun are drawn into an
+   r_res_w x r_res_h target at the viewport's bottom right in the frame
+   buffer, which engine/vid.c then stretches over the viewport; the frame
+   buffer, the HUD and the menus stay 320 x 240. The field of view is
+   kept: the GTE's H is half the width (the slow path's product mul <<
+   shift: r_slow.s sp_proj, patched), and a target whose pixels are not
+   square (256 x 224) has the view's y row scaled to its rows' H
+   (r_set_view; the frustum's vertical planes patched to match). h is the
+   rows over the whole screen's 240; over the 192-row viewport, in
+   proportion. docs/porting-notes.md §78. */
+#define R_RES_COUNT 4
+typedef struct { uint16_t w, h; uint8_t mul, shift, seam, pad; } r_res_t;   /* (seam: vid.h) */
+extern const r_res_t r_res_table[R_RES_COUNT];
+extern int r_res;               /* r_res_table's index in use, 0 the native 320 */
+extern int r_res_w, r_res_h;    /* the target (the viewport, native)            */
+extern int r_proj_h;            /* the GTE's H (the C slow path's)              */
+void r_set_res(int i);
 
 /* Camera for the next r_frame(): position in 1/R_POS_SUB world units (the
    player physics' own resolution), angles in binary degrees. */

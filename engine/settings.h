@@ -1,9 +1,10 @@
 /*
  * q1psx — the player's settings (docs/porting-notes.md §52): the effects'
- * level (medium or high), the dithering, the HUD's style, the dynamic
- * lights, the volumes, the frame rate cap and the game's tick rate. The
- * debug build's map menu and the release build's Options / Graphics menu
- * (engine/menu.c) change them, at once (settings_apply).
+ * level (medium or high), the dithering, the HUD's style, the 3D view's
+ * internal resolution (§78), the dynamic lights, the volumes, the frame
+ * rate cap and the game's tick rate. The debug build's map menu and the
+ * release build's Options / Graphics menu (engine/menu.c) change them, at
+ * once (settings_apply).
  *
  * The rest is the build's (CMakeLists.txt), never a menu's:
  *   the textures   Q1PSX_TEXTURES, high or medium: the disc's one set, 4-bit
@@ -36,6 +37,7 @@ typedef struct {
 	                         or QL_HIGH */
 	int dither;
 	int hud;         /* HUD_*                                                */
+	int res;         /* r_res_table's index: the 3D view's resolution (0 320) */
 	int dlights;     /* the dynamic lights                                   */
 	int volume;      /* the sound effects', tenths (Quake's volume 0.7)      */
 	int music;       /* the music's, tenths (bgmvolume 1)                    */
@@ -60,7 +62,7 @@ int  settings_level_step(int axis, int level, int d);   /* the next level the di
 
 /* The rows both menus show (engine/menu.c's Graphics page, the debug map
    menu), in their order: */
-enum { SET_EFFECTS, SET_DITHER, SET_HUD, SET_DLIGHTS, SET_FPS, SET_TICK, SET_ROWS };
+enum { SET_EFFECTS, SET_DITHER, SET_HUD, SET_RES, SET_DLIGHTS, SET_FPS, SET_TICK, SET_ROWS };
 
 void settings_step(int row, int d);   /* its value one step on (wrapping); not applied */
 void settings_value(int row, char *buf, int size);   /* its value as the menus write it */

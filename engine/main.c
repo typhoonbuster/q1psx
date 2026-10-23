@@ -81,12 +81,17 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #ifndef Q1PSX_BENCH_EFFECTS
 #define Q1PSX_BENCH_EFFECTS QL_MEDIUM          /* the effects (EFFECTS= scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_RES
+#define Q1PSX_BENCH_RES  0                     /* the 3D view's resolution, r_res_table's
+                                                  index (RES= scripts/bench.sh) */
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
 static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
+	r_set_res(Q1PSX_BENCH_RES);
 	r_set_warp(R_WARP_FIXED, Q1PSX_BENCH_T);
 	vid_set_dither(1);
 	settings.level[QL_EFFECTS] = Q1PSX_BENCH_EFFECTS;
@@ -568,12 +573,12 @@ static void opt_step(int d)
 
 static void opt_draw(void)
 {
-	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "dlights", "fps cap", "tick rate" };
+	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "3d res", "dlights", "fps cap", "tick rate" };
 	char line[48], val[16];
 	for (int o = 0; o < SET_ROWS; o++) {
 		settings_value(o, val, sizeof val);
 		int x = 16 + (o % 2) * 152, y = 128 + (o / 2) * 10;
-		q_snprintf(line, sizeof line, "%-9s< %s >", label[o], val);
+		q_snprintf(line, sizeof line, "%-8s< %s >", label[o], val);
 		vid_text(x, y, line);
 		if (o == opt_sel)
 			ui_rect(x - 4, y - 1, 148, 10, 60, 70, 120);

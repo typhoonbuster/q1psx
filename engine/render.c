@@ -8,6 +8,7 @@
 #include "gdata.h"
 #include "mem.h"
 #include "prof.h"
+#include "q_fixed.h"
 #include "render.h"
 #include "rlist.h"
 #include "vid.h"
@@ -49,6 +50,7 @@ _Static_assert(offsetof(r_state_t, nlights)      == 208, "r_state layout");
 _Static_assert(offsetof(r_state_t, lights)       == 212, "r_state layout");
 _Static_assert(offsetof(r_state_t, mark_r)       == 216, "r_state layout");
 _Static_assert(offsetof(r_state_t, fragpool)     == 220, "r_state layout");
+_Static_assert(offsetof(r_state_t, yrow)         == 224, "r_state layout");
 _Static_assert(offsetof(qw_leaf, light)          == 27,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");
@@ -142,13 +144,24 @@ static const uint16_t warp_k16[R_WARP_T_MAX + 1] = {
 	95, 92, 89, 87, 85, 83, 81, 79, 77, 76, 74, 73, 72, 70, 69, 68, 67,
 };
 
-static void warp_apply(int t)
+static int32_t yb_num = 1, yb_den = 1;   /* the view's y row x num / den: the rows'
+                                            H over the columns' (256 x 224's; §78) */
+static int32_t yb12 = 4096;              /* the same, x 4096 rounded */
+
+/* T is in the target's pixels: below the native 320 the bound follows H's
+   share, k16 = sqrt(560 x (2H / 320) / T) x 16 = sqrt(448 x 2H / T), H the
+   larger of the columns' and the rows' (256 x 224: the rows' 149.3),
+   rounded as the table is (it is that at H 160) */
+Q_COLD static void warp_apply(int t)
 {
 	if (t < 1) t = 1;
 	if (t > R_WARP_T_MAX) t = R_WARP_T_MAX;
 	r_warp.t_eff     = t;
 	r_state.warp_t2  = 2u * (uint32_t) t;
-	r_state.warp_k16 = warp_k16[t];
+	uint32_t w2 = (uint32_t) ((r_res_w * yb_num + yb_den - 1) / yb_den);   /* 2H, up */
+	if (w2 < (uint32_t) r_res_w)
+		w2 = (uint32_t) r_res_w;
+	r_state.warp_k16 = r_res ? (q_isqrt32(448u * 4u * w2 / (uint32_t) t) + 1) / 2 : warp_k16[t];
 }
 
 void r_set_warp(int mode, int t_px)
@@ -311,12 +324,129 @@ int32_t r_view_depth(const int32_t pos[3])
 
 static int viewport_rows = VID_H;
 
-void r_set_viewport(int rows)
+/* The internal resolutions (docs/porting-notes.md §78): the width, the rows
+   over the whole screen's 240, and the slow path's H = mul << shift, the
+   GTE's half the width (the field of view kept): sp_proj's x 5 as built,
+   x 15 and x 1 patched in its two words, x 25 its second entry. The
+   stretch (vid.c) needs each a share of the screen above 1/2. */
+const r_res_t r_res_table[R_RES_COUNT] = {
+	{ 320, 240, 5, 5, 0, 0 }, { 256, 224, 1, 7, 80, 0 }, { 240, 180, 15, 3, 64, 0 }, { 200, 150, 25, 2, 16, 0 },
+};
+int r_res;
+int r_res_w = VID_W, r_res_h = VID_H;
+int r_proj_h = R_SCREEN_H;
+
+/* The patched words (docs/porting-notes.md §78): the walk's SP_HSHIFT
+   (r_world.s), the off-screen tests' bounds (every POLYS and the sorted
+   models' lui v0, 240 / 320, as pairs; the slow path's), the frustum's
+   vertical planes (r_ysites: 4y / 3z or 8y / 7z), the slow path's x H, y H,
+   centre and entry (r_slow.s sp_proj; the C engine's slow path reads
+   r_proj_h and r_res_w). */
+extern uint32_t r_o_hshift[];
+extern const uint16_t r_far_sites[], r_far_sites_end[], r_ysites[], r_ysites_end[];   /* (offsets in r_render) */
+#if !Q1PSX_ENGINE_C
+extern uint32_t sp_o_entry[], sp_o_xmul[], sp_o_ymul[], sp_o_ofx[], sp_o_bounds[], sp_proj_25[];
+static uint32_t sp_entry_word;             /* sp_o_entry's own (its z's load) */
+#endif
+
+#define MIPS_SLL(rd, rt, sa)  (((uint32_t) (rt) << 16) | ((uint32_t) (rd) << 11) | ((uint32_t) (sa) << 6))
+#define MIPS_ADDU(rd, rs, rt) (((uint32_t) (rs) << 21) | ((uint32_t) (rt) << 16) | ((uint32_t) (rd) << 11) | 0x21)
+#define MIPS_SUBU(rd, rs, rt) (((uint32_t) (rs) << 21) | ((uint32_t) (rt) << 16) | ((uint32_t) (rd) << 11) | 0x23)
+#define MIPS_J(to)            (0x08000000u | ((uint32_t) (to) >> 2 & 0x3ffffffu))
+#define IMM16(w, v)           (((w) & 0xffff0000u) | ((uint32_t) (v) & 0xffffu))
+
+/* r x mul (5, 15 or 1) into r, at the scratch ($at, 1): two words, as
+   sp_proj has them for 5 (sll at, r, 2; addu r, r, at) */
+Q_COLD static void mul_words(uint32_t *w, int mul, int r)
 {
+	if (mul == 15) {
+		w[0] = MIPS_SLL(1, r, 4);
+		w[1] = MIPS_SUBU(r, 1, r);
+	} else if (mul == 1) {
+		w[0] = w[1] = 0;                       /* nop, nop */
+	} else {
+		w[0] = MIPS_SLL(1, r, 2);
+		w[1] = MIPS_ADDU(r, r, 1);
+	}
+}
+
+/* the off-screen tests' bounds, the far polygons' and the slow path's
+   triangles': the target's (native: as built, 240 and 320, the whole
+   screen's); the frustum's vertical planes: 3z -+ 4y and 8 r, or 7z -+ 8y
+   and 24 r when the view's y row is scaled (r_world.s YSITE) */
+Q_COLD static void res_patch_bounds(void)
+{
+	int rows = r_res ? r_res_h : VID_H, cols = r_res ? r_res_w : VID_W, an = yb_num != yb_den;
+	uint8_t *code = (uint8_t *) (uintptr_t) r_render;
+	for (const uint16_t *p = r_far_sites; p < r_far_sites_end; p += 2) {
+		uint32_t *lr = (uint32_t *) (code + p[0]), *lc = (uint32_t *) (code + p[1]);
+		*lr = IMM16(*lr, rows);
+		*lc = IMM16(*lc, cols);
+	}
+	static const uint32_t ys_mask[4] = { 31u << 6, 31u << 6, 63u, 31u << 6 | 31u << 16 };
+	static const uint32_t ys_set[2][4] = {
+		{ 2u << 6, 1u << 6, 0x21, 3u << 6 | 11u << 16 },   /* 4y, 3z = z << 1 + z, 8 r = r (t3) << 3 */
+		{ 3u << 6, 3u << 6, 0x23, 4u << 6 | 15u << 16 },   /* 8y, 7z = z << 3 - z, 24 r = rho (t7) << 4 */
+	};
+	for (const uint16_t *p = r_ysites; p < r_ysites_end; p++) {
+		uint32_t *w = (uint32_t *) (code + (*p & ~3u)), k = *p & 3u;
+		*w = (*w & ~ys_mask[k]) | ys_set[an][k];
+	}
+#if !Q1PSX_ENGINE_C
+	static const uint8_t col_w[3] = { 0, 1, 3 }, row_w[3] = { 5, 6, 8 };
+	for (int i = 0; i < 3; i++) {
+		sp_o_bounds[col_w[i]] = IMM16(sp_o_bounds[col_w[i]], -cols);
+		sp_o_bounds[row_w[i]] = IMM16(sp_o_bounds[row_w[i]], -rows);
+	}
+#endif
+	FlushCache();
+}
+
+/* The target: the viewport's rows in proportion, at most rows - 16 (its
+   rows within one texture page: vid.c); its pixels' height over their
+   width, the view's y row's scale (1 but for 256 x 224: 7 / 6). */
+Q_COLD void r_set_viewport(int rows)
+{
+	const r_res_t *rs = &r_res_table[r_res];
 	viewport_rows = rows;
-	gte_SetGeomOffset(VID_W / 2, rows / 2);
-	r_state.ofy = rows / 2;
+	r_res_w = rs->w;
+	r_res_h = rows;
+	yb_num = yb_den = 1;
+	if (r_res) {
+		r_res_h = (rows * rs->h + VID_H / 2) / VID_H;
+		if (r_res_h > rows - 16)
+			r_res_h = rows - 16;
+		yb_num = VID_W * r_res_h;              /* (r_res_h 160 / rows) / (w / 2) */
+		yb_den = rows * r_res_w;
+		if (yb_num == yb_den || r_ysites == r_ysites_end)
+			yb_num = yb_den = 1;               /* (square, or a build without the sites) */
+	}
+	yb12 = (yb_num * 4096 + yb_den / 2) / yb_den;
+	gte_SetGeomOffset(r_res_w / 2, r_res_h / 2);
+	r_state.ofy = r_res_h / 2;
 	r_state.vh2 = rows;
+	res_patch_bounds();
+}
+
+Q_COLD void r_set_res(int i)
+{
+	if (i < 0 || i >= R_RES_COUNT)
+		i = 0;
+	r_res = i;
+	const r_res_t *rs = &r_res_table[i];
+	r_proj_h = rs->w / 2;
+	gte_SetGeomScreen(r_proj_h);
+	*r_o_hshift = IMM16(*r_o_hshift, rs->shift);
+#if !Q1PSX_ENGINE_C
+	if (!sp_entry_word)
+		sp_entry_word = *sp_o_entry;
+	*sp_o_entry = rs->mul == 25 ? MIPS_J(sp_proj_25) : sp_entry_word;
+	mul_words(sp_o_xmul, rs->mul, 10);         /* x in t2 */
+	mul_words(sp_o_ymul, rs->mul, 11);         /* y in t3 */
+	*sp_o_ofx = IMM16(*sp_o_ofx, rs->w / 2);
+#endif
+	r_set_viewport(viewport_rows);             /* (the target, the centre, the bounds; FlushCache) */
+	warp_apply(r_warp.t_eff);                  /* (the bound's share of H) */
 }
 
 int r_viewport_rows(void)
@@ -357,6 +487,18 @@ void r_bind_world(void)
 	mark_patch();                                /* (through the zones' hook or not) */
 }
 
+/* 256 x 224: the view's y row kept as it is for the C's frustum tests
+   (render.h yrow), then scaled to the rows' H (r_state.cam already set) */
+__attribute__((noinline)) Q_COLD static void y_scale(int16_t r[9])
+{
+	r_state.yrow[0] = r[3];
+	r_state.yrow[1] = r[4];
+	r_state.yrow[2] = r[5];
+	r_state.ytr = -((r[3] * r_state.cam[0] + r[4] * r_state.cam[1] + r[5] * r_state.cam[2]) >> 12);
+	for (int i = 3; i < 6; i++)
+		r[i] = (int16_t) ((r[i] * yb12 + 2048) >> 12);
+}
+
 void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 {
 	int32_t sy = r_sin(yaw), cy = r_cos(yaw), sp = r_sin(pitch), cp = r_cos(pitch);
@@ -375,17 +517,24 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 	for (int i = 0; i < 9; i++)
 		r[i] = (int16_t) (m[i / 3][i % 3] * R_MATRIX_ONE / 4096);
 
+	for (int k = 0; k < 3; k++)                    /* 1/8 units -> vertex units (x4) */
+		r_state.cam[k] = pos[k] * QW_VSCALE / R_POS_SUB;
+	if (yb_num != yb_den)                          /* (pixels not square: the y row to */
+		y_scale(r);                                /*  the rows' H, r_set_viewport) */
 	for (int i = 0; i < 9; i++) {
 		r_state.rot[i]    = r[i];
 		r_state.absrot[i] = (int16_t) (r[i] < 0 ? -r[i] : r[i]);
 	}
 	r_state.rot[9] = r_state.absrot[9] = 0;
-
-	for (int k = 0; k < 3; k++)                    /* 1/8 units -> vertex units (x4) */
-		r_state.cam[k] = pos[k] * QW_VSCALE / R_POS_SUB;
 	for (int i = 0; i < 3; i++)
 		r_state.tr[i] = -((r[i * 3] * r_state.cam[0] + r[i * 3 + 1] * r_state.cam[1] +
 		                   r[i * 3 + 2] * r_state.cam[2]) >> 12);
+	if (yb_num == yb_den) {                        /* (the C's frustum tests' y row) */
+		r_state.yrow[0] = r[3];
+		r_state.yrow[1] = r[4];
+		r_state.yrow[2] = r[5];
+		r_state.ytr     = r_state.tr[1];
+	}
 }
 
 /* ----------------------------------------------------------------- frame -- */
@@ -414,6 +563,8 @@ void r_frame(void)
 		r_state.force_mark = 1;
 	}
 
+	if (r_res)                                     /* (the target's packets: before the view's) */
+		vid_res_frame(r_res_w, r_res_h, r_res_table[r_res].seam);
 	r_state.ot_world     = (uint32_t) &vid_frame.ot[OT_WORLD];
 	r_state.pkt          = (uint32_t) vid_frame.pkt;
 	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 48 - r_ui_room);  /* see r_world.s */

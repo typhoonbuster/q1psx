@@ -15,9 +15,13 @@
  * timing.
  *
  * Supported: polygons (flat / Gouraud, textured or not), sprites (SPRT),
- * tiles (TILE), the texture page (DR_TPAGE), texture window (E2) and draw
- * area (E3 / E4) commands, VRAM-to-VRAM copies (GP0 80h: they change the
- * VRAM for the dumps after). The debug font is skipped.
+ * tiles (TILE), the texture page (DR_TPAGE), texture window (E2), draw
+ * area (E3 / E4), drawing offset (E5) and mask bit (E6) commands, VRAM-to-
+ * VRAM copies (GP0 80h: they change the VRAM for the dumps after). A
+ * 15-bit texture over the framebuffer reads what the dump drew there, as
+ * it is then (the 3D view's internal resolution: its target stretched in
+ * place, docs/porting-notes.md §78; best seen with PKTVIEW_UVROUND=1).
+ * The debug font is skipped.
  *
  * PKTVIEW_BG=r,g,b sets the clear colour (default black). A colour no
  * texture produces (e.g. 255,0,255) makes every pixel no polygon covers
@@ -47,6 +51,10 @@ static uint16_t vram[512][1024];
 static uint8_t  fb[H][W][3];
 static uint8_t  bg[3];          /* clear colour (PKTVIEW_BG) */
 static int      clip_x0, clip_y0, clip_x1 = W - 1, clip_y1 = H - 1;   /* the draw area */
+static int      ofs_x, ofs_y;   /* the drawing offset (E5), the second buffer's 240 off */
+static int      mask_set;       /* E6 bit 0: bit 15 set on what is drawn */
+static uint8_t  fbm[H][W];      /* each pixel's bit 15 (a texel of it: 0 is transparent) */
+static int      texel_stp;      /* the last texel's bit 15 */
 
 /* ------------------------------------------------------------------ png -- */
 
@@ -280,10 +288,17 @@ static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque
 	} else if (mode == 1) {    /* 8bpp */
 		uint16_t w = vram[(py + v) & 511][(px + u / 2) & 1023];
 		c = vram[cy][(cx + ((w >> ((u & 1) * 8)) & 255)) & 1023];
-	} else {                   /* 15bpp */
-		c = vram[(py + v) & 511][(px + u) & 1023];
+	} else {                   /* 15bpp: over the framebuffer, what is drawn there */
+		int vx = (px + u) & 1023, vy = (py + v) & 511;
+		if (vx < W && vy < 2 * H) {
+			const uint8_t *f = fb[vy % H][vx];
+			c = (uint16_t) (f[0] >> 3 | (f[1] >> 3) << 5 | (f[2] >> 3) << 10 | fbm[vy % H][vx] << 15);
+		} else {
+			c = vram[vy][vx];
+		}
 	}
 	*opaque = c != 0;
+	texel_stp = c >> 15;
 	out[0] = (uint8_t) ((c & 31) << 3);
 	out[1] = (uint8_t) (((c >> 5) & 31) << 3);
 	out[2] = (uint8_t) (((c >> 10) & 31) << 3);
@@ -360,6 +375,7 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 					continue;
 				if (raw) {
 					memcpy(fb[y][x], col, 3);
+					fbm[y][x] = (uint8_t) (mask_set | texel_stp);
 					if (occl_on) { idbuf[y][x] = cur_id; if (cur_id >= 0) id_written[cur_id]++; }
 					continue;
 				}
@@ -374,6 +390,7 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 				col[k] = (uint8_t) (d & 0xf8);
 			}
 			memcpy(fb[y][x], col, 3);
+			fbm[y][x] = (uint8_t) (mask_set | (textured ? texel_stp : 0));
 			if (occl_on) { idbuf[y][x] = cur_id; if (cur_id >= 0) id_written[cur_id]++; }
 		}
 }
@@ -381,8 +398,8 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 static vtx mkv(uint32_t xy, uint32_t uv, uint32_t rgb)
 {
 	vtx v;
-	v.x = (int16_t) (xy & 0xffff);
-	v.y = (int16_t) (xy >> 16);
+	v.x = (int16_t) (xy & 0xffff) + ofs_x;
+	v.y = (int16_t) (xy >> 16) + ofs_y;
 	v.u = (int) (uv & 255);
 	v.v = (int) ((uv >> 8) & 255);
 	v.r = (int) (rgb & 255);
@@ -405,6 +422,7 @@ static void put_pixel(int x, int y, const uint8_t col_in[3])
 		col[k] = (uint8_t) (d & 0xf8);
 	}
 	memcpy(fb[y][x], col, 3);
+	fbm[y][x] = (uint8_t) (mask_set | texel_stp);   /* (a sprite's texel) */
 }
 
 /* a sprite: xy, uv | clut, [wh]; textured from the current page, modulated
@@ -413,7 +431,7 @@ static void sprite(const uint32_t *w, int n, int sw, int sh, int raw)
 {
 	if (n < (sw ? 3 : 4))
 		return;
-	int x0 = (int16_t) (w[1] & 0xffff), y0 = (int16_t) (w[1] >> 16);
+	int x0 = (int16_t) (w[1] & 0xffff) + ofs_x, y0 = (int16_t) (w[1] >> 16) + ofs_y;
 	int u0 = (int) (w[2] & 255), v0 = (int) ((w[2] >> 8) & 255), clut = (int) (w[2] >> 16);
 	if (!sw) { sw = (int) (w[3] & 0xffff); sh = (int) (w[3] >> 16); }
 	int rgb[3] = { (int) (w[0] & 255), (int) ((w[0] >> 8) & 255), (int) ((w[0] >> 16) & 255) };
@@ -425,8 +443,10 @@ static void sprite(const uint32_t *w, int n, int sw, int sh, int raw)
 			if (!op)
 				continue;
 			if (raw) {
-				if (x0 + x >= clip_x0 && x0 + x <= clip_x1 && y0 + y >= clip_y0 && y0 + y <= clip_y1)
+				if (x0 + x >= clip_x0 && x0 + x <= clip_x1 && y0 + y >= clip_y0 && y0 + y <= clip_y1) {
 					memcpy(fb[y0 + y][x0 + x], col, 3);
+					fbm[y0 + y][x0 + x] = (uint8_t) (mask_set | texel_stp);
+				}
 				continue;
 			}
 			for (int k = 0; k < 3; k++) {
@@ -455,6 +475,7 @@ static void blend_pixel(int x, int y, const uint8_t f[3])
 		}
 		fb[y][x][k] = (uint8_t) ((v < 0 ? 0 : v > 255 ? 255 : v) & 0xf8);
 	}
+	fbm[y][x] = (uint8_t) mask_set;
 }
 
 /* a tile: a flat rectangle, blended when semi-transparent (the water's tint) */
@@ -462,7 +483,7 @@ static void tile(const uint32_t *w, int n, int tw, int th, int semi)
 {
 	if (n < (tw ? 2 : 3))
 		return;
-	int x0 = (int16_t) (w[1] & 0xffff), y0 = (int16_t) (w[1] >> 16);
+	int x0 = (int16_t) (w[1] & 0xffff) + ofs_x, y0 = (int16_t) (w[1] >> 16) + ofs_y;
 	if (!tw) { tw = (int) (w[2] & 0xffff); th = (int) (w[2] >> 16); }
 	uint8_t col[3] = { (uint8_t) (w[0] & 255), (uint8_t) ((w[0] >> 8) & 255), (uint8_t) ((w[0] >> 16) & 255) };
 	for (int y = 0; y < th; y++)
@@ -471,8 +492,10 @@ static void tile(const uint32_t *w, int n, int tw, int th, int semi)
 				blend_pixel(x0 + x, y0 + y, col);
 				continue;
 			}
-			if (x0 + x >= clip_x0 && x0 + x <= clip_x1 && y0 + y >= clip_y0 && y0 + y <= clip_y1)
+			if (x0 + x >= clip_x0 && x0 + x <= clip_x1 && y0 + y >= clip_y0 && y0 + y <= clip_y1) {
 				memcpy(fb[y0 + y][x0 + x], col, 3);
+				fbm[y0 + y][x0 + x] = (uint8_t) mask_set;
+			}
 		}
 	polys_drawn++;
 }
@@ -500,6 +523,10 @@ static void packet(const uint32_t *w, int n)
 		cpu_words(w, n);
 		return;
 	}
+	while (n > 1 && w[0] >> 24 == 0x01) {   /* the texture cache's clear: nothing here */
+		w++;
+		n--;
+	}
 	uint32_t code = w[0] >> 24;
 	if (code == 0xa0 && n >= 3) {        /* CPU to VRAM */
 		cpu_x = cpu_x0 = (int) (w[1] & 1023);
@@ -510,9 +537,13 @@ static void packet(const uint32_t *w, int n)
 		return;
 	}
 
-	if ((code & 0xf8) == 0xe0) {         /* environment commands, one per word */
-		for (int i = 0; i < n; i++) {
+	if ((code & 0xf8) == 0xe0) {         /* environment commands, one per word (and the
+	                                        texture cache's clear); a primitive after them */
+		int i = 0;
+		for (; i < n; i++) {
 			uint32_t c = w[i] >> 24;
+			if ((c & 0xf8) != 0xe0 && c != 0x01)
+				break;
 			if (c == 0xe2) {             /* texture window */
 				twin = w[i] & 0xfffff;
 			} else if (c == 0xe1) {      /* draw mode: the texture page */
@@ -525,8 +556,17 @@ static void packet(const uint32_t *w, int n)
 				clip_y1 = (int) ((w[i] >> 10) & 511) % H;
 				if (clip_x1 > W - 1) clip_x1 = W - 1;
 				if (clip_y1 > H - 1) clip_y1 = H - 1;
+			} else if (c == 0xe5) {      /* drawing offset: 11-bit signed x, y */
+				ofs_x = (int32_t) (w[i] << 21) >> 21;
+				ofs_y = (int32_t) (w[i] << 10) >> 21;
+				if (ofs_y >= H)
+					ofs_y -= H;
+			} else if (c == 0xe6) {      /* the mask bit */
+				mask_set = (int) (w[i] & 1);
 			}
 		}
+		if (i < n)
+			packet(w + i, n - i);
 		return;
 	}
 	if (code == 0x02 && n >= 3) {        /* a fill (the 2D gun's slot): 16-halfword units */
@@ -650,6 +690,8 @@ int main(int argc, char **argv)
 			memset(id_class, 0, sizeof id_class);
 			twin = 0;
 			cur_tpage = 0;
+			ofs_x = ofs_y = mask_set = 0;
+			memset(fbm, 0, sizeof fbm);
 			clip_x0 = clip_y0 = 0;
 			clip_x1 = W - 1;
 			clip_y1 = H - 1;

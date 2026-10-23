@@ -88,7 +88,7 @@ typedef struct { sv_t v[3]; int depth; } tri_t;
 
 static tri_t    stack[3 * MAXD + 2];         /* depth-first, <= 3 left per level */
 static uint32_t clut16, tpage16;
-static int32_t  t2, h, ofy, znear;           /* the call's: T2, H, the centre, the plane */
+static int32_t  t2, h, ofx, ofy, znear;      /* the call's: T2, H, the centre, the plane */
 
 /* ------------------------------------------------------------- projection */
 
@@ -97,7 +97,7 @@ static void project(sv_t *p)
 	/* past the near plane only: x, y may be far off screen, so divide each
 	   (x H as the asm's 5 x << shift); subdivision culls or splits what lies
 	   outside */
-	p->sx = (int16_t) (160 + p->x * h / p->z);
+	p->sx = (int16_t) (ofx + p->x * h / p->z);
 	p->sy = (int16_t) (ofy + p->y * h / p->z);
 }
 
@@ -255,7 +255,7 @@ static int subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 			if (t.v[i].sy < miny) miny = t.v[i].sy;
 			if (t.v[i].sy > maxy) maxy = t.v[i].sy;
 		}
-		if (maxx < 0 || minx >= 320 || maxy < 0 || miny >= 240)
+		if (maxx < 0 || minx >= r_res_w || maxy < 0 || miny >= r_res_h)
 			continue;                              /* off screen */
 
 		int s01 = 0, s12 = 0, s20 = 0;
@@ -318,7 +318,8 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	clut16  = SPW(SP_CLUT16);
 	tpage16 = SPW(SP_TPAGE16);
 	t2      = (int32_t) SPW(SP_T2);
-	h       = 5 << SPW(SP_HSHIFT);
+	h       = r_res_table[r_res].mul << SPW(SP_HSHIFT);   /* (the target's: W / 2) */
+	ofx     = r_res_w / 2;
 	ofy     = (int32_t) SPW(SP_OFY);
 	znear   = (int32_t) SPW(SP_ZNEAR);
 

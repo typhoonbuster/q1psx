@@ -644,10 +644,11 @@ void items_physics(edict_t *e)
 }
 
 /* R_AliasCheckBBox's trivial reject, on the model's sphere: its origin in
-   the view's space (world x 6: the walk's matrix), wholly behind the eye or
-   outside a side of the 90 degree frustum (|x| <= z; |y| <= z x the
-   viewport's rows / 320); the distances to the slanted planes taken
-   conservatively (x sqrt 2 as 3 / 2, the vertical's 5 / 4) */
+   the view's space (world x 6: the walk's matrix, its y row unscaled:
+   render.h yrow), wholly behind the eye or outside a side of the 90 degree
+   frustum (|x| <= z; |y| <= z x the viewport's rows / 320); the distances
+   to the slanted planes taken conservatively (x sqrt 2 as 3 / 2, the
+   vertical's 5 / 4) */
 int ent_in_view(const int32_t org[3], int radius_vu)
 {
 	int32_t v[3] = { org[0] * QW_VSCALE / CLIP_SUB, org[1] * QW_VSCALE / CLIP_SUB, org[2] * QW_VSCALE / CLIP_SUB };
@@ -659,7 +660,8 @@ int ent_in_view(const int32_t org[3], int radius_vu)
 	int32_t x = ((r[0] * v[0] + r[1] * v[1] + r[2] * v[2]) >> 12) + r_state.tr[0];
 	if (x - z > rad * 3 / 2 || -x - z > rad * 3 / 2)
 		return 0;
-	int32_t y = ((r[3] * v[0] + r[4] * v[1] + r[5] * v[2]) >> 12) + r_state.tr[1];
+	const int16_t *ry = r_state.yrow;
+	int32_t y = ((ry[0] * v[0] + ry[1] * v[1] + ry[2] * v[2]) >> 12) + r_state.ytr;
 	int32_t zy = z * (int32_t) r_state.vh2 / VID_W;   /* half the rows over 160 */
 	if (y - zy > rad * 5 / 4 || -y - zy > rad * 5 / 4)
 		return 0;

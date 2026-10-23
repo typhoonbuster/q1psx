@@ -1890,3 +1890,20 @@ followed by R0-R4.
     physics and attacks, the movers, `vnormalize`), more cold code:
     −4.4 KB of code, the same game (the monsters' scenarios line for
     line); the release's stack room 90616 B (master 57016: +33.6 KB).
+- **The 3D view's internal resolution** (2026-10-23, `docs/porting-notes.md`
+  §78):
+  - a Graphics row, 3D resolution: 320×240, 256×224, 240×180, 200×150;
+    the framebuffer, the HUD and the menus stay 320×240;
+  - the 3D view drawn into the viewport's bottom-right corner, then
+    stretched over the viewport in place by two raw quads textured from
+    the framebuffer (the mask bit set while it draws: no transparent
+    texel);
+  - the field of view kept: the GTE's H, the slow path's product (x 15,
+    x 1 patched, x 25 a second entry), the off-screen bounds; 256×224's
+    pixels not square: the view's y row x 7/6 and the frustum's vertical
+    planes patched to 7z ± 8y;
+  - START's 12 views: frame cycles −4.1 / −11.7 / −18.3 % (fewer splits:
+    the warp in the target's pixels); 256×224's GPU time +25 % on
+    DuckStation (the stretch); the 128 views identical at 320×240;
+    the release's stack room 87560 B (−3056 B);
+  - bench: `RES=`, `GPUTIME=1`; pktview reads the target.

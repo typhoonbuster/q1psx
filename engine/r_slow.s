@@ -405,12 +405,15 @@ sp_sub:
 	lh      $t7, PV_SXY+2($a2)
 
 	# off screen? all x < 0 or all y < 0; all x >= 320 or all y >= 240
+	# (render.c r_set_res: words 0, 1, 3 at sp_o_bounds -cols, 5, 6, 8 -rows)
 	and     $at, $t0, $t3
 	and     $at, $at, $t6
 	and     $v0, $t1, $t4
 	and     $v0, $v0, $t7
 	or      $at, $at, $v0                # < 0: all x < 0 or all y < 0
 	bltz    $at, sp_sub
+	.global sp_o_bounds
+sp_o_bounds:
 	addiu   $at, $t0, -320
 	addiu   $v0, $t3, -320
 	or      $at, $at, $v0
@@ -816,7 +819,9 @@ sp_proj:
 	sll     $t0, $t0, 5
 	addu    $t0, $t0, $v1                # pool[i]
 sp_proj_2:
-	lw      $t4, VIEW_OFS+8($t0)         # z
+	.global sp_o_entry, sp_o_xmul, sp_o_ymul, sp_o_ofx
+sp_o_entry:                              # (render.c r_set_res: j sp_proj_25 for H
+	lw      $t4, VIEW_OFS+8($t0)         #  25 << 2) z
 	lw      $t5, SP_T2($t8)
 	lw      $t2, VIEW_OFS+0($t0)         # x
 	slt     $t1, $t4, $s0
@@ -825,14 +830,17 @@ sp_proj_2:
 	move    $t4, $s0                     # (the lerp's rounding; s0 = SP_ZNEAR)
 1:	mult    $t5, $t4                     # z T2 (T2 as rs: the short multiply)
 	lw      $t1, SP_HSHIFT($t8)
-	sll     $at, $t2, 2
+sp_o_xmul:                               # (render.c r_set_res: the target's mul,
+	sll     $at, $t2, 2                  #  x 15 or x 1 for 5 here)
 	addu    $t2, $t2, $at                # x H = 5 x << shift
 	mflo    $t5
 	sllv    $t2, $t2, $t1
+sp_o_ymul:
 	sll     $at, $t3, 2
 	addu    $t3, $t3, $at                # y H
 	sllv    $t3, $t3, $t1
 	sw      $t5, PV_ZT($t0)
+sp_proj_st:
 	sw      $t4, PV_Z($t0)
 	div     $zero, $t2, $t4              # x H / z (while it divides: the uv word)
 	lw      $t1, PV_U($t0)
@@ -845,7 +853,8 @@ sp_proj_2:
 	sw      $t1, PV_UVW($t0)
 	lw      $t5, SP_OFY($t8)             # (the viewport's centre: sy below)
 	mflo    $t2
-	addiu   $t2, $t2, 160                # sx
+sp_o_ofx:
+	addiu   $t2, $t2, 160                # sx (r_set_res: the target's width / 2)
 	andi    $t2, $t2, 0xffff
 	div     $zero, $t3, $t4              # y H / z
 	mflo    $t3
@@ -854,5 +863,32 @@ sp_proj_2:
 	or      $t2, $t2, $t3
 	jr      $ra
 	sw      $t2, PV_SXY($t0)
+
+# sp_proj for a target whose H is 25 << 2 (200 x 150: render.c r_set_res
+# jumps here from sp_o_entry, whose second word, the T2's load, ran in the
+# jump's slot): x 25 as two x 5, then back in sp_proj
+	.global sp_proj_25
+sp_proj_25:
+	lw      $t4, VIEW_OFS+8($t0)         # z
+	lw      $t2, VIEW_OFS+0($t0)         # x
+	slt     $t1, $t4, $s0
+	beqz    $t1, 1f
+	lw      $t3, VIEW_OFS+4($t0)         # y
+	move    $t4, $s0
+1:	mult    $t5, $t4                     # z T2
+	lw      $t1, SP_HSHIFT($t8)
+	sll     $at, $t2, 2
+	addu    $t2, $t2, $at
+	sll     $at, $t2, 2
+	addu    $t2, $t2, $at                # x H = 25 x << shift
+	mflo    $t5
+	sllv    $t2, $t2, $t1
+	sll     $at, $t3, 2
+	addu    $t3, $t3, $at
+	sll     $at, $t3, 2
+	addu    $t3, $t3, $at                # y H
+	sllv    $t3, $t3, $t1
+	b       sp_proj_st
+	sw      $t5, PV_ZT($t0)
 
 	.size slow_poly, . - slow_poly

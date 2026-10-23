@@ -2463,10 +2463,11 @@ static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3
 	POLY_FT4 *q = vid_alloc(sizeof *q);
 	if (!q)
 		return 1;
-	int cy = r_viewport_rows() / 2;
+	int cx = VID_W / 2, cy = r_viewport_rows() / 2;
 	int32_t a16 = ws->anchor;                     /* the gun's depth, 1/16 units */
 	int32_t b16 = bob * 16 / SUB;
 	int32_t s12 = a16 * 4096 / (a16 + b16 * 2 / 5);           /* ahead: the scale */
+	int32_t t12 = s12;                                        /* (its rows') */
 	int32_t dy16 = 0;                                         /* (1/16 px) */
 	if (cy == VID_H / 2)                                      /* (no 2-unit fudge there: */
 		dy16 = R_SCREEN_H * 16 * 2 * 16 / a16;                /*  2 units lower) */
@@ -2474,15 +2475,22 @@ static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3
 	game_view_angles(&yaw, &pitch, &roll);
 	int k = pitch - pl.pm.pitch;                  /* the camera's pitch over the gun's */
 	int32_t kick16 = -R_SCREEN_H * 16 * r_sin(k) / r_cos(k);
+	if (r_res) {                                  /* the 3D view's target (render.h): its */
+		s12    = s12 * r_res_w / VID_W;           /*  columns, its rows (256 x 224's not */
+		t12    = t12 * r_res_h / (2 * cy);        /*  in proportion), its centre */
+		kick16 = kick16 * r_res_h / (2 * cy);
+		cx     = r_res_w / 2;
+		cy     = r_res_h / 2;
+	}
 	int32_t cr = r_cos(roll), sr = r_sin(roll);
 	int16_t xy[4][2];
 	for (int c = 0; c < 4; c++) {
 		int32_t x16 = (fr->x + (c & 1) * 2 * (fr->w - 1)) * 16;
 		int32_t y16 = (fr->y + (c >> 1) * 2 * (fr->h - 1)) * 16 + dy16;
 		x16 = x16 * s12 >> 12;
-		y16 = (y16 * s12 >> 12) + kick16;
+		y16 = (y16 * t12 >> 12) + kick16;
 		int32_t rx = (cr * x16 + sr * y16) >> 12, ry = (cr * y16 - sr * x16) >> 12;
-		xy[c][0] = (int16_t) (VID_W / 2 + (rx >> 4));
+		xy[c][0] = (int16_t) (cx + (rx >> 4));
 		xy[c][1] = (int16_t) (cy + (ry >> 4));
 	}
 	setPolyFT4(q);

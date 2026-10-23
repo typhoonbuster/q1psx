@@ -9772,3 +9772,138 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
     but for a stream's read count at one line on E1M7 (48 against 47:
     when a read ends follows the cycles);
   - the release's stack room is 90616 B.
+
+## §78 — The 3D view's internal resolution (2026-10-23)
+
+- **The ask**: a setting that lowers the internal resolution of the 3D
+  view, the framebuffer staying 320×240, to try lower resolutions even
+  where they play badly. The steps chosen: 256×224, 240×180 and
+  200×150, after a first set of halves and quarters (160×120 down to
+  40×30). It runs on the branch of §75-§77.
+- **Where**: Options → Graphics → 3D resolution (`settings.res`,
+  `engine/render.c` `r_res_table`, applied at once); `RES=<index>` in
+  `scripts/bench.sh`.
+
+### 78.1 The target and its stretch
+
+- **The target R** is the viewport's bottom-right w×h corner in the back
+  buffer. The 3D view draws into it: the world, its models, the
+  particles, the gun. At `OT_TARGET` (bucket 5, after `OT_SKY`'s VRAM
+  transfers, before the world), a packet sets the draw area and the
+  drawing offset to R, sets the mask bit (GP0(E6h)) and clears R with a
+  TILE of the background's colour.
+- **The stretch** at `OT_STRETCH` (bucket 1, after the 2D gun, before
+  the overlay) resets the mask bit and the viewport's area and offset.
+  It then draws raw textured quads whose texture is the framebuffer
+  itself (15-bit pages) over the viewport.
+- **In place**: the source of the pixel (x, y) is R's texel
+  (x w / 320, y h / rows), never left of the pixel nor above it.
+  - The GPU draws each triangle top-down and each row left to right, so
+    it reads every pixel of R before writing over it.
+  - The quad's second triangle reads only below and right of the
+    diagonal, which its first triangle never wrote.
+  - No other VRAM is used: R lies inside the frame it is stretched over.
+- **Its pages**: R starts left of x 128, so the stretch is two quads.
+  - Page 64 serves the columns up to the seam: a column whose source is
+    a whole texel past VRAM x 128 (the screen's column 80, 64 and 16).
+  - Page 128 serves the rest: its u reaches 192 at x 320, where page 64's
+    would need 256.
+  - R's rows lie in one page: h ≤ rows − 16, so the second buffer's R
+    starts at VRAM row 256 or below it.
+- **The texels' rounding** (§71): the GPU rounds a pixel's u, v to the
+  nearest texel. With a share above 1/2 the rounding stays inside R, and
+  an emulator that cuts instead (PCSX-Redux) stays inside too.
+  - A share of 1/2 or less would read past R's last column. The first set
+    of halves and quarters moved its quads half a texel instead: they
+    started k pixels before the viewport, m texels before R, with
+    k w / 320 = m − 1/2. That is exact only for binary fractions.
+  - The quad was dropped with that first set.
+- **The mask bit**: the texel 0 is transparent, and a black pixel of R is
+  exactly that. With GP0(E6h) bit 0 set while R draws, every pixel of R
+  carries bit 15, and the stretch draws them all.
+  - GP0(E6h) also acts on CPU-to-VRAM and VRAM-to-VRAM transfers.
+  - `OT_SKY`'s transfers (the animated textures, the 2D gun's frames) are
+    before the set. The reset comes before the overlay and the next
+    frame's transfers.
+- **The texture cache** is cleared (GP0(01h)) before each quad: R is new,
+  and page 128's lines alias page 64's.
+- **The clear**: the stretch covers the viewport, so such a frame's draw
+  environment clears nothing (`isbg` 0, set again once the list is
+  kicked). A 320×240 fill is saved.
+- **The packets**: 140 B of the frame's arena (`vid_res_frame`, cold
+  code). An arena too full for them leaves the frame native: nothing
+  would fit after them anyway.
+
+### 78.2 The projection
+
+- **The field of view is kept**: the GTE's H is half the target's width,
+  and its offset is the target's centre.
+- **The slow path** (`r_slow.s` `sp_proj`): x H = 5x << shift as built.
+  `r_set_res` patches its two words to x 15 (240×180) or x 1 (256×224),
+  and the walk's shift (`r_o_hshift`).
+  - 200×150's H of 100 is 25 << 2, which two words cannot multiply.
+  - Its entry word becomes a jump to `sp_proj_25`, two x 5 steps, then
+    back into sp_proj: 6 cycles more a vertex, at that resolution only.
+- **The off-screen tests' bounds**, so that a polygon wholly off the
+  target is left out:
+  - the far polygons' `lui v0, 240` and `lui v0, 320` (every `POLYS`,
+    the sorted models'; `FARSITE` offsets in `r_render`);
+  - the slow path's triangles' −320 and −240 (`sp_o_bounds`).
+- **256×224's pixels are not square**: on the screen they are 1.25 wide
+  and 1.07 high.
+  - H is the columns' (128). The view's y row is scaled by 7/6, to the
+    rows' H of 149.3, in `r_set_view`: the rotation, |rotation| and the
+    translation. The models' composed matrices follow.
+  - The frustum's vertical planes are patched, 3z ± 4y → 7z ± 8y, exact
+    at 240 rows (`YSITE`, 2 B a site).
+  - The boxes' radius 3 rz + 4 ry → 7 rz + 8 ry, exact.
+  - The records' and the sorted models' spheres: 8 r → 24 r. The sphere
+    is an ellipsoid there, whose reach is
+    sqrt(64 b² + 49) × 1.5 r = 17.5 r. One instruction, rho << 4, gives
+    24 r; 32 r cost records (START's view 10: 37 → 52, +1.3 %).
+  - The C's frustum tests (`ent_in_view`, the brush models'
+    `all_culled`) read the unscaled y row (`r_state.yrow`, `ytr`).
+- **The 192-row viewport** (the original status bar): the rows go in
+  proportion, at most rows − 16. 256 then gets 176 rows, its y row
+  scaled by 55/48, and the 7z ± 8y planes are conservative there.
+- **The warp bound** stays in the target's pixels:
+  k16 = sqrt(448 × 2H / T), H the larger of the columns' and the rows'.
+  A target pixel is wider than a screen pixel, so fewer polygons split.
+- **The 2D gun**: its corners scaled per axis, centred in the target.
+
+### 78.3 Measured
+
+| START's 12 views | 320×240 | 256×224 | 240×180 | 200×150 |
+|---|---|---|---|---|
+| CPU, frame cycles (PCSX-Redux, T 4) | 6.42 M | −4.1 % | −11.7 % | −18.3 % |
+| GPU, list drawn alone (DuckStation, `GPUTIME=1`) | 3.02 M | +25.2 % | not measured | not measured |
+
+- **The CPU's gain is the slow path's**: fewer splits, the warp counted
+  in the target's pixels. Its `r_slow` stage falls by about as much as
+  the frame.
+- **The GPU's**:
+  - the stretch, one 320×240 textured quad of 15-bit texels, costs about
+    60-76 k cycles a frame on DuckStation;
+  - that is more than 256×224 saves by filling 25 % fewer pixels;
+  - the GPU took 114-348 k cycles a frame at 320×240, the CPU 137-806 k,
+    so the frame waits on the CPU, and the GPU's extra time changes no
+    frame rate.
+- **RAM**: the release's room for the stack 90616 → 87560 B (−3056 B).
+  - The set-up is cold code (the patches, the plan); the stretch is
+    built a frame from a few words.
+  - The patch tables are 2 B a site.
+- **At 320×240**: the 128 views' display lists are identical to the
+  branch's before this (`H` and `Q` lines).
+
+### 78.4 Checking
+
+- **pktview** reads the target: the drawing offset (E5), the mask bit
+  (E6) as each pixel's bit 15, a 15-bit texture over the framebuffer from
+  what the dump drew there (in place, as the GPU), the cache's clears
+  before a primitive. The dump's `R` line marks a frame drawn into a
+  target.
+  `PKTVIEW_UVROUND=1` gives the GPU's rounding.
+- **`GPUTIME=1`** (bench builds): each frame's display list is drawn
+  alone, the CPU waiting, and the bench lines get `gpu=avg/max`. Only an
+  emulator that counts the GPU's time gives a figure: DuckStation, on
+  the bench's `.cue`. PCSX-Redux draws at once and gives 0.

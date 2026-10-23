@@ -20,6 +20,9 @@ void bench_add(bench_acc_t *b, uint32_t vbl)
 		b->pkt_max = vid_stats.pkt_bytes;
 	b->full_frames += r_arena_full != 0;
 	b->vbl_sum += vbl;
+	b->gpu_sum += vid_stats.gpu_cycles;
+	if (vid_stats.gpu_cycles > b->gpu_max)
+		b->gpu_max = vid_stats.gpu_cycles;
 	for (int i = 0; i < PROF_STAGES; i++) {
 		b->stage_sum[i] += prof_stage[i];
 		if (prof_stage[i] > b->stage_max[i])
@@ -41,5 +44,7 @@ void bench_print(const bench_acc_t *b)
 	for (int i = 0; i < PROF_COUNTERS; i++)
 		if (b->count_sum[i])
 			printf(" %s=%u", prof_count_name[i], b->count_sum[i] / n);
+	if (b->gpu_max)
+		printf(" gpu=%u/%u", b->gpu_sum / n, b->gpu_max);
 	printf(" pkt=%u%s\n", b->pkt_max, b->full_frames ? " FULL" : "");
 }

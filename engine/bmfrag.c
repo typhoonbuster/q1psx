@@ -1193,15 +1193,19 @@ static int32_t clamp16(int32_t v)
    it is in view (bmf_seen finds it by its box meanwhile). */
 __attribute__((noinline)) BMF_COLD static int all_culled(const edict_t *e, int32_t rmax)
 {
-	const int16_t *rot = r_state.rot, *ar = r_state.absrot;
-	int32_t c[3], h[3], lo[3], hi[3];
+	const int16_t *rows[3] = { r_state.rot, r_state.yrow, r_state.rot + 6 };   /* (the y row
+	                                                 unscaled: render.h yrow) */
+	int32_t c[3], h[3], lo[3], hi[3], tr[3] = { r_state.tr[0], r_state.ytr, r_state.tr[2] };
 	for (int k = 0; k < 3; k++) {                 /* 1/8 units -> vertex units */
 		c[k] = (e->absmin[k] + e->absmax[k]) >> 2;
 		h[k] = ((e->absmax[k] - e->absmin[k]) >> 2) + 1;
 	}
 	for (int i = 0; i < 3; i++) {
-		int32_t v = ((rot[3 * i] * c[0] + rot[3 * i + 1] * c[1] + rot[3 * i + 2] * c[2]) >> 12) + r_state.tr[i];
-		int32_t x = ((ar[3 * i] * h[0] + ar[3 * i + 1] * h[1] + ar[3 * i + 2] * h[2]) >> 12) + 3;
+		const int16_t *ro = rows[i];
+		int32_t v = ((ro[0] * c[0] + ro[1] * c[1] + ro[2] * c[2]) >> 12) + tr[i], x = 0;
+		for (int k = 0; k < 3; k++)
+			x += (ro[k] < 0 ? -ro[k] : ro[k]) * h[k];   /* (|rot| h: absrot's) */
+		x = (x >> 12) + 3;
 		lo[i] = clamp16(v - x);
 		hi[i] = clamp16(v + x);
 	}
