@@ -491,11 +491,11 @@ ps_walk:
 13:	li      $t0, 1
 	sw      $t0, PM_JUMPREL($s7)
 14:
-	# ---- SV_Physics_Client: the water, gravity out of it, the move ------
+	# ---- SV_Physics_Client: the water, gravity unless swimming, the move
 	jal     check_water
 	nop
-	lw      $t0, PM_ONGROUND($s7)        # gravity: not on the ground, not in
-	lw      $t6, PM_WATERJUMP($s7)       # the water, not jumping out of it
+	lw      $t0, PM_ONGROUND($s7)        # gravity: not on the ground, not
+	lw      $t6, PM_WATERJUMP($s7)       # swimming, not jumping out of the water
 	bnez    $t0, 6f
 	lw      $t1, PM_GRAVACC($s7)
 	bnez    $v0, 6f
@@ -690,7 +690,8 @@ ps_out:
 # check_water: SV_CheckWater. The contents at the feet (mins_z + 1), then the
 # waist, then the eyes (hull 0); water, slime, lava and the sky count
 # (cont <= CONTENTS_WATER). PM_WATERLEVEL 0..3, PM_WATERTYPE the feet's;
-# v0 = 1 when in water at all.
+# v0 = Quake's return, waterlevel > 1: 1 when the waist is under (gravity
+# stops), 0 with the feet alone in the water.
 check_water:
 	addiu   $sp, $sp, -8
 	sw      $ra, 0($sp)
@@ -718,24 +719,21 @@ check_water:
 	jal     clip_contents
 	sw      $t2, PS_PT+8($s7)
 	slti    $t0, $v0, QW_CONTENTS_WATER + 1
-	beqz    $t0, 8f
-	li      $t1, 2
-	sw      $t1, PM_WATERLEVEL($s7)
+	beqz    $t0, 9f                      # the waist out: level 1, v0 = 0
 	lw      $t2, PM_POS+8($s7)
 	move    $a0, $zero
 	addiu   $t2, $t2, PM_EYE_HEIGHT * CLIP_SUB
 	jal     clip_contents
 	sw      $t2, PS_PT+8($s7)
-	slti    $t0, $v0, QW_CONTENTS_WATER + 1
-	beqz    $t0, 8f
-	li      $t1, 3
-	sw      $t1, PM_WATERLEVEL($s7)
-8:	li      $v0, 1
-	b       10f
-	nop
-9:	move    $v0, $zero
-10:	lw      $ra, 0($sp)
-	nop
+	slti    $t0, $v0, QW_CONTENTS_WATER + 1   # the eyes under: level 3, else 2
+	lw      $ra, 0($sp)
+	addiu   $t0, $t0, 2
+	sw      $t0, PM_WATERLEVEL($s7)
+	li      $v0, 1
+	jr      $ra
+	addiu   $sp, $sp, 8
+9:	lw      $ra, 0($sp)
+	move    $v0, $zero
 	jr      $ra
 	addiu   $sp, $sp, 8
 

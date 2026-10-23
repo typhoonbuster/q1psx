@@ -3110,7 +3110,8 @@ FL_WATERJUMP for 2 s, velocity_z 225), PlayerJump (held: in the water
 a kick of 100 / 80 / 50 by its kind every tick, on the ground +270
 once per press, FL_JUMPRELEASED stopping the pogo); **SV_Physics_Client**
 — `SV_CheckWater` (the contents at the feet, the waist, the eyes, hull
-0), gravity only out of the water and not jumping out of it, the move,
+0), gravity only out of the water and not jumping out of it (§75:
+Quake's rule is the waist out, not the feet), the move,
 the step-up allowed in the water too (SV_WalkMove's rule). The jump
 moved after the friction and acceleration, as Quake's PreThink runs
 after its think: the jump tick now gets the ground's acceleration.
@@ -9454,3 +9455,41 @@ starts, and the scenarios' random draws follow another course.
   - eight keys a turn: ~4.25 an entry, more landing code;
   - a hint per asset (the entry its last hit took, a byte an asset):
     most hits without a scan, for RAM. A call left open.
+
+## §75 — Gravity with the feet in the water (2026-10-23)
+
+- **The report**: in the demo video the player crept through E1M3's
+  flooded basement toward the gold key, then came back at full speed.
+  Other shallow water did the same: the player held between the surface
+  and the water, with no jump out of it.
+- **The cause**: `pmove_step` added gravity only when `check_water` found
+  no water at all. Quake's `SV_Physics_Client` adds it unless
+  `SV_CheckWater` returns true, and that returns `waterlevel > 1`: the
+  waist under, not the feet.
+  - With the feet alone in the water (level 1), a Quake player keeps
+    falling; here it stopped.
+  - WaterMove's drag at level 1 (`1 − 0.8 / 60` a tick, §27.1) then
+    brought a slow descent to 0 before the floor.
+  - The player hung there, at level 1 and in the air. SV_AirMove's
+    30-unit cap moved it, with no friction and no ground to jump from;
+    the swim's kick and CheckWaterJump need level 2.
+  - The bot met it at the basement's steps: 306 units in 7.9 s, 10 units
+    over the floor (z −358, the floor's −368).
+- **The fix**: `check_water` (`engine/pmove.s`, `engine/pmove.c`) returns
+  Quake's value, 1 with the waist under. The level's other readers are
+  unchanged: the step-up allowed in the water (any level), the drag, the
+  game's sounds and damage. The asm's end is shorter too: level 2 or 3
+  in one store after the eyes' test, each return without the jump to a
+  common exit.
+- **Checked**:
+  - `VIEWS=0 scripts/bench.sh`: pmdiff 6000 ticks, 0 mismatches (7 runs
+    started in the water).
+  - E1M3's basement: `BENCH_MAPS=1 MAP=E1M3 VIEW=-551,-401,-336,143,0
+    TICKS=200`, with a print of the player every 4 ticks (not
+    committed), the jump held at ticks 48-55, the stick forward from 96.
+    Before: z −358 to the end, the jump did nothing, about 45 units/s
+    forward. After: on the floor (−367) at tick 12, a jump of 37 units,
+    316 units/s forward.
+  - Not run: the game bench's water lines (`BENCH_GAME=1`). They change
+    at the surface: a player swimming up now falls back once the waist is
+    out, as in Quake.

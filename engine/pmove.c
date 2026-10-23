@@ -333,7 +333,8 @@ static void accelerate(pmove_t *pm, const int32_t wishdir[3], int32_t cap, int32
 
 /* SV_CheckWater: the contents at the feet (mins_z + 1), then the waist, then
    the eyes; water, slime and lava count (Quake's `cont <= CONTENTS_WATER`,
-   the sky too). 1 when in water at all. */
+   the sky too). Its return is Quake's, `waterlevel > 1`: 1 when the waist is
+   under, gravity's switch; the feet alone in the water keep it. */
 static int check_water(pmove_t *pm)
 {
 	int32_t p[3] = { pm->pos[0], pm->pos[1], pm->pos[2] + (PM_MINS_Z + 1) * CLIP_SUB };
@@ -346,7 +347,7 @@ static int check_water(pmove_t *pm)
 	pm->waterlevel = 1;
 	p[2] = pm->pos[2] + (PM_MINS_Z + PM_MAXS_Z) / 2 * CLIP_SUB;
 	if (clip_contents(0, p) > QW_CONTENTS_WATER)
-		return 1;
+		return 0;
 	pm->waterlevel = 2;
 	p[2] = pm->pos[2] + PM_EYE_HEIGHT * CLIP_SUB;
 	if (clip_contents(0, p) <= QW_CONTENTS_WATER)
@@ -488,9 +489,9 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 		pm->jumpreleased = 1;
 	}
 
-	/* ---- SV_Physics_Client: the water, gravity out of it, the move ---- */
-	int inwater = check_water(pm);
-	int grav    = !pm->onground && !inwater && !pm->waterjump;
+	/* ---- SV_Physics_Client: the water, gravity unless swimming, the move ---- */
+	int swimming = check_water(pm);
+	int grav     = !pm->onground && !swimming && !pm->waterjump;
 	if (grav) {
 		pm->grav_acc += PM_GRAVITY * pm_dt;
 		pm->vel[2] -= pm->grav_acc / PM_HZ;

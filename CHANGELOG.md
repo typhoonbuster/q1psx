@@ -1851,3 +1851,10 @@ followed by R0-R4.
     by the C call by call (8878 calls, 0 mismatches);
   - the fight -0.048 %, the game bench -85..-1435 cycles a frame; the
     table +16 B.
+- **Gravity with the feet in the water** (2026-10-23, `docs/porting-notes.md`
+  §75): gravity stopped as soon as the feet were in the water; Quake stops
+  it only with the waist under (`SV_CheckWater`'s return). A player who
+  came down slowly into shallow water hung above the floor, crept at the
+  air's speed cap and could not jump. Fixed in the asm and the C (0
+  mismatches between them). In E1M3's basement the player now lands,
+  jumps and walks at full speed.
