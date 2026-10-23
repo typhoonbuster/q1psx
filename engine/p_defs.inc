@@ -176,3 +176,13 @@
 .set MV_MISSILE,    32
 .set MV_ROOT0,      36     # the next hull-0 sweep's start node (one sweep), 0 the root
 .set MV_SIGHT,      40     # the next sweep a line of sight's (one sweep)
+
+# ---- edict_t (engine/ents.h) and a trigger list's walk (engine/ents.c
+# touch_walk_t, engine/e_touch.s) -------------------------------------------------
+.set E_ABSMIN,     112     # int32[3], 1/8 units, a unit wider (SV_LinkEdict)
+.set E_ABSMAX,     124
+.set TW_COUNT,       0     # uint16 *: the slots linked in each area node's subtree
+.set TW_HEAD,        4     # uint16 *: each node's first slot + 1, 0 none
+.set TW_NEXT,        8     # uint16 *: a slot's next + 1, 0 the end
+.set TW_SLOTS,      12     # touch_slot_t * (16 B: int16 box[6] first, whole units)
+.set TW_LIST,       16     # uint16 *: a slot's edict

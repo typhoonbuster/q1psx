@@ -151,6 +151,8 @@ struct edict_s {
 	int32_t  item_model;     /* an item's model (formats/qgame.h QGM_*), -1 none */
 };
 
+_Static_assert(__builtin_offsetof(edict_t, absmin) == 112 && __builtin_offsetof(edict_t, absmax) == 124,
+               "engine/p_defs.inc E_ABSMIN, E_ABSMAX");
 _Static_assert(__builtin_offsetof(edict_t, maxs) == __builtin_offsetof(edict_t, mins) + 12,
                "the box's 6 words (rlist.h rl_add_model)");
 
@@ -289,6 +291,7 @@ int  ents_num_touch(void);             /* the touch list's length (the bench's) 
 int  ents_in_use(int *max);            /* the edicts in use, *max the pool's */
 #endif
 void ents_area_stats(void);            /* the area nodes' lists (the bench's) */
+void ents_touch_diff(int n);           /* the touch walk's asm against its C (the bench's) */
 #endif
 
 #endif

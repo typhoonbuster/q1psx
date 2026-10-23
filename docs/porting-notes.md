@@ -9252,3 +9252,20 @@ with the same zone tables):
   - The fight's busy samples -11.4 % (266951 -> 236489; the asm's share
     57.2 -> 60.4 %, the C's 26.1 -> 15.4 %); every bench identical
     (`WORLD_HZ=60` against the references; the release's room 57352 B).
+- **(3b) The touch walk in asm** (`engine/e_touch.s`, `touch_gather`):
+  e's box in registers (box16's floor / ceiling / int16, no trip through
+  the stack), the area nodes' stack in the frame, a slot's x span tested
+  first, its other loads in the branches' delay slots, four saved
+  registers where the C's prologue saved nine. The walk takes a list's
+  descriptor (`touch_walk_t`: its counts, heads, nexts, the slots and
+  their edicts; `p_defs.inc` TW_*, E_ABSMIN / E_ABSMAX, static-asserted).
+  `touch_gather_c` follows it (the C engine's); the bench's `touchdiff`
+  line walks both lists of 4000 boxes (half about a random trigger slot,
+  most of those reaching it) with both: 0 mismatches on START, E1M1,
+  E1M3 (and its interpreter); a walk 843 / 943 cycles against the C's
+  997 / 1103. The bench's slot count (`trigtests`) is the asm's own
+  (`ASM_BENCH`, a symbol the bench build defines for every asm file).
+- **The stream's wants of the edicts' sounds**: a pass walked every edict
+  for its five noises; a bitmap of those with a streamed one, made with
+  the lists (their noises are set when they spawn), is walked instead.
+  Every bench identical (`WORLD_HZ=60`); the release's room 57064 B.

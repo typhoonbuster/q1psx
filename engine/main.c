@@ -3101,6 +3101,9 @@ static void run_bench(void)
 	if (world_ok) {
 		bench_clip_diff();
 		bench_wleaf_diff();
+#if !Q1PSX_ENGINE_C
+		ents_touch_diff(4000);
+#endif
 		bench_pmove_diff();
 	}
 	for (uint32_t v = 0; Q1PSX_BENCH_VIEWS && world_ok && v < world.num_views && v < 16; v++) {

@@ -45,6 +45,8 @@ int      ents_first_spawn;
 
 static uint32_t active[ENT_WORDS];   /* edicts with a think or a move pending */
 static uint32_t pushers[ENT_WORDS];  /* the movers (MOVETYPE_PUSH): run every tick */
+static uint32_t noisy[ENT_WORDS];    /* the edicts with a streamed sound (their noises are
+                                        set when they spawn: ents_stream_wants' walk) */
 static int      lists_dirty;         /* an edict spawned or went: the lists */
 static uint16_t touch_list[512];     /* edicts with a touch (the player's pass) */
 static int      num_touch;
@@ -1034,12 +1036,16 @@ static void rebuild_lists(void)
 	memset(trig_tail, 0, sizeof trig_tail);
 	memset(trig_count, 0, sizeof trig_count);
 	memset(pushers, 0, sizeof pushers);
+	memset(noisy, 0, sizeof noisy);
 	for (int i = 2; i < num_edicts; i++) {
 		edict_t *e = &edicts[i];
 		if (!e->inuse)
 			continue;
 		if (e->movetype == MOVETYPE_PUSH)
 			pushers[i >> 5] |= 1u << (i & 31);
+		if (e->noise >= SND_STREAM || e->noise1 >= SND_STREAM || e->noise2 >= SND_STREAM ||
+		    e->noise3 >= SND_STREAM || e->noise4 >= SND_STREAM)
+			noisy[i >> 5] |= 1u << (i & 31);
 		if (e->item_model >= 0 && ents_num_models < (int) (sizeof ents_model_list / sizeof ents_model_list[0]))
 			ents_model_list[ents_num_models++] = (uint16_t) i;
 		if ((e->masset >= 0 || e->mdef) &&
@@ -1100,13 +1106,28 @@ void ents_area_stats(void)
 /* SV_TouchLinks' walk: the trigger slots whose box the box of e reaches,
    area node by area node (Quake's order: clip.h), their edicts; touched
    after (the touches spawn, remove and move edicts: each one is tested
-   again when its turn comes). List 0: every slot (the player's walk); 1:
-   the monsters' list (another edict's: the slots whose touch can do
-   something to it, in the same order, a node with none of them pruned) */
+   again when its turn comes). The list walked: touch_walks[0], every slot
+   (the player's walk), or [1] the monsters' list (another edict's: the
+   slots whose touch can do something to it, in the same order, a node
+   with none of them pruned). engine/e_touch.s is the base; this C follows
+   it: the C engine's, and the bench's check (ents_touch_diff). */
 #define TOUCH_MAX 64
-static int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX], int list)
+typedef struct {
+	const uint16_t     *count, *head, *next;   /* the list's (trig_count[k]...) */
+	const touch_slot_t *slots;
+	const uint16_t     *list;                   /* touch_list */
+} touch_walk_t;
+_Static_assert(__builtin_offsetof(touch_walk_t, next) == 8 && __builtin_offsetof(touch_walk_t, list) == 16 &&
+               sizeof(touch_slot_t) == 16, "engine/p_defs.inc TW_*");
+static touch_walk_t touch_walks[2];
+int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX], const touch_walk_t *w);   /* e_touch.s */
+#if Q1PSX_ENGINE_C
+#define touch_gather_c touch_gather
+#endif
+#if Q1PSX_ENGINE_C || defined(Q1PSX_BENCH)
+int touch_gather_c(const edict_t *e, uint16_t out[TOUCH_MAX], const touch_walk_t *w)
 {
-	const uint16_t *count = trig_count[list], *head = trig_head[list], *next = touch_next[list];
+	const uint16_t *count = w->count, *head = w->head, *next = w->next;
 	int16_t eb[6];
 	box16(e, eb);
 	int n = 0;
@@ -1125,18 +1146,66 @@ static int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX], int list)
 				stack[sp++] = (uint8_t) (a + 1);     /* children[0]: the next node */
 		}
 		for (uint16_t l = head[a]; l; l = next[l - 1]) {
-			const int16_t *b = touch_slots[l - 1].box;
+			const int16_t *b = w->slots[l - 1].box;
 #ifdef Q1PSX_BENCH
 			ai_tr_n[AI_TR_OTHER]++;                   /* (the bench: the slots tested) */
 #endif
 			if (eb[0] > b[3] || eb[1] > b[4] || eb[2] > b[5] || eb[3] < b[0] || eb[4] < b[1] || eb[5] < b[2])
 				continue;
 			if (n < TOUCH_MAX)
-				out[n++] = touch_list[l - 1];
+				out[n++] = w->list[l - 1];
 		}
 	}
 	return n;
 }
+#endif
+
+#if defined(Q1PSX_BENCH) && !Q1PSX_ENGINE_C
+/* e_touch.s against its C: n random boxes (2 to 128 units across), half
+   in the map's box, half about a random trigger slot's box (most of
+   them reach it), each list walked by both; the hits, the mismatches,
+   the cycles of a walk */
+void ents_touch_diff(int n)
+{
+	if (!edicts || !touch_slots)
+		return;
+	if (lists_dirty)
+		rebuild_lists();
+	static edict_t probe;
+	uint32_t rng = 12345, hits = 0, bad = 0, cyc_asm = 0, cyc_c = 0;
+	const qw_node *r = world.root;
+	for (int i = 0; i < n; i++) {
+		rng = rng * 1103515245u + 12345u;
+		const int16_t *sb = (i & 1) && num_touch ? touch_slots[(rng >> 8) % (uint32_t) num_touch].box : 0;
+		for (int k = 0; k < 3; k++) {
+			rng = rng * 1103515245u + 12345u;
+			int32_t c = sb ? ((sb[k] + sb[k + 3]) / 2 + (int32_t) ((rng >> 8) % 65) - 32) * CLIP_SUB
+			               : (r->c[k] + (int32_t) ((rng >> 8) % (uint32_t) (2 * r->h[k] + 1)) - r->h[k]) *
+			                 (CLIP_SUB / QW_VSCALE);
+			rng = rng * 1103515245u + 12345u;
+			int32_t h = (int32_t) (8 + (rng >> 8) % 505);   /* 1 to 64 units, 1/8 units */
+			probe.absmin[k] = c - h;
+			probe.absmax[k] = c + h;
+		}
+		for (int list = 0; list < 2; list++) {
+			uint16_t a[TOUCH_MAX], c[TOUCH_MAX];
+			uint32_t t0 = prof_now();
+			int na = touch_gather(&probe, a, &touch_walks[list]);
+			uint32_t t1 = prof_now();
+			int nc = touch_gather_c(&probe, c, &touch_walks[list]);
+			uint32_t t2 = prof_now();
+			cyc_asm += prof_cycles(t0, t1);
+			cyc_c   += prof_cycles(t1, t2);
+			hits += (uint32_t) nc;
+			if ((na != nc || memcmp(a, c, (size_t) nc * sizeof *a)) && bad++ < 4)
+				printf("touchdiff MISMATCH %d list %d: asm %d c %d\n", i, list, na, nc);
+		}
+	}
+	printf("touchdiff %d boxes x 2 lists (%d slots): %u hits, mismatches %u; cycles/walk asm %u c %u\n", n,
+	       num_touch, (unsigned) hits, (unsigned) bad, (unsigned) (cyc_asm / (2 * (uint32_t) n)),
+	       (unsigned) (cyc_c / (2 * (uint32_t) n)));
+}
+#endif
 
 /* SV_TouchLinks: the SOLID_TRIGGER edicts the box of e overlaps, touched
    by it (the player each tick; a monster when it moves) */
@@ -1150,8 +1219,8 @@ void ents_touch_links(edict_t *e)
 	uint32_t t0 = prof_now();
 #endif
 	uint16_t hit[TOUCH_MAX];
-	int n = touch_slots ? touch_gather(e, hit, e != ent_player) : 0;   /* (another edict: the
-	                                                                      monsters' list) */
+	int n = touch_slots ? touch_gather(e, hit, &touch_walks[e != ent_player]) : 0;   /* (another
+	                                                                    edict: the monsters' list) */
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (t == e || !t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
@@ -1179,7 +1248,7 @@ static void touch_player(void)
 	if (p->solid == SOLID_NOT || !touch_slots)
 		return;
 	uint16_t hit[TOUCH_MAX];
-	int n = touch_gather(p, hit, 0);
+	int n = touch_gather(p, hit, &touch_walks[0]);
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (!t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
@@ -1307,6 +1376,8 @@ Q_COLD void ents_load(void)
 	touch_next[1] = touch_next[0] ? touch_next[0] + max_touch : 0;
 	if (!touch_slots || !touch_next[0])
 		max_touch = 0;
+	for (int k = 0; k < 2; k++)
+		touch_walks[k] = (touch_walk_t) { trig_count[k], trig_head[k], touch_next[k], touch_slots, touch_list };
 }
 
 /* the edict for a cooked entity: the fields every class takes (ED_ParseEdict) */
@@ -1671,24 +1742,25 @@ void ents_stream_wants(void)
 	monsters_stream_wants();
 	/* the entities' streamed sounds (a door's, a plat's, a trigger's, an
 	   item's), by their box centre's distance (Chebyshev, world units) */
-	for (int i = 2; i < num_edicts; i++) {
-		const edict_t *e = &edicts[i];
-		if (!e->inuse || (e->noise < SND_STREAM && e->noise1 < SND_STREAM && e->noise2 < SND_STREAM &&
-		                  e->noise3 < SND_STREAM && e->noise4 < SND_STREAM))
-			continue;
-		int32_t c[3];
-		ent_centre(e, c);
-		uint32_t d = 0;
-		for (int k = 0; k < 3; k++) {
-			int32_t v = c[k] - stream_origin[k];
-			uint32_t x = (uint32_t) (v < 0 ? -v : v);
-			if (x > d) d = x;
+	for (int w = 0; w < ENT_WORDS; w++) {
+		for (uint32_t bits = noisy[w]; bits; bits &= bits - 1) {
+			const edict_t *e = &edicts[w * 32 + ctz_tab[((bits & -bits) * 0x077cb531u) >> 27]];
+			if (!e->inuse)
+				continue;
+			int32_t c[3];
+			ent_centre(e, c);
+			uint32_t d = 0;
+			for (int k = 0; k < 3; k++) {
+				int32_t v = c[k] - stream_origin[k];
+				uint32_t x = (uint32_t) (v < 0 ? -v : v);
+				if (x > d) d = x;
+			}
+			d /= CLIP_SUB;
+			const int16_t n[5] = { e->noise, e->noise1, e->noise2, e->noise3, e->noise4 };
+			for (int k = 0; k < 5; k++)
+				if (n[k] >= SND_STREAM)
+					stream_want(n[k] - SND_STREAM, d);
 		}
-		d /= CLIP_SUB;
-		const int16_t n[5] = { e->noise, e->noise1, e->noise2, e->noise3, e->noise4 };
-		for (int k = 0; k < 5; k++)
-			if (n[k] >= SND_STREAM)
-				stream_want(n[k] - SND_STREAM, d);
 	}
 	game_stream_wants();
 }
