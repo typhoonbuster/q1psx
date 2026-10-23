@@ -1806,3 +1806,22 @@ followed by R0-R4.
     same cycles; the pictures change only where a texel past a tile's
     end showed. pktview's `PKTVIEW_UVROUND=1` rounds the texture
     coordinates as the GPU does.
+- **The world's cycles: the stream's lookup, the monsters' fewer calls,
+  the ticks split** (2026-10-22: §70's levers, the player at 60 ticks and the rest at 30). §72:
+  - the stream: what the more wanted assets hold, a binary search in the
+    resident assets sorted by score once a search (no walk of every slot
+    for every stuck asset), and no search again on frames where nothing
+    changed: the crowd's stream cost -71 %;
+  - a monster's sight line answered from the PVS before its trace (a
+    leaf its eye's row leaves out holds nothing the trace reaches), and
+    its touches walked only on the triggers whose touch can do something
+    to it (each area node's second list: not the items, the
+    `trigger_multiple`s, the changelevels... which return at once for
+    all but the player): the crowd's ticks 261k -> 219k cycles, every
+    bench identical;
+  - the player, the movers and the projectiles each 60th; the other
+    edicts at the world's rate, the Graphics menu's "World tick rate"
+    (30 by default, 60 as before): at 30 half of them each tick, over
+    two 60ths, and a falling or thrown one drawn a 60th on between its
+    moves. At 60 every bench is the previous commit's; at 30 the movers'
+    ways the same, the crowd -6 % a tick and its worst tick -45 %.

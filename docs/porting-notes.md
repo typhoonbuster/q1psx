@@ -9183,3 +9183,45 @@ with the same zone tables):
   only those, the player all of them. The crowd's `ents_tick` -4 %
   (cumulated with (2a): 261k -> 219k cycles a tick); every bench
   identical.
+- **(T) The ticks split** (the player's part at 60 ticks, the rest at 30). A tick each
+  vblank's poll, always (`engine/main.c` `player_update`: the player's
+  old 30 Hz path, its accumulator and its camera lerp, gone):
+  - each 60th: the player's part (pmove, the weapons, the view, its
+    trigger touches, the powerups), the movers (`MOVETYPE_PUSH`: they
+    carry the player, SV_PushMove), the projectiles (the player's shots
+    and those aimed at it), the particles (stepped each 60th already),
+    the dynamic lights' decay, the flashes and kicks;
+  - the other edicts (the monsters, what they throw, the items, the
+    triggers' and delays' thinks) at the world's rate, the Graphics
+    menu's "World tick rate" (`settings.tick`, 30 by default, 60 as
+    before): at 30, `ents_tick` runs them in two halves by their index's
+    parity, a half each tick, each over 2 60ths (`game_dt` 2; the movers
+    in between with `game_dt` 1, a `pushers` bitmap from the lists'
+    rebuild). Why halves and not every edict every other tick: the
+    monsters think at 10 Hz whatever the rate (id's frame macros,
+    `nextthink = time + 0.1`), their thinks are most of the cost and do
+    not shrink with it; every other tick would put two ticks' thinks in
+    one frame, a half each tick keeps the 60 Hz spread;
+  - `force_retouch` is counted down every other tick at 30 (both halves
+    retouched);
+  - drawn (`ents_draw_pose`, `monsters_render`, `items_render`): an edict
+    that moves by its velocity (a fall, a throw, a gib's spin) whose half
+    was not run this tick is drawn a 60th on, where the 60 Hz world would
+    have it; at 60, where it is.
+  - The measures (bench `WORLD_HZ=60|30`, 30 the default): at 60 every
+    bench is the previous commit's (START's views, the game bench but
+    the Graphics menu's two pages, the row's new label, value and hint;
+    the monsters' scenario and crowd lines; the movers' 159 frames); at
+    30 the movers' ways the same tick for tick (`mvpath` lines, new);
+    the crowd (E1M3, 47 monsters woken at once): a tick 219k -> 206k
+    cycles on average (-6 %), the worst tick 1.17-1.51M -> 0.65-0.93M
+    (-45 %: monsters woken together think together, now half each
+    tick); START's walk 55.8k -> 49.6k sim cycles a frame (-11 %); the
+    monsters' scenario: each one's death within a tick of the 60 Hz one.
+  - Left at 60 by choice: the projectiles (to go
+    to 30 they would need the same drawing a 60th on).
+- **The room** (the release's `ramcheck`): 58552 -> 57768 B for the stack
+  (-784 B: the touch lists' code, the sight lines' PVS test, the drawn
+  pose, the movers' bitmap; the stream's sorted table lives on
+  `next_wanted`'s stack, 768 B for a moment, not for good, and the two
+  trigger lists share one walk, their next links in two rows).

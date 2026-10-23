@@ -29,9 +29,7 @@ int      game_tick_count;
 uint32_t game_ents_cycles, game_ents_max, game_ents_ticks;
 #endif
 int      game_dt = 1;
-int      game_tick_hz = 60;
-int32_t  game_view_lerp[3];
-int      game_view_cut = 1;
+int      game_world_hz = 30;
 int      game_draw_viewmodel = 1;
 
 #define SUB CLIP_SUB                            /* 8 position sub-units per world unit */
@@ -1842,7 +1840,6 @@ static void parms_apply(void)
 /* PutClientInServer with DecodeLevelParms: SelectSpawnPoint's spot */
 Q_COLD void game_spawn_level(void)
 {
-	game_view_cut = 1;                            /* (the scheduler: no lerp across it) */
 	if (!parms.valid)
 		game_new_parms();
 	if (game_serverflags && world.map_name && !strcmp(world.map_name, "START"))
@@ -1886,7 +1883,6 @@ void game_init(void)
    debug menu's start */
 void game_spawn(void)
 {
-	game_view_cut = 1;
 	memset(&pl.pm, 0, sizeof pl.pm);
 	pl.pm.pos[0] = world.spawn[0] * SUB;
 	pl.pm.pos[1] = world.spawn[1] * SUB;
@@ -2010,7 +2006,7 @@ static void check_water_jump(pmove_cmd_t *pc)
 
 void game_tick(const game_cmd_t *cmd)
 {
-	game_tick_count += game_dt;
+	game_tick_count++;
 	pl.fire_was = pl.fire;
 	pl.fire     = cmd->fire;
 
@@ -2139,7 +2135,7 @@ static int calc_roll(void)
 }
 
 /* the view's position (a tick's: the bob follows its time and speed) */
-void game_view_pos(int32_t pos[3])
+static void game_view_pos(int32_t pos[3])
 {
 	if (level_intermission) {                     /* the intermission's spot: view_ofs 0 */
 		__builtin_memcpy(pos, level_camera, 3 * sizeof *pos);
@@ -2151,8 +2147,8 @@ void game_view_pos(int32_t pos[3])
 	pos[2] = pl.pm.pos[2] + pl.viewheight + bob;
 }
 
-/* the view's angles (each poll's: the pad turns the view between ticks) */
-void game_view_angles(int *yaw, int *pitch, int *roll)
+/* the view's angles */
+static void game_view_angles(int *yaw, int *pitch, int *roll)
 {
 	if (level_intermission) {
 		*pitch = level_camera_angles[0];
@@ -2341,8 +2337,8 @@ void game_render(void)
 		int32_t f[3], r[3], u[3], org[3];
 		int bob = calc_bob();
 		view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
-		for (int k = 0; k < 3; k++)                   /* (at the camera, drawn between ticks) */
-			org[k] = pl.pm.pos[k] + f[k] * bob * 4 / 10 / 4096 + game_view_lerp[k];
+		for (int k = 0; k < 3; k++)
+			org[k] = pl.pm.pos[k] + f[k] * bob * 4 / 10 / 4096;
 		org[2] += pl.viewheight + bob + (r_viewport_rows() < 240 ? 2 * SUB : 0);
 		const qw_leaf *leaf = leaf_at(org);
 		int light = leaf ? leaf->light : 128;

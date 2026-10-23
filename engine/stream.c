@@ -522,13 +522,13 @@ static void held_by_more(uint32_t score, uint32_t *ram, uint32_t *vram, uint32_t
    much as a score hold is then a binary search. next_wanted asks it of
    every asset stuck for room, every idle frame: walking the slots and
    their images each time was quadratic (E1M3's crowd: 29 % of its ticks,
-   porting-notes §72). Made once a next_wanted that meets a stuck asset. */
-static struct { uint32_t last, ram, vram, spu; } held[MAX_RES];
-static int num_held;
+   porting-notes §72). Made once a next_wanted that meets a stuck asset,
+   on its stack (768 bytes for a moment, not for good). */
+typedef struct { uint32_t last, ram, vram, spu; } held_t;
 
-static void held_sort(void)
+static int held_sort(held_t *held)
 {
-	num_held = 0;
+	int num_held = 0;
 	for (int i = 0; i < MAX_RES; i++) {
 		const res_t *r = &res[i];
 		if (r->asset < 0 || assets[r->asset].state != A_RES)
@@ -552,11 +552,13 @@ static void held_sort(void)
 		held[j].vram += held[j - 1].vram;
 		held[j].spu  += held[j - 1].spu;
 	}
+	return num_held;
 }
 
 /* held_by_more's sums from the sorted table (held_sort's): the assets whose
    score is at most `score` */
-static void held_upto(uint32_t score, uint32_t *ram, uint32_t *vram, uint32_t *spu)
+static void held_upto(const held_t *held, int num_held, uint32_t score, uint32_t *ram, uint32_t *vram,
+                      uint32_t *spu)
 {
 	int lo = 0, hi = num_held;
 	while (lo < hi) {
@@ -1120,7 +1122,8 @@ static int next_wanted(void)
 {
 	if (none_wanted)
 		return -1;
-	int best = -1, sorted = 0;
+	int best = -1, num_held = -1;                /* (-1: not sorted yet) */
+	held_t held[MAX_RES];
 	for (int a = 0; a < num_assets; a++) {
 		asset_t *as = &assets[a];
 		if (as->state != A_DISC || as->backoff || as->stuck == ST_BROKEN)
@@ -1130,11 +1133,9 @@ static int next_wanted(void)
 			continue;
 		if (as->stuck == ST_ROOM) {
 			uint32_t ram, vram, spu;
-			if (!sorted) {
-				held_sort();
-				sorted = 1;
-			}
-			held_upto(as->last, &ram, &vram, &spu);
+			if (num_held < 0)
+				num_held = held_sort(held);
+			held_upto(held, num_held, as->last, &ram, &vram, &spu);
 			if (ram >= as->stuck_ram && vram >= as->stuck_vram && spu >= as->stuck_spu)
 				continue;                     /* (no more room than when it failed) */
 			as->stuck = ST_NONE;

@@ -44,6 +44,7 @@ int      ents_first_spawn;
 #define ENT_WORDS 32         /* the active bitmap: up to 1024 edicts */
 
 static uint32_t active[ENT_WORDS];   /* edicts with a think or a move pending */
+static uint32_t pushers[ENT_WORDS];  /* the movers (MOVETYPE_PUSH): run every tick */
 static int      lists_dirty;         /* an edict spawned or went: the lists */
 static uint16_t touch_list[512];     /* edicts with a touch (the player's pass) */
 static int      num_touch;
@@ -51,18 +52,18 @@ typedef struct {
 	int16_t  box[6];                 /* its box in whole units, a unit wider (the
 	                                    touch passes' first test: no edict read
 	                                    for one far away) */
-	uint16_t next;                   /* its area node's list: the next slot + 1, 0 the end */
-	uint8_t  area;                   /* that node, CLIP_NO_AREA none */
-	uint8_t  mon;                    /* in its node's monster list too (touch_relink) */
+	uint8_t  area;                   /* its area node, CLIP_NO_AREA none */
+	uint8_t  mon;                    /* in the node's monster list too (touch_relink) */
+	uint16_t pad;
 } touch_slot_t;
 static touch_slot_t *touch_slots;    /* (touch_list's) */
-static uint16_t     *touch_mnext;    /* a slot's next in its node's monster list (+ 1, 0 the end) */
+static uint16_t     *touch_next[2];  /* a slot's next in its node's list (+ 1, 0 the end) */
 static int           max_touch;
-static uint16_t trig_head[CLIP_AREAS], trig_tail[CLIP_AREAS];   /* the nodes' trigger lists */
-static uint16_t trig_count[CLIP_AREAS];   /* the trigger slots linked in each node's subtree */
-static uint16_t trig_mhead[CLIP_AREAS], trig_mtail[CLIP_AREAS];   /* the same for the slots */
-static uint16_t trig_mcount[CLIP_AREAS];  /* a touch by any other edict than the player can
-                                             reach (no FL_ITEM, no FL_TOUCH_PLAYER) */
+/* the area nodes' trigger lists: [0] every slot, [1] the slots whose touch
+   can do something to another edict than the player (no FL_ITEM, no
+   FL_TOUCH_PLAYER: the monsters' list); their heads, tails, and the slots
+   linked in each node's subtree */
+static uint16_t trig_head[2][CLIP_AREAS], trig_tail[2][CLIP_AREAS], trig_count[2][CLIP_AREAS];
 static void touch_relink(const edict_t *e);
 static uint16_t draw_list[CLIP_MAX_BMODELS + 64];   /* drawn brush models */
 uint16_t        ents_model_list[512];               /* drawn alias models (items.c) */
@@ -130,7 +131,8 @@ static int create_area(int depth, const int32_t mins[3], const int32_t maxs[3])
 	int n = num_areas++;
 	clip_area_t *a = &clip_areas[n];
 	a->head = a->tail = 0;
-	trig_head[n] = trig_tail[n] = trig_count[n] = 0;
+	trig_head[0][n] = trig_tail[0][n] = trig_count[0][n] = 0;
+	trig_head[1][n] = trig_tail[1][n] = trig_count[1][n] = 0;
 	area_solids[n] = 0;
 	if (depth == CLIP_AREA_DEPTH) {
 		a->flags  = CLIP_AREA_LEAF;
@@ -959,13 +961,39 @@ static void box16(const edict_t *e, int16_t b[6])
 static void trig_count_add(int n, int d, int mon)
 {
 	for (;;) {
-		trig_count[n] = (uint16_t) (trig_count[n] + d);
+		trig_count[0][n] = (uint16_t) (trig_count[0][n] + d);
 		if (mon)
-			trig_mcount[n] = (uint16_t) (trig_mcount[n] + d);
+			trig_count[1][n] = (uint16_t) (trig_count[1][n] + d);
 		if (!n)
 			return;
 		n = area_parent[n];
 	}
+}
+
+static void list_unlink(int list, int a, int s)
+{
+	uint16_t *next = touch_next[list], self = (uint16_t) (s + 1), prev = 0;
+	for (uint16_t l = trig_head[list][a]; l; prev = l, l = next[l - 1])
+		if (l == self) {
+			if (prev)
+				next[prev - 1] = next[s];
+			else
+				trig_head[list][a] = next[s];
+			if (trig_tail[list][a] == self)
+				trig_tail[list][a] = prev;
+			break;
+		}
+	next[s] = 0;
+}
+static void list_append(int list, int a, int s)
+{
+	uint16_t *next = touch_next[list];
+	if (trig_tail[list][a])
+		next[trig_tail[list][a] - 1] = (uint16_t) (s + 1);
+	else
+		trig_head[list][a] = (uint16_t) (s + 1);
+	trig_tail[list][a] = (uint16_t) (s + 1);
+	next[s] = 0;
 }
 
 static void touch_unlink(int s)
@@ -974,32 +1002,9 @@ static void touch_unlink(int s)
 	if (t->area == CLIP_NO_AREA)
 		return;
 	trig_count_add(t->area, -1, t->mon);
-	uint16_t self = (uint16_t) (s + 1), prev = 0;
-	for (uint16_t l = trig_head[t->area]; l; prev = l, l = touch_slots[l - 1].next)
-		if (l == self) {
-			if (prev)
-				touch_slots[prev - 1].next = t->next;
-			else
-				trig_head[t->area] = t->next;
-			if (trig_tail[t->area] == self)
-				trig_tail[t->area] = prev;
-			break;
-		}
-	if (t->mon) {
-		prev = 0;
-		for (uint16_t l = trig_mhead[t->area]; l; prev = l, l = touch_mnext[l - 1])
-			if (l == self) {
-				if (prev)
-					touch_mnext[prev - 1] = touch_mnext[s];
-				else
-					trig_mhead[t->area] = touch_mnext[s];
-				if (trig_mtail[t->area] == self)
-					trig_mtail[t->area] = prev;
-				break;
-			}
-		touch_mnext[s] = 0;
-	}
-	t->next = 0;
+	list_unlink(0, t->area, s);
+	if (t->mon)
+		list_unlink(1, t->area, s);
 	t->area = CLIP_NO_AREA;
 }
 static void touch_relink(const edict_t *e)
@@ -1009,25 +1014,15 @@ static void touch_relink(const edict_t *e)
 	box16(e, t->box);
 	touch_unlink(s);
 	int n = area_of(e->absmin, e->absmax);
-	if (trig_tail[n])
-		touch_slots[trig_tail[n] - 1].next = (uint16_t) (s + 1);
-	else
-		trig_head[n] = (uint16_t) (s + 1);
-	trig_tail[n] = (uint16_t) (s + 1);
-	t->next = 0;
 	t->area = (uint8_t) n;
-	/* the monsters' list: the slots whose touch can do something to another
-	   edict than the player (id's QC: an item's touch, a trigger_multiple's,
-	   a changelevel's... return at once for all but the player) */
+	/* the monsters' list: the slots whose touch can do something to
+	   another edict than the player (id's QC: an item's touch, a
+	   trigger_multiple's, a changelevel's... return at once for all but
+	   the player) */
 	t->mon = !(e->flags & (FL_ITEM | FL_TOUCH_PLAYER));
-	if (t->mon) {
-		if (trig_mtail[n])
-			touch_mnext[trig_mtail[n] - 1] = (uint16_t) (s + 1);
-		else
-			trig_mhead[n] = (uint16_t) (s + 1);
-		trig_mtail[n] = (uint16_t) (s + 1);
-		touch_mnext[s] = 0;
-	}
+	list_append(0, n, s);
+	if (t->mon)
+		list_append(1, n, s);
 	trig_count_add(n, 1, t->mon);
 }
 
@@ -1037,13 +1032,13 @@ static void rebuild_lists(void)
 	memset(trig_head, 0, sizeof trig_head);
 	memset(trig_tail, 0, sizeof trig_tail);
 	memset(trig_count, 0, sizeof trig_count);
-	memset(trig_mhead, 0, sizeof trig_mhead);
-	memset(trig_mtail, 0, sizeof trig_mtail);
-	memset(trig_mcount, 0, sizeof trig_mcount);
+	memset(pushers, 0, sizeof pushers);
 	for (int i = 2; i < num_edicts; i++) {
 		edict_t *e = &edicts[i];
 		if (!e->inuse)
 			continue;
+		if (e->movetype == MOVETYPE_PUSH)
+			pushers[i >> 5] |= 1u << (i & 31);
 		if (e->item_model >= 0 && ents_num_models < (int) (sizeof ents_model_list / sizeof ents_model_list[0]))
 			ents_model_list[ents_num_models++] = (uint16_t) i;
 		if ((e->masset >= 0 || e->mdef) &&
@@ -1092,7 +1087,7 @@ void ents_area_stats(void)
 		int ns = 0, nt = 0;
 		for (uint16_t l = clip_areas[a].head; l; l = CLIP_ENTRY(l)->next)
 			ns++;
-		for (uint16_t l = trig_head[a]; l; l = touch_slots[l - 1].next)
+		for (uint16_t l = trig_head[0][a]; l; l = touch_next[0][l - 1])
 			nt++;
 		printf(" %d:%s%d/%d", a, clip_areas[a].flags & CLIP_AREA_LEAF ? "L" : (clip_areas[a].flags & 1) ? "y" : "x",
 		       ns, nt);
@@ -1104,13 +1099,13 @@ void ents_area_stats(void)
 /* SV_TouchLinks' walk: the trigger slots whose box the box of e reaches,
    area node by area node (Quake's order: clip.h), their edicts; touched
    after (the touches spawn, remove and move edicts: each one is tested
-   again when its turn comes) */
+   again when its turn comes). List 0: every slot (the player's walk); 1:
+   the monsters' list (another edict's: the slots whose touch can do
+   something to it, in the same order, a node with none of them pruned) */
 #define TOUCH_MAX 64
-static inline __attribute__((always_inline))
-int touch_gather_lists(const edict_t *e, uint16_t out[TOUCH_MAX], int mon)
+static int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX], int list)
 {
-	const uint16_t *count = mon ? trig_mcount : trig_count;
-	const uint16_t *head  = mon ? trig_mhead : trig_head;
+	const uint16_t *count = trig_count[list], *head = trig_head[list], *next = touch_next[list];
 	int16_t eb[6];
 	box16(e, eb);
 	int n = 0;
@@ -1128,7 +1123,7 @@ int touch_gather_lists(const edict_t *e, uint16_t out[TOUCH_MAX], int mon)
 			if (e->absmax[axis] > an->dist && count[a + 1])
 				stack[sp++] = (uint8_t) (a + 1);     /* children[0]: the next node */
 		}
-		for (uint16_t l = head[a]; l; l = mon ? touch_mnext[l - 1] : touch_slots[l - 1].next) {
+		for (uint16_t l = head[a]; l; l = next[l - 1]) {
 			const int16_t *b = touch_slots[l - 1].box;
 #ifdef Q1PSX_BENCH
 			ai_tr_n[AI_TR_OTHER]++;                   /* (the bench: the slots tested) */
@@ -1140,18 +1135,6 @@ int touch_gather_lists(const edict_t *e, uint16_t out[TOUCH_MAX], int mon)
 		}
 	}
 	return n;
-}
-/* the player's: every trigger slot */
-static int touch_gather(const edict_t *e, uint16_t out[TOUCH_MAX])
-{
-	return touch_gather_lists(e, out, 0);
-}
-/* another edict's (a monster, an item, what is thrown): the slots of the
-   monster lists, in the same order (each node's list keeps the link order;
-   a node pruned holds none of them) */
-static int touch_gather_mon(const edict_t *e, uint16_t out[TOUCH_MAX])
-{
-	return touch_gather_lists(e, out, 1);
 }
 
 /* SV_TouchLinks: the SOLID_TRIGGER edicts the box of e overlaps, touched
@@ -1166,7 +1149,8 @@ void ents_touch_links(edict_t *e)
 	uint32_t t0 = prof_now();
 #endif
 	uint16_t hit[TOUCH_MAX];
-	int n = !touch_slots ? 0 : e == ent_player ? touch_gather(e, hit) : touch_gather_mon(e, hit);
+	int n = touch_slots ? touch_gather(e, hit, e != ent_player) : 0;   /* (another edict: the
+	                                                                      monsters' list) */
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (t == e || !t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
@@ -1194,7 +1178,7 @@ static void touch_player(void)
 	if (p->solid == SOLID_NOT || !touch_slots)
 		return;
 	uint16_t hit[TOUCH_MAX];
-	int n = touch_gather(p, hit);
+	int n = touch_gather(p, hit, 0);
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (!t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
@@ -1214,6 +1198,12 @@ static const uint8_t ctz_tab[32] = {
 	31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
 };
 
+/* SV_Physics, a tick: the player's touches, then the edicts in their order.
+   The world's rate (game_world_hz): at 60, every edict each tick; at 30,
+   the movers each tick (they carry the player: game_dt 1), the others in
+   two halves by their index's parity, a half each tick, over 2 60ths
+   (game_dt 2): a 60 Hz world's load spread over both ticks, each edict's
+   thinks on its half's ticks */
 void ents_tick(void)
 {
 	if (!edicts)
@@ -1223,10 +1213,13 @@ void ents_tick(void)
 		rebuild_lists();
 	sync_player();
 	touch_player();
-	if (ent_force_retouch > 0)
-		ent_force_retouch--;
+	int      wdt  = game_world_hz >= 60 ? 1 : 2;
+	uint32_t half = wdt == 1 ? 0xffffffffu : (ent_time & 1) ? 0xaaaaaaaau : 0x55555555u;
+	if (ent_force_retouch > 0 && (wdt == 1 || !(ent_time & 1)))
+		ent_force_retouch--;                  /* (at 30: a count of both halves' ticks) */
+	game_dt = wdt;
 	for (int w = 0; w < ENT_WORDS; w++) {
-		uint32_t bits = active[w];
+		uint32_t bits = active[w] & (half | pushers[w]);
 		while (bits) {
 			int b = ctz_tab[((bits & -bits) * 0x077cb531u) >> 27];   /* (not libgcc's __ctzsi2) */
 			bits &= bits - 1;
@@ -1235,7 +1228,9 @@ void ents_tick(void)
 				ents_touch_links(e);           /* force retouch even for stationary */
 			if (e->inuse) {
 				if (e->movetype == MOVETYPE_PUSH) {
+					game_dt = 1;
 					physics_pusher(e);
+					game_dt = wdt;
 				} else if (e->mdef || e->masset >= 0) {   /* a monster, what it throws */
 					if (e->mdef && e->health <= 0 && ent_time - e->pain_finished >= 0)
 						ent_remove(e);                /* a body's end (monsters.h) */
@@ -1264,7 +1259,31 @@ void ents_tick(void)
 				active[w] &= ~(1u << b);
 		}
 	}
+	game_dt = 1;
 	sync_player();
+}
+
+/* Where an edict is drawn, its angles: at the 30 Hz world, one that moves
+   by its velocity (a fall, a throw, a gib's spin) and whose half was not
+   run this tick is drawn a 60th on, where the 60 Hz world would have it
+   (its next move's start); else where it is. */
+const int32_t *ents_draw_pose(const edict_t *e, int32_t tmp[3], uint16_t ang[3])
+{
+	ang[0] = e->ang[0];
+	ang[1] = e->ang[1];
+	ang[2] = e->ang[2];
+	if (game_world_hz >= 60 || !((index_of(e) ^ ent_time) & 1))
+		return e->origin;
+	int mt = e->movetype;
+	if (mt == MOVETYPE_STEP ? (e->flags & (FL_ONGROUND | FL_FLY | FL_SWIM)) != 0
+	                        : mt < MOVETYPE_FLY || mt == MOVETYPE_PUSH || (e->flags & FL_ONGROUND))
+		return e->origin;
+	for (int k = 0; k < 3; k++) {
+		tmp[k] = e->origin[k] + e->velocity[k] * CLIP_SUB / GAME_HZ;
+		if (mt != MOVETYPE_STEP)              /* (a monster's turns: its thinks') */
+			ang[k] = (uint16_t) (ang[k] + e->avel[k] * 65536 / 360 / GAME_HZ);
+	}
+	return tmp;
 }
 
 /* ---------------------------------------------------------------- spawn -- */
@@ -1282,9 +1301,10 @@ Q_COLD void ents_load(void)
 	}
 	max_touch = max_edicts < (int) (sizeof touch_list / sizeof touch_list[0]) ? max_edicts
 	          : (int) (sizeof touch_list / sizeof touch_list[0]);
-	touch_slots = max_touch ? mem_level_alloc((uint32_t) max_touch * sizeof *touch_slots) : 0;
-	touch_mnext = touch_slots ? mem_level_alloc((uint32_t) max_touch * sizeof *touch_mnext) : 0;
-	if (!touch_slots || !touch_mnext)
+	touch_slots   = max_touch ? mem_level_alloc((uint32_t) max_touch * sizeof *touch_slots) : 0;
+	touch_next[0] = touch_slots ? mem_level_alloc((uint32_t) max_touch * 2 * sizeof (uint16_t)) : 0;
+	touch_next[1] = touch_next[0] ? touch_next[0] + max_touch : 0;
+	if (!touch_slots || !touch_next[0])
 		max_touch = 0;
 }
 

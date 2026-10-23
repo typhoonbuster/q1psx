@@ -538,7 +538,10 @@ void monsters_render(void)
 		if (!leaf || leaf->visframe != vis)
 			continue;
 		const qst_model *m = stream_model(e->masset);
-		if (!m || !ent_in_view(e->origin, m->radius))
+		int32_t tmp[3];
+		uint16_t ang[3];
+		const int32_t *org = ents_draw_pose(e, tmp, ang);
+		if (!m || !ent_in_view(org, m->radius))
 			continue;
 #ifdef Q1PSX_BENCH
 		monsters_drawn++;
@@ -549,15 +552,15 @@ void monsters_render(void)
 		if (flame)
 			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
 		int light = (m->flags & QSTM_FLAT) && flame ? 128
-		          : leaf->light + dl_add_at(e->origin, game_tick_count) * 3 / 2;
+		          : leaf->light + dl_add_at(org, game_tick_count) * 3 / 2;
 		if (e->mdef && e->health <= 0) {          /* a body's last second: darkened */
 			int32_t left = e->pain_finished - game_tick_count;
 			if (left < CORPSE_FADE)
 				light = left > 0 ? light * left / CORPSE_FADE : 0;
 		}
 		int yaw = QSTM_EF(m->flags) & QSTM_EF_ROTATE ? (game_tick_count % 216) * ANG_TURN / 216   /* 100 a second */
-		                                             : e->ang[1] >> 4;
-		rl_add_model(leaf, rl_model_stream(e->masset, frame, e->origin, yaw, e->ang[0] >> 4, e->ang[2] >> 4,
-		                                   light), e->origin, e->mins);
+		                                             : ang[1] >> 4;
+		rl_add_model(leaf, rl_model_stream(e->masset, frame, org, yaw, ang[0] >> 4, ang[2] >> 4, light), org,
+		             e->mins);
 	}
 }

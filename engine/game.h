@@ -25,24 +25,23 @@
 
 #define GAME_HZ 60      /* the game's time unit: 60ths of a second (game_tick_count) */
 
-/* the tick being run: its length in 60ths of a second (1 at the 60 Hz tick;
-   the tick rate setting: 2 at 30 Hz, 3 at 20, 6 at 10, 1 or 2 at 32). The
-   rates (physics, gravity, decays) act over it; the times (nextthink, die,
-   attack_finished...) stay in 60ths. */
+/* the tick being run: its length in 60ths of a second. A tick a vblank:
+   the player's part (the move, the weapons, the view), the movers', the
+   projectiles' and the effects' are 1; the other edicts' (the monsters,
+   what they throw, the items, the triggers' thinks) run at the world's
+   rate: at 30 Hz, each one every other tick, over 2 (engine/ents.c
+   ents_tick). The rates (physics, gravity, decays) act over it; the times
+   (nextthink, die, attack_finished...) stay in 60ths. */
 extern int game_dt;
-/* ticks a second (the tick rate setting: 60, 32, 30, 20 or 10; engine/main.c
-   runs them), and the camera's offset from the last tick's view while it is
-   drawn between the last two (the view model follows it) */
-extern int     game_tick_hz;
-extern int32_t game_view_lerp[3];
+/* the world's ticks a second (the tick rate setting: 60 or 30); the
+   player's are 60 */
+extern int     game_world_hz;
 extern int     game_draw_viewmodel;   /* the weapon drawn (r_drawviewmodel): 0 none,
                                          1 the 3D gun, 2 the 2D one */
 void game_ws_invalidate(void);           /* the 2D gun's slot filled again (a dump) */
 void game_ws_sync(void);                 /* the 2D gun's packets asked for while it is the
                                             gun drawn, given back when not (a map's start,
                                             then each frame outside the menu) */
-extern int     game_view_cut;   /* set by a spawn outside a tick: the scheduler
-                                   takes the view afresh, no lerp across it */
 
 enum { W_AXE, W_SHOTGUN, W_SSHOTGUN, W_NAILGUN, W_SNAILGUN, W_GLAUNCHER, W_RLAUNCHER,
        W_LIGHTNING, W_COUNT };
@@ -133,8 +132,6 @@ void game_view_tint(void);
 /* the camera for this frame (1/R_POS_SUB units, binary degrees): its
    position (the last tick's) and its angles (now) */
 void game_view(int32_t pos[3], int *yaw, int *pitch, int *roll);
-void game_view_pos(int32_t pos[3]);
-void game_view_angles(int *yaw, int *pitch, int *roll);
 
 /* between rl_begin() and r_frame(): the render list (projectiles, effects,
    particles) and the view model; after the frame: the world's lights back */

@@ -179,7 +179,7 @@ static void graphics_draw(void)
 {
 	static const char *const label[SET_ROWS] = {
 		"               Effects", "             Dithering", "                   HUD",
-		"        Dynamic lights", "        Frame rate cap", "             Tick rate" };
+		"        Dynamic lights", "        Frame rate cap", "       World tick rate" };
 	char val[24];
 	draw_header(QGA_P_OPTION);
 	for (int g = 0; g < SET_ROWS; g++) {

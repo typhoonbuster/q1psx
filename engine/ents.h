@@ -193,6 +193,10 @@ void     ent_setsize(edict_t *e, const int32_t mins[3], const int32_t maxs[3]);
 void     ent_setorigin(edict_t *e, const int32_t org[3]);
 const qw_leaf *ent_model_leaf(edict_t *e);      /* an alias model's: its centre's leaf (NULL:
                                                    outside), found once it is drawn */
+const int32_t *ents_draw_pose(const edict_t *e, int32_t tmp[3], uint16_t ang[3]);
+                                                /* where it is drawn (its origin or tmp), its
+                                                   angles: a 60th on, between two moves of
+                                                   the 30 Hz world (engine/ents.c) */
 void     ent_wake(edict_t *e);                  /* on the tick's list (a think or a move set) */
 edict_t *ent_find(edict_t *from, uint16_t targetname);   /* find(from, targetname, s) */
 edict_t *ent_find_class(edict_t *from, int cls);         /* find(from, classname, s)  */

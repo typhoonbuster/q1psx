@@ -40,7 +40,7 @@ typedef struct {
 	int volume;      /* the sound effects', tenths (Quake's volume 0.7)      */
 	int music;       /* the music's, tenths (bgmvolume 1)                    */
 	int fps_cap;     /* fps_caps[] index: 60 (none), 45, 30                  */
-	int tick;        /* tick_rates[] index: 60, 30 ticks a second            */
+	int tick;        /* tick_rates[] index: the world's 60, 30 ticks a second */
 } settings_t;
 
 extern settings_t settings;

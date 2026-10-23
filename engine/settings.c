@@ -11,9 +11,9 @@
 
 const uint8_t fps_caps[]  = { 60, 45, 30 };
 const int num_fps_caps    = (int) sizeof fps_caps;
-/* the game's ticks a second (engine/main.c player_update): 60 a tick per
-   vblank; 30, half the work a second (the physics' traces, the thinks, the
-   touches), the camera drawn between two ticks */
+/* the world's ticks a second (engine/ents.c ents_tick; the player's, the
+   movers', the projectiles' are 60): 60, every edict each vblank; 30, each
+   one every other vblank, half of them each vblank */
 const uint8_t tick_rates[] = { 60, 30 };
 const int num_tick_rates   = (int) sizeof tick_rates;
 
@@ -31,7 +31,7 @@ void settings_defaults(void)
 	settings.volume  = 7;
 	settings.music   = 10;
 	settings.fps_cap = 0;                       /* 60: no cap */
-	settings.tick    = 0;                       /* 60 ticks a second */
+	settings.tick    = 1;                       /* the world at 30 ticks a second */
 }
 
 void settings_apply(void)
@@ -49,7 +49,7 @@ void settings_apply(void)
 	snd_set_volume(settings.volume);
 	snd_set_cd_volume(settings.music);
 	vid_set_fps_cap(fps_caps[settings.fps_cap]);
-	game_tick_hz = tick_rates[settings.tick];
+	game_world_hz = tick_rates[settings.tick];
 	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 	r_set_options(Q1PSX_DRAWDIST, R_FLAT_FAR);
 }
@@ -126,8 +126,8 @@ void settings_hint(int row, const char *line[2])
 		else                  { a = "A frame every vblank it fits in";  b = "lower: steadier pacing"; }
 		break;
 	default:
-		if (tick_rates[settings.tick] < 60) { a = "+ half the physics CPU";           b = "- coarser motion and input"; }
-		else                                { a = "Physics every vblank: most CPU";   b = "+ smoothest motion and input"; }
+		if (tick_rates[settings.tick] < 60) { a = "+ the world's physics halved";     b = "you, lifts and shots stay at 60"; }
+		else                                { a = "- the world every vblank: more CPU"; b = "+ monsters' falls a bit smoother"; }
 		break;
 	}
 	line[0] = a;

@@ -92,6 +92,7 @@ static void apply_settings(void)
 	game_set_effects(Q1PSX_BENCH_EFFECTS);
 	r_set_options(Q1PSX_BENCH_DRAWDIST, Q1PSX_BENCH_FLAT);
 	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
+	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
 #else
 	settings_apply();
 #endif
@@ -201,93 +202,21 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 	if (pl.pm.pitch < -1012) pl.pm.pitch = -1012;
 }
 
-/* The simulation is tick-based (Quake). Every vblank's poll (pad_frame) turns
-   the view (Quake's client turns each frame: CL_AdjustAngles); a tick runs
-   every 60 / game_tick_hz polls on average (an accumulator: at 32 Hz, 2, 2,
-   ... 1 polls), over the polls since the last one (game_dt 60ths of a
-   second), with the last poll's held buttons and every press since. At
-   60 Hz, a tick per poll. Below, the camera is drawn between the last two
-   ticks' views (CL_LerpPoint), late by the longest tick less a poll; a jump
-   of more than 64 units (a teleporter, a new level) is not lerped. */
+/* The simulation is tick-based (Quake): a tick each vblank's poll
+   (pad_frame), with that poll's held buttons and presses. The player's part
+   of each tick turns the view (Quake's client turns each frame:
+   CL_AdjustAngles), moves and fires; the world's runs at its own rate
+   (game_world_hz, engine/ents.c ents_tick). The camera at the last tick's
+   view. */
 static void player_update(const pad_t *polls, int n)
 {
-	static int        hz = 60, acc, since, span = 1;
-	static int32_t    prev[3], last[3];
-	static game_cmd_t presses = { .weapon_group = -1 };
 	uint32_t t0 = prof_now();
-	if (hz != game_tick_hz || game_view_cut) {  /* a new rate, a new spawn: afresh */
-		game_view_cut = 0;
-		hz = game_tick_hz;
-		acc = since = 0;
-		span = 1;
-		memset(&presses, 0, sizeof presses);
-		presses.weapon_group = -1;
-		memset(game_view_lerp, 0, sizeof game_view_lerp);
-		game_view_pos(last);
-		memcpy(prev, last, sizeof prev);
-	}
-	if (hz == 60) {                             /* a tick per poll, no lerp */
-		for (int i = 0; i < n; i++) {
-			game_cmd_t cmd;
-			player_cmd(&cmd, &polls[i]);
-			game_tick(&cmd);
-		}
-		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
-		prof_add(PROF_SIM, t0, prof_now());
-		return;
-	}
 	for (int i = 0; i < n; i++) {
 		game_cmd_t cmd;
 		player_cmd(&cmd, &polls[i]);
-		presses.weapon_next |= cmd.weapon_next;   /* a press between two ticks */
-		presses.weapon_prev |= cmd.weapon_prev;   /* counts (Quake's key "impulse" */
-		presses.centre      |= cmd.centre;        /* bit, CL_SendMove's state & 3): */
-		presses.fire        |= cmd.fire;          /* fire and jump too, held or */
-		presses.jump        |= cmd.jump;          /* tapped */
-		if (cmd.weapon_group >= 0)
-			presses.weapon_group = cmd.weapon_group;
-		since++;
-		if ((acc += hz) < 60)
-			continue;
-		acc -= 60;
-		cmd.weapon_next  = presses.weapon_next;
-		cmd.weapon_prev  = presses.weapon_prev;
-		cmd.centre       = presses.centre;
-		cmd.fire         = presses.fire;
-		cmd.jump         = presses.jump;
-		cmd.weapon_group = presses.weapon_group;
-		memset(&presses, 0, sizeof presses);
-		presses.weapon_group = -1;
-		game_dt = since;
 		game_tick(&cmd);
-		game_dt = 1;
-		span  = since;
-		since = 0;
-		memcpy(prev, last, sizeof prev);
-		game_view_pos(last);
 	}
-	game_view_angles(&cam.yaw, &cam.pitch, &cam.roll);
-	memcpy(cam.pos, last, sizeof cam.pos);
-	memset(game_view_lerp, 0, sizeof game_view_lerp);
-	{
-		static const uint16_t inv[7] = { 0, 65535, 32768, 21846, 16384, 13108, 10923 };   /* 65536 / span */
-		int lag = (60 + hz - 1) / hz - 1;       /* polls: the longest tick less one */
-		int num = since - lag + span;           /* of span: where between the two */
-		if (num < 0)    num = 0;
-		if (num > span) num = span;
-		int32_t far = 0;
-		for (int k = 0; k < 3; k++) {
-			int32_t d = last[k] - prev[k];
-			far |= d > 64 * CLIP_SUB || d < -64 * CLIP_SUB;
-		}
-		if (!far && num < span) {
-			int32_t f = num * inv[span];            /* 0.16: where between the two */
-			for (int k = 0; k < 3; k++) {
-				game_view_lerp[k] = -(((last[k] - prev[k]) * (65536 - f)) >> 16);
-				cam.pos[k] += game_view_lerp[k];
-			}
-		}
-	}
+	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 	prof_add(PROF_SIM, t0, prof_now());
 }
 
@@ -2029,7 +1958,7 @@ static void bench_movers(void)
 		bench_reset(&acc, names[ti]);
 		uint32_t moved = 0, cut_frames = 0, cuts = 0, given_up = 0, cyc = 0, cyc_max = 0, pieces = 0;
 		uint32_t f_cut = 0, f_cut_max = 0, n_ents_cut = 0, f_still = 0, n_still = 0, vbl_cut = 0;
-		uint32_t fold = 2166136261u;
+		uint32_t fold = 2166136261u, path_fold = 2166136261u;   /* the frames', the mover's way */
 		bmf_stats[5] = 0;
 		prof_sample_start();
 		for (int f = 0; f < MV_FRAMES; f++) {
@@ -2037,6 +1966,8 @@ static void bench_movers(void)
 			memcpy(was, e->origin, sizeof was);
 			game_tick(&cmd);
 			moved += memcmp(was, e->origin, sizeof was) != 0;
+			for (int k = 0; k < 3; k++)
+				path_fold = (path_fold ^ (uint32_t) e->origin[k]) * 16777619u;
 			uint32_t c0 = bmf_stats[2] + bmf_stats[3], g0 = bmf_stats[3], y0 = bmf_stats[4], p0 = bmf_stats[1];
 			mv_look(e, eye);
 			run_frame(0, 0);
@@ -2090,6 +2021,8 @@ static void bench_movers(void)
 		uint32_t cuts2 = 0, off0 = bmf_stats[6];
 		for (int f = 0; f < 256; f++) {
 			game_tick(&cmd);
+			for (int k = 0; k < 3; k++)
+				path_fold = (path_fold ^ (uint32_t) e->origin[k]) * 16777619u;
 			uint32_t c0 = bmf_stats[2] + bmf_stats[3];
 			mv_look(e, eye);
 			if (f & 16)
@@ -2109,6 +2042,7 @@ static void bench_movers(void)
 		       (unsigned) bmf_asm_mismatches);
 #endif
 		printf("bmfhash %s: %08x\n", names[ti], (unsigned) fold);
+		printf("mvpath %s: %08x (the mover's origin each tick)\n", names[ti], (unsigned) path_fold);
 	}
 	game_active = 0;
 }
@@ -2198,16 +2132,17 @@ static void bench_tick_cost(void)
 	game_active = 0;
 }
 
-/* The tick rates (settings.tick) through the game's own scheduler
+/* The world's rates (settings.tick) through the game's own scheduler
    (player_update) on the same polls: a second standing, two walking
-   forward, a jump held 0.2 s, a second falling back. The distance walked, the jump's
-   apex, the ticks run and the simulation's cycles (PROF_SIM) by rate. */
+   forward, a jump held 0.2 s, a second falling back. The distance walked,
+   the jump's apex, the ticks run (the player's: the same at every rate)
+   and the simulation's cycles (PROF_SIM) by rate. */
 static void bench_tick_rates(void)
 {
 	for (int r = num_tick_rates - 1; r >= 0; r--) {
 		game_spawn();
 		game_active = 1;
-		game_tick_hz = tick_rates[r];
+		game_world_hz = tick_rates[r];
 		int t0 = game_tick_count, ticks = 0, last_count = game_tick_count;
 		int32_t start[3], apex = -0x7fffffff;
 		uint32_t cyc = 0;
@@ -2249,22 +2184,22 @@ static void bench_tick_rates(void)
 		snprintf(rname[r], sizeof rname[r], "rate%d", tick_rates[r]);
 		prof_sample_print(rname[r]);
 	}
-	game_tick_hz = 60;
+	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
 	game_active = 0;
 }
 
 /* Frames in motion: the player walks forward through start's hall,
    turning left then right, each frame rendered after its vblanks' polls
-   (the last frame's vblanks: as the game loop takes them), at 60 and at
-   32 ticks a second. The leaf changes (mark_pvs), the ticks, the camera
-   between ticks: frames as in play. */
+   (the last frame's vblanks: as the game loop takes them), the world at
+   60 and at 30 ticks a second. The leaf changes (mark_pvs), the ticks:
+   frames as in play. */
 static void bench_walk(void)
 {
-	static const uint8_t rates[2] = { 60, 32 };
+	static const uint8_t rates[2] = { 60, 30 };
 	for (int r = 0; r < 2; r++) {
 		game_spawn();
 		game_active = 1;
-		game_tick_hz = rates[r];
+		game_world_hz = rates[r];
 		static char name[2][12];
 		snprintf(name[r], sizeof name[r], "walk%d", rates[r]);
 		bench_acc_t acc;
@@ -2303,7 +2238,7 @@ static void bench_walk(void)
 		       (unsigned) (sim / 300), (unsigned) vbls[1], (unsigned) vbls[2], (unsigned) vbls[3]);
 		prof_sample_print(name[r]);
 	}
-	game_tick_hz = 60;
+	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
 	game_active = 0;
 }
 
