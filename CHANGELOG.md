@@ -1825,3 +1825,13 @@ followed by R0-R4.
     two 60ths, and a falling or thrown one drawn a 60th on between its
     moves. At 60 every bench is the previous commit's; at 30 the movers'
     ways the same, the crowd -6 % a tick and its worst tick -45 %.
+- **Two crashes found by long runs** (2026-10-23, `docs/porting-notes.md`
+  §73):
+  - the §72 asm kept registers in the o32 argument area a callee may
+    write; a think run on the tick loop's frame by a tail call did, and
+    the demo build crashed at E1M1's intermission. The 16 bytes are now
+    kept free;
+  - the frame count's wrap cleared the faces' stamps but not the nodes'
+    light stamps, so 18 minutes into a map a node lit 65534 frames
+    earlier ran the light test on no light. A loop then zeroed RAM. The
+    wrap now clears those stamps too.

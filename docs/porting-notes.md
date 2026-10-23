@@ -9305,3 +9305,63 @@ with the same zone tables):
   `ents_tick` (4.6 KB): the release's room +720 B (57144 B). Every bench
   identical (`WORLD_HZ=60`); at 30 the asm's runs are the C engine's
   (`MONSTERS=1`, `MOVERS=1`, the crowd); the crowd's tick -0.9 %.
+
+## §73 — Two crashes a bot's long runs found (2026-10-23)
+
+A local build with a bot at the pad (a demo video's, not committed) played
+START to E1M3 for long stretches on PCSX-Redux and DuckStation. Two crashes
+came out of it, neither of which a bench reaches.
+
+### 73.1 The o32 argument area in §72's asm frames
+
+`ents_tick_loop` (`engine/e_tick.s`) kept `ra` and `s0`-`s2` at 0-12 of its
+frame, and `ents_seen_*` (`engine/e_seen.s`) the same. Those 16 bytes are
+the o32 ABI's argument area: a callee may write its `a0`-`a3` there.
+`ents_run_think` jumps to the think as a tail call (`jr t9`, no frame of
+its own), so a think runs on the tick loop's frame. The bot's build keeps
+its `printf`s, and `execute_changelevel` ends in one: its varargs prologue
+wrote `a1`-`a3` (0 secrets, 6, 56 s) over the kept `s0`-`s2`. `s0` came
+back 0, and `ents_tick`'s `game_dt` store after the call (`sw -6984(s0)`)
+went to 0xffffe4b8 (PCSX-Redux's "write to unknown address" at E1M1's
+intermission). DuckStation ran the rodata at a later return. In the
+release, a think whose tail call ends in one of the eleven functions that
+write their caller's argument area could do the same (`demon_check_attack`
+and `vram_upload` write at 0, where `ra` was).
+
+Both frames now keep the 16 bytes free, as `r_world.s` and `zone.s` do:
+`ra` and the `s` registers above them, 16 bytes more of stack. The frames
+are otherwise the same (`MONSTERS=3 MAP=E1M3`: every line identical,
+`seendiff` 0 mismatches).
+
+An audit of the release's code checked every function's writes above
+its frame, through its tail calls, and every function that keeps
+registers in its own lowest 16 bytes while it calls:
+- `pmove_step` and its helpers (`engine/pmove.s`) and `r_render` keep
+  registers there;
+- none of their callees writes there today.
+
+### 73.2 The lights' node stamps at the frame count's wrap
+
+The walk's lit-block gate compares a node's `dlstamp` with the frame
+count, both 16 bits.
+- `r_frame` restarts the count at 1 past 65534 and clears the faces'
+  stamps, but it left the nodes' stamps.
+- So a node a light reached 65534 frames earlier passed the gate again,
+  18 minutes into a map (or less at 30 fps), with no light that frame.
+- `dr_light_rec`'s test runs at least once: it took the table's stale
+  first light.
+- When that sphere reached the record, `dl_light_record_asm` cleared the
+  block cache's entries from the table's start to its end in steps of 32
+  until the two met. With an empty table they never meet, and the loop
+  zeroed every 48th word of RAM, its own code included.
+
+The bot met it when it stood still and fired in one place (its muzzle
+flashes stamped the same nodes):
+- E1M2 crashed after 1120 s in the map (67200 frames);
+- E1M3 crashed after about 1216 s over its lives.
+
+The wrap now clears the nodes' stamps too: `world.nodes` holds them all,
+the zones patching only the nodes' face pointers. The cost is a loop over
+the nodes once every 65534 frames.
+- The bot then stood 10102 s in E1M2 (nine wraps) with no crash.
+- START's views are identical (`HASHONLY=1 scripts/dlcheck.sh`).

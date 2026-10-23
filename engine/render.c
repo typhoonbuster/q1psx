@@ -400,6 +400,11 @@ void r_frame(void)
 
 	if (++r_state.framecount >= 0xffff) {          /* u16 stamps wrap */
 		memset(world.face_visframe, 0, world.num_faces * 2);
+		for (uint32_t i = 0; i < world.num_nodes; i++)   /* (the lights' stamps too: a node
+		                                                    a light reached 65534 frames ago
+		                                                    passed the walk's gate again, its
+		                                                    test ran on no light) */
+			world.nodes[i].dlstamp = 0;
 		r_state.framecount = 1;
 	}
 	if (r_state.visframe >= 0xfff0) {
