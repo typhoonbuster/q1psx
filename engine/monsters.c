@@ -248,6 +248,12 @@ Q_COLD static void flymonster_start_go(edict_t *self)
 static void monster_start(edict_t *self)
 {
 	self->nextthink += (int32_t) (frand() * TICKS(50) >> 16);
+	if (self->nextthink <= 0)                /* (Quake's random () x 0.5 seconds is
+	                                            never 0, its share of our ticks is, one
+	                                            time in 30: a think at 0 never runs, the
+	                                            monster stood there for good, solid, not
+	                                            hurt; the first tick) */
+		self->nextthink = 1;
 	self->think = self->mdef->fly ? flymonster_start_go : walkmonster_start_go;
 	ent_wake(self);
 	ent_total_monsters++;

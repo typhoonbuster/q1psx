@@ -1835,3 +1835,6 @@ followed by R0-R4.
     light stamps, so 18 minutes into a map a node lit 65534 frames
     earlier ran the light test on no light. A loop then zeroed RAM. The
     wrap now clears those stamps too.
+  - one monster in 30 never started: Quake's spawn delay, random () x 0.5
+    s, came out as 0 ticks, and a think at 0 never runs. The monster
+    stood frozen, solid and unhurt. A 0 is now the first tick.

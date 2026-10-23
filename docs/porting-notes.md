@@ -9365,3 +9365,19 @@ the zones patching only the nodes' face pointers. The cost is a loop over
 the nodes once every 65534 frames.
 - The bot then stood 10102 s in E1M2 (nine wraps) with no crash.
 - START's views are identical (`HASHONLY=1 scripts/dlcheck.sh`).
+
+### 73.3 A monster that never started
+
+`walkmonster_start` (`engine/monsters.c` `monster_start`) adds `random ()
+x 0.5` to the fresh edict's `nextthink`, 0. Quake's float is never 0
+there (and its `time` is 1.0 at the spawn). Here the share of
+`TICKS(50)` is 0 one time in 30 (`frand () x 30 >> 16`), and a think at 0
+never runs (`SV_RunThink`'s `thinktime <= 0`). So
+`walkmonster_start_go` never ran: the monster stood at its spawn, solid,
+`takedamage` 0, frozen for good. The bot met E1M2's first ogre like that
+in the corridor after a death's restart.
+
+The fix: a 0 is the first tick (1); 1..29 are unchanged (all due at once,
+as Quake's are). `MONSTERS=1` changes from its first line, the 60 ticks
+before the scenarios: a monster of E1M1's that the bench had frozen now
+starts, and the scenarios' random draws follow another course.
