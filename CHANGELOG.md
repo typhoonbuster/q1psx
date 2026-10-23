@@ -1926,3 +1926,7 @@ followed by R0-R4.
   128 frames and more; START's heavy view T 32 → 4 at the same 30 fps, the
   128 views line for line; bench: `WARPDYN=1` (the game's control, each
   view's T printed).
+- **The cook's polygons and records, measured** (2026-10-24,
+  `docs/porting-notes.md` §79.3): merging a node's coplanar faces would
+  save 2.5-5.7 % of the polygons (a coarser light), bigger records cost
+  more than they save (+0.6 to +2.7 % on the 128 views): neither built.

@@ -9992,3 +9992,34 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
   to a vblank by itself. A higher floor would add warp everywhere, and
   frames only where T is still climbing. The views it cannot fit need
   fewer cycles at any T: §79.3.
+
+### 79.3 The cook: fewer polygons, bigger records (measured, not built)
+
+- **The record stage's costs** (the 128 views' counters, a least-squares
+  fit): about 585 cycles a record and 184 a polygon. Records weigh 42 % of
+  the stage at START's grouping (§14.6: connected faces of a node's side
+  with one texture and the same marking leaves, at most 160 units). The fit
+  is not causal: see the regrouping below.
+- **The polygons that pay for nothing** (START's heaviest view, pktview
+  `PKTVIEW_OCCL=1`): 2047 processed, 1166 emitted (the backfacing models'
+  halves, the off-screen ones), 299 of those wholly painted over (29 %).
+- **Coplanar faces merged** (a scratch analysis in the cook: a node's
+  faces with one texture, side and texture cell, merged while their union
+  is convex): −3.6 % polygons on start, −4.4 % e1m1, −5.7 % e1m3, −3.6 %
+  e2m1, −2.5 % e3m4. That is about 1.5 % of a heavy frame. The cost is a
+  coarser light: the merged pieces lose the vertices on their inner edges,
+  where the light was sampled. Not built.
+- **Bigger records**, the 32 maps cooked again each time, the 128 views'
+  totals against the kept grouping (45.43 M cycles, 9674 records, 40230
+  polygons):
+
+  | grouping | records | polygons | frames |
+  |---|---|---|---|
+  | radius 240 units | −4.1 % | +2.1 % | +0.6 % |
+  | radius 320 units | −5.4 % | +2.7 % | +0.8 % |
+  | marks not checked, 160 | −13.5 % | +4.2 % | +0.7 % |
+  | marks not checked, 240 | −24.0 % | +10.7 % | +2.7 % |
+
+  Every variant draws the faces its records add in more views (the slow
+  path's share rises with them) and loses more than the records save. The
+  §14.6 grouping stays.
