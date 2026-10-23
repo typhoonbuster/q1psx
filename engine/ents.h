@@ -155,6 +155,12 @@ _Static_assert(__builtin_offsetof(edict_t, absmin) == 112 && __builtin_offsetof(
                __builtin_offsetof(edict_t, inuse) == 0 && __builtin_offsetof(edict_t, leaves) == 28 &&
                __builtin_offsetof(edict_t, masset) == 370 && __builtin_offsetof(edict_t, item_model) == 388 &&
                sizeof(edict_t) == 392, "engine/p_defs.inc E_*, engine/e_seen.s (x 392)");
+_Static_assert(__builtin_offsetof(edict_t, movetype) == 3 && __builtin_offsetof(edict_t, origin) == 64 &&
+               __builtin_offsetof(edict_t, mdef) == 160 && __builtin_offsetof(edict_t, pain_finished) == 188 &&
+               __builtin_offsetof(edict_t, watertype) == 216 && __builtin_offsetof(edict_t, water_at) == 228 &&
+               __builtin_offsetof(edict_t, move_ticks) == 252 && __builtin_offsetof(edict_t, nextthink) == 256 &&
+               __builtin_offsetof(edict_t, health) == 324 && __builtin_offsetof(edict_t, flags) == 376,
+               "engine/p_defs.inc E_* (engine/e_tick.s)");
 _Static_assert(__builtin_offsetof(edict_t, maxs) == __builtin_offsetof(edict_t, mins) + 12,
                "the box's 6 words (rlist.h rl_add_model)");
 

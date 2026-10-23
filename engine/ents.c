@@ -967,7 +967,9 @@ static void push_move(edict_t *pusher, int movetime)
 
 /* SV_Physics_Pusher, in 60ths: the tick's move (game_dt, host_frametime)
    up to the think's time, the think */
-static void physics_pusher(edict_t *e)
+void ents_physics_pusher(edict_t *e);   /* (e_tick.s calls them) */
+void ents_run_think(edict_t *e);
+void ents_physics_pusher(edict_t *e)
 {
 	int32_t oldltime  = e->ltime;
 	int32_t thinktime = e->nextthink;
@@ -990,7 +992,7 @@ static void physics_pusher(edict_t *e)
 }
 
 /* SV_RunThink */
-static void run_think(edict_t *e)
+void ents_run_think(edict_t *e)
 {
 	if (e->nextthink <= 0 || e->nextthink > ent_time)
 		return;
@@ -1321,35 +1323,21 @@ static void touch_player(void)
 
 /* the lowest set bit's index by a de Bruijn sequence (the edicts' active
    words): __builtin_ctz is libgcc's __ctzsi2 and its 256-byte table here */
-static const uint8_t ctz_tab[32] = {
+const uint8_t ents_ctz_tab[32] = {
 	0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
 	31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
 };
 
-/* SV_Physics, a tick: the player's touches, then the edicts in their order.
-   The world's rate (game_world_hz): at 60, every edict each tick; at 30,
-   the movers each tick (they carry the player: game_dt 1), the others in
-   two halves by their index's parity, a half each tick, over 2 60ths
-   (game_dt 2): a 60 Hz world's load spread over both ticks, each edict's
-   thinks on its half's ticks */
-void ents_tick(void)
+/* ents_tick's walk (engine/e_tick.s is the base; this C follows it: the C
+   engine's): the edicts of the active bitmap this tick runs, each one's
+   physics by its kind; asleep, its bit cleared */
+#if Q1PSX_ENGINE_C
+void ents_tick_loop(uint32_t *act, const uint32_t *push, uint32_t half, int wdt)
 {
-	if (!edicts)
-		return;
-	ent_time = game_tick_count;
-	if (lists_dirty)
-		rebuild_lists();
-	sync_player();
-	touch_player();
-	int      wdt  = game_world_hz >= 60 ? 1 : 2;
-	uint32_t half = wdt == 1 ? 0xffffffffu : (ent_time & 1) ? 0xaaaaaaaau : 0x55555555u;
-	if (ent_force_retouch > 0 && (wdt == 1 || !(ent_time & 1)))
-		ent_force_retouch--;                  /* (at 30: a count of both halves' ticks) */
-	game_dt = wdt;
 	for (int w = 0; w < ENT_WORDS; w++) {
-		uint32_t bits = active[w] & (half | pushers[w]);
+		uint32_t bits = act[w] & (half | push[w]);
 		while (bits) {
-			int b = ctz_tab[((bits & -bits) * 0x077cb531u) >> 27];   /* (not libgcc's __ctzsi2) */
+			int b = ents_ctz_tab[((bits & -bits) * 0x077cb531u) >> 27];   /* (not libgcc's __ctzsi2) */
 			bits &= bits - 1;
 			edict_t *e = &edicts[w * 32 + b];
 			if (e->inuse && ent_force_retouch && e->movetype != MOVETYPE_PUSH)
@@ -1357,7 +1345,7 @@ void ents_tick(void)
 			if (e->inuse) {
 				if (e->movetype == MOVETYPE_PUSH) {
 					game_dt = 1;
-					physics_pusher(e);
+					ents_physics_pusher(e);
 					game_dt = wdt;
 				} else if (e->mdef || e->masset >= 0) {   /* a monster, what it throws */
 					if (e->mdef && e->health <= 0 && ent_time - e->pain_finished >= 0)
@@ -1380,9 +1368,9 @@ void ents_tick(void)
 					         e->movetype != MOVETYPE_NOCLIP)
 						ai_physics_toss(e);
 					else
-						run_think(e);
+						ents_run_think(e);
 				} else {
-					run_think(e);                 /* SV_Physics_Toss: the think, then the move */
+					ents_run_think(e);                 /* SV_Physics_Toss: the think, then the move */
 					if (e->inuse && e->movetype == MOVETYPE_TOSS)
 						items_physics(e);
 				}
@@ -1393,9 +1381,35 @@ void ents_tick(void)
 			                  !((e->mdef || e->masset >= 0) && e->movetype >= MOVETYPE_STEP &&
 			                    e->movetype != MOVETYPE_PUSH && !(e->flags & FL_ONGROUND)) &&
 			                  !(e->mdef && e->health <= 0)))   /* (a body: till its end) */
-				active[w] &= ~(1u << b);
+				act[w] &= ~(1u << b);
 		}
 	}
+}
+#else
+void ents_tick_loop(uint32_t *act, const uint32_t *push, uint32_t half, int wdt);   /* e_tick.s */
+#endif
+
+/* SV_Physics, a tick: the player's touches, then the edicts in their order.
+   The world's rate (game_world_hz): at 60, every edict each tick; at 30,
+   the movers each tick (they carry the player: game_dt 1), the others in
+   two halves by their index's parity, a half each tick, over 2 60ths
+   (game_dt 2): a 60 Hz world's load spread over both ticks, each edict's
+   thinks on its half's ticks */
+void ents_tick(void)
+{
+	if (!edicts)
+		return;
+	ent_time = game_tick_count;
+	if (lists_dirty)
+		rebuild_lists();
+	sync_player();
+	touch_player();
+	int      wdt  = game_world_hz >= 60 ? 1 : 2;
+	uint32_t half = wdt == 1 ? 0xffffffffu : (ent_time & 1) ? 0xaaaaaaaau : 0x55555555u;
+	if (ent_force_retouch > 0 && (wdt == 1 || !(ent_time & 1)))
+		ent_force_retouch--;                  /* (at 30: a count of both halves' ticks) */
+	game_dt = wdt;
+	ents_tick_loop(active, pushers, half, wdt);
 	game_dt = 1;
 	sync_player();
 }
@@ -1821,7 +1835,7 @@ void ents_stream_wants(void)
 	   item's), by their box centre's distance (Chebyshev, world units) */
 	for (int w = 0; w < ENT_WORDS; w++) {
 		for (uint32_t bits = noisy[w]; bits; bits &= bits - 1) {
-			const edict_t *e = &edicts[w * 32 + ctz_tab[((bits & -bits) * 0x077cb531u) >> 27]];
+			const edict_t *e = &edicts[w * 32 + ents_ctz_tab[((bits & -bits) * 0x077cb531u) >> 27]];
 			if (!e->inuse)
 				continue;
 			int32_t c[3];

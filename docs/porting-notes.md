@@ -9290,3 +9290,18 @@ with the same zone tables):
   follows it (the C engine's); the fight compares both lists each frame
   (`seendiff`, untimed): 36867 walks, 0 mismatches. The cull ~0.55 % of
   the fight's busy samples where the C's loops took 0.9 %.
+- **(3d) The edicts' tick walk in asm** (`engine/e_tick.s`,
+  `ents_tick_loop`): `ents_tick`'s loop over the active bitmap, its
+  dispatch by kind and its asleep test; the C keeps the tick's frame
+  (the player's touches, the half's mask, `force_retouch`, `game_dt`)
+  and calls it. Ten saved registers once a tick, the de Bruijn product's
+  latency spent clearing the bit and finding the table, the edict's
+  address by shifts, each field read again after any call (a call can
+  remove it, change its kind, move it), the bit cleared in memory (the
+  calls wake edicts), the word's bits the snapshot taken when it is
+  reached, as the C's. `ents_physics_pusher` and `ents_run_think` are
+  global for it, `ents_ctz_tab` too. The C loop is the C engine's
+  (`ents_tick_loop` there); GCC had inlined the physics' helpers into
+  `ents_tick` (4.6 KB): the release's room +720 B (57144 B). Every bench
+  identical (`WORLD_HZ=60`); at 30 the asm's runs are the C engine's
+  (`MONSTERS=1`, `MOVERS=1`, the crowd); the crowd's tick -0.9 %.
