@@ -92,7 +92,11 @@ typedef struct {
 	int      muzzleflash;      /* EF_MUZZLEFLASH set this tick (a dlight)    */
 	int      dead, death_tick;
 	int      viewheight;       /* 1/R_POS_SUB units above the box origin     */
+	int32_t  step_oldz;        /* V_CalcRefdef's oldz: the view's z rising up a
+	                              step, 1/R_POS_SUB units                    */
+	int      dead_bounce;      /* dead: MOVETYPE_BOUNCE (a gib's head), else TOSS */
 	int      fire, fire_was;   /* the fire button now / last tick            */
+	int      jump_held;        /* the jump button last tick (a respawn's press) */
 	int      weapon_switch_tick;   /* when the weapon last changed (the HUD) */
 	int      teleport_time;    /* tick: a teleport's 0.7 s without backing up */
 	int      fly_sound;        /* tick: the next trigger_push wind sound      */
@@ -110,7 +114,7 @@ typedef struct {
 
 typedef struct {
 	int fwd, side;             /* -PM_AXIS .. PM_AXIS                        */
-	int jump;                  /* edge                                        */
+	int jump;                  /* held                                        */
 	int walk;                  /* held                                        */
 	int fire;                  /* held                                        */
 	int weapon_next, weapon_prev;   /* edges: cycle                           */
@@ -165,6 +169,7 @@ void game_bonus_flash(void);                       /* stuffcmd "bf" */
 void game_give_weapon(int w);                      /* a weapon picked up: to it */
 int  game_best_weapon(void);
 void game_select_best(void);
+void game_set_current_ammo(void);                  /* W_SetCurrentAmmo: out of a firing state */
 void game_powerup(uint32_t item);                  /* its 30 s */
 void game_radius_damage_player(const int32_t org[3], int damage);
 void game_explosion(const int32_t org[3]);         /* BecomeExplosion's */

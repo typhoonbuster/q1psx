@@ -583,8 +583,13 @@ ps_walk:
 	VCOPY   PS_AFTER, PM_POS
 	VCOPY   PS_FOUTVEL, PM_VEL
 
-	# step-up: a wall stopped us on the ground (or in the water, never while
-	# jumping out of it: SV_WalkMove) -> retry over an 18-unit lip
+	# SV_WalkMove: a wall stopped the move on the ground (or in the water,
+	# never while jumping out of it): the move again from 18 units up, level
+	# (velocity_z 0, the move's z 0), slowed by a wall it meets
+	# (SV_WallFriction), then down 18 units less the move's z (2 more: the
+	# ground is met without Quake's gravity on it). Kept when that lands on a
+	# floor (its velocity too), else the plain slide's. (Quake's
+	# SV_TryUnstick, a float's remedy, is left out.)
 	andi    $t0, $v1, 2
 	beqz    $t0, ps_cat
 	nop
@@ -597,7 +602,6 @@ ps_walk:
 	bnez    $t3, ps_cat
 	nop
 	VCOPY   PM_POS, PS_FLATPOS
-	VCOPY   PM_VEL, PS_FLATVEL
 	lw      $t2, PM_POS+8($s7)           # up
 	lw      $t0, PM_POS+0($s7)
 	lw      $t1, PM_POS+4($s7)
@@ -611,12 +615,26 @@ ps_walk:
 	jal     clip_trace
 	addiu   $a3, $s7, PS_TRB
 	VCOPY   PM_POS, PS_TRB+TR_ENDPOS
+	lw      $t0, PS_FLATVEL+0($s7)       # level
+	lw      $t1, PS_FLATVEL+4($s7)
+	lw      $t2, PS_MOVE+8($s7)
+	sw      $t0, PM_VEL+0($s7)
+	sw      $t1, PM_VEL+4($s7)
+	sw      $zero, PM_VEL+8($s7)
+	sw      $t2, PS_FSPEED($s7)          # (the move's z, for the way down)
 	jal     slide_move                   # across
+	sw      $zero, PS_MOVE+8($s7)
+	andi    $t0, $v0, 2
+	beqz    $t0, 1f
 	nop
-	lw      $t2, PM_POS+8($s7)           # down
+	jal     wall_friction
+	nop
+1:	lw      $t2, PM_POS+8($s7)           # down: 20 units less the move's z
+	lw      $t3, PS_FSPEED($s7)
 	lw      $t0, PM_POS+0($s7)
 	lw      $t1, PM_POS+4($s7)
 	addiu   $t2, $t2, -(PM_STEPSIZE + 2) * CLIP_SUB
+	addu    $t2, $t2, $t3
 	sw      $t0, PS_TO+0($s7)
 	sw      $t1, PS_TO+4($s7)
 	sw      $t2, PS_TO+8($s7)
@@ -625,47 +643,17 @@ ps_walk:
 	addiu   $a2, $s7, PS_TO
 	jal     clip_trace
 	addiu   $a3, $s7, PS_TRB
-	lw      $t0, PS_TRB+TR_FRACTION($s7) # stepped_ok: landed on a floor
+	lw      $t0, PS_TRB+TR_FRACTION($s7) # landed on a floor: the step kept
 	lh      $t1, PS_TRB+TR_PLANE_N+4($s7)
 	slti    $t0, $t0, Q_FIX_ONE
+	beqz    $t0, 12f
 	slti    $t1, $t1, FLOOR_NZ + 1
-	xori    $t1, $t1, 1
-	and     $s5, $t0, $t1
-	beqz    $s5, 12f
+	bnez    $t1, 12f
 	nop
 	VCOPY   PM_POS, PS_TRB+TR_ENDPOS
-	# keep the step only if it went further than the flat slide
-	lw      $t0, PM_POS+0($s7)
-	lw      $t1, PS_FLATPOS+0($s7)
-	lw      $t2, PM_POS+4($s7)
-	lw      $t3, PS_FLATPOS+4($s7)
-	subu    $t0, $t0, $t1
-	subu    $t2, $t2, $t3
-	mult    $t0, $t0
-	mflo    $t4
+	b       ps_cat
 	nop
-	nop
-	mult    $t2, $t2
-	mflo    $t5
-	addu    $t4, $t4, $t5                # stepped distance^2
-	lw      $t0, PS_AFTER+0($s7)
-	lw      $t2, PS_AFTER+4($s7)
-	subu    $t0, $t0, $t1
-	mult    $t0, $t0
-	subu    $t2, $t2, $t3
-	mflo    $t6
-	nop
-	nop
-	mult    $t2, $t2
-	mflo    $t5
-	addu    $t6, $t6, $t5                # flat distance^2
-	slt     $t7, $t6, $t4
-	beqz    $t7, 12f
-	nop
-	lw      $t0, PS_FOUTVEL+8($s7)       # stepped: vertical speed of the
-	b       ps_cat                       # flat attempt
-	sw      $t0, PM_VEL+8($s7)
-12:	VCOPY   PM_POS, PS_AFTER             # the step did not help
+12:	VCOPY   PM_POS, PS_AFTER             # else the plain slide's
 	VCOPY   PM_VEL, PS_FOUTVEL
 
 ps_cat:
@@ -987,24 +975,78 @@ categorize:
 	addiu   $sp, $sp, 8
 
 # =============================================================================
-# friction: ground friction, speed -= max(speed, stopspeed) * 4 dt / 60,
-# applied as one 0.16 scale factor.
+# friction: SV_UserFriction. The speed in the plane (z left out), speed -=
+# max(speed, stopspeed) x friction x dt / 60, applied as one 0.16 scale
+# factor. The friction 4, doubled (sv_edgefriction 2) when the leading edge
+# is over a dropoff: 16 units ahead along the velocity at the feet, nothing
+# within 34 units down (clip_trace_ent: a point, nomonsters, a line of
+# sight's question: its fraction 1 or not; a start in solid is 1 too).
 friction:
 	addiu   $sp, $sp, -8
 	sw      $ra, 0($sp)
-	addiu   $t9, $s7, PM_VEL
-	DOT_II  $a0, $t9, $t9
-	jal     isqrt32
+	lw      $t0, PM_VEL+0($s7)
+	lw      $t1, PM_VEL+4($s7)
+	mult    $t0, $t0
+	mflo    $a0
 	nop
+	nop
+	mult    $t1, $t1
+	mflo    $t2
+	jal     isqrt32
+	addu    $a0, $a0, $t2                # vx^2 + vy^2
 	blez    $v0, 9f                      # speed < 1
-	slti    $t0, $v0, PM_STOPSPEED
+	sw      $v0, PS_FSPEED($s7)
+	lw      $t0, PM_VEL+0($s7)           # the leading edge: pos + vel x 16
+	lw      $t1, PM_VEL+4($s7)           # units / speed (truncating, as the
+	sll     $t0, $t0, 7                  # C's /), the feet's height
+	div     $zero, $t0, $v0
+	lw      $t2, PM_POS+0($s7)
+	lw      $t3, PM_POS+4($s7)
+	sll     $t1, $t1, 7
+	lw      $t4, PM_POS+8($s7)
+	lui     $t5, %hi(clip_mover)         # (a point, the player's entry
+	addiu   $t5, $t5, %lo(clip_mover)    # passed, nomonsters, a sight)
+	li      $t6, 1
+	sw      $zero, MV_BOX+0($t5)
+	sw      $zero, MV_BOX+4($t5)
+	sw      $zero, MV_BOX+8($t5)
+	sw      $zero, MV_BOX+12($t5)
+	sw      $zero, MV_BOX+16($t5)
+	sw      $zero, MV_BOX+20($t5)
+	sw      $t6, MV_PASS($t5)
+	sw      $t6, MV_NOMON($t5)
+	sw      $zero, MV_MISSILE($t5)
+	sw      $zero, MV_ROOT0($t5)
+	sw      $t6, MV_SIGHT($t5)
+	mflo    $t0
+	addu    $t0, $t2, $t0
+	sw      $t0, PS_PT+0($s7)            # start (check_water's point: free here)
+	div     $zero, $t1, $v0              # (two apart from the mflo: HI/LO)
+	sw      $t0, PS_TO+0($s7)            # stop
+	addiu   $t4, $t4, PM_MINS_Z * CLIP_SUB
+	sw      $t4, PS_PT+8($s7)
+	addiu   $t4, $t4, -34 * CLIP_SUB
+	sw      $t4, PS_TO+8($s7)
+	move    $a0, $zero
+	addiu   $a1, $s7, PS_PT
+	addiu   $a2, $s7, PS_TO
+	mflo    $t1
+	addu    $t1, $t3, $t1
+	sw      $t1, PS_PT+4($s7)
+	sw      $t1, PS_TO+4($s7)
+	jal     clip_trace_ent
+	addiu   $a3, $s7, PS_TRB
+	slti    $t0, $v0, Q_FIX_ONE          # something within 34 units down
+	lw      $t2, PS_DT4($s7)             # PM_FRICTION x dt
+	lw      $v0, PS_FSPEED($s7)          # the speed
+	bnez    $t0, 1f
 	move    $t1, $v0                     # control = max(speed, stopspeed)
-	beqz    $t0, 1f
+	sll     $t2, $t2, 1                  # over a dropoff: sv_edgefriction 2
+1:	slti    $t0, $v0, PM_STOPSPEED
+	beqz    $t0, 2f
 	nop
 	li      $t1, PM_STOPSPEED
-1:	lw      $t2, PS_DT4($s7)             # PM_FRICTION x dt
-	nop
-	mult    $t1, $t2
+2:	mult    $t1, $t2
 	li      $t2, PM_HZ
 	mflo    $t1
 	nop
@@ -1012,10 +1054,10 @@ friction:
 	div     $zero, $t1, $t2
 	mflo    $t1                          # drop
 	subu    $t1, $v0, $t1                # newspeed
-	bgez    $t1, 2f
+	bgez    $t1, 3f
 	nop
 	move    $t1, $zero
-2:	sll     $t1, $t1, 16
+3:	sll     $t1, $t1, 16
 	divu    $zero, $t1, $v0
 	li      $t5, 0x8000
 	mflo    $t1                          # scale = newspeed / speed, 0.16
@@ -1041,6 +1083,74 @@ friction:
 	nop
 	jr      $ra
 	addiu   $sp, $sp, 8
+
+# =============================================================================
+# wall_friction: SV_WallFriction. The step's move was stopped by the wall
+# PS_STEPN (vertical: n z 0). Faced within 60 degrees of head-on by the
+# view's forward (its yaw and pitch: d = n . forward + 0.5 < 0), the speed
+# along it is cut: PM_VEL x, y = (vel - n (n . vel)) x (1 + d). x4096,
+# floored (sra) as the C's >> 12.
+wall_friction:
+	addiu   $sp, $sp, -24                # (the argument area kept free: r_cos is C)
+	sw      $ra, 16($sp)
+	lw      $a0, PM_PITCH($s7)
+	jal     r_cos
+	nop
+	sll     $v0, $v0, 16
+	sra     $v0, $v0, 16                 # cp
+	lw      $t0, PS_CY($s7)
+	lw      $t1, PS_SY($s7)
+	mult    $v0, $t0
+	lh      $t2, PS_STEPN+0($s7)         # n x
+	lh      $t3, PS_STEPN+2($s7)         # n y
+	mflo    $t0
+	sra     $t0, $t0, 12                 # forward x = cp cy >> 12
+	nop
+	mult    $v0, $t1
+	mflo    $t1
+	sra     $t1, $t1, 12                 # forward y
+	nop
+	mult    $t2, $t0
+	mflo    $t4
+	nop
+	nop
+	mult    $t3, $t1
+	mflo    $t5
+	addu    $t4, $t4, $t5
+	sra     $t4, $t4, 12
+	addiu   $t4, $t4, Q_FIX_ONE / 2      # d
+	bgez    $t4, 9f                      # not facing it: nothing
+	lw      $t0, PM_VEL+0($s7)
+	lw      $t1, PM_VEL+4($s7)
+	mult    $t0, $t2
+	mflo    $t5
+	nop
+	nop
+	mult    $t1, $t3
+	mflo    $t6
+	addu    $t5, $t5, $t6
+	sra     $t5, $t5, 12                 # i = n . vel
+	mult    $t2, $t5
+	addiu   $t4, $t4, Q_FIX_ONE          # 1 + d
+	mflo    $t6
+	sra     $t6, $t6, 12
+	subu    $t0, $t0, $t6                # along the wall: x
+	mult    $t3, $t5
+	mflo    $t6
+	sra     $t6, $t6, 12
+	subu    $t1, $t1, $t6                # y
+	mult    $t0, $t4
+	mflo    $t0
+	sra     $t0, $t0, 12
+	sw      $t0, PM_VEL+0($s7)
+	mult    $t1, $t4
+	mflo    $t1
+	sra     $t1, $t1, 12
+	sw      $t1, PM_VEL+4($s7)
+9:	lw      $ra, 16($sp)
+	nop
+	jr      $ra
+	addiu   $sp, $sp, 24
 
 # =============================================================================
 # accelerate(a0 = cap, a1 = rate): speed along wishdir up to `cap`, gaining
@@ -1195,7 +1305,10 @@ sm_bump:
 	ori     $s4, $s4, 1                  # floor
 	b       7f
 	sw      $t1, PM_ONGROUND($s7)
-6:	ori     $s4, $s4, 2                  # wall
+6:	bnez    $t0, 7f                      # a wall: Quake's "step", a vertical
+	lw      $t1, PS_TRB+TR_PLANE_N+0($s7) # plane only; its normal kept (the
+	ori     $s4, $s4, 2                  # steptrace's: n x, n y)
+	sw      $t1, PS_STEPN($s7)
 7:	lw      $t0, PS_TRB+TR_FRACTION($s7)
 	nop
 	mult    $s5, $t0

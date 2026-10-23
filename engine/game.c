@@ -789,8 +789,61 @@ static void player_die(void)
 	pl.death_tick = game_tick_count;
 	pl.weaponframe = 0;
 	pl.anim       = 0;
-	pl.viewheight = -8 * SUB;                      /* the view drops to the floor */
-	pl.pm.vel[0] = pl.pm.vel[1] = pl.pm.vel[2] = 0;
+	/* MOVETYPE_TOSS off the ground, the velocity kept, a kick up when not
+	   rising (velocity_z < 10: + random () x 300); the view 8 units under
+	   the origin. Gibbed (GibPlayer): the view the head's (ThrowHead: its
+	   box from the feet, the eye 8 units over them, VelocityForDamage's
+	   flight, MOVETYPE_BOUNCE), the three gibs thrown */
+	pl.pm.onground = 0;
+	pl.pm.grav_acc = 0;
+	if (pl.pm.vel[2] < 10)
+		pl.pm.vel[2] += (int) ((q_rand() & 0x7fff) * 300 / 0x8000);
+	pl.viewheight  = -8 * SUB;
+	pl.dead_bounce = 0;
+	if (pl.health < -40) {
+		velocity_for_damage(pl.health, pl.pm.vel);
+		for (int g = 0; g < 3; g++)
+			throw_gib(ent_player, g, pl.health);
+		pl.viewheight  = (8 - 24) * SUB;
+		pl.dead_bounce = 1;
+	}
+}
+
+/* the dead player each tick: SV_Physics_Toss with the box it had (no
+   monsters met: SOLID_NOT), ClipVelocity's overbounce 1 (1.5 for the
+   head); on a floor (normal z > 0.7) it lies still, a bouncing head once
+   slower than 60 units/s up */
+static void dead_toss(void)
+{
+	if (pl.pm.onground)
+		return;
+	pl.pm.grav_acc += 800 * game_dt;                  /* SV_AddGravity, exactly */
+	pl.pm.vel[2] -= pl.pm.grav_acc / GAME_HZ;
+	pl.pm.grav_acc %= GAME_HZ;
+	int32_t end[3];
+	for (int k = 0; k < 3; k++) {
+		if (pl.pm.vel[k] > 2000)  pl.pm.vel[k] = 2000;   /* SV_CheckVelocity */
+		if (pl.pm.vel[k] < -2000) pl.pm.vel[k] = -2000;
+		end[k] = pl.pm.pos[k] + pl.pm.vel[k] * SUB * game_dt / GAME_HZ;
+	}
+	static const int32_t box[6] = { -16 * SUB, -16 * SUB, -24 * SUB, 16 * SUB, 16 * SUB, 32 * SUB };
+	memset(&clip_mover, 0, sizeof clip_mover);
+	__builtin_memcpy(clip_mover.box, box, sizeof box);
+	clip_mover.pass       = 1;                        /* the player's own entry */
+	clip_mover.nomonsters = 1;
+	trace_t tr;
+	clip_trace_ent(1, pl.pm.pos, end, &tr);
+	__builtin_memcpy(pl.pm.pos, tr.endpos, sizeof pl.pm.pos);
+	if (tr.fraction >= Q_FIX_ONE)
+		return;
+	int32_t dot = (pl.pm.vel[0] * tr.plane_n[0] + pl.pm.vel[1] * tr.plane_n[1] + pl.pm.vel[2] * tr.plane_n[2]) >> 12;
+	int32_t backoff = pl.dead_bounce ? dot * 3 / 2 : dot;
+	for (int k = 0; k < 3; k++)
+		pl.pm.vel[k] -= tr.plane_n[k] * backoff >> 12;
+	if (tr.plane_n[2] > 2867 && (pl.pm.vel[2] < 60 || !pl.dead_bounce)) {   /* 0.7 x 4096 */
+		pl.pm.onground = 1 + tr.ent;
+		pl.pm.vel[0] = pl.pm.vel[1] = pl.pm.vel[2] = 0;
+	}
 }
 
 /* T_Damage on the player: armor absorbs its share, the rest is health;
@@ -844,6 +897,8 @@ static void t_damage_x256(int damage, const int32_t inflictor[3])
 	   every half second */
 	if (pl.weaponframe)
 		return;
+	if (pl.invisible_finished > game_tick_count)
+		return;                                       /* eyes don't have pain frames */
 	if (pl.pm.watertype == QW_CONTENTS_WATER && pl.pm.waterlevel == 3) {
 		death_bubbles(1);
 		snd_start(ENT_PLAYER, CHAN_VOICE, (q_rand() & 0x7fff) > 0x4000 ? S_DROWN1 : S_DROWN2,
@@ -955,10 +1010,12 @@ static int has_ammo_for(int w)
 	return a < 0 || pl.ammo[a] >= weapon_needs[w];
 }
 
+/* W_BestWeapon: the lightning gun only with the waist out of the water
+   (under, it would discharge), then the order below; never a launcher */
 static int w_best_weapon(void)
 {
 	static const int order[] = { W_LIGHTNING, W_SNAILGUN, W_SSHOTGUN, W_NAILGUN, W_SHOTGUN };
-	for (int i = 0; i < 5; i++)
+	for (int i = pl.pm.waterlevel <= 1 ? 0 : 1; i < 5; i++)
 		if ((pl.items & weapon_item[order[i]]) && has_ammo_for(order[i]))
 			return order[i];
 	return W_AXE;
@@ -989,6 +1046,15 @@ static void w_fire_axe(void);
 static void w_fire_spikes(int ox);
 static void w_fire_lightning(void);
 
+/* SuperDamageSound: the quad's sound, once a second while firing */
+static void super_damage_sound(void)
+{
+	if (pl.super_damage_finished > game_tick_count && pl.super_sound < game_tick_count) {
+		pl.super_sound = game_tick_count + TICKS(100);
+		snd_start(ENT_PLAYER, CHAN_BODY, S_DAMAGE3, pl.pm.pos, 255, ATTN_NORM);
+	}
+}
+
 static void anim_start(int anim, int frame)
 {
 	pl.anim        = anim;
@@ -1008,17 +1074,18 @@ static void anim_tick(void)
 	case AN_ROCKET:                                /* player_rocket1..6 */
 		if (++pl.weaponframe > 6) { pl.anim = 0; pl.weaponframe = 0; }
 		break;
-	case AN_AXE_A:                                 /* 1 2 3(hit) 4 */
+	case AN_AXE_A:                                 /* 1 2 3(hit) 4, then player_run */
 	case AN_AXE_B:                                 /* 5 6 7(hit) 8 */
+		if (pl.weaponframe == 4 || pl.weaponframe == 8) { pl.anim = 0; pl.weaponframe = 0; break; }
 		pl.weaponframe++;
 		if (pl.weaponframe == 3 || pl.weaponframe == 7)
 			w_fire_axe();
-		if (pl.weaponframe == 4 || pl.weaponframe == 8) { pl.anim = 0; pl.weaponframe = 0; }
 		break;
 	case AN_NAIL:                                  /* player_nail1 / 2 while firing */
 		if (!pl.fire) { pl.anim = 0; pl.weaponframe = 0; break; }
 		pl.weaponframe = pl.weaponframe % 8 + 1;
 		pl.muzzleflash = 1;                            /* player_nail1 / 2 */
+		super_damage_sound();
 		w_fire_spikes((pl.weaponframe & 1) ? 4 : -4);
 		pl.attack_finished = game_tick_count + TICKS(20);
 		break;
@@ -1026,6 +1093,7 @@ static void anim_tick(void)
 		if (!pl.fire) { pl.anim = 0; pl.weaponframe = 0; break; }
 		pl.weaponframe = pl.weaponframe % 4 + 1;
 		pl.muzzleflash = 1;                            /* player_light1 / 2 */
+		super_damage_sound();
 		w_fire_lightning();
 		pl.attack_finished = game_tick_count + TICKS(20);
 		break;
@@ -1062,8 +1130,84 @@ static void w_fire_axe(void)
 	particle_effect(org, leaf_at(org), 0, 20);
 }
 
-/* FireBullets: `count` pellets from the eye, spread x4096 */
-static void fire_bullets(int count, int32_t spread_x, int32_t spread_y)
+/* traceline (start, end, FALSE, the player): the world, the brush models
+   and the boxes; the edict hit (0: the world or nothing), tr->fraction 1
+   when nothing. The line is cut to the asm traces' cube first when it
+   leaves it (a 2048-unit shot from near a map's edge: beyond, the void
+   holds nothing) */
+static int cut_to_world(int32_t a[3], int32_t b[3]);
+
+static edict_t *shot_trace(const int32_t start[3], const int32_t end[3], trace_t *tr)
+{
+	const int32_t lim = 4095 * SUB;
+	if (end[0] < -lim || end[0] > lim || end[1] < -lim || end[1] > lim || end[2] < -lim || end[2] > lim) {
+		int32_t a[3] = { start[0], start[1], start[2] }, b[3] = { end[0], end[1], end[2] };
+		if (!cut_to_world(a, b)) {
+			tr->fraction = Q_FIX_ONE;
+			return 0;
+		}
+		clip_trace(0, a, b, tr);
+	} else {
+		clip_trace(0, start, end, tr);
+	}
+	return tr->fraction < Q_FIX_ONE ? ent_from_trace(tr) : 0;
+}
+
+/* aim (PF_aim, sv_aim 0.93): a shot's direction, x4096, from the view's
+   forward f. f itself when the line 2048 units along it from 20 units over
+   the origin hits a target (DAMAGE_AIM: a monster, an explosive box). Else
+   the target whose centre is most ahead within the 0.93 cone (the dot of
+   the unit vectors, x4096: 3809), among those whose centre that point's
+   line reaches first: f's heading, raised or lowered to that target (its
+   origin's height over the player's, at the distance along f of its
+   origin). Else f. In whole units: 32 bits suffice. */
+static void w_aim(const int32_t f[3], int32_t out[3])
+{
+	int32_t start[3] = { pl.pm.pos[0], pl.pm.pos[1], pl.pm.pos[2] + 20 * SUB }, end[3];
+	for (int k = 0; k < 3; k++) {
+		end[k] = start[k] + f[k] * (2048 * SUB / 4096);
+		out[k] = f[k];
+	}
+	trace_t tr;
+	edict_t *hit = shot_trace(start, end, &tr);
+	if (hit && hit->takedamage == DAMAGE_AIM)
+		return;
+	edict_t *best = 0;
+	int32_t best_dist = 3809;
+	for (edict_t *e = &edicts[2]; e < &edicts[num_edicts]; e++) {
+		if (e->takedamage != DAMAGE_AIM || !e->inuse)
+			continue;
+		int32_t c[3], d[3];
+		for (int k = 0; k < 3; k++) {
+			c[k] = e->origin[k] + (e->mins[k] + e->maxs[k]) / 2;
+			d[k] = (c[k] - start[k]) / SUB;
+		}
+		int32_t dot = d[0] * f[0] + d[1] * f[1] + d[2] * f[2];
+		if (dot <= 0)
+			continue;                             /* behind: outside any cone */
+		int32_t len = (int32_t) q_isqrt32((uint32_t) (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+		if (!len || dot / len < best_dist)
+			continue;                             /* to far to turn */
+		if (shot_trace(start, c, &tr) == e) {     /* can shoot at this one */
+			best_dist = dot / len;
+			best      = e;
+		}
+	}
+	if (!best)
+		return;
+	int32_t dir[3], v[3];
+	for (int k = 0; k < 3; k++)
+		dir[k] = (best->origin[k] - pl.pm.pos[k]) / SUB;
+	int32_t along = (dir[0] * f[0] + dir[1] * f[1] + dir[2] * f[2]) >> 12;
+	v[0] = f[0] * along >> 12;
+	v[1] = f[1] * along >> 12;
+	v[2] = dir[2];
+	vnormalize(v, out);
+}
+
+/* FireBullets: `count` pellets from the eye along dir (aim's), spread
+   x4096 across the view's right and up */
+static void fire_bullets(int count, const int32_t dir0[3], int32_t spread_x, int32_t spread_y)
 {
 	int32_t f[3], r[3], u[3], src[3];
 	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
@@ -1076,17 +1220,16 @@ static void fire_bullets(int count, int32_t spread_x, int32_t spread_y)
 		int32_t dir[3], end[3];
 		int32_t cx = crandom(4096) * spread_x >> 12, cy = crandom(4096) * spread_y >> 12;
 		for (int k = 0; k < 3; k++) {
-			dir[k] = f[k] + (cx * r[k] >> 12) + (cy * u[k] >> 12);
+			dir[k] = dir0[k] + (cx * r[k] >> 12) + (cy * u[k] >> 12);
 			end[k] = src[k] + (int32_t) ((int64_t) dir[k] * 2048 * SUB / 4096);
 		}
 		trace_t tr;
-		clip_trace(0, src, end, &tr);
+		edict_t *hit = shot_trace(src, end, &tr);
 		if (tr.fraction >= Q_FIX_ONE)
 			continue;
 		int32_t org[3];                             /* TraceAttack */
 		for (int k = 0; k < 3; k++)
 			org[k] = tr.endpos[k] - 4 * SUB * dir[k] / 4096;
-		edict_t *hit = ent_from_trace(&tr);
 		if (hit && hit->takedamage) {               /* SpawnBlood, AddMultiDamage */
 			particle_effect(org, leaf_at(org), 73, 8);
 			if (hit != multi_ent) {
@@ -1104,12 +1247,22 @@ static void fire_bullets(int count, int32_t spread_x, int32_t spread_y)
 		ent_damage(multi_ent, ent_player, ent_player, multi_damage);
 }
 
+/* makevectors (self.v_angle), then aim's direction */
+static void w_aimed(int32_t dir[3])
+{
+	int32_t f[3], r[3], u[3];
+	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
+	w_aim(f, dir);
+}
+
 static void w_fire_shotgun(void)
 {
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_GUNCOCK, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(2);
 	pl.ammo[AMMO_SHELLS]--;
-	fire_bullets(6, 164, 164);                      /* 0.04 x 4096 */
+	int32_t dir[3];
+	w_aimed(dir);
+	fire_bullets(6, dir, 164, 164);                 /* 0.04 x 4096 */
 }
 
 static void w_fire_super_shotgun(void)
@@ -1121,7 +1274,9 @@ static void w_fire_super_shotgun(void)
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_SHOTGN2, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(4);
 	pl.ammo[AMMO_SHELLS] -= 2;
-	fire_bullets(14, 573, 328);                     /* 0.14, 0.08 x 4096 */
+	int32_t dir[3];
+	w_aimed(dir);
+	fire_bullets(14, dir, 573, 328);                /* 0.14, 0.08 x 4096 */
 }
 
 static void launch_spike(const int32_t org[3], const int32_t dir[3], int super)
@@ -1180,15 +1335,16 @@ void game_monster_missile(int kind, edict_t *owner, const int32_t org[3], const 
 
 static void w_fire_spikes(int ox)
 {
-	int32_t f[3], r[3], u[3], org[3];
+	int32_t f[3], r[3], u[3], org[3], dir[3];
 	view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
 	if (pl.ammo[AMMO_NAILS] >= 2 && pl.weapon == W_SNAILGUN) {   /* W_FireSuperSpikes */
 		snd_start(ENT_PLAYER, CHAN_WEAPON, S_SPIKE2, pl.pm.pos, 255, ATTN_NORM);
 		pl.attack_finished = game_tick_count + TICKS(20);
 		pl.ammo[AMMO_NAILS] -= 2;
+		w_aim(f, dir);
 		for (int k = 0; k < 3; k++)
 			org[k] = pl.pm.pos[k] + (k == 2 ? 16 * SUB : 0);
-		launch_spike(org, f, 1);
+		launch_spike(org, dir, 1);
 		pl.punch = -DEG(2);
 		return;
 	}
@@ -1199,9 +1355,10 @@ static void w_fire_spikes(int ox)
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_ROCKET1I, pl.pm.pos, 255, ATTN_NORM);
 	pl.attack_finished = game_tick_count + TICKS(20);
 	pl.ammo[AMMO_NAILS]--;
+	w_aim(f, dir);
 	for (int k = 0; k < 3; k++)
 		org[k] = pl.pm.pos[k] + (k == 2 ? 16 * SUB : 0) + ox * SUB * r[k] / 4096;
-	launch_spike(org, f, 0);
+	launch_spike(org, dir, 0);
 	pl.punch = -DEG(2);
 }
 
@@ -1214,12 +1371,22 @@ static void w_fire_grenade(void)
 	pl.punch = -DEG(2);
 	proj_t *p = proj_new(PJ_GRENADE);
 	if (!p) return;
+	/* v_forward x 600 + v_up x 200 + crandom () x v_right x 10 + crandom ()
+	   x v_up x 10 (one draw each for the vector); level, aim's x 600 and
+	   200 up */
+	int32_t dir[3], cr = 0, cu = 0;
+	if (pl.pm.pitch) {
+		cr = crandom(10);
+		cu = crandom(10);
+	} else {
+		w_aim(f, dir);
+	}
 	for (int k = 0; k < 3; k++) {
 		p->org[k] = pl.pm.pos[k];
 		if (pl.pm.pitch)
-			p->vel[k] = f[k] * 600 / 4096 + u[k] * 200 / 4096 + crandom(10) * r[k] / 4096 + crandom(10) * u[k] / 4096;
+			p->vel[k] = (f[k] * 600 + u[k] * 200 + cr * r[k] + cu * u[k]) / 4096;
 		else
-			p->vel[k] = f[k] * 600 / 4096 + (k == 2 ? 200 : 0);
+			p->vel[k] = k == 2 ? 200 : dir[k] * 600 / 4096;
 	}
 	vectoangles(p->vel, &p->yaw, &p->pitch);
 	p->die  = game_tick_count + TICKS(250);
@@ -1236,9 +1403,11 @@ static void w_fire_rocket(void)
 	pl.punch = -DEG(2);
 	proj_t *p = proj_new(PJ_ROCKET);
 	if (!p) return;
+	int32_t dir[3];
+	w_aim(f, dir);
 	for (int k = 0; k < 3; k++) {
 		p->org[k] = pl.pm.pos[k] + 8 * SUB * f[k] / 4096 + (k == 2 ? 16 * SUB : 0);
-		p->vel[k] = f[k] * 1000 / 4096;
+		p->vel[k] = dir[k] * 1000 / 4096;
 	}
 	vectoangles(p->vel, &p->yaw, &p->pitch);
 	p->die  = game_tick_count + TICKS(500);
@@ -1315,7 +1484,7 @@ static void w_fire_lightning(void)
 	if (pl.pm.waterlevel > 1) {                       /* explode if under water */
 		int cells = pl.ammo[AMMO_CELLS];
 		pl.ammo[AMMO_CELLS] = 0;
-		w_set_current(w_best_weapon());
+		w_set_current(pl.weapon);                     /* W_SetCurrentAmmo (PreThink changes it) */
 		ents_radius_damage(pl.pm.pos, 35 * cells, ent_player, ent_world);
 		t_radius_damage(pl.pm.pos, 35 * cells, 1);
 		return;
@@ -1390,12 +1559,12 @@ void game_monster_beam(edict_t *owner, const int32_t org[3], const int32_t end[3
 /* W_Attack */
 static void w_attack(void)
 {
+	super_damage_sound();                         /* (W_WeaponFrame's, before W_Attack) */
 	if (w_has_no_ammo())
 		return;
-	if (pl.super_damage_finished > game_tick_count && pl.super_sound < game_tick_count) {   /* SuperDamageSound */
-		pl.super_sound = game_tick_count + TICKS(100);
-		snd_start(ENT_PLAYER, CHAN_BODY, S_DAMAGE3, pl.pm.pos, 255, ATTN_NORM);
-	}
+	/* show_hostile: for a second, a monster near enough sees the player
+	   from behind it too (FindTarget) */
+	ent_player->show_hostile = game_tick_count + TICKS(100);
 	switch (pl.weapon) {
 	case W_AXE:
 		snd_start(ENT_PLAYER, CHAN_WEAPON, S_AX1, pl.pm.pos, 255, ATTN_NORM);
@@ -1551,6 +1720,11 @@ void game_select_best(void)
 	w_set_current(w_best_weapon());
 }
 
+void game_set_current_ammo(void)
+{
+	w_set_current(pl.weapon);
+}
+
 void game_powerup(uint32_t item)
 {
 	int t = game_tick_count + TICKS(3000);
@@ -1689,6 +1863,7 @@ void game_teleport(const int32_t org[3], const int16_t mangle[3])
 		pl.pm.vel[k]     = f[k] * 300 / 4096;
 	}
 	pl.pm.onground   = 0;
+	pl.step_oldz     = pl.pm.pos[2];              /* (off the ground: no step's lag) */
 	pl.teleport_time = game_tick_count + TICKS(70);
 }
 
@@ -1806,7 +1981,10 @@ static void spawn_at(const int32_t org[3], int yaw)
 	pl.dmgtime = pl.dmg = pl.inwater = pl.swim_flag = 0;
 	pl.teleport_time = pl.fly_sound = 0;
 	pl.dead        = 0;
+	pl.dead_bounce = 0;
 	pl.viewheight  = PM_EYE_HEIGHT * SUB;
+	pl.step_oldz   = pl.pm.pos[2];                /* (no step's lag at the start) */
+	pl.jump_held   = 1;                           /* (a held jump is no press) */
 	pl.weapon_switch_tick = game_tick_count - TICKS(200);
 	pl.muzzleflash = 0;
 	/* PutClientInServer: no powerup carried over, no flash */
@@ -1909,7 +2087,10 @@ void game_spawn(void)
 	pl.air_finished = game_tick_count + TICKS(1200);  /* PutClientInServer: 12 s of air */
 	pl.dmgtime = pl.dmg = pl.inwater = pl.swim_flag = 0;
 	pl.dead        = 0;
+	pl.dead_bounce = 0;
 	pl.viewheight  = PM_EYE_HEIGHT * SUB;
+	pl.step_oldz   = pl.pm.pos[2];                /* (no step's lag at the start) */
+	pl.jump_held   = 1;                           /* (a held jump is no press) */
 	pl.weapon_switch_tick = game_tick_count - TICKS(200);
 	pl.muzzleflash = 0;
 	/* PutClientInServer: no powerup carried over, no flash */
@@ -1986,12 +2167,16 @@ static void player_water(void)
 
 /* client.qc CheckWaterJump: at the surface, a wall 24 units ahead at the
    waist and nothing at the eyes is a ledge: the push away from the wall
-   (movedir) and the jump out go through pmove_step this tick */
+   (movedir) and the jump out go through pmove_step this tick. 1.06's
+   makevectors (self.angles): the player entity's pitch, a third of the
+   view's, then v_forward_z 0 and its normalize discarded: the reach is
+   24 x cos (pitch / 3) */
 static void check_water_jump(pmove_cmd_t *pc)
 {
 	int32_t sy = r_sin(pl.pm.yaw), cy = r_cos(pl.pm.yaw);
+	int32_t reach = 24 * SUB * r_cos(pl.pm.pitch / 3);   /* x4096 */
 	int32_t start[3] = { pl.pm.pos[0], pl.pm.pos[1], pl.pm.pos[2] + 8 * SUB };
-	int32_t end[3]   = { start[0] + 24 * SUB * cy / 4096, start[1] + 24 * SUB * sy / 4096, start[2] };
+	int32_t end[3]   = { start[0] + (reach >> 12) * cy / 4096, start[1] + (reach >> 12) * sy / 4096, start[2] };
 	trace_t tr;
 	clip_trace(0, start, end, &tr);
 	if (tr.fraction < Q_FIX_ONE) {                    /* solid at waist */
@@ -2016,11 +2201,15 @@ void game_tick(const game_cmd_t *cmd)
 	if (level_intermission) {                     /* PlayerPreThink: IntermissionThink */
 		level_think(cmd);
 	} else if (pl.dead) {
-		/* respawn on fire after a second: the level starts over */
-		if (pl.fire && !pl.fire_was && game_tick_count > pl.death_tick + TICKS(100)) {
+		/* respawn on fire or jump after a second: the level starts over */
+		int jump_was = pl.jump_held;
+		pl.jump_held = cmd->jump;
+		if (((pl.fire && !pl.fire_was) || (cmd->jump && !jump_was)) &&
+		    game_tick_count > pl.death_tick + TICKS(100)) {
 			game_restart_level();
 			return;
 		}
+		dead_toss();                              /* SV_Physics_Toss */
 	} else {
 		pmove_cmd_t pc;
 		pc.fwd  = cmd->fwd;
@@ -2053,12 +2242,29 @@ void game_tick(const game_cmd_t *cmd)
 				snd_start(ENT_PLAYER, CHAN_BODY, S_PLYRJMP8, pl.pm.pos, 255, ATTN_NORM);
 			}
 		}
+		/* PreThink: an empty weapon changed for the best one once its
+		   attack is over */
+		if (game_tick_count > pl.attack_finished && pl.weapon != W_AXE && !game_current_ammo())
+			w_set_current(w_best_weapon());
+		pl.jump_held = cmd->jump;
 		pl.jump_flag = pl.pm.vel[2];
 		pmove_step(&pl.pm, &pc);
 		if (pl.pm.touched)                        /* SV_Impact: a brush model run into */
 			ents_impact(pl.pm.touched);
 		w_weapon_frame(cmd);
 		anim_tick();
+		/* V_CalcRefdef: on the ground, a higher origin (a step up) is
+		   followed by the view at 80 units a second, 12 units below it at
+		   most */
+		if (pl.pm.onground && pl.pm.pos[2] > pl.step_oldz) {
+			pl.step_oldz += 80 * SUB * game_dt / GAME_HZ;
+			if (pl.step_oldz > pl.pm.pos[2])
+				pl.step_oldz = pl.pm.pos[2];
+			if (pl.pm.pos[2] - pl.step_oldz > 12 * SUB)
+				pl.step_oldz = pl.pm.pos[2] - 12 * SUB;
+		} else {
+			pl.step_oldz = pl.pm.pos[2];
+		}
 		/* PlayerPostThink: landed (in the water: the splash) */
 		if (pl.jump_flag < -300 && pl.pm.onground && pl.health > 0) {
 			if (pl.pm.watertype == QW_CONTENTS_WATER) {
@@ -2134,6 +2340,12 @@ static int calc_roll(void)
 	return sign * side * DEG(2) / 200;
 }
 
+/* the view's lag up a step (V_CalcRefdef's oldz - origin_z, <= 0) */
+static int32_t step_lag(void)
+{
+	return pl.dead ? 0 : pl.step_oldz - pl.pm.pos[2];
+}
+
 /* the view's position (a tick's: the bob follows its time and speed) */
 static void game_view_pos(int32_t pos[3])
 {
@@ -2144,7 +2356,7 @@ static void game_view_pos(int32_t pos[3])
 	int bob = pl.dead ? 0 : calc_bob();
 	pos[0] = pl.pm.pos[0];
 	pos[1] = pl.pm.pos[1];
-	pos[2] = pl.pm.pos[2] + pl.viewheight + bob;
+	pos[2] = pl.pm.pos[2] + pl.viewheight + bob + step_lag();
 }
 
 /* the view's angles */
@@ -2339,7 +2551,7 @@ void game_render(void)
 		view_vectors(pl.pm.yaw, pl.pm.pitch, f, r, u);
 		for (int k = 0; k < 3; k++)
 			org[k] = pl.pm.pos[k] + f[k] * bob * 4 / 10 / 4096;
-		org[2] += pl.viewheight + bob + (r_viewport_rows() < 240 ? 2 * SUB : 0);
+		org[2] += pl.viewheight + bob + step_lag() + (r_viewport_rows() < 240 ? 2 * SUB : 0);
 		const qw_leaf *leaf = leaf_at(org);
 		int light = leaf ? leaf->light : 128;
 		if (light < 24) light = 24;                   /* always some light on the gun */

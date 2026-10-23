@@ -706,12 +706,14 @@ push. `ClipVelocity` with `overbounce` 1; a `< 2 u/s` component is snapped to
 **Step-up**: if a grounded move was wall-blocked, redo it from `start + (0,0,18)`
 then trace `-(18+2)` back down; keep the stepped result only if it landed on a
 walkable floor *and* covered more horizontal ground than the flat attempt
-(`SV_WalkMove`). Lets the player walk stairs / ledges ≤ 18 u.
+(`SV_WalkMove`). Lets the player walk stairs / ledges ≤ 18 u. (§76: the
+"farther" rule is QuakeWorld's; SV_WalkMove keeps a step that lands on a
+floor.)
 
 Constants are Quake defaults: maxspeed 320, accel 10, friction 4, stopspeed
 100, gravity 800, jump 270, stepsize 18, floor normal z > 0.7. Host sim on
 `start.qbsp`: jump apex ≈ 44 u, accel to 320 in ~0.3 s, dead stop at walls.
-Known rough edges: no edge-friction dropoff boost, no water, no `pos_acc`
+Known rough edges: no edge-friction dropoff boost (§76 added it), no water, no `pos_acc`
 consistency when a move is clipped mid-frame (bounded, cosmetic).
 
 ---
@@ -9493,3 +9495,134 @@ starts, and the scenarios' random draws follow another course.
   - Not run: the game bench's water lines (`BENCH_GAME=1`). They change
     at the surface: a player swimming up now falls back once the waist is
     out, as in Quake.
+
+## §76 — Gameplay against id's code: an audit (2026-10-23)
+
+- **The ask**: after §75, look for other places where play departs from
+  Quake's, fix them, on a branch tested before master.
+- **Read against id's**: the player's physics (`engine/pmove.c` /
+  `pmove.s`: sv_user.c, sv_phys.c), the player's game (`engine/game.c`:
+  client.qc, player.qc, weapons.qc, combat.qc, PF_aim, view.c), the items
+  (items.qc). The monsters' AI, the movers and the triggers were spot
+  checked: they are transcribed line by line already (§28-§29, §50) and
+  matched, but for the player's `show_hostile` below.
+
+### 76.1 The player's movement (asm and C)
+
+- **Edge friction** (SV_UserFriction, sv_edgefriction 2): the friction
+  doubles when the leading edge is over a dropoff. That edge is 16 units
+  ahead along the velocity, at the feet, with nothing within 34 units
+  down. The test is a point trace: the world and the brush models
+  (nomonsters), asking a line of sight's question (`clip_mover.sight`:
+  its fraction 1 or not). Quake's start inside solid counts as 1, so
+  running into a wall doubles it too, as in Quake. The speed is the one
+  in the plane, z left out, as Quake's. §9 had listed this as missing.
+- **SV_WalkMove's rules**, which §9 had taken from QuakeWorld:
+  - a wall is a vertical plane only (Quake's "step": normal z 0); a steep
+    slope no longer starts a step-up;
+  - the step's move is level (velocity z 0, the move's z 0);
+  - the step is kept whenever its way down lands on a floor, not only
+    when it went farther than the plain slide;
+  - the way down is 18 units less the move's own z, plus the 2 units it
+    had (the ground is met without Quake's gravity on it).
+- **Wall friction** (SV_WallFriction): when the step's move is stopped by
+  a wall the view faces within 60 degrees of head-on (the view's forward,
+  pitch and all, · the normal < −0.5), the speed along the wall is
+  multiplied by (1 + that dot + 0.5). It needed the keep rule above: on
+  flat ground a slide along a wall is a step kept.
+- **Not reproduced**: SV_TryUnstick. Quake nudges the player in 8
+  directions when the step made no progress, which costs up to 16 traces
+  a tick against a wall. Its own comment calls it a remedy for floats.
+- **Cost**: the edge trace, about 1.6 k cycles a walking tick (START's
+  scripted walk: 15313 → 16947 cycles a tick; pmdiff's random walk
+  10173 → 10357).
+
+### 76.2 The weapons
+
+- **Autoaim** (PF_aim, sv_aim 0.93: Quake's default) for the shotguns,
+  the nailguns, the rockets and a level grenade (`w_aim`):
+  - the forward when a line 2048 units along it, from 20 over the
+    origin, hits a target (DAMAGE_AIM: a monster, an explosive box);
+  - else the target most ahead within the 0.93 cone that the line from
+    there reaches first: the forward's heading, raised or lowered to its
+    origin;
+  - integer math in whole units (the cone's dot ×4096: 3809);
+  - the line cut to the asm traces' ±4095-unit cube first, as the
+    bullets' now are too. A 2048-unit shot from near a map's edge
+    overflowed the traces' int16 there.
+- **W_BestWeapon**: the lightning gun only with the waist out of the
+  water. The automatic changes could pick it under water, where it
+  discharges.
+- **PlayerPreThink**: an empty weapon is changed for the best one as soon
+  as its attack is over (it waited for the next press of fire).
+- **The lightning's discharge** keeps the weapon (W_SetCurrentAmmo); the
+  rule above changes it.
+- **An ammo pickup** ends a firing animation (ammo_touch's
+  W_SetCurrentAmmo, player_run).
+- **The axe's 4th frame** (axe4 / axeb4) shows for its 0.1 s; it was
+  skipped.
+- **SuperDamageSound** every second during the nailguns' and the
+  lightning's held fire too (player_nail1/2, player_light1/2).
+- **show_hostile**: firing sets the player's for a second, so a monster
+  within 500 units sees it from behind too (FindTarget).
+- **A grenade off level**: one random draw each for the right and up
+  offsets (crandom () × v_right × 10 + crandom () × v_up × 10), not one
+  per axis.
+
+### 76.3 Death, pain, the view
+
+- **Death** (PlayerDie): MOVETYPE_TOSS. The velocity is kept, and a kick
+  of up to 300 units/s is added when not rising. The body falls and
+  lands (`dead_toss`, the player's box, no monsters met). Gibbed
+  (GibPlayer): the view is the head's (ThrowHead: VelocityForDamage's
+  flight, MOVETYPE_BOUNCE with overbounce 1.5, the eye 8 units over the
+  feet) and the three gibs are thrown. The view had stayed where the
+  player died, mid-air too.
+- **Respawn**: jump does it too, as fire does (PlayerDeathThink: any
+  button).
+- **Pain**: none while invisible (player_pain: the eyes have no pain
+  frames).
+- **The view up a step** (V_CalcRefdef's oldz): on the ground, a higher
+  origin is followed at 80 units/s, at most 12 units below it. The gun
+  rides with it. It is reset at a spawn and a teleport.
+- **CheckWaterJump's reach**: 24 × cos (pitch / 3). 1.06's makevectors
+  of the player entity's angles, normalize discarded.
+- **The double-barrelled shotgun's name**: id's "Double-barrelled
+  Shotgun".
+
+### 76.4 Checked, unchanged
+
+- The items (health, armor, ammo, weapons, keys, powerups).
+- CheckPowerups.
+- WaterMove's air, burns and sounds.
+- T_Damage and T_RadiusDamage on the player, the projectiles'
+  touches.
+- PlayerPostThink's landing.
+- The AI's FindTarget, visible, range and infront.
+- The doors and the triggers.
+- The projectiles' water sound (SV_CheckWaterTransition): Quake's toss
+  physics only checks on a tick that hit something, so it is almost never
+  heard. Nothing to add.
+- Left: V_DriftPitch (the digital pad's look; the analog pad looks as
+  mlook does, which never drifts), and trigger_push on grenades.
+
+### 76.5 Checking
+
+- `VIEWS=0 scripts/bench.sh`: pmdiff 9000 ticks (6000 + 3000 at 2-6
+  60ths), 0 mismatches. START's scripted walk ends where it did (settle,
+  run, jump apex 43, wall, back up the stairs).
+- `ENGINE_C=1 VIEWS=0` (the C engine): 0 mismatches.
+- `BENCH_GAME=1 HASHONLY=1` runs, 0 frame cache refusals. Its frames
+  change: the shots are aimed.
+- Checks with prints, not committed (`TICKS=` at a `VIEW=`):
+  - E1M1, 410 units from a soldier, the view 10 degrees up, one shell:
+    the aim picks it, levels the shot, and it loses 4 health. 0.5 s
+    later the empty shotgun is changed for the lightning gun.
+  - START's stairs: the view lags 12 units at most and rises 10
+    sub-units a tick.
+  - START, a gib in the air: the head flies, bounces off the ceiling and
+    the floor, the view 16 units down.
+  - The axe: frames 1-4, 0.1 s each, then 0.
+- **The release's room for the stack**: 57016 → 54216 bytes (code
+  +2.8 KB: the aim 936 B, the dead body's toss in game_tick, the
+  physics' asm).

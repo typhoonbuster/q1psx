@@ -1858,3 +1858,17 @@ followed by R0-R4.
   air's speed cap and could not jump. Fixed in the asm and the C (0
   mismatches between them). In E1M3's basement the player now lands,
   jumps and walks at full speed.
+- **Gameplay audited against id's code** (2026-10-23,
+  `docs/porting-notes.md` §76):
+  - movement (asm and C): edge friction (sv_edgefriction 2), Quake's
+    SV_WalkMove rules (a wall is vertical, the step kept when it lands on
+    a floor), wall friction;
+  - weapons: autoaim (sv_aim 0.93); the lightning gun never auto-chosen
+    under water; an empty weapon changed as its attack ends; the axe's
+    4th frame; the quad's sound during held fire; firing wakes nearby
+    monsters behind;
+  - death tosses the body (a gib's head flies); the view follows a step
+    up at 80 units/s; no pain sound while invisible; respawn on jump too;
+    the double-barrelled shotgun's name;
+  - costs: about 1.6 k cycles a walking tick (the edge trace), 2.8 KB of
+    code.

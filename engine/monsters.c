@@ -302,8 +302,9 @@ int monsters_kind_asset(int kind, int i)
 
 /* ----------------------------------------------------- gibs, backpack -- */
 
-/* VelocityForDamage: the gib's flight by the health it was hit down to */
-static void velocity_for_damage(int dm, int32_t v[3])
+/* VelocityForDamage: the gib's flight by the health it was hit down to
+   (the player's head's too: game.c) */
+void velocity_for_damage(int dm, int32_t v[3])
 {
 	v[0] = 100 * crand() >> 16;
 	v[1] = 100 * crand() >> 16;

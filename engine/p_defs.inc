@@ -166,6 +166,9 @@
 .set PS_FBMIN,    0x2D0     # the whole swept box[3] (the area walk's; PS_BMIN / PS_BMAX
 .set PS_FBMAX,    0x2DC     #   are the entries' test's: a blocked line's start) to 0x2E8
 .set PS_GNODE,    0x2E8     # the residual-solid backing out's walk: from this node (CT_LOOP)
+.set PS_STEPN,    0x2EC     # pmove.s: the last wall a slide_move hit, its normal (int16[3] + pad:
+                            #   SV_FlyMove's steptrace, SV_WallFriction's)
+.set PS_FSPEED,   0x2F4     # pmove.s: friction's speed across its trace; the step's move z
 .set PS_BOXLO,    0x000     # clip_box_node0's box: mins[3], maxs[3] (over PS_START /
 .set PS_BOXHI,    0x00C     #   PS_DELTA: no trace runs then)
 

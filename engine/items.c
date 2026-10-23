@@ -285,7 +285,7 @@ static void weapon_touch(edict_t *self)
 	switch (self->class) {
 	case QE_WEAPON_NAILGUN:         w = W_NAILGUN;   pl.ammo[AMMO_NAILS] += 30;  name = "nailgun"; break;
 	case QE_WEAPON_SUPERNAILGUN:    w = W_SNAILGUN;  pl.ammo[AMMO_NAILS] += 30;  name = "Super Nailgun"; break;
-	case QE_WEAPON_SUPERSHOTGUN:    w = W_SSHOTGUN;  pl.ammo[AMMO_SHELLS] += 5;  name = "Super Shotgun"; break;
+	case QE_WEAPON_SUPERSHOTGUN:    w = W_SSHOTGUN;  pl.ammo[AMMO_SHELLS] += 5;  name = "Double-barrelled Shotgun"; break;
 	case QE_WEAPON_ROCKETLAUNCHER:  w = W_RLAUNCHER; pl.ammo[AMMO_ROCKETS] += 5; name = "Rocket Launcher"; break;
 	case QE_WEAPON_GRENADELAUNCHER: w = W_GLAUNCHER; pl.ammo[AMMO_ROCKETS] += 5; name = "Grenade Launcher"; break;
 	case QE_WEAPON_LIGHTNING:       w = W_LIGHTNING; pl.ammo[AMMO_CELLS] += 15;  name = "Thunderbolt"; break;
@@ -330,6 +330,7 @@ static void ammo_touch(edict_t *self)
 	bonus();
 	if (pl.weapon == best)                        /* change to a better weapon if appropriate */
 		game_select_best();
+	game_set_current_ammo();                      /* (W_SetCurrentAmmo: out of a firing state) */
 	taken(self);
 }
 

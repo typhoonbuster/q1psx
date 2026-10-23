@@ -56,6 +56,7 @@ static const int32_t water_drag[PM_DT_MAX + 1][4] = {
 static const int32_t grav_mid[PM_DT_MAX + 1] = { 0, 0, 213, 480, 853, 1333, 1920 };
 
 static int pm_dt;      /* this tick's length (pmove_step), for the routines below */
+static int16_t step_n[3];   /* the last wall a slide_move hit: SV_FlyMove's steptrace's normal */
 
 /* floor(sqrt(v)), bit by bit: no division, exact */
 static int32_t isqrt32(uint32_t v)
@@ -180,8 +181,11 @@ static int slide_move(pmove_t *pm, const int32_t move[3])
 		if (tr.plane_n[2] > FLOOR_NZ) {
 			blocked |= 1;
 			pm->onground = 1 + tr.ent;
-		} else {
+		}
+		if (!tr.plane_n[2]) {               /* a wall: Quake's "step", a vertical plane only */
 			blocked |= 2;
+			step_n[0] = tr.plane_n[0];
+			step_n[1] = tr.plane_n[1];
 		}
 
 		time_left -= (time_left * tr.fraction) >> Q_FIX_SHIFT;
@@ -291,14 +295,32 @@ static void categorize_position(pmove_t *pm)
 
 /* ------------------------------------------------------- friction & accel */
 
+/* SV_UserFriction: the speed in the plane (Quake's leaves z out); the
+   friction doubled (sv_edgefriction 2) when the leading edge is over a
+   dropoff: 16 units ahead along the velocity at the feet, nothing within
+   34 units down (a point; the world and the brush models only, as a line
+   of sight asks: its fraction 1 or not). A start inside solid is Quake's
+   fraction 1 too. */
 static void ground_friction(pmove_t *pm)
 {
-	int32_t speed = isqrt32((uint32_t) dot_ii(pm->vel, pm->vel));
+	int32_t speed = isqrt32((uint32_t) (pm->vel[0] * pm->vel[0] + pm->vel[1] * pm->vel[1]));
 	if (speed < 1)
 		return;
 
+	int32_t start[3], stop[3];
+	start[0] = stop[0] = pm->pos[0] + pm->vel[0] * 16 * CLIP_SUB / speed;
+	start[1] = stop[1] = pm->pos[1] + pm->vel[1] * 16 * CLIP_SUB / speed;
+	start[2] = pm->pos[2] + PM_MINS_Z * CLIP_SUB;
+	stop[2]  = start[2] - 34 * CLIP_SUB;
+	memset(&clip_mover, 0, sizeof clip_mover);
+	clip_mover.pass       = 1;                  /* (the player's own entry) */
+	clip_mover.nomonsters = 1;
+	clip_mover.sight      = 1;
+	trace_t tr;
+	int32_t friction = clip_trace_ent(0, start, stop, &tr) >= Q_FIX_ONE ? PM_FRICTION * 2 : PM_FRICTION;
+
 	int32_t control  = speed < PM_STOPSPEED ? PM_STOPSPEED : speed;
-	int32_t drop     = control * PM_FRICTION * pm_dt / PM_HZ;
+	int32_t drop     = control * friction * pm_dt / PM_HZ;
 	int32_t newspeed = speed - drop;
 	if (newspeed < 0)
 		newspeed = 0;
@@ -404,10 +426,22 @@ static void water_jump(pmove_t *pm)
 
 /* ----------------------------------------------------------------- step-up */
 
-static int32_t horiz_dist2(const int32_t a[3], const int32_t b[3])
+/* SV_WallFriction: the step's move stopped by a wall the view faces within
+   60 degrees of head-on (the forward of the view's angles, its pitch too,
+   . the wall's normal < -0.5): the speed along the wall, x (1 + that dot
+   + 0.5). The wall vertical: its normal's z 0 */
+static void wall_friction(pmove_t *pm)
 {
-	int32_t dx = a[0] - b[0], dy = a[1] - b[1];
-	return dx * dx + dy * dy;
+	int32_t sy = r_sin(pm->yaw), cy = r_cos(pm->yaw), cp = r_cos(pm->pitch);
+	int32_t fx = (cp * cy) >> 12, fy = (cp * sy) >> 12;
+	int32_t d  = ((step_n[0] * fx + step_n[1] * fy) >> 12) + 2048;   /* x4096 */
+	if (d >= 0)
+		return;
+	int32_t i = (pm->vel[0] * step_n[0] + pm->vel[1] * step_n[1]) >> 12;   /* n . vel */
+	for (int k = 0; k < 2; k++) {
+		int32_t side = pm->vel[k] - ((step_n[k] * i) >> 12);
+		pm->vel[k] = (side * (4096 + d)) >> 12;
+	}
 }
 
 /* --------------------------------------------------------------- pmove_step */
@@ -517,7 +551,6 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 	/* plain slide */
 	int32_t flat_pos[3]  = { pm->pos[0], pm->pos[1], pm->pos[2] };
 	int32_t flat_vel[3]  = { pm->vel[0], pm->vel[1], pm->vel[2] };
-	int32_t entry_pos[3] = { pm->pos[0], pm->pos[1], pm->pos[2] };
 	int blocked = slide_move(pm, move);
 	int32_t after_flat[3] = { pm->pos[0], pm->pos[1], pm->pos[2] };
 	int32_t flat_out_vel[3] = { pm->vel[0], pm->vel[1], pm->vel[2] };
@@ -525,16 +558,17 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 #ifdef PM_DEBUG
 	printf(" flat: blocked %d pos %d %d %d c%d\n", blocked, pm->pos[0], pm->pos[1], pm->pos[2], clip_contents(1, pm->pos));
 #endif
-	/* step-up: if a wall stopped us and we're grounded (or in the water:
-	   SV_WalkMove, never while jumping out of it), retry over an 18-unit
-	   lip */
+	/* SV_WalkMove: a wall stopped the move on the ground (or in the water,
+	   never while jumping out of it): the move again from 18 units up,
+	   level (velocity_z 0), slowed by a wall it meets (SV_WallFriction),
+	   then down 18 units less the move's own z (2 more: the ground is met
+	   without Quake's gravity on it). Kept when that lands on a floor (its
+	   velocity too), else the plain slide's. Quake's SV_TryUnstick (nudges
+	   when the step made no progress: a float's remedy) is left out. */
 	if ((blocked & 2) && (pm->onground || pm->waterlevel) && !pm->waterjump) {
 		pm->pos[0] = flat_pos[0];
 		pm->pos[1] = flat_pos[1];
 		pm->pos[2] = flat_pos[2];
-		pm->vel[0] = flat_vel[0];
-		pm->vel[1] = flat_vel[1];
-		pm->vel[2] = flat_vel[2];
 
 		int32_t up_from[3] = { pm->pos[0], pm->pos[1], pm->pos[2] };
 		int32_t up_to[3]   = { pm->pos[0], pm->pos[1], pm->pos[2] + PM_STEPSIZE * CLIP_SUB };
@@ -544,34 +578,31 @@ void pmove_step(pmove_t *pm, const pmove_cmd_t *cmd)
 		pm->pos[1] = tr.endpos[1];
 		pm->pos[2] = tr.endpos[2];
 
-		slide_move(pm, move);
+		pm->vel[0] = flat_vel[0];
+		pm->vel[1] = flat_vel[1];
+		pm->vel[2] = 0;
+		int32_t level[3] = { move[0], move[1], 0 };
+		if (slide_move(pm, level) & 2)
+			wall_friction(pm);
 
 		int32_t dn_from[3] = { pm->pos[0], pm->pos[1], pm->pos[2] };
-		int32_t dn_to[3]   = { pm->pos[0], pm->pos[1], pm->pos[2] - (PM_STEPSIZE + 2) * CLIP_SUB };
+		int32_t dn_to[3]   = { pm->pos[0], pm->pos[1], pm->pos[2] - (PM_STEPSIZE + 2) * CLIP_SUB + move[2] };
 		clip_trace(1, dn_from, dn_to, &tr);
-
-		int stepped_ok = (tr.fraction < Q_FIX_ONE && tr.plane_n[2] > FLOOR_NZ);
 #ifdef PM_DEBUG
-		printf(" step: down frac %d n %d %d %d end %d %d %d c%d ok %d\n", tr.fraction, tr.plane_n[0],
+		printf(" step: down frac %d n %d %d %d end %d %d %d c%d\n", tr.fraction, tr.plane_n[0],
 		       tr.plane_n[1], tr.plane_n[2], tr.endpos[0], tr.endpos[1], tr.endpos[2],
-		       clip_contents(1, tr.endpos), stepped_ok);
+		       clip_contents(1, tr.endpos));
 #endif
-		if (stepped_ok) {
-			pm->pos[0] = tr.endpos[0];
+		if (tr.fraction < Q_FIX_ONE && tr.plane_n[2] > FLOOR_NZ) {
+			pm->pos[0] = tr.endpos[0];            /* on a floor: the step kept */
 			pm->pos[1] = tr.endpos[1];
 			pm->pos[2] = tr.endpos[2];
-		}
-		if (!stepped_ok
-		 || horiz_dist2(pm->pos, entry_pos) <= horiz_dist2(after_flat, entry_pos)) {
-			/* the step didn't help — keep the flat result */
+		} else {
 			pm->pos[0] = after_flat[0];
 			pm->pos[1] = after_flat[1];
 			pm->pos[2] = after_flat[2];
 			pm->vel[0] = flat_out_vel[0];
 			pm->vel[1] = flat_out_vel[1];
-			pm->vel[2] = flat_out_vel[2];
-		} else {
-			/* keep horizontal velocity, drop the tiny vertical from the climb */
 			pm->vel[2] = flat_out_vel[2];
 		}
 	}

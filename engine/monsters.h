@@ -226,6 +226,7 @@ extern int monsters_drawn;            /* the last frame's streamed models drawn 
 
 /* player.qc's ThrowGib / ThrowHead, items.qc's DropBackpack: `dm` the
    health below 0 that threw them */
+void velocity_for_damage(int dm, int32_t v[3]);   /* VelocityForDamage */
 void throw_gib(edict_t *self, int gib, int dm);   /* gib 0..2: gib1..3, 3: zom_gib */
 void throw_head(edict_t *self, int dm);           /* the kind's head */
 void drop_backpack(edict_t *self);
