@@ -2715,7 +2715,9 @@ static void bench_monsters(void)
 			fsum += prof_stage[PROF_FRAME];
 			fdrawn += (uint32_t) monsters_drawn;
 #if !Q1PSX_ENGINE_C
-			ents_seen_check();                    /* (e_seen.s against its C, untimed) */
+			if (!(t & 15))
+				ents_seen_check();                /* (e_seen.s against its C, untimed; a
+				                                     frame in 16: the samples' profile) */
 #endif
 			int max, used = ents_in_use(&max);
 			if (used > peak)
