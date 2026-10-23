@@ -41,17 +41,17 @@
 	.global ents_tick_loop
 	.type   ents_tick_loop, @function
 ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half, a3 = wdt
-	addiu   $sp, $sp, -40
-	sw      $ra, 0($sp)
-	sw      $s0, 4($sp)
-	sw      $s1, 8($sp)
-	sw      $s2, 12($sp)
-	sw      $s3, 16($sp)
-	sw      $s4, 20($sp)
-	sw      $s5, 24($sp)
-	sw      $s6, 28($sp)
-	sw      $s7, 32($sp)
-	sw      $s8, 36($sp)
+	addiu   $sp, $sp, -56                # o32's argument area (16 bytes: a callee
+	sw      $ra, 16($sp)                 #  may keep its a0-a3 there; the thinks
+	sw      $s0, 20($sp)                 #  ents_run_think jumps to as its tail
+	sw      $s1, 24($sp)                 #  call run on this frame: a varargs one
+	sw      $s2, 28($sp)                 #  wrote a1-a3 over the s registers kept
+	sw      $s3, 32($sp)                 #  at 4-12), then ra, s0-s8
+	sw      $s4, 36($sp)
+	sw      $s5, 40($sp)
+	sw      $s6, 44($sp)
+	sw      $s7, 48($sp)
+	sw      $s8, 52($sp)
 	move    $s0, $a0                     # active[w]'s address
 	move    $s1, $a1                     # pushers[w]'s
 	move    $s2, $a2                     # half
@@ -239,16 +239,16 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 	bne     $s5, $t0, 1b
 	addiu   $s1, $s1, 4                  # (delay)
 
-	lw      $ra, 0($sp)
-	lw      $s0, 4($sp)
-	lw      $s1, 8($sp)
-	lw      $s2, 12($sp)
-	lw      $s3, 16($sp)
-	lw      $s4, 20($sp)
-	lw      $s5, 24($sp)
-	lw      $s6, 28($sp)
-	lw      $s7, 32($sp)
-	lw      $s8, 36($sp)
+	lw      $ra, 16($sp)
+	lw      $s0, 20($sp)
+	lw      $s1, 24($sp)
+	lw      $s2, 28($sp)
+	lw      $s3, 32($sp)
+	lw      $s4, 36($sp)
+	lw      $s5, 40($sp)
+	lw      $s6, 44($sp)
+	lw      $s7, 48($sp)
+	lw      $s8, 52($sp)
 	jr      $ra
-	addiu   $sp, $sp, 40
+	addiu   $sp, $sp, 56
 	.size   ents_tick_loop, . - ents_tick_loop

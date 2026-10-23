@@ -34,14 +34,14 @@ ents_seen_items:
 	li      $t9, -1                      # (delay) the items' model: item_model
 ents_seen_streamed:
 	li      $t9, 0                       # the streamed one: masset
-0:	addiu   $sp, $sp, -32
-	sw      $ra, 0($sp)
-	sw      $s0, 4($sp)
-	sw      $s1, 8($sp)
-	sw      $s2, 12($sp)
-	sw      $s3, 16($sp)
-	sw      $s4, 20($sp)
-	sw      $s5, 24($sp)
+0:	addiu   $sp, $sp, -48                # o32's argument area (16 bytes: the C
+	sw      $ra, 16($sp)                 #  callee may keep its a0-a3 there), then
+	sw      $s0, 20($sp)                 #  ra, s0-s5
+	sw      $s1, 24($sp)
+	sw      $s2, 28($sp)
+	sw      $s3, 32($sp)
+	sw      $s4, 36($sp)
+	sw      $s5, 40($sp)
 	sll     $t0, $a2, 1
 	addu    $s0, $a0, $t0                # the entry: list + from
 	sll     $t0, $a1, 1
@@ -90,14 +90,14 @@ ents_seen_streamed:
 
 9:	subu    $v0, $s1, $s2                # n
 	sra     $v0, $v0, 1
-8:	lw      $ra, 0($sp)
-	lw      $s0, 4($sp)
-	lw      $s1, 8($sp)
-	lw      $s2, 12($sp)
-	lw      $s3, 16($sp)
-	lw      $s4, 20($sp)
-	lw      $s5, 24($sp)
+8:	lw      $ra, 16($sp)
+	lw      $s0, 20($sp)
+	lw      $s1, 24($sp)
+	lw      $s2, 28($sp)
+	lw      $s3, 32($sp)
+	lw      $s4, 36($sp)
+	lw      $s5, 40($sp)
 	jr      $ra
-	addiu   $sp, $sp, 32
+	addiu   $sp, $sp, 48
 	.size   ents_seen_items, . - ents_seen_items
 	.size   ents_seen_streamed, . - ents_seen_streamed
