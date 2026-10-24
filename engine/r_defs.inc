@@ -237,3 +237,17 @@
 .set CODE_FT4,    0x2c000000   # flat textured quad, opaque, texture x colour
 .set CODE_FT3,    0x24000000   # flat textured triangle, opaque
 .set BACKFACE_EPS, 164         # Quake's 0.01 unit, x4096 x4
+
+# ICSEC name: the code from here on in a section of its own, .text.ic.<name>
+# (docs/porting-notes.md §81.5). The renderer's asm is cut into chains: runs
+# of code that only a jump enters, each ending with an unconditional jump or
+# return and its delay slot. The link (engine/q1psx.ld) puts the hot ones
+# first, in the order engine/icache.ld gives, so that the loops a frame
+# runs together do not evict each other from the 4 KB instruction cache;
+# the others keep the source's order. Only at a chain's head: the code above
+# never falls through to here (scripts/iccheck.sh checks every section's
+# last two instructions at the link).
+.macro ICSEC name
+	.section .text.ic.\name, "ax", @progbits
+	.balign 4
+.endm

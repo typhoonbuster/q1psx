@@ -49,6 +49,16 @@ endif()
 
 psn00bsdk_add_executable(q1psx GPREL ${ENGINE_SOURCES})
 
+# The link's script: the SDK's exe.ld with the instruction cache's hot code
+# first (engine/q1psx.ld, its order in engine/icache.ld; docs/porting-notes.md
+# §81.5), in place of the SDK's -T option.
+get_target_property(_q1psx_link_options q1psx LINK_OPTIONS)
+list(FILTER _q1psx_link_options EXCLUDE REGEX "exe\\.ld")
+set_target_properties(q1psx PROPERTIES LINK_OPTIONS "${_q1psx_link_options}"
+	LINK_DEPENDS "${PROJECT_SOURCE_DIR}/engine/q1psx.ld;${PROJECT_SOURCE_DIR}/engine/icache.ld")
+target_link_options(q1psx PRIVATE -T${PROJECT_SOURCE_DIR}/engine/q1psx.ld -L${PROJECT_SOURCE_DIR}/engine
+	-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/q1psx.ldmap)   # (the input sections' places: tools/icache)
+
 # CMake does not scan `.include` in assembly sources: make every asm file
 # depend on the .inc definition files, or editing an offset there leaves
 # stale objects behind (it did: pmove.s kept an old scratchpad map).
@@ -72,6 +82,14 @@ add_custom_command(TARGET q1psx POST_BUILD
 	COMMAND make -s -C ${PROJECT_SOURCE_DIR}/tools/hazcheck
 	COMMAND sh -c "${Q1PSX_OBJDUMP} -d -z --no-show-raw-insn $<TARGET_FILE:q1psx> | ${PROJECT_SOURCE_DIR}/tools/hazcheck/hazcheck"
 	COMMENT "Checking pipeline hazards (tools/hazcheck)"
+	VERBATIM)
+
+# The instruction cache's chains (engine/r_defs.inc ICSEC): none may fall
+# through, the link moving them (scripts/iccheck.sh, docs/porting-notes.md §81.5).
+add_custom_command(TARGET q1psx POST_BUILD
+	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/iccheck.sh ${Q1PSX_OBJDUMP} $<TARGET_OBJECTS:q1psx>
+	COMMENT "Checking the instruction cache's chains (scripts/iccheck.sh)"
+	COMMAND_EXPAND_LISTS
 	VERBATIM)
 
 # The stack's room under the BSS (scripts/ramcheck.sh): the build fails when

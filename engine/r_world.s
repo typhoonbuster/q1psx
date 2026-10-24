@@ -34,19 +34,22 @@
 	.include "r_defs.inc"
 
 # The far polygons' screen bounds (CAREFUL's other exits, below): each test's
-# "lui v0, 240" and "lui v0, 320" as a pair in this table (their offsets in
-# r_render), which render.c r_set_res patches to a smaller target's rows
-# and width (the 3D view's internal resolution, docs/porting-notes.md §78).
-# FARSITE in each.
+# "lui v0, 240" and "lui v0, 320" as a pair in this table, which render.c
+# r_set_res patches to a smaller target's rows and width (the 3D view's
+# internal resolution, docs/porting-notes.md §78). FARSITE in each. A pair
+# is one word (SITES, the link moving the renderer's chains apart, §81.5):
+# the first's address, the second's distance from it in bits 21-30 (the
+# addresses' bits 21-30 are 0: 2 MB of RAM in KSEG0); the two lie in one
+# chain.
 	.pushsection .rodata.r_far_sites, "a", @progbits
-	.align  1
+	.align  2
 	.global r_far_sites
 r_far_sites:
 	.popsection
 
 .macro FARSITE rows, cols
 	.pushsection .rodata.r_far_sites, "a", @progbits
-	.hword  \rows - r_render, \cols - r_render
+	.word   \rows + ((\cols - \rows) << 21)
 	.popsection
 .endm
 
@@ -55,20 +58,21 @@ r_far_sites:
 # whose pixels are not square (256 x 224) takes the view's y row x b
 # (render.c r_set_view, b up to 7/6): r_set_res then makes them 7z -+ 8y,
 # the spheres 24 r from them (rho x 16: the sphere an ellipsoid, its reach
-# sqrt(64 b^2 + 49) x 1.5 r = 17.5 r at most). YSITE puts an instruction's
-# offset in r_render in this table, its kind in the low bits: 0 sll 2 (4y) or 3 (8y),
+# sqrt(64 b^2 + 49) x 1.5 r = 17.5 r at most). YSITE2 puts two
+# instructions in this table as FARSITE does, each one's kind in its low
+# bits (the first's in bits 0-1, the second's in bits 21-22): 0 sll 2 (4y) or 3 (8y),
 # 1 sll 1 or 3 (the 3z's or 7z's first), 2 addu or subu (its second), 3
 # sll t5, t3, 3 (8 r) or sll t5, t7, 4 (24 r: t7 = rho there).
 	.pushsection .rodata.r_ysites, "a", @progbits
-	.align  1
+	.align  2
 	.global r_ysites
 r_ysites:
 	.popsection
 
-.macro YSITE at, kind                   # (none in a R_YSLOPE 5 build: render.c
+.macro YSITE2 a, ka, b, kb              # (none in a R_YSLOPE 5 build: render.c
 .if R_YSLOPE == 4                        #  then has no 256 x 224)
 	.pushsection .rodata.r_ysites, "a", @progbits
-	.hword  \at - r_render + \kind
+	.word   \a + \ka + ((\b - \a + \kb) << 21)
 	.popsection
 .endif
 .endm
@@ -117,12 +121,9 @@ r_ysites:
 .Lfrz2\@:
 	addu    $t9, $t9, $t5
 	addu    $t7, $t7, $t9                # 3 rz + 4 ry: radius for top/bottom
-	YSITE   .Lfy\@, 0
-	YSITE   .Lfz\@, 1
-	YSITE   .Lfz2\@, 2
-	YSITE   .Lfry\@, 0
-	YSITE   .Lfrz\@, 1
-	YSITE   .Lfrz2\@, 2
+	YSITE2  .Lfy\@, 0, .Lfz\@, 1
+	YSITE2  .Lfz2\@, 2, .Lfry\@, 0
+	YSITE2  .Lfrz\@, 1, .Lfrz2\@, 2
 	beqz    $at, 1f
 	andi    $at, $s2, 2
 	subu    $t3, $t2, $t0                # right: z - x
@@ -741,6 +742,7 @@ r_ysites:
 # every corner behind the near plane (SZ < SP_ZNEAR, the GTE's SZ being
 # 0 behind the eye) leaves the slow path nothing to draw (its clip finds
 # them all behind): on to the next polygon. Else the slow path.
+	ICSEC   \q\()_quad_near
 \q\()_quad_near:
 	lw      $t0, SP_ZNEAR($t8)
 	lw      $v0, SP_CLUT16($t8)          # (CAREFUL used v0, v1)
@@ -749,6 +751,7 @@ r_ysites:
 	lw      $v1, SP_TPAGE16($t8)
 	b       \q\()_quad_next
 	nop
+	ICSEC   \q\()_tri_near
 \q\()_tri_near:
 	lw      $t0, SP_ZNEAR($t8)
 	lw      $v0, SP_CLUT16($t8)
@@ -766,6 +769,7 @@ r_ysites:
 # on the same side) is left out; the others go to the slow path. The sign
 # bits of the SXY words carry y < 0 (31) and x < 0 (15); w - (240 << 16)
 # has the sign of y - 240, (w << 16) - (320 << 16) that of x - 320.
+	ICSEC   \q\()_quad_far
 \q\()_quad_far:
 	lw      $t0, SP_SXY($t3)
 	lw      $t1, SP_SXY($t4)
@@ -807,6 +811,7 @@ r_ysites:
 	lw      $v0, SP_CLUT16($t8)
 	b       \q\()_quad_next
 	lw      $v1, SP_TPAGE16($t8)
+	ICSEC   \q\()_tri_far
 \q\()_tri_far:
 	lw      $t0, SP_SXY($t3)
 	lw      $t1, SP_SXY($t4)
@@ -844,9 +849,11 @@ r_ysites:
 
 # Near polygon: hand it to the slow path (engine/r_slow.c) — near clip,
 # subdivision, exact projection. t0 = 4 (quad) or 3 (triangle).
+	ICSEC   \q\()_quad_skip
 \q\()_quad_skip:
 	b       \q\()_slow_call
 	li      $t0, 4
+	ICSEC   \q\()_tri_skip
 \q\()_tri_skip:
 	li      $t0, 3
 \q\()_slow_call:
@@ -936,6 +943,9 @@ r_ysites:
 # thresholds are slti immediates (\p\()_o_dcull, \p\()_o_fogz,
 # \p\()_o_flatz), patched (the flat shading everywhere: li 0).
 .macro RECLOOP p, exit, var, opt=0
+.if \opt
+	ICSEC   \p\()_records             # (dr, de: the walk, draw_model fall in)
+.endif
 	.globl  \p\()_records
 \p\()_records:
 .if R_PROFILE
@@ -1011,10 +1021,8 @@ r_ysites:
 	addu    $t5, $t5, $t3                # 9 r: |n| = sqrt(34) x 1.5 = 8.75
 	addu    $t0, $t0, $t1                # 5y (a 192-row viewport: R_YSLOPE)
 .endif
-	YSITE   \p\()_ys_r, 3
-	YSITE   \p\()_ys_z, 1
-	YSITE   \p\()_ys_z2, 2
-	YSITE   \p\()_ys_y, 0
+	YSITE2  \p\()_ys_r, 3, \p\()_ys_z, 1
+	YSITE2  \p\()_ys_z2, 2, \p\()_ys_y, 0
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, \p\()_cull
@@ -1146,6 +1154,7 @@ r_ysites:
 	POLYS   \p, \var, 0, \p\()_rec_1
 
 	# the transform of a record CAREFUL will not see: no SZ
+	ICSEC   \p\()_xfn
 	XFORM   0, \p\()_xfn, \p\()_onen, \p\()_polys
 	b       \p\()_polys_1
 	lhu     $t0, R_POLYS($a0)            # (\p\()_polys's first)
@@ -1154,6 +1163,7 @@ r_ysites:
 .if !\var
 	# the dynamic lights' way back here (render.c points dr_light_rec's
 	# returns at it): t3, the far depth, is lost: the fog's test passed
+	ICSEC   \p\()_lit_ret
 	.globl  \p\()_lit_ret
 \p\()_lit_ret:
 	b       \p\()_lit_back
@@ -1164,6 +1174,7 @@ r_ysites:
 	# flat, darkened as a whole (\p\()_o_fflat: cheaper than Gouraud);
 	# the others (a big one reaching from before it, a model) each light
 	# times its vertex's factor (XFORM fog, t2 = r_fogtab)
+	ICSEC   \p\()_o_fog
 \p\()_o_fog:
 .if !\var
 	.globl  \p\()_o_fogc
@@ -1180,6 +1191,7 @@ r_ysites:
 	XFORM   0, \p\()_xfgn, \p\()_onegn, \p\()_polys, 1, 1
 	b       \p\()_polys_1
 	lhu     $t0, R_POLYS($a0)            # (\p\()_polys's first)
+	ICSEC   \p\()_o_fogsz
 \p\()_o_fogsz:
 	XFORM   1, \p\()_xfg, \p\()_oneg, \p\()_xfg_done, 1, 1
 \p\()_xfg_done:
@@ -1196,6 +1208,7 @@ r_ysites:
 	# SP_FT4COL / SP_FT3COL with the codes for POLYS, in every vertex's
 	# colour word for the slow path (XFORM light 2, at = the colour)
 .if \opt & 2
+	ICSEC   \p\()_o_flat
 \p\()_o_flat:                              # (the flat shading's)
 	bnez    $gp, \p\()_o_gouraud
 	lbu     $t1, R_FLAGS($a0)            # (t0, the polygons' offset, kept for there)
@@ -1205,6 +1218,7 @@ r_ysites:
 .endif
 .endif
 .if \opt & 1
+	ICSEC   \p\()_o_fflat
 \p\()_o_fflat:                             # (the fog's: the centre in it)
 	bnez    $gp, \p\()_o_fogv
 	lbu     $t1, R_FLAGS($a0)
@@ -1244,6 +1258,7 @@ r_ysites:
 	XFORM   0, \p\()_fxfn, \p\()_fonen, \p\()f_polys, 0      # SXY only
 	b       \p\()f_polys_1
 	lhu     $t0, R_POLYS($a0)            # (\p\()f_polys's first)
+	ICSEC   \p\()_fsz
 \p\()_fsz:
 	XFORM   1, \p\()_fxf, \p\()_fone, \p\()_fxf_done, 2      # SXY, SZ, the colour
 \p\()_fxf_done:
@@ -1264,11 +1279,13 @@ r_ysites:
 .endif
 
 .if !\var
+	ICSEC   \p\()_inside
 \p\()_inside:                              # (no plane test: on with 2r)
 	b       \p\()_join
 	sll     $t5, $t3, 1
 .endif
 
+	ICSEC   \p\()_full
 \p\()_full:
 	li      $t0, 1
 .if R_PROFILE
@@ -1307,7 +1324,7 @@ bm_area:                                 # draw_bmodel's stack and kept words
 r_walk_spill:                            # walk stack overflow (see walk_spill)
 	.space  WALK_RAM
 
-	.section .text.r_render, "ax", @progbits
+	ICSEC   r_render                     # (the I-cache's chains: r_defs.inc ICSEC)
 	.global r_render
 	.type   r_render, @function
 r_render:
@@ -1453,6 +1470,8 @@ fl_loop:                                 # (t0 = s1 & 1: a leaf?)
 	lw      $s1, N_CHILD($t0)
 	b       fl_loop
 	andi    $t0, $s1, 1
+	.size r_render, . - r_render
+	ICSEC   fl_done
 fl_done:
 	addiu   $s1, $s1, -1                 # leaf pointer
 
@@ -1600,6 +1619,7 @@ dsn_pop:
 	lw      $a0, 0($a3)                  # popped
 	b       dsn_node_vis
 	lhu     $t3, N_VISFRAME($a0)
+	ICSEC   dsn_front
 dsn_front:                               # one side of the plane only: its
 	move    $t5, $v0                     # child (v0 front, t5 back), unless
 dsn_back:                                # a leaf
@@ -1608,6 +1628,7 @@ dsn_back:                                # a leaf
 	move    $a0, $t5                     # (the pop reloads a0)
 	b       dsn_node_vis
 	lhu     $t3, N_VISFRAME($a0)
+	ICSEC   dsn_next
 dsn_next:
 	addiu   $a1, $a1, DL_SIZE
 	bne     $a1, $a2, dsn_light_b
@@ -1651,6 +1672,7 @@ walk_t0:                                 # (t0 = s1 & 1: a leaf?)
 
 	# the node's plane: d = n . cam - dist (x4096, vertex units); axial
 	# planes skip the products
+	ICSEC   wn_inside
 wn_inside:                               # t0 = its visframe (the delay slot's)
 	lhu     $a2, N_PLANE3($s1)           # a2: plane index x 3, a word offset in
 	bne     $t0, $s5, pop                # the shared table s0 (dist in 1/8
@@ -1716,6 +1738,7 @@ walk_spill:
 
 	# general plane: n . cam by the GTE (the colour matrix's first row is
 	# the camera: r_render), sf 0, exact (|n . cam| < 2^28)
+	ICSEC   wn_general
 wn_general:
 	lwc2    C2_VXY0, PN_N+0($a2)         # nx | ny << 16
 	lh      $t2, PN_N+4($a2)             # nz (VZ0 from a halfword: see the
@@ -1728,6 +1751,7 @@ wn_general:
 	b       wn_push
 	subu    $v0, $v0, $a3
 
+	ICSEC   walk_refill
 walk_refill:                             # scratchpad stack empty: next RAM block
 	lw      $t1, SP_SPILLS($t8)
 	nop
@@ -1749,6 +1773,7 @@ walk_refill:                             # scratchpad stack empty: next RAM bloc
 	b       pop
 	nop
 
+	ICSEC   walk_leaf
 walk_leaf:                               # a0 = the leaf (s1 - 1)
 	lhu     $t0, L_VISFRAME($a0)
 	lhu     $a3, L_NMARKS($a0)
@@ -1784,6 +1809,7 @@ wl_ents:
 	b       pop_1
 	lw      $t0, SP_STACK($s3)           # (pop_1's first)
 
+	ICSEC   pop
 pop:
 	addiu   $s3, $s3, -4
 	lw      $t0, SP_STACK($s3)           # (see wn_push; empty: the word at +0)
@@ -1859,6 +1885,7 @@ dr_lit:
 # dl_light_record through a call (the C callee may write the frame's
 # first 16 bytes, the o32 argument slots, and gets the real gp back from
 # r_gp_saved). Then back to the loop.
+	ICSEC   dr_light_rec
 dr_light_rec:
 	lbu     $t0, R_FLAGS($a0)
 	lw      $t1, SP_RSTATE($t8)
@@ -1926,6 +1953,7 @@ dlr_ret1:
 	.set DLR_A2,    72     # the light loop's cursor and end, across the vertex loop
 	.set DLR_A3,    76
 	.set DLR_SIZE,  80
+	ICSEC   dr_light_full
 dr_light_full:
 	addiu   $sp, $sp, -DLR_SIZE
 	sw      $ra, DLR_RA($sp)
@@ -2005,6 +2033,7 @@ dl_light_record_asm:
 	addiu   $v1, $v1, DLB_FIRST
 	b       dlr_pass                     # its sphere test is done
 	lw      $t4, DLB_VALID($v1)
+	ICSEC   dlr_light
 dlr_light:
 	beq     $a2, $a3, dlr_done
 	lh      $t3, R_SC+0($a0)             # the record's sphere against the light
@@ -2220,6 +2249,7 @@ dlr_next:
 	addiu   $v1, $v1, DLB_SIZE
 	b       dlr_light
 	addiu   $a2, $a2, DL_SIZE
+	ICSEC   dlr_done
 dlr_done:
 .if R_DLIGHT_C == 2                      # then the C checks what the asm wrote
 	lw      $a0, DLR_A0($sp)
@@ -2254,6 +2284,7 @@ dlr_ret2:
 # game_render_done): dl_save_n entries of DL_SAVE_ENTRY bytes in
 # dl_save_buf (the record, its vertex count, the bytes as words).
 # Clobbers at, v0, v1, a0-a3, t0-t9.
+	ICSEC   dl_restore_asm
 	.global dl_restore_asm
 dl_restore_asm:
 	lui     $a0, %hi(dl_save_n)
@@ -2285,6 +2316,7 @@ dl_restore_asm:
 	nop
 
 
+	ICSEC   walk_done
 walk_done:
 	lw      $t0, SP_LASTTEX($t8)
 	lw      $t1, SP_TWIN($t8)
@@ -2340,6 +2372,7 @@ walk_done:
 # plane_dist: v0 = n . cam - dist for node a0 (x4096, vertex units).
 # Axial planes skip the products; a general one is an MVMVA, as in the walk.
 # Clobbers t0-t2, t5, v0.
+	ICSEC   plane_dist
 plane_dist:
 	lhu     $t0, N_PLANE3($a0)           # the node's plane, in the shared
 plane_dist_1:                            # table (dist in 1/8 units; fl_loop
@@ -2358,6 +2391,7 @@ plane_dist_1:                            # table (dist in 1/8 units; fl_loop
 	sll     $v0, $v0, 12
 	jr      $ra
 	subu    $v0, $v0, $t1
+	ICSEC   pd_general
 pd_general:
 	lh      $t2, PN_N+4($t5)
 	sra     $t1, $t1, 1
@@ -2374,6 +2408,7 @@ pd_general:
 # goes out after its polygons (so before them in the bucket) and
 # SP_LASTTEX becomes -1, so the next record reloads its texture.
 # Clobbers t6, t9.
+	ICSEC   close_run
 close_run:
 	lw      $t9, SP_LASTTEX($t8)
 	lw      $t6, SP_TWIN($t8)
@@ -2395,6 +2430,7 @@ close_run:
 # times the light t1 (<= 170, so the byte never overflows); a3 = 0: the
 # light itself, flat. Keeps a0, a2, a3, t1, t4, t5; clobbers a1, t0, t6,
 # t7, v0, v1.
+	ICSEC   light_recs
 light_recs:
 lr_rec:
 	beq     $a1, $a2, lr_done
@@ -2425,6 +2461,7 @@ lr_v:
 	sb      $t0, -1($t7)
 	b       lr_rec
 	nop
+	ICSEC   lr_flat
 lr_flat:
 	sb      $t1, 0($t7)
 	addiu   $t6, $t6, -1
@@ -2432,6 +2469,7 @@ lr_flat:
 	addiu   $t7, $t7, 1
 	b       lr_rec
 	nop
+	ICSEC   lr_done
 lr_done:
 	jr      $ra
 	nop
@@ -2444,6 +2482,7 @@ lr_done:
 # and the world's pointers are back on return. Needs the walk's s4, s6 /
 # s7 / fp, t8 and SP_RSTATE; clobbers at, v0, v1, a0-a3, t0-t7, t9 (a
 # sorted model also s1, s2 and gp: the walk's dead ones at a leaf).
+	ICSEC   draw_model
 draw_model:
 	sw      $ra, SP_DMRA($t8)
 dm_body:                                 # (ei_model: its ra and SP_DMRA set)
@@ -2513,6 +2552,7 @@ dm_draw:                                 # kept for the farther world's records
 	lw      $a1, RE_RECS_END($a0)
 	lw      $a0, RE_RECS($a0)
 	RECLOOP de, dm_exit, 1
+	ICSEC   dm_exit
 dm_exit:
 	lw      $t0, SP_BMWALK($t8)          # a brush model's block (bm_block: on
 	nop                                  # with its walk) or a model's pieces
@@ -2520,6 +2560,7 @@ dm_exit:
 	nop
 	jr      $t0
 	nop
+	ICSEC   dm_exit_1
 dm_exit_1:
 	jal     close_run
 	nop
@@ -2562,6 +2603,7 @@ dm_exit_1:
 	nop
 	jr      $ra
 	nop
+	ICSEC   dm_skip
 dm_skip:                                 # (nothing of the view's state touched)
 	lw      $ra, SP_DMRA($t8)
 	nop
@@ -2584,6 +2626,7 @@ dm_skip:                                 # (nothing of the view's state touched)
 # leaf's items where the model always was. gp holds the table; s1, s2, ra
 # are the sorted loop's temporaries (the walk's dead ones at a leaf;
 # SP_DMRA keeps ra). Then dm_exit_1, as for any model.
+	ICSEC   dm_sort
 dm_sort:
 	lw      $t0, RE_ZSF($a0)
 	lw      $t1, RE_ZNEAR($a0)
@@ -2628,6 +2671,7 @@ dm_sort:
 # stamp); a texture change closes no run (a streamed model's two images
 # share their window, none: stream.c), dm_exit_1 giving the table its one
 # window command, drawn before it.
+	ICSEC   ds_records
 	.globl  ds_records
 ds_records:
 .if R_PROFILE
@@ -2681,10 +2725,8 @@ ds_ys_y:
 	addu    $t5, $t5, $t3                # 9 r
 	addu    $t0, $t0, $t1                # 5y
 .endif
-	YSITE   ds_ys_r, 3
-	YSITE   ds_ys_z, 1
-	YSITE   ds_ys_z2, 2
-	YSITE   ds_ys_y, 0
+	YSITE2  ds_ys_r, 3, ds_ys_z, 1
+	YSITE2  ds_ys_z2, 2, ds_ys_y, 0
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, ds_cull
@@ -2840,6 +2882,7 @@ ds_next:
 	# CAREFUL's exits, as POLYS's: a corner nearer than its bound (t1 =
 	# the farthest corner's SZ): all behind the near plane, nothing to
 	# draw; else the slow path
+	ICSEC   ds_tri_near
 ds_tri_near:
 	lw      $t0, SP_ZNEAR($t8)
 	lw      $v0, SP_CLUT16($t8)          # (CAREFUL used v0, v1)
@@ -2850,6 +2893,7 @@ ds_tri_near:
 	nop
 	# too big or warping: wholly off one side of the screen, left out;
 	# else the slow path
+	ICSEC   ds_tri_far
 ds_tri_far:
 	lw      $t0, SP_SXY($t3)
 	lw      $t1, SP_SXY($t4)
@@ -2889,6 +2933,7 @@ ds_tri_off:
 	# pieces into the triangle's bucket: fp, the link it prepends to, is
 	# that chain's head before and after (s1 keeps the node: the slow path
 	# keeps s0-s7)
+	ICSEC   ds_tri_skip
 ds_tri_skip:
 	lwc2    C2_SZ1, SP_SZ($t3)           # (t3..t5: the corners, CAREFUL's)
 	lwc2    C2_SZ2, SP_SZ($t4)
@@ -2963,6 +3008,7 @@ ds_tri_skip:
 
 	# a record reaching into the fog: each light times its vertex's
 	# factor (XFORM fog, t2 = r_fogtab), then on as the others
+	ICSEC   ds_fog
 ds_fog:
 	lui     $t2, %hi(r_fogtab)
 	addiu   $t2, $t2, %lo(r_fogtab)
@@ -2972,6 +3018,7 @@ ds_xfg_done:
 	b       ds_xf_done                   #  the table and the fog's temporary
 	lw      $t7, SP_SZFAST($t8)          #  had their registers)
 
+	ICSEC   ds_full
 ds_full:
 	li      $t0, 1
 .if R_PROFILE
@@ -3010,6 +3057,7 @@ ds_exit:
 # own stack in RAM (bm_area, QW_MAX_BM_DEPTH entries: the cook bounds the
 # depth), the world walk's s3 kept around it; s1, s2 are the walk's dead
 # ones at a leaf, gp a block's (set again before each world block).
+	ICSEC   draw_bmodel
 draw_bmodel:
 	lui     $gp, %hi(bm_area)
 	addiu   $gp, $gp, %lo(bm_area)
@@ -3052,6 +3100,7 @@ bm_walk_t0:                              # (t0 = s1 & 1: a leaf?)
 	FRUSTUM bm_pop, "sll $a2, $a2, 2", "addu $a2, $a2, $s0", "lw $a3, PN_DIST($a2)", "lbu $a0, PN_TYPE($a2)", "sra $a3, $a3, 1"
 	b       bm_side_2
 	addiu   $s3, $s3, 4
+	ICSEC   bm_side_1
 bm_side_1:                               # the node's plane: d = n . cam - dist
 	addiu   $s3, $s3, 4                  # (x4096, vertex units)
 	sll     $a2, $a2, 2
@@ -3082,6 +3131,7 @@ bm_push:                                 # the stack word: as the world's
 	lw      $s1, N_CHILD($t0)            # near child first
 	b       bm_walk
 	sw      $t3, -4($s3)                 # push
+	ICSEC   bm_general
 bm_general:
 	lwc2    C2_VXY0, PN_N+0($a2)
 	lh      $t2, PN_N+4($a2)
@@ -3093,6 +3143,7 @@ bm_general:
 	mfc2    $v0, C2_MAC1                 # (waits for the GTE)
 	b       bm_push
 	subu    $v0, $v0, $a3
+	ICSEC   bm_pop
 bm_pop:
 	addiu   $s3, $s3, -4
 	addiu   $t1, $gp, BM_STACK
@@ -3123,6 +3174,7 @@ bm_pop:
 .endif
 	b       de_records                   # the record loop; dm_exit -> bm_block
 	nop
+	ICSEC   bm_block
 bm_block:                                # a block drawn (or the arena full)
 	lw      $t0, SP_FULL($t8)
 	nop
@@ -3150,6 +3202,7 @@ bm_done:
 # each, projected with the view matrix, models through draw_model.
 # Prepended here, between the faces behind the leaf and those in front of
 # it. Back to pop_1 (s3 already moved).
+	ICSEC   draw_ents
 draw_ents:
 	lw      $t0, SP_RSTATE($t8)
 	srl     $t9, $t9, 23                 # the id x 2 (bit 8: the flag, dropped)
@@ -3199,6 +3252,7 @@ ei_next:
 	lhu     $t9, SP_NEXTITEM($t8)
 	b       ei_item
 	nop
+	ICSEC   ei_model
 ei_model:
 	bltz    $t3, ei_pieces               # (RI_PIECES: a negative byte)
 	lui     $ra, %hi(ei_next)            # a model: draw_model's return
@@ -3212,6 +3266,7 @@ ei_model:
 # no matrix to load or put back (the walk's is the world's), the texture
 # run going on; the models' stamp for their face ids, the world's pool
 # and stamp again after them (ep_back, from dm_exit).
+	ICSEC   ei_pieces
 ei_pieces:                               # a0 = the first record (RI_ENT)
 	lw      $t0, SP_RSTATE($t8)
 	lhu     $t1, RI_LEN($t9)
@@ -3227,6 +3282,7 @@ ei_pieces:                               # a0 = the first record (RI_ENT)
 .endif
 	b       de_records
 	sw      $t3, SP_BMWALK($t8)
+	ICSEC   ep_back
 ep_back:                                 # (ei_next's own work here)
 	lw      $t0, SP_RSTATE($t8)
 	sw      $zero, SP_BMWALK($t8)
@@ -3260,6 +3316,7 @@ ep_back:                                 # (ei_next's own work here)
 # frustum, and the camera's moves before the next marking) is not stamped.
 # Clobbers v0, v1, at, a0 too.
 .macro MARKPVS n, far
+	ICSEC   \n
 \n:
 .if R_PROFILE
 	lhu     $t9, TIMER2($t8)
@@ -3384,7 +3441,6 @@ ep_back:                                 # (ei_next's own work here)
 	.globl  mark_pvs_far
 	MARKPVS mark_pvs_far, 1
 
-	.size r_render, . - r_render
 
 	.section .rodata.mp_all, "a", @progbits
 mp_all:                                  # mark_pvs: the row of a leaf without one

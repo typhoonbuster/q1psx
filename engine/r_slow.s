@@ -280,7 +280,7 @@ sp_ctab:                                 # children by split mask (1..7)
 93:
 .endm
 
-	.section .text.slow_poly, "ax", @progbits
+	ICSEC   slow_poly                    # (the I-cache's chains: r_defs.inc ICSEC)
 	.global slow_poly
 	.type   slow_poly, @function
 
@@ -321,6 +321,8 @@ slow_poly:
 	sw      $t1, 4($a3)
 	b       sp_sub
 	addiu   $a3, $a3, 8
+	.size slow_poly, . - slow_poly
+	ICSEC   sp_tri0
 sp_tri0:                                 # a triangle: (0, 1, 2)
 	addiu   $a3, $a3, %lo(r_slow_stack + 4)
 	bnez    $s1, sp_clip
@@ -334,6 +336,7 @@ sp_tri0:                                 # a triangle: (0, 1, 2)
 	# Corners to view space in ring order (a quad: 0, 1, 3, 2); a corner the
 	# cache holds keeps its SZ as z. Then the near plane. A pool entry's view
 	# x, y, z (entries 0..5) sit at VIEW_OFS from it.
+	ICSEC   sp_clip
 sp_clip:
 	STAT    1, $t0, $t1                  # (polygons clipped)
 	lw      $t9, SP_VERTPOOL($t8)
@@ -576,6 +579,7 @@ sp_emit:
 	# ---- split: the midpoints, then the children ---------------------------
 	# the edges NOSPLIT marked, by their length (REFINE): those under the
 	# threshold stay whole; none left, a leaf (t2 and t9 sp_emit's again)
+	ICSEC   sp_refine
 sp_refine:
 	STAT    6, $v0, $t9                  # (triangles refined)
 	lw      $t2, PV_Z($a0)               # z0 (t2 held the arena's test)
@@ -590,6 +594,7 @@ sp_refine:
 	b       sp_emit
 	lui     $t9, CODE_GT3 >> 16
 
+	ICSEC   sp_split
 sp_split:                                # s3 = mask, s2 = the triangle
 	STAT    5, $at, $v0                  # (triangles split)
 	sltiu   $at, $s4, POOL_N - 2         # the pool nearly full: a forced leaf
@@ -628,6 +633,7 @@ sp_split:                                # s3 = mask, s2 = the triangle
 	srl     $t2, $s2, 18
 	jr      $v0
 	andi    $t2, $t2, 0x1ff
+	ICSEC   sp_c7
 sp_c7:                                   # all three: 4 triangles
 	PUSHW   0,  $t0, $s0, $s1            # (p0, m01, m20)
 	PUSHW   4,  $s0, $t1, $s5            # (m01, p1, m12)
@@ -635,34 +641,40 @@ sp_c7:                                   # all three: 4 triangles
 	PUSHW   12, $s0, $s5, $s1            # (m01, m12, m20)
 	b       sp_sub
 	addiu   $a3, $a3, 16
+	ICSEC   sp_c3
 sp_c3:                                   # p0-p1 and p1-p2 (p2-p0 whole)
 	PUSHW   0,  $t0, $s0, $t2            # (p0, m01, p2)
 	PUSHW   4,  $s0, $t1, $s5            # (m01, p1, m12)
 	PUSHW   8,  $s0, $s5, $t2            # (m01, m12, p2)
 	b       sp_sub
 	addiu   $a3, $a3, 12
+	ICSEC   sp_c6
 sp_c6:                                   # p1-p2 and p2-p0 (p0-p1 whole)
 	PUSHW   0,  $t1, $s5, $t0            # (p1, m12, p0)
 	PUSHW   4,  $s5, $t2, $s1            # (m12, p2, m20)
 	PUSHW   8,  $s5, $s1, $t0            # (m12, m20, p0)
 	b       sp_sub
 	addiu   $a3, $a3, 12
+	ICSEC   sp_c5
 sp_c5:                                   # p2-p0 and p0-p1 (p1-p2 whole)
 	PUSHW   0,  $t2, $s1, $t1            # (p2, m20, p1)
 	PUSHW   4,  $s1, $t0, $s0            # (m20, p0, m01)
 	PUSHW   8,  $s1, $s0, $t1            # (m20, m01, p1)
 	b       sp_sub
 	addiu   $a3, $a3, 12
+	ICSEC   sp_c1
 sp_c1:                                   # p0-p1
 	PUSHW   0,  $t0, $s0, $t2            # (p0, m01, p2)
 	PUSHW   4,  $s0, $t1, $t2            # (m01, p1, p2)
 	b       sp_sub
 	addiu   $a3, $a3, 8
+	ICSEC   sp_c2
 sp_c2:                                   # p1-p2
 	PUSHW   0,  $t1, $s5, $t0            # (p1, m12, p0)
 	PUSHW   4,  $s5, $t2, $t0            # (m12, p2, p0)
 	b       sp_sub
 	addiu   $a3, $a3, 8
+	ICSEC   sp_c4
 sp_c4:                                   # p2-p0
 	PUSHW   0,  $t2, $s1, $t1            # (p2, m20, p1)
 	PUSHW   4,  $s1, $t0, $t1            # (m20, p0, p1)
@@ -670,6 +682,7 @@ sp_c4:                                   # p2-p0
 	addiu   $a3, $a3, 8
 
 	# a forced leaf (max depth, pool full): only if the GPU takes it
+	ICSEC   sp_leaf_max
 sp_leaf_max:
 	STAT    8, $at, $v0                  # (forced leaves)
 	sll     $a0, $s2, 5                  # (p0 again: from sp_split, REFINE
@@ -724,6 +737,7 @@ sp_leaf_max:
 	# a near-plane crossing (sc_edge), interpolated from its end behind the
 	# plane: r_slow.c before() compares z first, and a crossing's two ends
 	# differ in z, so both polygons sharing the edge make the same point
+	ICSEC   sc_cross
 sc_cross:
 	move    $t9, $t5                     # to b
 	move    $at, $t0                     # num: da
@@ -739,6 +753,7 @@ sc_cross:
 	b       sc_next
 	addiu   $a1, $a1, 1
 
+	ICSEC   sp_full
 sp_full:
 	li      $t0, 1
 	sw      $t0, SP_FULL($t8)
@@ -761,6 +776,7 @@ sp_done:
 # the u, v and light work in their shadows (36 cycles each). z T2 needs no
 # multiply: the pool holds pz T2 and qz T2, T2 is even, so
 # T2 (zs >> 1) = (pz T2 + qz T2) / 2 - (zs & 1) T, exactly.
+	ICSEC   sm_new
 sm_new:
 	sll     $t0, $t0, 5
 sm_new_1:
@@ -853,6 +869,7 @@ sm_new_1:
 # registers in turn: at / s0 the from value, s3 the difference, v0 the
 # result). Clobbers at, t0, t2, t4, t7, t9, s0, s3 (sc_edge's a: dead by
 # then). Keeps t1, t3, t5, t6, a*. sc_cross enters at sp_lerp_1.
+	ICSEC   sp_lerp
 sp_lerp:
 	sll     $at, $at, 14
 sp_lerp_1:
@@ -927,6 +944,7 @@ sp_lerp_1:
 # view entry (VIEW_OFS): z clamped to the near plane, sx = OFX + x H / z,
 # sy = OFY + y H / z (H = 5 << SP_HSHIFT; OFY: SP_OFY), z T2, uv word. Clobbers at,
 # t0-t5. Keeps t6, t7, a*, s*.
+	ICSEC   sp_proj
 sp_proj:
 	sll     $t0, $t0, 5
 	addu    $t0, $t0, $v1                # pool[i]
@@ -979,6 +997,7 @@ sp_o_ofx:
 # sp_proj for a target whose H is 25 << 2 (200 x 150: render.c r_set_res
 # jumps here from sp_o_entry, whose second word, the T2's load, ran in the
 # jump's slot): x 25 as two x 5, then back in sp_proj
+	ICSEC   sp_proj_25
 	.global sp_proj_25
 sp_proj_25:
 	lw      $t4, VIEW_OFS+8($t0)         # z
@@ -1003,4 +1022,3 @@ sp_proj_25:
 	b       sp_proj_st
 	sw      $t5, PV_ZT($t0)
 
-	.size slow_poly, . - slow_poly

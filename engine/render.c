@@ -390,7 +390,7 @@ int r_proj_h = R_SCREEN_H;
    centre and entry (r_slow.s sp_proj; the C engine's slow path reads
    r_proj_h and r_res_w). */
 extern uint32_t r_o_hshift[];
-extern const uint16_t r_far_sites[], r_far_sites_end[], r_ysites[], r_ysites_end[];   /* (offsets in r_render) */
+extern const uint32_t r_far_sites[], r_far_sites_end[], r_ysites[], r_ysites_end[];   /* (pairs: SITE_A, SITE_B) */
 #if !Q1PSX_ENGINE_C
 extern uint32_t sp_o_entry[], sp_o_xmul[], sp_o_ymul[], sp_o_ofx[], sp_o_bounds[], sp_proj_25[];
 static uint32_t sp_entry_word;             /* sp_o_entry's own (its z's load) */
@@ -401,6 +401,12 @@ static uint32_t sp_entry_word;             /* sp_o_entry's own (its z's load) */
 #define MIPS_SUBU(rd, rs, rt) (((uint32_t) (rs) << 21) | ((uint32_t) (rt) << 16) | ((uint32_t) (rd) << 11) | 0x23)
 #define MIPS_J(to)            (0x08000000u | ((uint32_t) (to) >> 2 & 0x3ffffffu))
 #define IMM16(w, v)           (((w) & 0xffff0000u) | ((uint32_t) (v) & 0xffffu))
+/* a pair of sites in one word (r_world.s FARSITE, YSITE2): the first's
+   address and kind (bits 0-1), the second's distance from it and kind in
+   bits 21-30 (RAM addresses have none there): SITE_NEXT makes the second
+   the first */
+#define SITE_AT(w)            ((uint32_t *) (uintptr_t) ((w) & 0x801ffffcu))
+#define SITE_NEXT(w)          (((w) & 0x801ffffcu) + ((w) >> 21 & 0x3ffu))
 
 /* r x mul (5, 15 or 1) into r, at the scratch ($at, 1): two words, as
    sp_proj has them for 5 (sll at, r, 2; addu r, r, at) */
@@ -424,9 +430,8 @@ Q_COLD static void mul_words(uint32_t *w, int mul, int r)
 Q_COLD static void res_patch_bounds(void)
 {
 	int rows = r_res ? r_res_h : VID_H, cols = r_res ? r_res_w : VID_W, an = yb_num != yb_den;
-	uint8_t *code = (uint8_t *) (uintptr_t) r_render;
-	for (const uint16_t *p = r_far_sites; p < r_far_sites_end; p += 2) {
-		uint32_t *lr = (uint32_t *) (code + p[0]), *lc = (uint32_t *) (code + p[1]);
+	for (const uint32_t *p = r_far_sites; p < r_far_sites_end; p++) {
+		uint32_t *lr = SITE_AT(*p), *lc = SITE_AT(SITE_NEXT(*p));
 		*lr = IMM16(*lr, rows);
 		*lc = IMM16(*lc, cols);
 	}
@@ -435,10 +440,11 @@ Q_COLD static void res_patch_bounds(void)
 		{ 2u << 6, 1u << 6, 0x21, 3u << 6 | 11u << 16 },   /* 4y, 3z = z << 1 + z, 8 r = r (t3) << 3 */
 		{ 3u << 6, 3u << 6, 0x23, 4u << 6 | 15u << 16 },   /* 8y, 7z = z << 3 - z, 24 r = rho (t7) << 4 */
 	};
-	for (const uint16_t *p = r_ysites; p < r_ysites_end; p++) {
-		uint32_t *w = (uint32_t *) (code + (*p & ~3u)), k = *p & 3u;
-		*w = (*w & ~ys_mask[k]) | ys_set[an][k];
-	}
+	for (const uint32_t *p = r_ysites; p < r_ysites_end; p++)
+		for (uint32_t s = *p, i = 0; i < 2; i++, s = SITE_NEXT(s)) {
+			uint32_t *w = SITE_AT(s), k = s & 3u;
+			*w = (*w & ~ys_mask[k]) | ys_set[an][k];
+		}
 #if !Q1PSX_ENGINE_C
 	static const uint8_t col_w[3] = { 0, 1, 3 }, row_w[3] = { 5, 6, 8 };
 	for (int i = 0; i < 3; i++) {
