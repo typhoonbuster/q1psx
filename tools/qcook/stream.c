@@ -306,7 +306,11 @@ int cmd_stream(int argc, char **argv)
 			write_out(path, o == OUT_POOL ? QSX_MAGIC : QSTREAM_MAGIC, ents, n, o, &data[o]);
 		free(data[o].p);
 	}
-	printf("qcook: streamed — %d assets, %d sounds (%zu KB)\n", n, nsnd, sound_bytes / 1024);
+	int cls_n;
+	size_t cls_saved;
+	sound_class_halved(&cls_n, &cls_saved);
+	printf("qcook: streamed — %d assets, %d sounds (%zu KB; %d halved by their class, %zu KB saved)\n", n, nsnd,
+	       sound_bytes / 1024, cls_n, cls_saved / 1024);
 	free(ents);
 	return 0;
 }

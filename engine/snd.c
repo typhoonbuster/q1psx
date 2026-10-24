@@ -153,8 +153,10 @@ static int sfx_get(int s, sfx_t *o)
 {
 	if (s >= SND_STREAM) {
 		const stream_sound_t *ss = stream_sound(s - SND_STREAM);
-		if (!ss)
+		if (!ss) {
+			stream_stats.snd_missing++;       /* (asked to play, not in: the bench's figure) */
 			return 0;
+		}
 		o->addr = ss->spu;
 		o->len = ss->len;
 		o->ticks = ss->ticks;

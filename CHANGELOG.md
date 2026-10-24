@@ -1976,6 +1976,18 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The sounds at half their rate where the ear loses nothing**
+  (2026-10-24, `docs/porting-notes.md` §85, the same branch): the SPU plays
+  its own 4-bit ADPCM alone, so a sound's bytes follow its sample rate;
+  measured over Quake's 225 sounds, 100 of the 217 at 11 kHz and 5 of the
+  8 at 22 kHz hold under 1 % of their energy above a quarter of their rate.
+  `QCOOK_SOUND_HALVE=<percent>` (default 1) cooks every such sound, the
+  banks' and the streamed ones, at half its rate (a 95-tap low-pass in
+  place of the 9-tap half-band, which dulled the mids); the bench counts
+  the streamed sounds asked to play while not in. Measured: the banks
+  327-367 → 265-296 KB, the streamed sounds 1160 → 842 KB, their pool
+  93-133 → 164-195 KB; in the zones' walk under the drive model the sounds
+  asked and absent 23 360 → 4250, the sounds' reads −32 %.
 - **The disc in sections, one a level** (2026-10-24,
   `docs/porting-notes.md` §84, the same branch): the choice among
   §83's options (the sections, the refills by four, the loads in reading

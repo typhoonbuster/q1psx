@@ -11003,3 +11003,123 @@ and `CDMODEL=1`; the 27 zoned maps, 33 loads):
   figure is for a DuckStation run of `CDLOG=1` to show.
 - The lod-poc branch's levels of detail (§81) go into the level's stream
   file by the same cook once merged (the pool holds them).
+
+## §85 — The sounds at half their rate where the ear loses nothing (2026-10-24)
+
+The decision after §84: before any change to the sounds' residency
+(§83.8's C), the one lever on their bytes, alone.
+
+### 85.1 Why the rate
+
+The SPU plays its own ADPCM and nothing else: 16 bytes a block of 28
+samples, 4.57 bits a sample, read from its 512 KB; no other codec exists in
+the hardware (the CD-ROM's XA is 4-bit ADPCM too, played as a stream, never
+stored), and a software codec on the R3000 would end as ADPCM in SPU RAM
+all the same. So a sound's bytes in SPU RAM are its samples, and its
+sample rate is the one lever. Today: 11 025 Hz for 217 of Quake's 225
+sounds (8-bit mono sources), 22 050 for 8 (195 KB of ADPCM between them,
+`weapons/lstart.wav` and `lhit.wav`, the fish's, Shub-Niggurath's): 50
+kbit/s a sound; the game's 225 sounds are 293 s and 1903 KB of ADPCM, a
+level's 79-135 sounds 601-958 KB (its bank, 327-367 KB, resident; the
+rest streamed into 93-133 KB), four times what the SPU holds.
+
+Measured over the 225 sounds, the share of each one's energy above a
+quarter of its rate — what halving the rate removes (2.76 kHz at 11 025
+Hz, 5.5 kHz at 22 050):
+
+| halved, the loss | at 11 025 Hz | KB | at 22 050 Hz | KB |
+|---|---|---|---|---|
+| under 1 % (transparent) | 100 sounds | 839 | 5 | 170 |
+| 1 to 5 % (acceptable) | 57 | 401 | 1 | 4 |
+| 5 to 15 % (noticeable) | 35 | 324 | 0 | 0 |
+| over 15 % (bothersome) | 25 | 144 | 2 | 22 |
+
+The bothersome are the metal and the highs: `weapons/ric1` (81 %), `tink1`
+(59 %), `pkup` (42 %), `items/armor1` (41 %), `misc/h2ohit1`, `lock4`,
+`secret`, `player/gib`, `h2ojump`, `r_tele3`, the wizard's `hit` and
+`wsight`, `z_gib`, `power`, `medkey`, `fish/idle`, `weapons/lhit`. The
+transparent ones are the rumbles, hums and cries: `lstart`,
+`ambience/wind2`, the player's deaths and pains, `r_exp3`, `sgun1`,
+`ambience/water1`.
+
+A level's whole sound set with the transparent halved: 450-728 KB; with
+the acceptable too: 377-638 KB, under the 460 KB the SPU leaves beside
+the music on 9 maps of 32 (START, E1M1, E1M7, E1M8, E2M1, E3M3, E3M6,
+E4M1, END).
+
+### 85.2 The cook (tools/qcook/sound.c)
+
+`QCOOK_SOUND_HALVE=<percent>` (default 1; 0 none; `cooked/settings.txt`
+records it, so the build cooks again when it changes): every sound the
+cook loads, the banks' and the streamed ones alike, whose halving would
+lose no more than that share of its energy is cooked at half its rate
+(`halve_by_class`, in `sound_add`). The loss is the spectrum's share
+above a quarter of the rate, by an FFT over the sound (`halve_loss`): a
+first try measured it as the energy `wav_halve`'s 9-tap half-band filter
+removed, and that filter is soft (0.82 at a tenth of the rate, 0.56 at
+0.15), so `player/death5` read 29 % where its spectrum holds 0.1 % above
+2.76 kHz, and almost nothing qualified (the banks lost 2 KB). The same
+softness dulled every halved sound's mids, so the halving's low-pass is
+now a 95-tap windowed sinc (Blackman) cut at a quarter of the rate: flat
+to a fifth of it, 60 dB down past three tenths. The bank's budget still
+halves other sounds for room when it must (the longest loops first); a
+sound halved by its class is not halved again. The cook's lines say how
+many and how much: `qcook: sounds — ... (n halved by their class, k KB
+saved; m for room)`, `qcook: streamed — ... (n halved by their class, k
+KB saved)`.
+
+Nothing changes in the engine: a sound's pitch is the bank's or the
+stream's (`qs_sound.pitch`, `qst_sound.pitch`: 0x200 at 5512 Hz), its
+length in ticks the same.
+
+### 85.3 The measure of quality
+
+The bench counts the streamed sounds asked to play while not in
+(`stream_stats.snd_missing`, engine/snd.c `sfx_get`; the walk's `bench
+zones` line: `n sounds asked, not in`): a missing sound is what the player
+would notice of the streaming, and the figure the SPU room moves.
+
+### 85.4 Measured
+
+`QCOOK_SOUND_HALVE=1` (the default), the 32 maps cooked again:
+
+- **The banks**: 327-367 KB → **265-296 KB**. E1M1's 350 → 280 KB: 24
+  sounds at 5512 Hz (the player's deaths, pains and landings, `r_exp3`,
+  `sgun1`, `spike2`, `grenade`, `bounce`, `ax1`, `wind2`, the water's,
+  `damage3`, `talk`, `menu3`, the demon's landing) and `lstart` from 22 050
+  to 11 025 Hz; the ricochets, tinks, pickups and the rest as they were.
+- **The streamed sounds**: 121 sounds, 1160 → **842 KB** (59 at 5512 Hz);
+  STREAM_0.DAT 2276 → 1954 KB, the levels' files with it.
+- **The pool the streamed sounds get**: 93-133 → **164-195 KB**, with the
+  2 s music ring (+16 KB more with the 1.3 s one).
+- The frames: nothing of the sounds reaches a display list (the 128 views
+  were checked identical to master's on this branch's disc, §84.4).
+
+The zones' walk under the drive model (`CDMODEL=1 ZONES=1 MUSIC=1
+CDLOG=1`, the 27 maps), the halving off against on:
+
+| | `QCOOK_SOUND_HALVE=0` | `=1` |
+|---|---|---|
+| streamed sounds asked to play, not in | 23 360 | **4 250** (−82 %) |
+| the sounds' pieces read | 8574 | **5827** (−32 %) |
+| the walks' seeks (the model's) | 871 s | 775 s |
+| late events, late frames | 250, 3505 | 251, 3516 |
+| music underruns | 0 | 0 |
+
+With the pool at 164-195 KB and the sounds half their size, the player
+hears five sixths of what the streaming lost; the drive reads a third
+fewer sound pieces. The chunks' late frames are the music's and the
+chunks' own affair and do not move.
+
+### 85.5 Left
+
+- **The threshold is the ear's**: `QCOOK_SOUND_HALVE=5` takes 57
+  more sounds (1-5 % of their energy above a quarter of the rate: the
+  teleporter's `r_tele1/2/4`, `guncock`, `shotgn2`, the player's `pain2/5/6`
+  and `udeath`, the menu's clicks), another 100 KB or so; 0 restores
+  today's sounds. A build cooks again when the setting changes
+  (`cooked/settings.txt`).
+- The bank's budget still halves the longest loops when a bank does not
+  fit; none needs it now.
+- §83.8's C1 (the bank by the episode's position) and C2 (the reach, the
+  eviction's hysteresis) are not built.

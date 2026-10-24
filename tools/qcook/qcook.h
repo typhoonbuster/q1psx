@@ -208,6 +208,7 @@ int  sound_streamed(const char **list, int max);
 /* the release menu's bank: its clicks, CD track 2 (`qcook menu`, menu.c) */
 void sound_build_menu(const uint8_t *pak0, long pak0_len, const char *out_path);
 int  sound_is_banked(const char *name);
+void sound_class_halved(int *n, size_t *saved);   /* the sounds halved by their class so far, the bytes saved */
 int  sound_in_paks(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len);
 void sound_encode_stream(const char *name, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len,
                          buf_t *out, uint32_t *ticks);

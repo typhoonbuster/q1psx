@@ -277,16 +277,41 @@ static void wav_load(const uint8_t *d, uint32_t len, const char *name, wav_t *w)
 		w->s[i] = bits == 8 ? (int16_t) ((data[i] - 128) << 8) : (int16_t) rd16(data + 2 * i);
 }
 
-/* halve the sample rate: a 9-tap half-band filter, then every other sample */
+/* The low-pass that halves a rate: a windowed sinc (Blackman, HALVE_TAPS
+   taps) cut at a quarter of the rate; flat to a fifth of it, 60 dB down
+   past three tenths. (The 9-tap half-band it replaces was 0.82 at a
+   tenth of the rate and 0.56 at 0.15: it dulled what it kept.) */
+#define HALVE_TAPS 95
+static const double *halve_kernel(void)
+{
+	static double k[HALVE_TAPS];
+	static int made;
+	if (!made) {
+		double sum = 0;
+		for (int t = 0; t < HALVE_TAPS; t++) {
+			double m = t - (HALVE_TAPS - 1) / 2.0, x = M_PI * m / 2;   /* sinc at fc = 1/4 */
+			double s = m == 0 ? 0.5 : sin(x) / (M_PI * m);
+			double wn = 0.42 - 0.5 * cos(2 * M_PI * t / (HALVE_TAPS - 1)) + 0.08 * cos(4 * M_PI * t / (HALVE_TAPS - 1));
+			k[t] = s * wn;
+			sum += k[t];
+		}
+		for (int t = 0; t < HALVE_TAPS; t++)
+			k[t] /= sum;
+		made = 1;
+	}
+	return k;
+}
+
+/* halve the sample rate: the low-pass above, then every other sample */
 static void wav_halve(wav_t *w)
 {
-	static const double k[9] = { -0.0208, 0, 0.1178, 0.25, 0.3061, 0.25, 0.1178, 0, -0.0208 };
+	const double *k = halve_kernel();
 	int n2 = (w->n + 1) / 2;
 	int16_t *o = xmalloc((size_t) n2 * sizeof *o);
 	for (int i = 0; i < n2; i++) {
 		double a = 0;
-		for (int t = 0; t < 9; t++) {
-			int j = 2 * i + t - 4;
+		for (int t = 0; t < HALVE_TAPS; t++) {
+			int j = 2 * i + t - (HALVE_TAPS - 1) / 2;
 			if (j < 0) j = 0;
 			if (j >= w->n) j = w->n - 1;
 			a += k[t] * w->s[j];
@@ -436,6 +461,8 @@ static int sound_find(const char *name)
 	return -1;
 }
 
+static void halve_by_class(bank_sound *s);
+
 static int sound_add(const char *name, int group, const uint8_t *pak, long pak_len,
                      const uint8_t *pak0, long pak0_len)
 {
@@ -453,6 +480,7 @@ static int sound_add(const char *name, int group, const uint8_t *pak, long pak_l
 	snprintf(s->name, sizeof s->name, "%s", name);
 	s->group = group;
 	wav_load(d, len, path, &s->wav);
+	halve_by_class(s);
 	return nsounds++;
 }
 
@@ -460,6 +488,107 @@ static size_t sound_bytes(const bank_sound *s)
 {
 	int pre = s->wav.loopstart >= 0 ? (28 - s->wav.loopstart % 28) % 28 : 0;
 	return (size_t) ((pre + s->wav.n + 27) / 28) * 16;
+}
+
+/* ------------------------------------------------------ the rate by class -- */
+
+/* The SPU plays its own ADPCM alone, 4 bits a sample: a sound's bytes in
+   SPU RAM follow its rate, and the rate is the one lever on them. Most of
+   Quake's sounds are 11 025 Hz 8-bit; many hold next to nothing above
+   2.76 kHz (rumbles, hums, the player's cries), some are all highs (the
+   ricochets, the metal tinks, the pickups). QCOOK_SOUND_HALVE=<percent>
+   (default 1; 0: none) halves the rate of every sound, the bank's and the
+   streamed ones alike, whose spectrum holds no more than that share of its
+   energy above a quarter of its rate (what the halving cuts; an FFT;
+   docs/porting-notes.md §85). Over the game's 225
+   sounds, 1 % takes 100 of the 217 at 11 kHz and 5 of the 8 at 22 kHz,
+   5 % takes 57 more. The budget below still halves others for room. */
+/* an in-place radix-2 FFT (re, im interleaved), n a power of two */
+static void fft(double *z, int n)
+{
+	for (int i = 1, j = 0; i < n; i++) {           /* bit reversal */
+		int bit = n >> 1;
+		for (; j & bit; bit >>= 1)
+			j ^= bit;
+		j ^= bit;
+		if (i < j) {
+			double tr = z[2 * i], ti = z[2 * i + 1];
+			z[2 * i] = z[2 * j]; z[2 * i + 1] = z[2 * j + 1];
+			z[2 * j] = tr;       z[2 * j + 1] = ti;
+		}
+	}
+	for (int len = 2; len <= n; len <<= 1) {
+		double ang = -2 * M_PI / len, wr = cos(ang), wi = sin(ang);
+		for (int i = 0; i < n; i += len) {
+			double cr = 1, ci = 0;
+			for (int j = 0; j < len / 2; j++) {
+				int a = 2 * (i + j), b = 2 * (i + j + len / 2);
+				double ur = z[a], ui = z[a + 1];
+				double vr = z[b] * cr - z[b + 1] * ci, vi = z[b] * ci + z[b + 1] * cr;
+				z[a] = ur + vr;     z[a + 1] = ui + vi;
+				z[b] = ur - vr;     z[b + 1] = ui - vi;
+				double ncr = cr * wr - ci * wi;
+				ci = cr * wi + ci * wr;
+				cr = ncr;
+			}
+		}
+	}
+}
+
+/* the share of a sound's energy above a quarter of its rate: what halving
+   the rate cuts (its spectrum, by an FFT over the sound zero-padded) */
+static double halve_loss(const wav_t *w)
+{
+	int n = 1;
+	while (n < w->n)
+		n <<= 1;
+	double *z = xcalloc((size_t) n * 2, sizeof *z), e_all = 0, e_hi = 0;
+	for (int i = 0; i < w->n; i++)
+		z[2 * i] = w->s[i];
+	fft(z, n);
+	for (int k = 0; k <= n / 2; k++) {              /* (the real signal's half) */
+		double p = z[2 * k] * z[2 * k] + z[2 * k + 1] * z[2 * k + 1];
+		e_all += p;
+		if (k > n / 4)
+			e_hi += p;
+	}
+	free(z);
+	return e_all > 0 ? e_hi / e_all : 0;
+}
+
+static double halve_threshold(void)
+{
+	static double t = -1;
+	if (t < 0) {
+		const char *e = getenv("QCOOK_SOUND_HALVE");
+		t = e ? atof(e) : 1.0;
+		if (t < 0)
+			t = 0;
+	}
+	return t;
+}
+
+static int    class_halved_n;
+static size_t class_halved_saved;
+
+static void halve_by_class(bank_sound *s)
+{
+	double t = halve_threshold();
+	if (t <= 0 || s->wav.n < 64 || s->wav.rate <= 5512)
+		return;
+	if (halve_loss(&s->wav) * 100 > t)
+		return;
+	size_t before = sound_bytes(s);
+	wav_halve(&s->wav);
+	s->halved = 1;
+	class_halved_n++;
+	class_halved_saved += before - sound_bytes(s);
+}
+
+void sound_class_halved(int *n, size_t *saved)
+{
+	*n     = class_halved_n;
+	*saved = class_halved_saved;
 }
 
 /* the bank's sounds (sounds[0 .. nsounds)) encoded and written, with its
@@ -513,8 +642,12 @@ static void bank_write(const qs_static *statics, int nstatics, int cd_track, int
 	int per_group[SG_COUNT] = { 0 };
 	for (int i = 0; i < nsounds; i++)
 		per_group[sounds[i].group]++;
-	printf("qcook: sounds — %d sounds, %zu KB of SPU RAM (%d halved), %d static sounds, CD track %d, worst SNR %.1f dB (%s)\n",
-	       nsounds, data / 1024, halved, nstatics, cd_track, worst_snr, worst);
+	int cls_n;
+	size_t cls_saved;
+	sound_class_halved(&cls_n, &cls_saved);
+	printf("qcook: sounds — %d sounds, %zu KB of SPU RAM (%d halved by their class, %zu KB saved; %d for room), %d static "
+	       "sounds, CD track %d, worst SNR %.1f dB (%s)\n",
+	       nsounds, data / 1024, cls_n, cls_saved / 1024, halved, nstatics, cd_track, worst_snr, worst);
 	printf("qcook: sounds — core %d", per_group[SG_CORE]);
 	for (int g = 1; g < SG_COUNT; g++)
 		if (per_group[g]) printf(", %s %d", group_name[g], per_group[g]);

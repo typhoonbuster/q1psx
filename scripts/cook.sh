@@ -33,7 +33,9 @@
 # A cook writes what its output depends on, besides the cooker's sources
 # (CMake tracks those), to cooked/settings.txt: the settings above, the paks,
 # the zone tables' and the music's contents, qcook's own switches
-# (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP). `cook.sh --stale <file>`, the
+# (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP, QCOOK_SOUND_HALVE: the share of
+# its energy a sound may lose to be cooked at half its rate, in percent;
+# default 1, 0 none; docs/porting-notes.md §85). `cook.sh --stale <file>`, the
 # build's check before the cook (CMakeLists.txt), rewrites <file> when they
 # differ from the last cook's, and the build cooks again: a change in
 # local.env or on the command line, or a cook another build directory made
@@ -113,7 +115,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-}"
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_HALVE=${QCOOK_SOUND_HALVE:-}"
 }
 if [ "${1:-}" = --stale ]; then
 	stamp=${2:?--stale needs the file the cook depends on}
