@@ -10023,3 +10023,63 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
   Every variant draws the faces its records add in more views (the slow
   path's share rises with them) and loses more than the records save. The
   §14.6 grouping stays.
+
+## §81 — The asm pass: the interrupts, the slow path, every asm file (2026-10-24)
+
+- **The ask**: on a branch of its own (from the CPU pass's), the slow
+  path first, then every asm file, drawing on
+  a list of known R3000A / PS1 techniques: the load and branch delay
+  slots, the GTE's scheduling, a minimal exception handler in place of
+  the BIOS's, the scratchpad, the DMA, the ordering table, self-modifying
+  code. Every gain is kept, however small; RAM gains too.
+- **The references** (the branch's base, PCSX-Redux at 10×, `HASHONLY=1
+  PROFILE=0`, `scripts/dlcheck.sh`): START's 12 views and the physics
+  checks (the default bench), the 128 spawn views (`BENCH_MAPS=1`), the
+  game (`BENCH_GAME=1`), the monsters (`MONSTERS=1`), E1M3's crowd
+  (`MONSTERS=2`) and the movers (`MOVERS=1`). Each step below keeps every
+  display list, every monster line (cycles aside) and every mover hash,
+  under the dynarec and the interpreter.
+
+### 81.1 The interrupts without the kernel's dispatch
+
+- **Before**: psxetc (PSn00bSDK v0.24) reached its callbacks through the
+  BIOS. The kernel's exception handler saves every register into its
+  thread block and runs its priority chains. It then jumps to the custom
+  exit (`HookEntryInt`) that calls the callbacks, and
+  `ReturnFromException` restores the thread block. That is ~2.7 k cycles
+  an interrupt on PCSX-Redux (§25.7). Every frame takes the vblank, the
+  GPU's DMA end and the profile timer's wrap; the CD adds its own while
+  it streams.
+- **Now** (`engine/irq.s`, `engine/irq.c`):
+  - the RAM exception vector (0x80000080) jumps to `q_exc`;
+  - on an interrupt, `q_exc` saves the registers a C callback may change
+    (26 words), runs the callbacks on its own stack with the program's
+    gp, as psxetc's `_global_isr` does (each pending, enabled source
+    acknowledged, then its callback, again until none is pending), and
+    returns with `rfe`;
+  - a return onto a GTE command skips it, as the kernel does: the command
+    ran before the interrupt (psx-spx);
+  - every other exception (the syscalls: `EnterCriticalSection`...) goes
+    on to the kernel's handler, through its vector's four words copied
+    into `q_bios_vec` (`lui` / `addiu` / `jr k0`, checked at the install:
+    OpenBIOS and Sony's);
+  - `irq.c` is psxetc's API with the same calls and effects
+    (`InterruptCallback`, `DMACallback`, `ResetCallback`,
+    `SetDMAPriority`...), so the link leaves psxetc's object out. psxgpu,
+    psxcd and psxspu register their callbacks there as before.
+    `q_dma_isr` is the DMA master handler.
+- **Frames**:
+  - START's 12 views −0.6 %; view 3 now always fits one vblank (`vbl`
+    106 → 100);
+  - the 128 views −0.7 % (44.60 M → 44.30 M), the worst 1 133 717 →
+    1 116 015;
+  - the game: walk60 −0.4 %, walk30 −1.4 % (its worst frame 1 250 240 →
+    1 197 352);
+  - E1M3's crowd −0.6 %; the movers −0.6 %.
+- **RAM**: psxetc's 4 KB interrupt stack becomes 1 KB. 500 bytes are
+  reached on every bench; the bench prints `isr stack: N bytes never
+  reached` before `bench done`. The release's stack room: 86 664 →
+  90 048 B (+3.3 KB).
+- **Left**: a check on DuckStation (Sony's BIOS: a run before the
+  rule against DuckStation runs here went through START's views 0-7) and
+  on the machine.

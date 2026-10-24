@@ -3066,6 +3066,15 @@ static void bench_key(void)
 	printf("key done, edicts %s\n", ents_check("key done") ? "ok" : "CORRUPT");
 }
 
+/* the bench's end: the interrupt stack's room (engine/irq.c), then the
+   line scripts/bench.sh waits for */
+static void bench_done(void)
+{
+	extern int irq_stack_room(void);
+	printf("isr stack: %d bytes never reached\n", irq_stack_room());
+	printf("bench done\n");
+}
+
 static void run_bench(void)
 {
 	static char names[16][8];
@@ -3074,48 +3083,48 @@ static void run_bench(void)
 	zone_sync = 1;                              /* (a view's zone read before its frame) */
 	if (Q1PSX_BENCH_ZONES) {
 		bench_zones();
-		printf("bench done\n");
+		bench_done();
 		for (;;)
 			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_MONSTERS == 6) {
 		bench_key();
-		printf("bench done\n");
+		bench_done();
 		for (;;)
 			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_MONSTERS >= 4) {
 		bench_clear();
-		printf("bench done\n");
+		bench_done();
 		for (;;)
 			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_MONSTERS) {
 		bench_monsters();
-		printf("bench done\n");
+		bench_done();
 		for (;;)
 			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_MAPS) {
 		bench_maps();
-		printf("bench done\n");
+		bench_done();
 		for (;;)
 			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_ENTS) {
 		bench_ents();
-		printf("bench done\n");
+		bench_done();
 		return;
 	}
 	if (Q1PSX_BENCH_MOVERS) {
 		bench_movers();
-		printf("bench done\n");
+		bench_done();
 		for (;;)
 			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_GAME) {
 		bench_game();
-		printf("bench done\n");
+		bench_done();
 		for (;;)
 			run_frame(0, 0);
 	}
@@ -3207,7 +3216,7 @@ static void run_bench(void)
 		       (unsigned) (cyc_sum / ticks), (unsigned) cyc_max);
 #undef PM_TICK
 	}
-	printf("bench done\n");
+	bench_done();
 	for (;;)
 		run_frame(0, 0);
 }

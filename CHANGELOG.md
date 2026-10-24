@@ -1930,3 +1930,9 @@ followed by R0-R4.
   `docs/porting-notes.md` §79.3): merging a node's coplanar faces would
   save 2.5-5.7 % of the polygons (a coarser light), bigger records cost
   more than they save (+0.6 to +2.7 % on the 128 views): neither built.
+- **The interrupts without the kernel's dispatch** (2026-10-24,
+  `docs/porting-notes.md` §81.1): the RAM exception vector runs the
+  callbacks itself (`engine/irq.s`, psxetc's API in `engine/irq.c`), the
+  syscalls still the kernel's; ~2.7 k cycles an interrupt gone on
+  PCSX-Redux: frames −0.6 to −1.4 %, the game's worst −53 k; the
+  interrupt stack 4 KB → 1 KB.
