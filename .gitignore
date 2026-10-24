@@ -58,6 +58,7 @@ rogue/
 /tools/hazcheck/hazcheck
 /tools/icache/icache
 /tools/pmsim/pmsim
+__pycache__/
 
 # --- Editor / OS ---
 *.swp
