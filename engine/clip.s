@@ -42,9 +42,11 @@
 # scratchpad (PS_S4K / PS_D4K = start / delta x 4096), GTE rows 1-2 = start /
 # delta. Out: t0 = node pointer, a2 / a3 = children, t5 = ds, t6 = dd.
 # Clobbers t1-t4, v1.
-.macro NODE_DSDD h0
+.macro NODE_DSDD h0, first=1
 	.if \h0
+	.if \first
 	lhu     $t1, N_PLANE3($t9)
+	.endif
 	lw      $a2, N_CHILD+0($t9)
 	move    $t0, $t9
 	.else
@@ -127,14 +129,15 @@
 	subu    $t5, $t5, $t3
 .endm
 
-# LEAF h0, node: branch to `node` if t9 is a node; else t9 becomes its
-# contents (hull 0: the leaf's byte). The delay slot does NODE_*'s first
-# step (hull 0: nothing to do; it holds a nop).
-.macro LEAF h0, node
+# LEAF h0, node [, slot]: branch to `node` if t9 is a node; else t9 becomes
+# its contents (hull 0: the leaf's byte). The delay slot does NODE_*'s
+# first step (hull 0: slot, its plane's load when node is past it; else a
+# nop).
+.macro LEAF h0, node, slot=nop
 	.if \h0
 	andi    $t0, $t9, 1
 	beqz    $t0, \node
-	nop
+	\slot
 	lb      $t9, L_CONTENTS-1($t9)       # (the pointer carries bit 0)
 	.else
 	bgez    $t9, \node
@@ -196,7 +199,13 @@
 	move    $v0, $t5                     # t1 = ds
 
 \p\()_node:
+	.if \h0
+	lhu     $t1, N_PLANE3($t9)           # (NODE_DSDD's first: the next's slot
+\p\()_node_1:                            #  does it, \p\()_next)
+	NODE_DSDD \h0, 0
+	.else
 	NODE_DSDD \h0
+	.endif
 	beqz    $s4, 1f
 	move    $v0, $t5                     # t1 = ds when f1 = 0
 	FRAC_MUL $t7, $t6, $s4
@@ -262,7 +271,11 @@
 	move    $t9, $a2
 	move    $t9, $a3
 \p\()_next:
+	.if \h0
+	LEAF    \h0, \p\()_node_1, "lhu $t1, N_PLANE3($t9)"   # (a leaf: t1 unused)
+	.else
 	LEAF    \h0, \p\()_node
+	.endif
 \p\()_leaf:
 
 	# ---- leaf -----------------------------------------------------------
