@@ -1936,3 +1936,7 @@ followed by R0-R4.
   syscalls still the kernel's; ~2.7 k cycles an interrupt gone on
   PCSX-Redux: frames −0.6 to −1.4 %, the game's worst −53 k; the
   interrupt stack 4 KB → 1 KB.
+- **The pad's poll by interrupts** (2026-10-24, `docs/porting-notes.md`
+  §81.2): each byte's /ACK interrupt sends the next one, the CPU no
+  longer waits for the port; interrupts 10.7 k → 3.8 k cycles a vblank;
+  the game −2.8 / −3.7 %; the bench's `IRQTIME=1` times the handler.

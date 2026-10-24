@@ -30,6 +30,17 @@ void bench_add(bench_acc_t *b, uint32_t vbl)
 	}
 	for (int i = 0; i < PROF_COUNTERS; i++)
 		b->count_sum[i] += prof_count[i];
+#if Q1PSX_BENCH_IRQTIME
+	extern volatile uint32_t q_irq_ticks, q_irq_count;   /* (engine/irq.s) */
+	static uint32_t last_ticks, last_count;
+	uint32_t t = q_irq_ticks, c = q_irq_count;
+	if (b->frames > 1) {                   /* (since the last frame's) */
+		b->irq_sum   += (t - last_ticks) * PROF_CYCLES_PER_TICK;
+		b->irq_count += c - last_count;
+	}
+	last_ticks = t;
+	last_count = c;
+#endif
 }
 
 void bench_print(const bench_acc_t *b)
@@ -46,5 +57,7 @@ void bench_print(const bench_acc_t *b)
 			printf(" %s=%u", prof_count_name[i], b->count_sum[i] / n);
 	if (b->gpu_max)
 		printf(" gpu=%u/%u", b->gpu_sum / n, b->gpu_max);
+	if (b->irq_count && n > 1)             /* (IRQTIME: the handler's cycles a frame, interrupts x 100) */
+		printf(" irq=%u/%u", b->irq_sum / (n - 1), b->irq_count * 100 / (n - 1));
 	printf(" pkt=%u%s\n", b->pkt_max, b->full_frames ? " FULL" : "");
 }

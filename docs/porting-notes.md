@@ -10083,3 +10083,41 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
 - **Left**: a check on DuckStation (Sony's BIOS: a run before the
   rule against DuckStation runs here went through START's views 0-7) and
   on the machine.
+
+### 81.2 The pad's poll by interrupts
+
+- **Before** (§25.7): the game polled port 1 in the vblank callback, a
+  byte at a time, waiting for each answer and each /ACK: ~10 k cycles a
+  frame on PCSX-Redux, ~12 k on the machine (9 bytes of ~40 µs). The
+  interrupt-driven poll written then cost more, as each byte paid the
+  kernel's dispatch.
+- **Now** (`engine/pad.c`):
+  - the vblank selects the pad and sends the first byte;
+  - each byte's /ACK interrupt (SIO0, IRQ 7) reads its answer and sends
+    the next one;
+  - the last answer, which no /ACK follows, comes by the receive
+    interrupt;
+  - the last answer puts the poll in the ring, as the vblank did.
+  - A poll still going at the next vblank (no pad, or one that stopped
+    answering) ends there with what came.
+  - `pad_frame` waits for this vblank's poll while its bytes keep coming
+    (at most ~120 µs since the last one), so the game reads the same
+    poll as before.
+- **Measured** (the bench's new `IRQTIME=1`: the handler times itself;
+  `irq=` is its cycles a frame, every interrupt, those in the wait for
+  the vblank too):
+  - START's views in one vblank: 10 740 → 3 800 cycles of interrupts a
+    frame, 3 → 12 interrupts;
+  - views over two vblanks: 21 140 → 7 270.
+  - The frames' own counts rise by 2.3-2.9 k in the one-vblank views: the
+    bytes' interrupts now land in the frame, where the old poll ran in
+    the vblank handler, in the wait. The work is the same (identical
+    display lists), so the CPU's load a vblank falls by ~6.9 k (1.2 % of
+    a frame).
+  - The game: walk60 −2.8 %, walk30 −3.7 % (sim + frame, against §81.1).
+    walk30's frames in one vblank go from 103 to 150 of 300.
+- **RAM**: the release's stack room 90 048 → 89 584 B (the driver's
+  code).
+- **Left**: a check on DuckStation and the machine (the pad,
+  digital and analog, plugged in and out while playing). PCSX-Redux
+  answers the receive interrupt: the last byte comes by it.

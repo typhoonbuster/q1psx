@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <psxapi.h>
+#include <psxetc.h>
 #include <psxgpu.h>
 #include <psxpad.h>
 #include <hwregs_c.h>
@@ -99,58 +100,6 @@ static int digital_frames, attempts;
 
 /* ----------------------------------------------------------- the poll -- */
 
-/* The BIOS driver (StartPAD) polls both ports in the vblank handler, a byte
-   at a time, waiting for each: 13 k cycles a frame on PCSX-Redux (its serial
-   port takes ~535 cycles a byte), landing anywhere in the renderer. This
-   driver polls port 1 only, the same way, in the vblank callback: half the
-   waiting. (An interrupt-driven poll, a byte per /ACK interrupt, was tried
-   first: the kernel's interrupt dispatch costs ~2.7 k cycles a byte on
-   PCSX-Redux, 22 k a frame; on the real machine, whose serial byte takes
-   ~40 us, it would be the better driver.) The pad's id byte says how long
-   the poll is (0x41: a digital pad, 5 bytes; 0x73: analog, 9; 0xf3: config
-   mode, 9); a pad that stops answering ends the poll by a short timeout. */
-
-static const uint8_t poll_tx[9] = { 0x01, PAD_CMD_READ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-static volatile int   driver_on;
-
-static void poll_sync(void)
-{
-	uint8_t rx[9];
-	int n = 9, got = 0;
-	SIO_CTRL(0) = 0x1003;                  /* TX on, port 1 selected, /ACK sets the IRQ flag */
-	for (volatile int i = 0; i < 40; i++)
-		;                                  /* (the select settles) */
-	for (int i = 0; i < n; i++) {
-		SIO_DATA(0) = poll_tx[i];
-		if (!sio_wait(0x0002, 0x800))      /* the answer byte */
-			break;
-		rx[got++] = SIO_DATA(0);
-		if (i == 1) {                      /* the id byte: the poll's length */
-			int len = rx[1] & 0xf;
-			n = rx[1] == 0xff || len == 0xf ? 2 : 3 + 2 * len;
-			if (n > 9)
-				n = 9;
-		}
-		if (i == n - 1)
-			break;
-		if (!sio_wait(0x0200, 0x400))      /* /ACK: the pad takes another byte */
-			break;
-		SIO_CTRL(0) = 0x1013;              /* the flag cleared, the pad still selected */
-	}
-	SIO_CTRL(0) = 0x0010;                  /* deselected, any flag cleared */
-	uint8_t *b = pad_buf[0];
-	if (got >= 5 && got >= n && rx[1] != 0xff) {
-		b[0] = 0;                          /* PADTYPE: stat, id, buttons, sticks */
-		b[1] = rx[1];
-		b[2] = rx[3];
-		b[3] = rx[4];
-		for (int i = 5; i < 9; i++)
-			b[i - 1] = got > i ? rx[i] : 0x80;
-	} else {
-		b[0] = 0xff;
-	}
-}
-
 /* the polls, as the game takes them: written in the vblank, read by the
    frame (a single writer and a single reader; the reader stays 2 slots
    behind the writer so a slot is never read while it is written) */
@@ -164,6 +113,93 @@ static volatile pad_snap ring[PAD_RING];
 static volatile uint32_t ring_head;      /* polls written */
 static uint32_t          ring_tail;      /* polls taken   */
 static uint16_t          last_held;      /* the last taken poll's buttons */
+
+/* The BIOS driver (StartPAD) polls both ports in the vblank handler, a byte
+   at a time, waiting for each: 13 k cycles a frame on PCSX-Redux (its serial
+   port takes ~535 cycles a byte), landing anywhere in the renderer. The
+   game's first driver polled port 1 only the same way: 10 k. This one is
+   interrupt-driven (docs/porting-notes.md §81.2): the vblank sends the
+   first byte, then each byte's /ACK interrupt (SIO0, IRQ 7) reads its
+   answer and sends the next one; the last answer, which no /ACK follows,
+   comes by the receive interrupt. The CPU never waits for the port: the
+   kernel's dispatch, ~2.7 k cycles an interrupt, made this the dearer
+   driver until engine/irq.s took it out. The pad's id byte says how long
+   the poll is (0x41: a digital pad, 5 bytes; 0x73: analog, 9; 0xf3: config
+   mode, 9). A poll still going at the next vblank (no pad, or one that
+   stopped answering) ends there with what came. */
+
+static volatile int   driver_on;
+
+#if !Q1PSX_PADSCRIPT
+static const uint8_t poll_tx[9] = { 0x01, PAD_CMD_READ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+static uint8_t           poll_rx[9];
+static volatile uint8_t  poll_busy;      /* a poll in flight */
+static uint8_t           poll_n, poll_i; /* its length, the answers in */
+static volatile uint16_t poll_t;         /* timer 2 at its last byte */
+
+static void snap_poll(volatile pad_snap *s);
+
+/* (interrupts off) the poll ended: its answer into pad_buf, then the ring */
+static void poll_end(void)
+{
+	int got = poll_i, n = poll_n;
+	if (got == n - 1 && (SIO_STAT(0) & 0x0002))
+		poll_rx[got++] = SIO_DATA(0);      /* (the last answer, its interrupt not taken yet) */
+	SIO_CTRL(0) = 0x0010;                  /* deselected, any flag cleared */
+	poll_busy = 0;
+	uint8_t *b = pad_buf[0];
+	if (got >= 5 && got >= n && poll_rx[1] != 0xff) {
+		b[0] = 0;                          /* PADTYPE: stat, id, buttons, sticks */
+		b[1] = poll_rx[1];
+		b[2] = poll_rx[3];
+		b[3] = poll_rx[4];
+		for (int i = 5; i < 9; i++)
+			b[i - 1] = got > i ? poll_rx[i] : 0x80;
+	} else {
+		b[0] = 0xff;
+	}
+	uint32_t h = ring_head;
+	snap_poll(&ring[h & (PAD_RING - 1)]);
+	ring_head = h + 1;
+}
+
+/* SIO0's interrupt: the answer to byte poll_i came */
+static void poll_isr(void)
+{
+	if (!poll_busy) {
+		SIO_CTRL(0) = 0x0010;              /* (one after the poll ended) */
+		return;
+	}
+	int i = poll_i;
+	poll_rx[i++] = SIO_DATA(0);
+	poll_i = i;
+	if (i == 2) {                          /* the id byte: the poll's length */
+		int id = poll_rx[1], len = id & 0xf, n = id == 0xff || len == 0xf ? 2 : 3 + 2 * len;
+		poll_n = n > 9 ? 9 : n;
+	}
+	if (i >= poll_n) {
+		poll_end();
+		return;
+	}
+	/* the flag cleared, the pad still selected; the last answer by the
+	   receive interrupt (no /ACK follows it), the others by /ACK */
+	SIO_CTRL(0) = i == poll_n - 1 ? 0x0813 : 0x1013;
+	SIO_DATA(0) = poll_tx[i];
+	poll_t = (uint16_t) TIMER_VALUE(2);
+}
+
+static void poll_start(void)
+{
+	SIO_CTRL(0) = 0x1003;                  /* TX on, port 1 selected, /ACK raises the IRQ */
+	for (volatile int i = 0; i < 40; i++)
+		;                                  /* (the select settles) */
+	poll_i    = 0;
+	poll_n    = 9;
+	poll_busy = 1;
+	SIO_DATA(0) = poll_tx[0];
+	poll_t = (uint16_t) TIMER_VALUE(2);
+}
+#endif
 
 /* the poll's answer (pad_buf) as a snapshot. stat 0 = data valid. Every
    pad type carries the button word at the same place (digital, analog,
@@ -251,12 +287,14 @@ static void pad_vblank(void)
 		return;
 #if Q1PSX_PADSCRIPT
 	script_poll();
-#else
-	poll_sync();
-#endif
 	uint32_t h = ring_head;
 	snap_poll(&ring[h & (PAD_RING - 1)]);
 	ring_head = h + 1;
+#else
+	if (poll_busy)
+		poll_end();                        /* the last one, as far as it went */
+	poll_start();
+#endif
 }
 
 static void driver_start(void)
@@ -265,14 +303,25 @@ static void driver_start(void)
 	SIO_MODE(0) = 0x000d;                  /* 8 bits, no parity, x1 */
 	SIO_BAUD(0) = 0x0088;                  /* 250 kbps */
 	SIO_CTRL(0) = 0x0010;
+#if !Q1PSX_PADSCRIPT
+	poll_busy = 0;
+	InterruptCallback(IRQ_SIO0, poll_isr);
+#endif
 	driver_on = 1;
 }
 
-/* the driver off and idle, for a synchronous exchange (pad_force_analog) */
+/* the driver off and idle, for a synchronous exchange (pad_force_analog):
+   a poll in flight dropped, the port's interrupt off */
 static void driver_stop(void)
 {
 	driver_on = 0;
-	VSync(0);                              /* a poll in flight ends with the vblank */
+#if !Q1PSX_PADSCRIPT
+	FastEnterCriticalSection();
+	InterruptCallback(IRQ_SIO0, 0);
+	poll_busy = 0;
+	SIO_CTRL(0) = 0x0010;
+	FastExitCriticalSection();
+#endif
 }
 
 Q_COLD void pad_init(void)
@@ -296,8 +345,31 @@ static void snap_to_pad(const volatile pad_snap *s, pad_t *p)
 	last_held    = s->held;
 }
 
+/* A poll still going: wait while its bytes keep coming (the game reads the
+   pad soon after the vblank; a poll takes 9 bytes of ~40 us on the
+   machine), then end it as it is (no pad: no byte comes). */
+#if !Q1PSX_PADSCRIPT
+#define POLL_WAIT 512                    /* timer 2 ticks since its last byte: ~120 us */
+
+static void poll_wait(void)
+{
+	while (poll_busy && (uint16_t) ((uint16_t) TIMER_VALUE(2) - poll_t) < POLL_WAIT)
+		;
+	if (poll_busy) {
+		FastEnterCriticalSection();
+		if (poll_busy)
+			poll_end();
+		FastExitCriticalSection();
+	}
+}
+#endif
+
 int pad_frame(pad_t *ticks, int max)
 {
+#if !Q1PSX_PADSCRIPT
+	if (driver_on)
+		poll_wait();
+#endif
 	uint32_t head = ring_head;
 	if (head - ring_tail > PAD_RING - 2)        /* a long frame (a load): the oldest gone */
 		ring_tail = head - (PAD_RING - 2);

@@ -199,6 +199,8 @@ set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the gam
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 set(Q1PSX_BENCH_WARPDYN 0 CACHE STRING "1: the views with the game's dynamic warp control (T its floor), the T each ends at printed")
+set(Q1PSX_BENCH_IRQTIME 0 CACHE STRING "1: the interrupts' handler times itself: the bench lines' irq= (cycles a frame, entries x 100)")
+target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,IRQTIME=$<AND:$<BOOL:${Q1PSX_BENCH}>,$<BOOL:${Q1PSX_BENCH_IRQTIME}>>>)
 set(Q1PSX_BENCH_GPUTIME 0 CACHE STRING "1: each frame's display list drawn alone, the CPU waiting: the bench lines' gpu= (an emulator that counts the GPU's time: DuckStation)")
 set(Q1PSX_BENCH_RES 0 CACHE STRING "The 3D view's internal resolution the bench renders with: engine/render.c r_res_table's index (0: 320, the screen's)")
 set(Q1PSX_BENCH_WORLD_HZ 30 CACHE STRING "The world's tick rate the bench runs at: 60 or 30 (the game's default; the player's: 60)")
@@ -207,6 +209,7 @@ if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
 		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
+		Q1PSX_BENCH_IRQTIME=${Q1PSX_BENCH_IRQTIME}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}

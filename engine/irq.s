@@ -10,7 +10,8 @@
 #   - an interrupt: the registers a C callback may change saved in q_save,
 #     the callbacks run on q_isr_stack with the program's gp, as psxetc's
 #     _global_isr runs them (each pending, enabled source acknowledged,
-#     then its callback; again until none is pending);
+#     then its callback; again until none is pending; the game's sources
+#     tested first, by their index);
 #   - anything else (a syscall: EnterCriticalSection..., a break): on to
 #     the kernel's own handler, through its vector's four words copied in
 #     q_bios_vec (k0 and k1 alone touched before).
@@ -27,17 +28,29 @@
 .set I_MASK,    0x1074
 .set DICR,      0x10f4
 
+.ifndef IRQTIME
+.set IRQTIME, 0
+.endif
 .set Q_ISR_STACK, 1024                   # (500 B reached on the benches: irq.c)
 
 	.section .bss.q_irq, "aw", @nobits
 	.align  3
 	.global q_irq_handlers, q_dma_handlers, q_isr_stack
+.if IRQTIME
+	.global q_irq_ticks, q_irq_count
+.endif
+.if IRQTIME
+q_irq_ticks:                             # (the bench's IRQTIME: timer 2's ticks in
+	.space  4                            #  the handler, its entries)
+q_irq_count:
+	.space  4
+.endif
 q_irq_handlers:                          # IRQ 0..10 callbacks
 	.space  11 * 4
 q_dma_handlers:                          # DMA channel 0..6 callbacks
 	.space  7 * 4
 q_save:                                  # the interrupted registers
-	.space  26 * 4
+	.space  (22 + IRQTIME) * 4           # (+88: IRQTIME's start)
 	.align  3
 q_isr_stack:
 	.space  Q_ISR_STACK
@@ -92,49 +105,85 @@ q_irq:
 	sw      $gp, 68($k1)
 	sw      $sp, 72($k1)
 	sw      $ra, 76($k1)
-	sw      $s0, 80($k1)
-	sw      $s1, 84($k1)
-	sw      $s2, 88($k1)
-	sw      $s3, 92($k1)
-	sw      $t0, 96($k1)                 # hi
-	sw      $t1, 100($k1)                # lo
+	sw      $t0, 80($k1)                 # hi
+	sw      $t1, 84($k1)                 # lo
+.if IRQTIME
+	lui     $t0, 0x1f80
+	lhu     $t0, 0x1120($t0)             # timer 2: the handler's start
+	nop
+	sw      $t0, 88($k1)
+.endif
 	lui     $sp, %hi(q_isr_top - 16)     # (o32: the callee's argument area)
 	addiu   $sp, $sp, %lo(q_isr_top - 16)
 	lui     $gp, %hi(_gp)
 	addiu   $gp, $gp, %lo(_gp)
-	lui     $s0, 0x1f80                  # the I/O registers
-	lhu     $t0, I_STAT($s0)
-	lhu     $t1, I_MASK($s0)
-q_poll:                                  # (t0 = I_STAT, t1 = I_MASK, loaded)
-	lui     $s2, %hi(q_irq_handlers)
-	and     $s1, $t0, $t1                # pending and enabled
-	beqz    $s1, q_ret
-	addiu   $s2, $s2, %lo(q_irq_handlers)
-	li      $s3, -2                      # ~bit: the source's acknowledge word
-q_bit:
-	andi    $t0, $s1, 1
-	beqz    $t0, q_next
-	srl     $s1, $s1, 1
-	lw      $t9, 0($s2)
-	sh      $s3, I_STAT($s0)             # acknowledged, then its callback
-	beqz    $t9, q_next
+
+# One source a pass, the status read again after each callback (nothing
+# kept over a call: the program's s-registers are the callbacks' to keep).
+# The sources the game enables first, by their index (0 the vblank, 2 the
+# CD, 3 the DMA, 6 the profile timer, 7 the pad's port: each a test), then
+# any other one, the lowest first.
+q_poll:
+	lui     $t2, 0x1f80                  # the I/O registers
+	lhu     $t0, I_STAT($t2)
+	lhu     $t1, I_MASK($t2)
 	nop
+	and     $t3, $t0, $t1                # pending and enabled
+	beqz    $t3, q_ret
+	andi    $t0, $t3, 0x0001
+	bnez    $t0, q_src                   # the vblank
+	li      $t1, 0 * 4
+	andi    $t0, $t3, 0x0004
+	bnez    $t0, q_src                   # the CD
+	li      $t1, 2 * 4
+	andi    $t0, $t3, 0x0008
+	bnez    $t0, q_src                   # the DMA
+	li      $t1, 3 * 4
+	andi    $t0, $t3, 0x0040
+	bnez    $t0, q_src                   # timer 2
+	li      $t1, 6 * 4
+	andi    $t0, $t3, 0x0080
+	bnez    $t0, q_src                   # SIO0, the pad
+	li      $t1, 7 * 4
+	li      $t0, 1                       # another: the lowest
+	move    $t1, $zero
+1:	and     $t4, $t3, $t0
+	bnez    $t4, q_src
+	nop
+	sll     $t0, $t0, 1
+	b       1b
+	addiu   $t1, $t1, 4
+q_src:                                   # t0 = its bit, t1 = 4 x its index
+	lui     $t9, %hi(q_irq_handlers)
+	addu    $t9, $t9, $t1
+	lw      $t9, %lo(q_irq_handlers)($t9)
+	nor     $t0, $zero, $t0
+	beqz    $t9, q_poll                  # (no callback: acknowledged alone)
+	sh      $t0, I_STAT($t2)             # acknowledged, then its callback
 	jalr    $t9
 	nop
-q_next:
-	sll     $s3, $s3, 1
-	ori     $s3, $s3, 1
-	bnez    $s1, q_bit
-	addiu   $s2, $s2, 4
-	lhu     $t0, I_STAT($s0)             # what came meanwhile
 	b       q_poll
-	lhu     $t1, I_MASK($s0)
+	nop
 
 q_ret:
 	lui     $k1, %hi(q_save)
 	addiu   $k1, $k1, %lo(q_save)
-	lw      $t0, 96($k1)
-	lw      $t1, 100($k1)
+.if IRQTIME
+	lui     $t0, 0x1f80
+	lhu     $t0, 0x1120($t0)
+	lw      $t1, 88($k1)
+	lui     $t2, %hi(q_irq_ticks)
+	subu    $t0, $t0, $t1
+	andi    $t0, $t0, 0xffff
+	lw      $t1, %lo(q_irq_ticks)($t2)
+	lw      $t3, %lo(q_irq_count)($t2)
+	addu    $t1, $t1, $t0
+	addiu   $t3, $t3, 1
+	sw      $t1, %lo(q_irq_ticks)($t2)
+	sw      $t3, %lo(q_irq_count)($t2)
+.endif
+	lw      $t0, 80($k1)
+	lw      $t1, 84($k1)
 	lw      $at,  0($k1)
 	mthi    $t0
 	mtlo    $t1
@@ -156,12 +205,8 @@ q_ret:
 	lw      $t9, 64($k1)
 	lw      $gp, 68($k1)
 	lw      $sp, 72($k1)
-	lw      $ra, 76($k1)
-	lw      $s0, 80($k1)
-	lw      $s1, 84($k1)
-	lw      $s2, 88($k1)
 	mfc0    $k0, $14                     # EPC
-	lw      $s3, 92($k1)
+	lw      $ra, 76($k1)
 	lw      $k1, 0($k0)                  # the instruction there
 	nop
 	srl     $k1, $k1, 24
