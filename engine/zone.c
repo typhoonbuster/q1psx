@@ -22,7 +22,7 @@ zone_rt_t    zone_rt __attribute__((aligned(16)));   /* (zone.s: one %hi for its
 zone_stats_t zone_stats;
 
 #define SECTOR    CD_SECTOR
-#define MAX_RES   4        /* slots at most (the cook's num_slots)   */
+#define MAX_RES   5        /* slots at most (the cook's num_slots): a fifth one keeps the last chunk left */
 #define WANT      4        /* zones a set wants at most: its own, its three nearest */
 #define SET_NONE  0x10000u /* zone_rt.set before any call: no halfword equals it */
 #define BACKOFF   30       /* frames before a read that failed is tried again */

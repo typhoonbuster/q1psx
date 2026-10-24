@@ -10450,10 +10450,14 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
     instruction more, only when the camera's leaf changes);
   - the skeleton +1 KB a map, and no other change with today's tables
     (the 32 maps' pools the same).
-- **Four slots** (`Q1PSX_ZONE_SLOTS=4`, cook.sh → `qcook zones
-  --resident 4`): engine/zone.c wants as many zones as it has slots, the
-  camera's and its three nearest (the tables' `near[2]`). With 3 slots,
-  nothing changes.
+- **Four or five slots** (`Q1PSX_ZONE_SLOTS=4` or `5`, cook.sh → `qcook
+  zones --resident`):
+  - engine/zone.c wants as many zones as it has slots, four at most: the
+    camera's and its three nearest (the tables' `near[2]`). With 3 slots,
+    nothing changes;
+  - a fifth slot (`MAX_RES` 5) only keeps the last chunk left;
+  - the command line's `Q1PSX_ZONE_SLOTS` wins over `local.env`'s, as the
+    tables' does.
 - **Measured** (32 maps, the arena capped as the release's, 1318 KB;
   `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`):
 
@@ -10464,10 +10468,12 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
   | pvs 64, 3 slots | 27 | E3M6 409, E3M4 474, E4M7 480 | 480 |
   | seen 48, 3 slots | 30 | E3M6 543, E3M4 546, E4M7 552 | 552 |
   | seen 48, 4 slots | 27 | E3M6 477, E3M4 496, E4M7 504 | 504 |
+  | seen 48, 5 slots | 26 | E3M6 411, E3M4 446, E4M7 456 | 456 |
 
   - With seen 48 and 3 slots every map but E1M7 and END is zoned (their
     pools 926 KB and more), and the pools grow 106-198 KB. With 4 slots
-    E1M6, E1M8 and E3M2 stay whole too (pools of 600-795 KB).
+    E1M6, E1M8 and E3M2 stay whole too (pools of 600-795 KB), with 5 one
+    more map.
   - In every run the spots where a visible monster lacks its model are the
     same two, E1M7's (Chthon, out of reach).
 - **The frames** (`BENCH_MAPS=1 HASHONLY=1`, the 128 spawn views, seen 48
@@ -10488,10 +10494,16 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
   | seen 48, 3 slots (the same 20) | 696 | 1422 | 4748 | 335 |
   | seen 48, 3 slots (30 maps) | 908 | 1789 | 5954 | 471 |
   | seen 48, 4 slots (30 maps) | 917 | 1981 | 4814 | 391 |
+  | seen 48, 3 slots (the 26 maps zoned with 5) | 892 | 1764 | 5885 | 471 |
+  | seen 48, 4 slots (the same 26) | 901 | 1942 | 4748 | 391 |
+  | seen 48, 5 slots (the same 26) | 904 | 1803 | 4425 | 397 |
 
   - Smaller zones mean twice the switches and reads, and more frames drawn
     with the last zone while the camera's is read (E1M8, 75 zones: 989,
     the longest run 42 frames). The fourth slot takes a fifth of them back.
+  - The fifth slot saves some reads when the eye comes back (−7 % late
+    frames) but none on the clear legs, for 45-66 KB of every map's pool:
+    four is the better trade.
   - pvs 64 is the worst of the three: its zones are small (E1M1 145, E3M6
     129) and each still carries a big chunk (what one leaf's PVS holds, up
     to 106 KB), so its reads are many and long. Its longest late run is 58

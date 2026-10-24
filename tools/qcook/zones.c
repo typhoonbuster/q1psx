@@ -276,8 +276,8 @@ int cmd_zones(int argc, char **argv)
 		else if (!strcmp(argv[i], "--chunks") && nzon < MAX_TEX) zon[nzon++] = argv[++i];
 		else die("zones: unknown option %s", argv[i]);
 	}
-	if (!wld || !tab || !skl || ntex != nzon || want < 1 || want > 4)
-		die("usage: qcook zones --world <wld> --tables <zones> --skeleton <skl> [--resident 1..4] "
+	if (!wld || !tab || !skl || ntex != nzon || want < 1 || want > 5)
+		die("usage: qcook zones --world <wld> --tables <zones> --skeleton <skl> [--resident 1..5] "
 		    "[--tex4 <tx4> --chunks <zon>]...");
 	remove(skl);                              /* (a map kept whole leaves none) */
 	for (int i = 0; i < nzon; i++)

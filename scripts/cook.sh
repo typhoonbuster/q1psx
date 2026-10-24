@@ -54,8 +54,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 _zone_tables=${Q1PSX_ZONE_TABLES-unset}            # (the command line's wins over local.env's)
+_zone_slots=${Q1PSX_ZONE_SLOTS-unset}
 [ -f local.env ] && set -a && . ./local.env && set +a
 [ "$_zone_tables" != unset ] && Q1PSX_ZONE_TABLES=$_zone_tables
+[ "$_zone_slots" != unset ] && Q1PSX_ZONE_SLOTS=$_zone_slots
 : "${QUAKE_PAK0:?set QUAKE_PAK0 in local.env}"
 
 EP1="start e1m1 e1m2 e1m3 e1m4 e1m5 e1m6 e1m7 e1m8"
@@ -124,7 +126,8 @@ echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures medium and high, the
 # into its skeleton and its chunks at both texture levels (their UVs on that
 # set's tiles: after the textures' jobs), or left whole where that saves no
 # RAM (the cook says which); Q1PSX_ZONE_SLOTS the chunks resident at once
-# (3: the camera's zone and its two nearest; 4: its three nearest)
+# (3: the camera's zone and its two nearest; 4: its three nearest; 5: and the
+# last one left, kept)
 if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 	export Q1PSX_ZONE_TABLES
 	export Q1PSX_ZONE_SLOTS=${Q1PSX_ZONE_SLOTS:-3}
