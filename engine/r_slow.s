@@ -94,6 +94,28 @@ r_slow_stack:                            # word 0: the end marker under every
 	.word   -1                           # polygon's triangles (never written)
 	.space  (STACK_N - 1) * 4
 
+.ifndef SLOWSTAT
+.set SLOWSTAT, 0
+.endif
+.if SLOWSTAT
+	.section .bss.r_slow_stat, "aw", @nobits
+	.align  2
+	.global r_slow_stat
+r_slow_stat:                             # (the bench's SLOWSTAT: see bench.c)
+	.space  16 * 4
+.endif
+# STAT k, ra, rb: counter k plus one (SLOWSTAT builds: the bench's slow path
+# statistics, bench.c), through two registers dead at that place
+.macro STAT k, ra, rb
+.if SLOWSTAT
+	lui     \ra, %hi(r_slow_stat + 4 * \k)
+	lw      \rb, %lo(r_slow_stat + 4 * \k)(\ra)
+	nop
+	addiu   \rb, \rb, 1
+	sw      \rb, %lo(r_slow_stat + 4 * \k)(\ra)
+.endif
+.endm
+
 .set HASH_OFS, r_slow_hash - r_slow_pool
 .set VIEW_OFS, r_slow_view - r_slow_pool
 
@@ -276,6 +298,7 @@ slow_poly:
 	lw      $s2, SP_SZCLIP($t8)          # (CORNER's near bound)
 	lui     $v1, %hi(r_slow_pool)
 	addiu   $v1, $v1, %lo(r_slow_pool)   # v1 = pool, for the whole call
+	STAT    0, $t0, $t1                  # (polygons)
 
 	# ---- 1. corners (PS1 order) from the cache ---------------------------
 	move    $s1, $zero                   # clip mask: bit k = corner k off range
@@ -313,6 +336,7 @@ sp_tri0:                                 # a triangle: (0, 1, 2)
 	# cache holds keeps its SZ as z. Then the near plane. A pool entry's view
 	# x, y, z (entries 0..5) sit at VIEW_OFS from it.
 sp_clip:
+	STAT    1, $t0, $t1                  # (polygons clipped)
 	lw      $t9, SP_VERTPOOL($t8)
 	lw      $s0, SP_ZNEAR($t8)           # (s0 = the near plane through the clip)
 	move    $t2, $v1                     # pool[j]
@@ -432,6 +456,7 @@ sp_sub:
 	addiu   $a3, $a3, -4
 	bltz    $s2, sp_done                 # the end marker: done
 	sll     $a0, $s2, 5
+	STAT    2, $t0, $t1                  # (triangles popped)
 	andi    $a0, $a0, 0x3fe0
 	srl     $a1, $s2, 4
 	andi    $a1, $a1, 0x3fe0
@@ -446,6 +471,29 @@ sp_sub:
 	lh      $t4, PV_SXY+2($a1)
 	lh      $t6, PV_SXY($a2)             # x2 y2
 	lh      $t7, PV_SXY+2($a2)
+.if SLOWSTAT
+	or      $at, $t0, $t3                # (wholly on the screen: every x, y >= 0,
+	or      $at, $at, $t6                #  x < 320, y < 240)
+	or      $at, $at, $t1
+	or      $at, $at, $t4
+	or      $at, $at, $t7
+	bltz    $at, 81f
+	addiu   $at, $t0, -320
+	addiu   $v0, $t3, -320
+	and     $at, $at, $v0
+	addiu   $v0, $t6, -320
+	and     $at, $at, $v0
+	bgez    $at, 81f
+	addiu   $at, $t1, -240
+	addiu   $v0, $t4, -240
+	and     $at, $at, $v0
+	addiu   $v0, $t7, -240
+	and     $at, $at, $v0
+	bgez    $at, 81f
+	nop
+	STAT    3, $at, $v0                  # (wholly on the screen)
+81:
+.endif
 
 	# off screen? all x < 0 or all y < 0; all x >= 320 or all y >= 240
 	# (render.c r_set_res: words 0, 1, 3 at sp_o_bounds -cols, 5, 6, 8 -rows)
@@ -494,6 +542,7 @@ sp_o_bounds:
 	# ---- a leaf: one POLY_GT3 (a0 / a1 / a2 = its pool entries; t2 = 1 if
 	# the arena is full, t9 = the command) ---------------------------------------
 sp_emit:
+	STAT    4, $t0, $t1                  # (leaves emitted)
 	bnez    $t2, sp_full
 	lw      $t0, PV_GC($a0)
 	lw      $t1, PV_SXY($a0)
@@ -529,6 +578,7 @@ sp_emit:
 	# the edges NOSPLIT marked, by their length (REFINE): those under the
 	# threshold stay whole; none left, a leaf (t2 and t9 sp_emit's again)
 sp_refine:
+	STAT    6, $v0, $t9                  # (triangles refined)
 	lw      $t2, PV_Z($a0)               # z0 (t2 held the arena's test)
 	REFINE  $t0, $t1, $t2, $s0, $t3, $t4, $t5, $s5, 1   # p0-p1
 	REFINE  $t3, $t4, $t5, $s5, $t6, $t7, $s1, $ra, 2   # p1-p2
@@ -539,6 +589,7 @@ sp_refine:
 	lui     $t9, CODE_GT3 >> 16
 
 sp_split:                                # s3 = mask, s2 = the triangle
+	STAT    5, $at, $v0                  # (triangles split)
 	sltiu   $at, $s4, POOL_N - 2         # the pool nearly full: a forced leaf
 	beqz    $at, sp_leaf_max
 	andi    $v0, $s3, 1                  # (harmless there)
@@ -618,6 +669,7 @@ sp_c4:                                   # p2-p0
 
 	# a forced leaf (max depth, pool full): only if the GPU takes it
 sp_leaf_max:
+	STAT    8, $at, $v0                  # (forced leaves)
 	move    $at, $t0                     # max x - min x <= 1023?
 	slt     $v0, $t3, $at
 	beqz    $v0, 1f
@@ -707,6 +759,7 @@ sp_done:
 sm_new:
 	sll     $t0, $t0, 5
 sm_new_1:
+	STAT    7, $t3, $t5                  # (midpoints made)
 	addu    $a0, $t0, $v1                # p
 	lh      $t0, PV_SXY($a0)             # px
 	lw      $t3, PV_Z($a0)               # pz

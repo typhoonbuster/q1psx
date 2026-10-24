@@ -10116,7 +10116,7 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
     a frame).
   - The game: walk60 −2.8 %, walk30 −3.7 % (sim + frame, against §81.1).
     walk30's frames in one vblank go from 103 to 150 of 300.
-- **RAM**: the release's stack room 90 048 → 89 584 B (the driver's
+- **RAM**: the release's stack room 90 048 → 89 600 B (the driver's
   code).
 - **Left**: a check on DuckStation and the machine (the pad,
   digital and analog, plugged in and out while playing). PCSX-Redux

@@ -7,10 +7,21 @@
 #include "render.h"
 #include "vid.h"
 
+#if Q1PSX_BENCH_SLOWSTAT
+extern volatile uint32_t r_slow_stat[16];     /* (engine/r_slow.s) */
+static const char *const slowstat_name[9] = {
+	"polys", "clipped", "popped", "onscreen", "leaves", "split", "refined", "mids", "forced",
+};
+#endif
+
 void bench_reset(bench_acc_t *b, const char *name)
 {
 	memset(b, 0, sizeof *b);
 	b->name = name;
+#if Q1PSX_BENCH_SLOWSTAT
+	for (int i = 0; i < 16; i++)
+		r_slow_stat[i] = 0;
+#endif
 }
 
 void bench_add(bench_acc_t *b, uint32_t vbl)
@@ -60,4 +71,10 @@ void bench_print(const bench_acc_t *b)
 	if (b->irq_count && n > 1)             /* (IRQTIME: the handler's cycles a frame, interrupts x 100) */
 		printf(" irq=%u/%u", b->irq_sum / (n - 1), b->irq_count * 100 / (n - 1));
 	printf(" pkt=%u%s\n", b->pkt_max, b->full_frames ? " FULL" : "");
+#if Q1PSX_BENCH_SLOWSTAT
+	printf("slowstat %s", b->name);         /* (a frame's, on average) */
+	for (int i = 0; i < 9; i++)
+		printf(" %s=%u", slowstat_name[i], r_slow_stat[i] / n);
+	printf("\n");
+#endif
 }
