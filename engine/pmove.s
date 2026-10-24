@@ -1214,7 +1214,7 @@ sm_bump:
 	or      $t3, $t0, $t1
 	or      $t3, $t3, $t2
 	beqz    $t3, sm_done                 # nothing left to move
-	nop
+	li      $s6, 2                       # (delay: below's; s6 scratch)
 	mult    $t0, $s5                     # disp = (rem * time_left + 2048) >> 12
 	mflo    $t3
 	addiu   $t3, $t3, Q_FIX_ONE / 2
@@ -1231,8 +1231,8 @@ sm_bump:
 	sra     $t3, $t3, 12
 	sw      $t3, PS_DISP+8($s7)
 
-	li      $s6, 2                       # keep disp off every plane hit since
-1:	move    $a3, $zero                   # the last advance (two passes)
+	# (s6 = 2) keep disp off every plane hit since the last advance (two
+1:	move    $a3, $zero                   #  passes)
 2:	beq     $a3, $s3, 3f
 	sll     $t0, $a3, 3
 	addiu   $a1, $s7, PS_PLANES
@@ -1242,8 +1242,8 @@ sm_bump:
 	b       2b
 	addiu   $a3, $a3, 1
 3:	addiu   $s6, $s6, -1
-	bnez    $s6, 1b
-	nop
+	bnez    $s6, 2b
+	move    $a3, $zero                   # (delay: 1's; out: a3 set again below)
 
 	lw      $t0, PS_CUR+0($s7)           # end = cur + disp
 	lw      $t1, PS_DISP+0($s7)
@@ -1264,15 +1264,14 @@ sm_bump:
 	addiu   $a3, $s7, PS_TRB
 
 	lw      $t0, PS_TRB+TR_ALLSOLID($s7)
-	nop
-	beqz    $t0, 4f
-	nop
+	lw      $t1, PS_TRB+TR_ENDPOS+4($s7) # (4's, in the load's delay and the
+	beqz    $t0, 4f                      #  branch's)
+	lw      $t2, PS_TRB+TR_ENDPOS+8($s7)
 	VZERO   PS_SVEL                      # stuck in solid
 	b       sm_done
 	ori     $s4, $s4, 4
 4:	lw      $t0, PS_TRB+TR_ENDPOS+0($s7) # advanced? (by position: a short
-	lw      $t1, PS_TRB+TR_ENDPOS+4($s7) # impact can round back onto the
-	lw      $t2, PS_TRB+TR_ENDPOS+8($s7) # start)
+	                                     #  impact can round back onto the start)
 	lw      $t3, PS_CUR+0($s7)
 	lw      $t4, PS_CUR+4($s7)
 	lw      $t5, PS_CUR+8($s7)
@@ -1282,8 +1281,7 @@ sm_bump:
 	or      $t3, $t3, $t4
 	or      $t3, $t3, $t5
 	beqz    $t3, 5f
-	nop
-	sw      $t0, PS_CUR+0($s7)
+	sw      $t0, PS_CUR+0($s7)           # (delay: not advanced, the same value)
 	sw      $t1, PS_CUR+4($s7)
 	sw      $t2, PS_CUR+8($s7)
 	move    $s3, $zero
@@ -1292,14 +1290,11 @@ sm_bump:
 	slt     $t2, $t0, $t1
 	beqz    $t2, sm_done                 # moved the whole way
 	lh      $t1, PS_TRB+TR_ENT($s7)      # (a brush model run into: SV_Impact's)
-	nop
+	lh      $t0, PS_TRB+TR_PLANE_N+4($s7) # (8's, in the load's delay)
 	beqz    $t1, 8f
-	nop
+	slti    $t2, $t0, FLOOR_NZ + 1       # (delay: 8's)
 	sw      $t1, PM_TOUCHED($s7)
-8:	lh      $t0, PS_TRB+TR_PLANE_N+4($s7)
-	lh      $t1, PS_TRB+TR_ENT($s7)
-	slti    $t2, $t0, FLOOR_NZ + 1
-	bnez    $t2, 6f
+8:	bnez    $t2, 6f                      # (t1: the trace's ent still)
 	addiu   $t1, $t1, 1                  # (on the ground: 1 + the trace's ent)
 	ori     $s4, $s4, 1                  # floor
 	b       7f
@@ -1484,9 +1479,8 @@ sm_stop:
 sm_done:
 	VCOPY   PM_POS, PS_CUR
 	VCOPY   PM_VEL, PS_SVEL
-	move    $v0, $s4
 	lw      $ra, 0($sp)
-	nop
+	move    $v0, $s4                     # (the load's delay)
 	jr      $ra
 	addiu   $sp, $sp, 8
 
