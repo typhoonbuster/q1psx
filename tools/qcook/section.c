@@ -11,8 +11,13 @@
  * preload, which reads by distance, sweeps the file forward. The file goes
  * in the level's section on the disc, right before its music.
  *
+ * With the level's sound set (`--sndset <m>.sndset`, the bank's cook,
+ * §86): the sounds the bank holds are QST_BANKED (not in the file); the
+ * others are flagged QSTF_RAM and lie first, together, for the engine to
+ * read them in one go at the map's start and play them from main RAM.
+ *
  *   qcook section --pak <pak0.pak> [--pak1 <pak1.pak>] --stream <stream_0.dat>
- *                 --map maps/<m>.bsp --out <m>_s0.dat
+ *                 --map maps/<m>.bsp --out <m>_s0.dat [--sndset <m>.sndset]
  */
 
 #include <math.h>
@@ -53,12 +58,14 @@ static int pool_find(const qst_asset *dir, int n, uint32_t hash)
 int cmd_section(int argc, char **argv)
 {
 	const char *pak_path = NULL, *pak1_path = NULL, *stream_path = NULL, *map = NULL, *out_path = NULL;
+	const char *sndset_path = NULL;
 	for (int i = 2; i < argc - 1; i++) {
 		if (!strcmp(argv[i], "--pak"))    pak_path    = argv[i + 1];
 		if (!strcmp(argv[i], "--pak1"))   pak1_path   = argv[i + 1];
 		if (!strcmp(argv[i], "--stream")) stream_path = argv[i + 1];
 		if (!strcmp(argv[i], "--map"))    map         = argv[i + 1];
 		if (!strcmp(argv[i], "--out"))    out_path    = argv[i + 1];
+		if (!strcmp(argv[i], "--sndset")) sndset_path = argv[i + 1];
 	}
 	if (!pak_path || !stream_path || !map || !out_path)
 		die("usage: qcook section --pak <pak0.pak> [--pak1 <pak1.pak>] --stream <stream_0.dat> --map maps/<m>.bsp "
@@ -138,6 +145,40 @@ int cmd_section(int argc, char **argv)
 			nin++;
 		want[a] = 1;
 	}
+	/* the level's sound set: the bank's sounds leave the file, the others
+	   are read into RAM at the map's start: they go first */
+	uint8_t *banked = xcalloc((size_t) (n ? n : 1), 1), *ram = xcalloc((size_t) (n ? n : 1), 1);
+	int nbanked = 0, nram = 0, nunlisted = 0;
+	if (sndset_path) {
+		FILE *sf = fopen(sndset_path, "r");
+		if (!sf)
+			die("cannot read %s", sndset_path);
+		char line[256], word[8], name[200];
+		while (fgets(line, sizeof line, sf))
+			if (sscanf(line, "%7s %199s", word, name) == 2 && (!strcmp(word, "spu") || !strcmp(word, "ram"))) {
+				int a = pool_find(dir, n, qs_hash(name));
+				if (a < 0)
+					continue;                     /* (a bank sound of the always set: not in the pool) */
+				if (!strcmp(word, "spu")) {
+					banked[a] = 1;
+					want[a] = 0;
+				} else {
+					ram[a] = 1;
+					if (!want[a])
+						nin++;
+					want[a] = 1;
+				}
+			}
+		fclose(sf);
+		for (int a = 0; a < n; a++) {
+			if (want[a] && dir[a].kind == QSTK_SOUND && !ram[a]) {
+				ram[a] = 1;                       /* (a sound the set did not list: into RAM too) */
+				nunlisted++;
+			}
+			nbanked += banked[a];
+			nram    += ram[a];
+		}
+	}
 	pick *order = xcalloc((size_t) (nin ? nin : 1), sizeof *order);
 	int no = 0, nnear = 0;
 	for (int a = 0; a < n; a++) {
@@ -145,8 +186,8 @@ int cmd_section(int argc, char **argv)
 			continue;
 		int g = dir[a].group;
 		order[no].asset = a;
-		order[no].dist  = g >= 0 && g <= G_WORLD ? gdist[g] : 1e9;
-		nnear += order[no].dist < 1e9;
+		order[no].dist  = ram[a] ? -1 : g >= 0 && g <= G_WORLD ? gdist[g] : 1e9;   /* (the RAM sounds first) */
+		nnear += order[no].dist >= 0 && order[no].dist < 1e9;
 		no++;
 	}
 	qsort(order, (size_t) no, sizeof *order, by_dist);
@@ -158,11 +199,13 @@ int cmd_section(int argc, char **argv)
 	qst_asset *d2 = xmalloc((size_t) (n ? n : 1) * sizeof *d2);
 	memcpy(d2, dir, (size_t) n * sizeof *d2);
 	for (int a = 0; a < n; a++)
-		d2[a].sector = QST_ABSENT;
+		d2[a].sector = banked[a] ? QST_BANKED : QST_ABSENT;
 	uint32_t sector = dir_sectors;
 	for (int i = 0; i < no; i++) {
 		int a = order[i].asset;
 		d2[a].sector = sector;
+		if (ram[a])
+			d2[a].flags |= QSTF_RAM;
 		sector += (dir[a].size + QST_SECTOR - 1) / QST_SECTOR;
 	}
 	FILE *f = fopen(out_path, "wb");
@@ -184,11 +227,12 @@ int cmd_section(int argc, char **argv)
 		fwrite(zero, 1, (QST_SECTOR - a->size % QST_SECTOR) % QST_SECTOR, f);
 	}
 	fclose(f);
-	printf("qcook: %s — %d of %d assets, %u KB (%d by their distance from the start, %d after; %d names the "
-	       "bank's)\n", out_path, nin, n, (unsigned) ((sector - dir_sectors) * QST_SECTOR / 1024), nnear, no - nnear,
-	       nbank);
+	printf("qcook: %s — %d of %d assets, %u KB (%d sounds into RAM%s, %d in the bank; the models %d by their "
+	       "distance from the start, %d after; %d names the bank's)\n", out_path, nin, n,
+	       (unsigned) ((sector - dir_sectors) * QST_SECTOR / 1024), nram,
+	       nunlisted ? " (some the set did not list)" : "", nbanked, nnear, no - nnear - nram, nbank);
 
-	free(order); free(want); free(d2); free(sp.ents);
+	free(order); free(want); free(banked); free(ram); free(d2); free(sp.ents);
 	ents_free(&l);
 	free(pf); free(pak); free(pak1);
 	return 0;

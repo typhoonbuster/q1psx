@@ -1976,6 +1976,20 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **Every sound of a level resident** (2026-10-24,
+  `docs/porting-notes.md` §86, the same branch): the cook builds each
+  level's exact sound set from the entities single player spawns, the
+  weapons the player can hold on entering (the episode's paths from
+  START, where Quake resets the inventory) and the monsters' kinds; the
+  bank fills SPU RAM beside the music's ring and a swap room (the always
+  set first, then the ambients, the monsters', the entities'), the rest
+  goes to main RAM, read in one go with the level and put in the swap
+  room by a DMA when wanted: no sound is read from the disc in play. The
+  halving's default 5 %, a second halving to 2756 Hz at 1 %. 10 maps whole
+  in the SPU (banks 298-428 KB), the others 9-158 KB in RAM. Measured in
+  the zones' walk under the drive model: the sounds' disc reads 5827 → 0,
+  the sounds asked and absent 4250 → 294, the seeks 775 → 272 s, the late
+  frames −13 %, a load 58 → 35 reads; the 128 views identical.
 - **The sounds at half their rate where the ear loses nothing**
   (2026-10-24, `docs/porting-notes.md` §85, the same branch): the SPU plays
   its own 4-bit ADPCM alone, so a sound's bytes follow its sample rate;

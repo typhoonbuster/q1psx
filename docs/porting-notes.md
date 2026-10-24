@@ -11049,11 +11049,14 @@ E4M1, END).
 
 ### 85.2 The cook (tools/qcook/sound.c)
 
-`QCOOK_SOUND_HALVE=<percent>` (default 1; 0 none; `cooked/settings.txt`
-records it, so the build cooks again when it changes): every sound the
-cook loads, the banks' and the streamed ones alike, whose halving would
-lose no more than that share of its energy is cooked at half its rate
-(`halve_by_class`, in `sound_add`). The loss is the spectrum's share
+`QCOOK_SOUND_HALVE=<percent>` (default 5 since §86; 0
+none; `cooked/settings.txt` records it, so the build cooks again when it
+changes): every sound the cook loads, the banks' and the streamed ones
+alike, whose halving would lose no more than that share of its energy is
+cooked at half its rate (`halve_by_class`, in `sound_add`); a second
+halving, 5512 → 2756 Hz, follows for a sound whose spectrum at 5512 Hz
+holds no more than `QCOOK_SOUND_HALVE2` (default 1 %) above 1.38 kHz: the
+rumbles, hums and low cries keep what they have. The loss is the spectrum's share
 above a quarter of the rate, by an FFT over the sound (`halve_loss`): a
 first try measured it as the energy `wav_halve`'s 9-tap half-band filter
 removed, and that filter is soft (0.82 at a tenth of the rate, 0.56 at
@@ -11123,3 +11126,133 @@ chunks' own affair and do not move.
   fit; none needs it now.
 - §83.8's C1 (the bank by the episode's position) and C2 (the reach, the
   eviction's hysteresis) are not built.
+
+## §86 — Every sound of a level resident: the bank fills the SPU, the rest in main RAM (2026-10-24)
+
+The plan after §85: load only the sounds a level needs — taking the
+episode into account for the weapons, and checking the entities exist (the
+multiplayer ones left out) — and keep them all resident: the whole set in
+SPU RAM where it fits in the 460 KB beside the music, else the SPU filled
+and the rest in main RAM, taken from the level's stream pool. One adjustment
+to the plan: a sound in main RAM must be in SPU RAM to play, so the SPU keeps
+a swap room for the RAM-held ones, sized by the cook.
+
+### 86.1 The level's set (tools/qcook/sound.c `sound_build`)
+
+- **The entities**: the cook's `ents_parse` leaves out what single player
+  never spawns (`ent_sp_never`: the coop and deathmatch starts, every
+  entity inhibited at the three skills), so the maps' deathmatch weapons
+  and items (one to four `weapon_*` a map, `item_*`, `func_wall`) bring
+  nothing. The set is built from the entities that remain.
+- **The weapons** (`episode_weapons`): Quake takes the inventory away when
+  a map leads to START (client.qc `SetNewParms`), so a player entering a
+  map can hold the shotgun, the axe, and every `weapon_*` single player
+  spawns on any path from START to it through the maps'
+  `trigger_changelevel` targets (the secret levels: E1M4 → E1M8 → E1M5,
+  E2M3 → E2M7 → E2M4, E3M4 → E3M7 → E3M5, E4M5 → E4M8 → E4M6; END from
+  START). Read from the paks' maps at each cook (32 entity lumps). A
+  weapon's sound stays only for a weapon the player can hold or an entity
+  that plays it (`WEAPON_SOUNDS`, from weapons.qc, ogre.qc, shambler.qc,
+  misc.qc): `shotgn2` the super shotgun; `rocket1i` the nailgun; `spike2`
+  the super nailgun or a `trap_spikeshooter`; `ric1/2/3`, `tink1` the
+  nails (both nailguns, the spike shooter); `grenade`, `bounce` the
+  grenade launcher or an ogre; `r_exp3` either launcher, an ogre or a
+  `misc_explobox`; `sgun1` the rocket launcher; `lstart` the lightning
+  gun; `lhit` the lightning gun or a shambler. E1M1 drops 29 KB (six
+  sounds), START 60 KB (thirteen), the late maps nothing.
+- **The whole set**: the always set so filtered (the player's, the
+  water's, lava's, slime's and sky's by the map's contents, the
+  teleporters', the items'), the static sources' ambients, the monsters'
+  kinds' sounds (`stream_monster_needs`), the entities' sounds (doors,
+  plats, buttons, triggers, items, keys: `sound_map_streamed_n`, which
+  also counts the entities bringing each). 66 to 134 sounds a map, 298 to
+  572 KB at §85's rates (the second halving included).
+- **The split**: the always set first, then the ambients, the monsters'
+  (the most numerous kind first), the entities' (the most entities first);
+  SPU RAM takes them in that order up to 512 KB less the capture buffers,
+  the music's ring (48 KB, `QCOOK_MUSIC_RING_KB`) and the swap room; the
+  rest go to main RAM. The swap room is the biggest RAM sound plus 16 KB
+  (32-35 KB today), the split made again when it grows. The bank
+  (`<MAP>.SND`) holds the SPU set; `<map>.sndset` lists every sound as
+  `spu` or `ram` with the swap room, for `qcook section`.
+- **The level's file** (`qcook section --sndset`): a banked sound is
+  `QST_BANKED` (not in the file: the engine never wants it of the stream);
+  a RAM sound is flagged `QSTF_RAM` and the RAM sounds lie first, together,
+  for one read. The models follow by distance as before.
+
+The 32 maps: 10 whole in the SPU (START 298 KB, E1M1 373, E1M7, E1M8,
+E2M1, E2M3, E3M3, E4M1, E4M8, END); the others 418-428 KB in the bank and
+9 to 158 KB in RAM (E4M3 158, E2M4 147, E1M3 147, E4M7 132, E2M7 123,
+E1M5 115, E4M5 103, E1M2 102; the rest under 100), 1 to 35 sounds. The
+pool STREAM_0.DAT 1954 → 1770 KB (the second halving).
+
+### 86.2 The engine (engine/stream.c, engine/snd.c)
+
+- `stream_level` reads the level's directory as in §84 and notes the
+  banked sounds (silent: wanted by their monster's group, they are in the
+  bank, where `snd.c`'s `sound_of_hash` finds them first) and the RAM
+  sounds' sectors (`ram_first`, `ram_sectors`; each asset's `ram_ofs`).
+- `stream_map_start` reads the RAM block in one go (`cd_read_now`, 9 to
+  158 KB: 5 to 80 sectors) into the level arena before the pool, which
+  shrinks by as much; the `stream: pools` line says how many sounds and
+  KB. The block does not survive the arena (`stream_abort`).
+- A wanted RAM sound (`ram_start`): its place in the swap room as a disc
+  read's (`sound_room`: the slot, the SPU place, the evictions), then one
+  DMA from the block (`SpuWrite`), polled by `sound_step`'s `SR_UPLOAD`
+  step; no drive, so `stream_reading` leaves it out and the music's and
+  the chunks' reads go on. The preload does the same at once. The bench
+  counts them (`ram_swaps`: the walk's line, `swapped from RAM`) apart
+  from the disc's reads.
+- A sound neither banked nor flagged (a level file without a sound set)
+  streams from the disc as before.
+
+### 86.3 Measured
+
+The 128 spawn views: identical to master's. Every map loads with its bank
+and its block (`stream: \LVL\E4M3\E4M3_S0.DAT, ... 28 for RAM (180 KB)`;
+no `wanted, not in the level's file`, no block refused). The stream's pool
+after the block: E4M7 283 KB (its 154 KB block), E4M3 334 KB, 1000 KB on
+START. The stack: 9896 bytes of 12 288 never reached.
+
+The zones' walk under the drive model (`CDMODEL=1 ZONES=1 MUSIC=1
+CDLOG=1`, the 27 maps), §85's run against this one:
+
+| | §85 (the sounds halved, streamed from the disc) | **§86 (every sound resident)** |
+|---|---|---|
+| the sounds' disc reads | 5827 | **0** |
+| sounds put in the swap room from RAM | — | 3294 |
+| streamed sounds asked to play, not in | 4250 | **294** (−93 %) |
+| late events, late frames | 251, 3516 | 238, **3053** |
+| the walks' seeks (the model's) | 775 s | **272 s** |
+| music refills, underruns | 1735, 0 | 1661, 0 |
+| a load: reads, PCSX-Redux's seconds, the model's seeks | 58, 10.8 s, 3.8 s | **35, 9.0 s, 2.5 s** |
+| the banks | 265-295 KB | 297-427 KB |
+
+The 294 sounds still missing are the swap's latency: a RAM sound wanted
+and played before its DMA is through (the wants come every eighth frame,
+by distance, as before), where §85's streaming read it from the disc in
+tens of frames. The drive now carries the chunks, the models and the
+music alone: a third of §85's seeks, and the chunks come late 13 % less.
+
+The models' reads went 35 (§84, the drive saturated by the sounds: the
+models starved) → 1443 in §85's run → 158 here. Not the resident slots:
+`MAX_RES` 96 instead of 48 measured the same walk (157 model reads, 3078
+late frames, 294 sounds missing) for 1.5 KB of stack (9896 → 8360 bytes
+never reached); 48 stays. §85's 1443 were the sounds, smaller, filling
+the SPU room and the slots the models shared; with the sounds in their
+bank and their swap room the models stream by distance as they should.
+
+### 86.4 Left
+
+- **The swap's latency**: the 294 misses (0.5 % of what the player hears)
+  would go with a want one pass earlier for the RAM sounds, or by playing
+  a sound as soon as its DMA ends when it was asked for meanwhile.
+- **The RAM**: the biggest blocks take 154-180 KB of the pool (E4M7's
+  pool 439 → 283 KB, E4M3's 334); `QCOOK_SOUND_HALVE=5` with the second
+  halving at 1 % is the setting to hear; a stricter one grows the
+  blocks, a looser one shrinks them.
+- **A listen**: the halved sounds (the player's cries, the
+  explosions, the ambiences at 5512 Hz; the rumbles at 2756), on
+  DuckStation; `QCOOK_SOUND_HALVE=0` restores today's.
+- The music's ring at 4 chunks (`Q1PSX_MUSIC_RING=4`, +16 KB: the cook's
+  `QCOOK_MUSIC_RING_KB=32` to match) stays a knob.

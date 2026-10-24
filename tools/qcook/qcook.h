@@ -190,16 +190,22 @@ enum {
 	G_SHAMBLER, G_BOSS, G_ITEMS, G_WORLD
 };
 int stream_kind_group(const char *classname);   /* a monster's classname: its group, 0 none */
+int stream_sound_group(const char *name);       /* a monster's sound: its group, 0 none */
 int stream_monster_needs(const ent_list *l, const char **list, int max);
 int items_streamed(const ent_list *l, int worldtype, const char **list, int max);
 int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max);
+int sound_map_streamed_n(const ent_list *ents, int worldtype, const char **list, int *counts, int max);
 
 /* ---------------------------------------------------------------- sound -- */
 
 /* `qcook map --sounds`: the map's sound bank (formats/qsound.h, sound.c).
    Sounds come from the map's pak, then from pak0. */
+/* the map's bank (every sound the level needs that fits SPU RAM beside the
+   music's ring and a swap room) and its sound set (<map>.sndset: `spu <name>` /
+   `ram <name>`, the swap room; `qcook section` reads it): `map` the map's
+   name ("e1m1"), the episode's weapons found through the paks' maps */
 void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
-                 long pak0_len, const char *out_path);
+                 long pak0_len, const char *out_path, const char *map, const char *sndset_path);
 /* the streamed sounds (the ones with a place in a map: its entities' and
    ambient entities'; the monsters' are stream.c's) into list, their count;
    a bank sound (always in a map's bank); one streamed sound's asset

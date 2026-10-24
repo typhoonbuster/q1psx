@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #include "qcook.h"
 #include "../../formats/qsound.h"
@@ -211,6 +212,124 @@ static const char *const KEY_DOOR_SOUNDS[3][2] = {
 #define DOOR_SILVER_KEY 16
 #define H_ROTTEN 1
 #define H_MEGA   2
+
+/* The sounds of the weapons (weapons.qc) and what else plays them: a map
+   keeps one only when the player can hold the weapon on entering it or an
+   entity of the map plays it (ogre.qc's grenades, shambler.qc's lightning,
+   misc.qc's spike shooters and exploding boxes). The rest of ALWAYS stays
+   by its group. */
+enum { W_SSG = 1, W_NG = 2, W_SNG = 4, W_GL = 8, W_RL = 16, W_LG = 32 };
+typedef struct { const char *name; unsigned weapons; const char *classes[5]; } weapon_sound;
+static const weapon_sound WEAPON_SOUNDS[] = {
+	{ "weapons/shotgn2.wav",  W_SSG,        { 0 } },
+	{ "weapons/rocket1i.wav", W_NG,         { 0 } },
+	{ "weapons/spike2.wav",   W_SNG,        { "trap_spikeshooter", 0 } },
+	{ "weapons/ric1.wav",     W_NG | W_SNG, { "trap_spikeshooter", 0 } },
+	{ "weapons/ric2.wav",     W_NG | W_SNG, { "trap_spikeshooter", 0 } },
+	{ "weapons/ric3.wav",     W_NG | W_SNG, { "trap_spikeshooter", 0 } },
+	{ "weapons/tink1.wav",    W_NG | W_SNG, { "trap_spikeshooter", 0 } },
+	{ "weapons/grenade.wav",  W_GL,         { "monster_ogre", "monster_ogre_marksman", 0 } },
+	{ "weapons/bounce.wav",   W_GL,         { "monster_ogre", "monster_ogre_marksman", 0 } },
+	{ "weapons/r_exp3.wav",   W_GL | W_RL,  { "monster_ogre", "monster_ogre_marksman", "misc_explobox", "misc_explobox2", 0 } },
+	{ "weapons/sgun1.wav",    W_RL,         { 0 } },
+	{ "weapons/lstart.wav",   W_LG,         { 0 } },
+	{ "weapons/lhit.wav",     W_LG,         { "monster_shambler", 0 } },
+};
+static const struct { const char *classname; unsigned bit; } WEAPON_ENTS[] = {
+	{ "weapon_supershotgun", W_SSG }, { "weapon_nailgun", W_NG }, { "weapon_supernailgun", W_SNG },
+	{ "weapon_grenadelauncher", W_GL }, { "weapon_rocketlauncher", W_RL }, { "weapon_lightning", W_LG },
+};
+static const char *const WEAPON_NAMES[6] = { "super shotgun", "nailgun", "super nailgun", "grenade launcher",
+                                             "rocket launcher", "lightning gun" };
+
+/* Every map, and the weapons a player can hold on entering each: the
+   shotgun and the axe always (Quake takes the rest away when a map leads
+   to START: client.qc SetNewParms), and every weapon_* single player
+   spawns on any path from START to the map, through the maps'
+   trigger_changelevel targets (the secret levels: E1M4 -> E1M8 -> E1M5
+   and the like; END is reached from START). Read from the paks' maps. */
+static const char *const EPISODE_MAPS[] = {
+	"start", "e1m1", "e1m2", "e1m3", "e1m4", "e1m5", "e1m6", "e1m7", "e1m8",
+	"e2m1", "e2m2", "e2m3", "e2m4", "e2m5", "e2m6", "e2m7",
+	"e3m1", "e3m2", "e3m3", "e3m4", "e3m5", "e3m6", "e3m7",
+	"e4m1", "e4m2", "e4m3", "e4m4", "e4m5", "e4m6", "e4m7", "e4m8", "end",
+};
+#define NUM_EPISODE_MAPS (int) (sizeof EPISODE_MAPS / sizeof EPISODE_MAPS[0])
+
+static int episode_index(const char *name)
+{
+	for (int m = 0; m < NUM_EPISODE_MAPS; m++)
+		if (!strcasecmp(name, EPISODE_MAPS[m]))
+			return m;
+	return -1;
+}
+
+static unsigned episode_weapons(const char *map, const uint8_t *pak, long pak_len, const uint8_t *pak0, long pak0_len)
+{
+	unsigned has[NUM_EPISODE_MAPS] = { 0 }, obt[NUM_EPISODE_MAPS] = { 0 };
+	int      next[NUM_EPISODE_MAPS][6], nnext[NUM_EPISODE_MAPS] = { 0 }, present[NUM_EPISODE_MAPS] = { 0 };
+	for (int m = 0; m < NUM_EPISODE_MAPS; m++) {
+		char path[32];
+		snprintf(path, sizeof path, "maps/%s.bsp", EPISODE_MAPS[m]);
+		uint32_t len;
+		const uint8_t *raw = pak_find(pak, pak_len, path, &len);
+		if (!raw && pak0)
+			raw = pak_find(pak0, pak0_len, path, &len);
+		if (!raw)
+			continue;                             /* (a pak the cook has not: its maps are not on the disc) */
+		present[m] = 1;
+		bsp_t b;
+		bsp_parse(&b, raw, len);
+		ent_list l;
+		ents_parse(&b, &l);
+		for (int i = 0; i < l.num; i++) {
+			const ent_rec *e = &l.ents[i];
+			for (size_t k = 0; k < sizeof WEAPON_ENTS / sizeof WEAPON_ENTS[0]; k++)
+				if (!strcmp(e->classname, WEAPON_ENTS[k].classname))
+					has[m] |= WEAPON_ENTS[k].bit;
+			if (!strcmp(e->classname, "trigger_changelevel")) {
+				const char *to = ent_value(&l, e, "map");
+				int t = to ? episode_index(to) : -1;
+				if (t > 0 && nnext[m] < 6) {      /* (0 is START: the inventory is taken away) */
+					int dup = 0;
+					for (int j = 0; j < nnext[m]; j++)
+						dup |= next[m][j] == t;
+					if (!dup)
+						next[m][nnext[m]++] = t;
+				}
+			}
+		}
+		ents_free(&l);
+	}
+	/* from START, every path: a map's weapons add to what the paths before
+	   it gave, until nothing new reaches any map */
+	int changed = 1;
+	for (int pass = 0; changed && pass < 64; pass++) {
+		changed = 0;
+		for (int j = 0; j < nnext[0]; j++) {
+			int t = next[0][j];
+			unsigned v = has[t];
+			if ((obt[t] | v) != obt[t]) {
+				obt[t] |= v;
+				changed = 1;
+			}
+		}
+		for (int m = 1; m < NUM_EPISODE_MAPS; m++) {
+			if (!present[m] || (!obt[m] && !has[m]))
+				continue;
+			unsigned v = obt[m] | has[m];
+			for (int j = 0; j < nnext[m]; j++) {
+				int t = next[m][j];
+				if ((obt[t] | v | has[t]) != obt[t]) {
+					obt[t] |= v | has[t];
+					changed = 1;
+				}
+			}
+		}
+	}
+	int m = episode_index(map);
+	return m >= 0 ? obt[m] : 0;
+}
 
 /* ------------------------------------------------------------------ wav -- */
 
@@ -448,6 +567,10 @@ typedef struct {
 	int      halved;
 	bytes_t  adpcm;
 	double   snr;
+	int      cls;        /* the split's order: 0 the always set, 1 the ambients, 2 the
+	                        monsters', 3 the entities' (docs/porting-notes.md §86) */
+	int      weight;     /* within a class: the entities bringing it (more first) */
+	int      ram;        /* put in main RAM, not the bank                        */
 } bank_sound;
 
 static bank_sound sounds[QS_MAX_SOUNDS];
@@ -497,7 +620,7 @@ static size_t sound_bytes(const bank_sound *s)
    Quake's sounds are 11 025 Hz 8-bit; many hold next to nothing above
    2.76 kHz (rumbles, hums, the player's cries), some are all highs (the
    ricochets, the metal tinks, the pickups). QCOOK_SOUND_HALVE=<percent>
-   (default 1; 0: none) halves the rate of every sound, the bank's and the
+   (default 5; 0: none) halves the rate of every sound, the bank's and the
    streamed ones alike, whose spectrum holds no more than that share of its
    energy above a quarter of its rate (what the halving cuts; an FFT;
    docs/porting-notes.md §85). Over the game's 225
@@ -561,7 +684,7 @@ static double halve_threshold(void)
 	static double t = -1;
 	if (t < 0) {
 		const char *e = getenv("QCOOK_SOUND_HALVE");
-		t = e ? atof(e) : 1.0;
+		t = e ? atof(e) : 5.0;
 		if (t < 0)
 			t = 0;
 	}
@@ -571,18 +694,36 @@ static double halve_threshold(void)
 static int    class_halved_n;
 static size_t class_halved_saved;
 
+/* the second halving (5512 -> 2756 Hz) asks for a stricter share:
+   QCOOK_SOUND_HALVE2 (default 1 %; 0: never) */
+static double halve_threshold2(void)
+{
+	static double t = -1;
+	if (t < 0) {
+		const char *e = getenv("QCOOK_SOUND_HALVE2");
+		t = e ? atof(e) : 1.0;
+		if (t < 0)
+			t = 0;
+	}
+	return t;
+}
+
 static void halve_by_class(bank_sound *s)
 {
-	double t = halve_threshold();
-	if (t <= 0 || s->wav.n < 64 || s->wav.rate <= 5512)
-		return;
-	if (halve_loss(&s->wav) * 100 > t)
-		return;
-	size_t before = sound_bytes(s);
-	wav_halve(&s->wav);
-	s->halved = 1;
-	class_halved_n++;
-	class_halved_saved += before - sound_bytes(s);
+	double t = halve_threshold(), t2 = halve_threshold2();
+	int steps = 0;
+	/* twice at most (11 025 -> 5512 -> 2756 Hz), each step judged on the
+	   spectrum at the rate it starts from, the second against the stricter
+	   share: a sound at 2756 Hz keeps 1.4 kHz */
+	while (s->wav.n >= 64 && s->wav.rate > 2756 && steps < 2 &&
+	       (steps == 0 ? t : t2) > 0 && halve_loss(&s->wav) * 100 <= (steps == 0 ? t : t2)) {
+		size_t before = sound_bytes(s);
+		wav_halve(&s->wav);
+		s->halved = 1;
+		class_halved_saved += before - sound_bytes(s);
+		if (!steps++)
+			class_halved_n++;
+	}
 }
 
 void sound_class_halved(int *n, size_t *saved)
@@ -662,7 +803,7 @@ static void bank_write(const qs_static *statics, int nstatics, int cd_track, int
 }
 
 void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
-                 long pak0_len, const char *out_path)
+                 long pak0_len, const char *out_path, const char *map, const char *sndset_path)
 {
 	nsounds = 0;
 
@@ -714,18 +855,163 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			st->atten  = (uint8_t) lround(a->atten * 64);
 		}
 	}
+	/* The level's whole set of sounds (docs/porting-notes.md §86): the
+	   always set, less the weapons' sounds the player cannot need here
+	   (the weapons they can hold on entering, the entities that play them);
+	   the ambients' (the static sources'); the monsters' kinds'; the
+	   entities' (doors, plats, buttons, items...). Every one single player
+	   can meet, none it cannot. */
+	unsigned weapons = map ? episode_weapons(map, pak, pak_len, pak0, pak0_len) : ~0u;
+	for (size_t k = 0; k < sizeof ALWAYS / sizeof ALWAYS[0]; k++) {
+		if (!have[ALWAYS[k].group])
+			continue;
+		int keep = 1;
+		for (size_t w = 0; w < sizeof WEAPON_SOUNDS / sizeof WEAPON_SOUNDS[0]; w++) {
+			const weapon_sound *ws = &WEAPON_SOUNDS[w];
+			if (strcmp(ws->name, ALWAYS[k].name))
+				continue;
+			keep = (ws->weapons & weapons) != 0;
+			for (int c = 0; !keep && ws->classes[c]; c++)
+				for (int i = 0; i < ents.num && !keep; i++)
+					keep = !strcmp(ents.ents[i].classname, ws->classes[c]);
+		}
+		if (keep) {
+			int i = sound_add(ALWAYS[k].name, ALWAYS[k].group, pak, pak_len, pak0, pak0_len);
+			sounds[i].cls = 0;
+			sounds[i].weight = 1000;
+		}
+	}
+	for (int st = 0; st < nstatics; st++)       /* the ambients: by their sources */
+		for (size_t k = 0; k < sizeof AMBIENTS / sizeof AMBIENTS[0]; k++)
+			if (qs_hash(AMBIENTS[k].sound) == statics[st].hash) {
+				int i = sound_add(AMBIENTS[k].sound, SG_CORE, pak, pak_len, pak0, pak0_len);
+				if (sounds[i].cls < 1)
+					sounds[i].cls = 1;
+				sounds[i].weight++;
+				break;
+			}
+	{                                            /* the monsters' kinds' sounds: by the kind's count */
+		int kind_count[G_WORLD + 1] = { 0 };
+		for (int i = 0; i < ents.num; i++) {
+			int g = stream_kind_group(ents.ents[i].classname);
+			if (g)
+				kind_count[g]++;
+		}
+		const char *names[512];
+		int n = stream_monster_needs(&ents, names, 512);
+		for (int k = 0; k < n; k++) {
+			size_t ln = strlen(names[k]);
+			if (ln < 4 || strcmp(names[k] + ln - 4, ".wav"))
+				continue;                         /* (a model) */
+			int g = stream_sound_group(names[k]);
+			int i = sound_add(names[k], SG_CORE, pak, pak_len, pak0, pak0_len);
+			if (!sounds[i].weight) {
+				sounds[i].cls = 2;
+				sounds[i].weight = g >= 0 && g <= G_WORLD ? kind_count[g] : 1;
+			}
+		}
+	}
+	{                                            /* the entities' sounds: by the entities bringing them */
+		const char *names[256];
+		int counts[256];
+		int worldtype = 0;
+		for (int i = 0; i < ents.num; i++)
+			if (!strcmp(ents.ents[i].classname, "worldspawn"))
+				worldtype = (int) ent_float(&ents, &ents.ents[i], "worldtype", 0);
+		int n = sound_map_streamed_n(&ents, worldtype, names, counts, 256);
+		for (int k = 0; k < n; k++) {
+			int i = sound_add(names[k], SG_CORE, pak, pak_len, pak0, pak0_len);
+			if (!sounds[i].weight) {
+				sounds[i].cls = 3;
+				sounds[i].weight = counts[k];
+			}
+		}
+	}
 	ents_free(&ents);
-	for (size_t k = 0; k < sizeof ALWAYS / sizeof ALWAYS[0]; k++)
-		if (have[ALWAYS[k].group])
-			sound_add(ALWAYS[k].name, ALWAYS[k].group, pak, pak_len, pak0, pak0_len);
+
+	/* The split (§86): SPU RAM holds, beside the music's ring and a swap
+	   room, as many as fit, the always set first, then the ambients, the
+	   monsters' (the most numerous kind first), the entities' (the most
+	   entities first); the rest go to main RAM, read with the level and
+	   put in the swap room when wanted (engine/stream.c). The swap room
+	   holds the biggest of them and 16 KB more; the split is made again
+	   when it grows. */
+	size_t ring = 48 * 1024;
+	if (getenv("QCOOK_MUSIC_RING_KB"))
+		ring = (size_t) atoi(getenv("QCOOK_MUSIC_RING_KB")) * 1024;
+	int *order = xmalloc((size_t) (nsounds ? nsounds : 1) * sizeof *order);
+	for (int i = 0; i < nsounds; i++)
+		order[i] = i;
+	for (int i = 1; i < nsounds; i++)            /* (insertion: by class, then weight down, then size up) */
+		for (int j = i; j > 0; j--) {
+			const bank_sound *x = &sounds[order[j - 1]], *y = &sounds[order[j]];
+			int before = x->cls < y->cls || (x->cls == y->cls && (x->weight > y->weight ||
+			             (x->weight == y->weight && sound_bytes(x) <= sound_bytes(y))));
+			if (before)
+				break;
+			int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
+		}
+	size_t swap = 32 * 1024, spu_budget = 0, in_spu = 0, in_ram = 0;
+	int nram = 0;
+	for (int pass = 0; pass < 4; pass++) {
+		spu_budget = QS_SPU_BYTES - ring - swap;
+		in_spu = in_ram = 0;
+		nram = 0;
+		size_t biggest_ram = 0;
+		for (int k = 0; k < nsounds; k++) {
+			bank_sound *sn = &sounds[order[k]];
+			size_t bytes = sound_bytes(sn);
+			sn->ram = sn->cls > 0 && in_spu + bytes > spu_budget;   /* (the always set never leaves the SPU) */
+			if (sn->ram) {
+				in_ram += bytes;
+				nram++;
+				if (bytes > biggest_ram)
+					biggest_ram = bytes;
+			} else {
+				in_spu += bytes;
+			}
+		}
+		if (!nram || biggest_ram + 16 * 1024 <= swap)
+			break;
+		swap = biggest_ram + 16 * 1024;
+	}
+	if (sndset_path) {
+		FILE *sf = fopen(sndset_path, "w");
+		if (!sf)
+			die("cannot write %s", sndset_path);
+		fprintf(sf, "swap %zu\n", nram ? swap : 0);
+		for (int k = 0; k < nsounds; k++)
+			fprintf(sf, "%s %s\n", sounds[order[k]].ram ? "ram" : "spu", sounds[order[k]].name);
+		fclose(sf);
+	}
+	printf("qcook: sounds — the level's %d sounds, %zu KB: %d in the bank (%zu KB), %d in RAM (%zu KB), the swap "
+	       "room %zu KB; the weapons held:", nsounds, (in_spu + in_ram) / 1024, nsounds - nram, in_spu / 1024, nram,
+	       in_ram / 1024, nram ? swap / 1024 : 0);
+	for (int w = 0; w < 6; w++)
+		if (weapons & (1u << w))
+			printf(" %s,", WEAPON_NAMES[w]);
+	printf(" shotgun, axe\n");
+	int kept = 0;
+	for (int i = 0; i < nsounds; i++) {          /* the bank: the SPU's sounds alone */
+		if (sounds[i].ram) {
+			free(sounds[i].wav.s);
+			continue;
+		}
+		if (kept != i)
+			sounds[kept] = sounds[i];
+		kept++;
+	}
+	nsounds = kept;
+	free(order);
 
 	/* the budget: halve the longest looping ambients until it fits; then
 	   the sounds above 11 kHz (the rest's rate); then, biggest first, the
-	   sounds outside the core set (items, doors, triggers: the rarer ones) */
+	   sounds outside the core set (items, doors, triggers: the rarer ones)
+	   (a safety: the split above fits the budget) */
 	size_t total = 0;
 	for (int i = 0; i < nsounds; i++) total += sound_bytes(&sounds[i]);
 	int halved = 0;
-	for (int pass = 0; total > QS_SPU_BYTES; ) {
+	for (int pass = 0; total > spu_budget; ) {
 		int best = -1;
 		for (int i = 0; i < nsounds; i++) {
 			const bank_sound *sn = &sounds[i];
@@ -744,7 +1030,7 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			for (int i = 0; i < nsounds; i++)
 				fprintf(stderr, "  %6zu B %5d Hz %s%s\n", sound_bytes(&sounds[i]), sounds[i].wav.rate,
 				        sounds[i].name, sounds[i].wav.loopstart >= 0 ? " (loop)" : "");
-			die("the sounds do not fit the SPU (%zu KB of %u KB)", total / 1024, QS_SPU_BYTES / 1024);
+			die("the sounds do not fit the SPU (%zu KB of %zu KB)", total / 1024, spu_budget / 1024);
 		}
 		total -= sound_bytes(&sounds[best]);
 		wav_halve(&sounds[best].wav);
@@ -817,7 +1103,16 @@ int sound_streamed(const char **list, int max)
    every bank has left out */
 int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max)
 {
+	return sound_map_streamed_n(ents, worldtype, list, NULL, max);
+}
+
+/* the same, with how many entities bring each name (counts[i] for list[i]) */
+int sound_map_streamed_n(const ent_list *ents, int worldtype, const char **list, int *counts, int max)
+{
 	int n = 0;
+#define ADD(name) do { int before = n; list_add(list, &n, max, name); \
+	if (counts) { int at = -1; for (int q = 0; q < n && at < 0; q++) if (!strcmp(list[q], name)) at = q; \
+		if (at >= 0) counts[at] = (n > before ? 0 : counts[at]) + 1; } } while (0)
 	for (int i = 0; i < ents->num; i++) {
 		const ent_rec *e = &ents->ents[i];
 		const char *cls = e->classname;
@@ -828,7 +1123,7 @@ int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, i
 				continue;
 			if (!strcmp(cls, "trigger_teleport") && (spawnflags & 1))   /* SILENT */
 				continue;
-			list_add(list, &n, max, AMBIENTS[k].sound);
+			ADD(AMBIENTS[k].sound);
 		}
 		if (!strcmp(cls, "func_door_secret") && !sn) sn = 3;
 		if (!strcmp(cls, "func_plat") && !sn) sn = 2;
@@ -845,12 +1140,13 @@ int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, i
 			if (!strcmp(cls, "item_health"))          /* items.qc: rotten, mega, or plain */
 				name = (spawnflags & H_ROTTEN) ? "items/r_item1.wav"
 				     : (spawnflags & H_MEGA) ? "items/r_item2.wav" : "items/health1.wav";
-			list_add(list, &n, max, name);
+			ADD(name);
 		}
 		if (!strcmp(cls, "func_door") && worldtype >= 0 && worldtype <= 2)   /* (doors.qc gives */
 			for (int k = 0; k < 2; k++)                                     /* every door them) */
-				list_add(list, &n, max, KEY_DOOR_SOUNDS[worldtype][k]);
+				ADD(KEY_DOOR_SOUNDS[worldtype][k]);
 	}
+#undef ADD
 	return n;
 }
 

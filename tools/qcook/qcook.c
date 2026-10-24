@@ -351,6 +351,7 @@ static int cmd_map(int argc, char **argv)
 	const char *out_mdl  = arg(argc, argv, "--mdl", NULL);
 	const char *pal_pak  = arg(argc, argv, "--palette-pak", NULL);
 	const char *out_snd  = arg(argc, argv, "--sounds", NULL);
+	const char *out_sset = arg(argc, argv, "--sndset", NULL);   /* (with --sounds: the level's sound set, §86) */
 	light_gain           = atof(arg(argc, argv, "--light-gain", "1.66"));
 	if (!pak_path || !map || (!out_tex && !out_tex4 && !out_wld && !out_mdl))
 		die("usage: qcook map --pak <pak> --map <name> [--textures l [--tex <out>] [--tex4 <out>]]"
@@ -413,7 +414,15 @@ static int cmd_map(int argc, char **argv)
 		items_write(out_mdl);
 	}
 	if (out_snd)
-		sound_build(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, out_snd);
+		{
+			char base[32];                            /* "maps/e1m1.bsp" -> "e1m1" */
+			const char *sl = strrchr(map, '/');
+			snprintf(base, sizeof base, "%s", sl ? sl + 1 : map);
+			char *dot = strrchr(base, '.');
+			if (dot)
+				*dot = 0;
+			sound_build(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, out_snd, base, out_sset);
+		}
 	if (!out_wld)
 		return 0;
 	printf("qcook: geometry at %s\n", level_name[geo_level]);

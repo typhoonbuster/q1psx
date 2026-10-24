@@ -83,10 +83,18 @@ typedef struct {
 } qst_asset;                 /* 16 bytes */
 
 #define QSTF_KEEP_SKIN 1     /* (unused yet) */
+#define QSTF_RAM       2     /* a level's file: this sound is read into main RAM at the
+                                map's load with the others so flagged (they lie first in
+                                the file, one read) and played from there, its samples
+                                put in the SPU's swap room when wanted (docs/porting-notes.md
+                                §86) */
 #define QST_ABSENT 0xffffffffu   /* a level's file (<MAP>_S0.DAT, its section: the pool's
                                     directory with the sectors of the assets the level
                                     uses, docs/porting-notes.md §84): this asset is not
                                     in it */
+#define QST_BANKED 0xfffffffeu   /* a level's file: this sound is in the level's bank
+                                    (<MAP>.SND, resident in SPU RAM for the whole map):
+                                    not in the file, never wanted of the stream (§86) */
 
 /* a model asset's header */
 #define QSTM_FLAT 1          /* no directional light (QGF_FLAT)              */

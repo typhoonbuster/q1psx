@@ -33,7 +33,8 @@ int32_t        stream_origin[3];
 
 #define SLOG(...) do { if (stream_log) printf(__VA_ARGS__); } while (0)
 
-#define MAX_RES       48       /* assets resident (or being read) at once       */
+#define MAX_RES       48       /* assets resident (or being read) at once (96 measured
+                                  the same, docs/porting-notes.md §86.3)        */
 #define MAX_REGIONS   40       /* free VRAM rectangles                          */
 #define PASS_FRAMES   8        /* a residency pass every this many frames       */
 #define PASS_JUMP     (256 * QW_CLIP_SUB)   /* and at once when the player moved
@@ -54,6 +55,8 @@ typedef struct {
 	uint8_t   backoff;         /* passes before it is tried again (a read error) */
 	uint8_t   stuck;           /* ST_*: no room for it, or not readable          */
 	uint8_t   absent;          /* not in the level's file (stream_level)         */
+	uint8_t   banked;          /* in the level's bank: never the stream's (§86)  */
+	uint32_t  ram_ofs;         /* its bytes in the RAM block (QSTF_RAM), ~0 none  */
 	uint32_t  stuck_ram;       /* ST_ROOM: what the assets wanted as much held   */
 	uint32_t  stuck_vram;      /*   then (RAM bytes, VRAM texels, SPU bytes)     */
 	uint32_t  stuck_spu;
@@ -99,6 +102,14 @@ static int32_t  base_lba;      /* the assets' file's first sector: the level's
 static int32_t  pool_lba;      /* STREAM_<n>.DAT's                               */
 static uint32_t *pool_sector;  /* [num_assets]: each asset's sector in the pool  */
 
+/* The level's RAM-resident sounds (docs/porting-notes.md §86): the level's
+   file flags them QSTF_RAM and lays them first, together; the map's start
+   reads them in one go into a block of the level arena, and a wanted one
+   goes to the SPU's swap room from there by a DMA, no read. */
+static uint8_t *ram_block;
+static uint32_t ram_first, ram_sectors;   /* their sectors in the level's file */
+static int      ram_sounds;
+
 static res_t    res[MAX_RES];
 
 static uint8_t *pool, *pool_end, *pool_top;   /* the RAM pool (bump, compacted) */
@@ -136,7 +147,8 @@ static struct {
 	uint32_t left;                /* its samples' bytes still to upload          */
 	uint16_t sector, sectors;     /* the next piece's (from its first), its count */
 	uint8_t  step;                /* SR_*                                        */
-} sread = { -1, 0, 0, 0, 0, 0 };
+	uint8_t  ram;                 /* its samples come from the RAM block (one DMA) */
+} sread = { -1, 0, 0, 0, 0, 0, 0 };
 enum { SR_WAIT, SR_READ, SR_UPLOAD };   /* (SR_WAIT: for the music's room) */
 static int      waiting = -1;  /* the asset whose read waits for the music's room */
 static uint32_t frame_no;
@@ -231,8 +243,12 @@ Q_COLD void stream_level(const char *map)
 	for (int i = 0; i < num_assets; i++) {
 		assets[i].d.sector = pool_sector[i];
 		assets[i].absent   = 0;
+		assets[i].banked   = 0;
+		assets[i].ram_ofs  = ~0u;
 	}
 	base_lba = pool_lba;
+	ram_first = ram_sectors = 0;
+	ram_sounds = 0;
 	char name[32];
 	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_S%d.DAT;1", map, map, stream_level_n);
 	uint32_t lba, mark = mem_level_mark();
@@ -245,28 +261,47 @@ Q_COLD void stream_level(const char *map)
 	         h->num_assets == (uint32_t) num_assets && h->dir_sectors <= 2 &&
 	         h->ofs_assets + h->num_assets * sizeof(qst_asset) <= h->dir_sectors * QST_SECTOR;
 	const qst_asset *d = (const qst_asset *) ((const uint8_t *) h + h->ofs_assets);
-	int in = 0;
+	int in = 0, banked = 0;
+	uint32_t rlo = ~0u, rhi = 0;
 	for (int i = 0; ok && i < num_assets; i++) {
 		if (d[i].hash != assets[i].d.hash)
 			ok = 0;
+		else if (d[i].sector == QST_BANKED)
+			assets[i].absent = assets[i].banked = 1, banked++;
 		else if (d[i].sector == QST_ABSENT)
 			assets[i].absent = 1;
-		else
+		else {
 			in++;
+			if (d[i].flags & QSTF_RAM) {
+				uint32_t end = d[i].sector + (d[i].size + QST_SECTOR - 1) / QST_SECTOR;
+				if (d[i].sector < rlo) rlo = d[i].sector;
+				if (end > rhi)         rhi = end;
+			}
+		}
 	}
 	if (!ok) {
 		printf("stream: %s is not the pool's directory: the pool's reads\n", name);
 		for (int i = 0; i < num_assets; i++)
-			assets[i].absent = 0;
+			assets[i].absent = assets[i].banked = 0;
 		mem_level_release(mark);
 		return;
 	}
 	for (int i = 0; i < num_assets; i++)
-		if (!assets[i].absent)
+		if (!assets[i].absent) {
 			assets[i].d.sector = d[i].sector;
+			if (d[i].flags & QSTF_RAM) {
+				assets[i].ram_ofs = (d[i].sector - rlo) * QST_SECTOR;
+				ram_sounds++;
+			}
+		}
+	if (rhi > rlo) {
+		ram_first   = rlo;
+		ram_sectors = rhi - rlo;
+	}
 	base_lba = (int32_t) lba;
 	mem_level_release(mark);
-	printf("stream: %s, %d of %d assets, from sector %d\n", name, in, num_assets, (int) base_lba);
+	printf("stream: %s, %d of %d assets, %d sounds in the bank, %d for RAM (%u KB), from sector %d\n", name, in,
+	       num_assets, banked, ram_sounds, (unsigned) (ram_sectors * QST_SECTOR / 1024), (int) base_lba);
 }
 
 #ifdef Q1PSX_BENCH
@@ -952,6 +987,8 @@ static int sound_room(int a)
 	return 1;
 }
 
+static void sound_done(int ok, int broken);
+
 static int sound_start(int a)
 {
 	if (!sound_room(a))
@@ -962,6 +999,38 @@ static int sound_start(int a)
 	sread.left   = n;
 	sread.sector = 0;
 	sread.step   = SR_WAIT;
+	sread.ram    = 0;
+	return 1;
+}
+
+/* a RAM-resident sound (§86): its place in the SPU's swap room taken as a
+   disc read's, its samples sent from the block by one DMA, no read (0: no
+   room, or not a sound this engine reads) */
+static int ram_start(int a)
+{
+	if (!sound_room(a))
+		return 0;
+	asset_t *as = &assets[a];
+	res_t *r = &res[as->res];
+	const qst_sound *h = (const qst_sound *) (ram_block + as->ram_ofs);
+	sread.a   = a;
+	sread.ram = 1;
+	if (sizeof *h + h->len > as->d.size || !h->len || (h->len & 15)) {
+		sound_done(0, 1);
+		return 0;
+	}
+	r->snd.len   = h->len;
+	r->snd.pitch = h->pitch;
+	r->snd.flags = h->flags;
+	r->snd.ticks = h->ticks;
+	uint32_t n = h->len < r->spu_size ? ALIGN64(h->len) : r->spu_size;
+	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
+	SpuSetTransferStartAddr(r->snd.spu);
+	SpuWrite((const uint32_t *) (h + 1), n);
+	sread.spu  = r->snd.spu + n;
+	sread.left = 0;
+	sread.step = SR_UPLOAD;
+	stream_stats.ram_swaps++;
 	return 1;
 }
 
@@ -1018,8 +1087,10 @@ static void sound_in(int a, int ok, int broken)
 	none_wanted = 0;
 	if (ok) {
 		as->state = A_RES;
-		stream_stats.reads++;
-		stream_stats.read_bytes += as->d.size;
+		if (!sread.ram) {
+			stream_stats.reads++;
+			stream_stats.read_bytes += as->d.size;
+		}
 		SLOG("stream: in %08x (sound, %u B at SPU %05x, last %u)\n", (unsigned) as->d.hash,
 		     (unsigned) res[as->res].snd.len, (unsigned) res[as->res].snd.spu, (unsigned) as->last);
 		return;
@@ -1188,10 +1259,10 @@ static int next_wanted(void)
 		uint32_t reach = as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : STREAM_REACH;
 		if ((as->last & STREAM_DIST) > reach || as->last >= STREAM_DEAD)
 			continue;
-		if (as->absent) {                     /* (not in the level's file: the cook's list
-		                                         missed it; never read) */
+		if (as->absent) {                     /* (in the level's bank, or not in its file: the
+		                                         cook's list missed it; never read) */
 #ifdef Q1PSX_BENCH
-			if (!as->backoff) {
+			if (!as->backoff && !as->banked) {
 				printf("stream: asset %08x wanted, not in the level's file\n", (unsigned) as->d.hash);
 				as->backoff = 255;
 			}
@@ -1219,9 +1290,10 @@ static int next_wanted(void)
 
 int stream_reading(void)
 {
-	return reading >= 0 || (sread.a >= 0 && (sread.step == SR_READ ||
+	return reading >= 0 || (sread.a >= 0 && !sread.ram && (sread.step == SR_READ ||
 	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK)))) ||
-	       zone_reading();                   /* (a world chunk's read: the drive's too) */
+	       zone_reading();                   /* (a world chunk's read: the drive's too; a RAM
+	                                             sound's DMA is not) */
 }
 
 uint8_t *stream_stage(void)
@@ -1287,6 +1359,7 @@ void stream_abort(void)
 	waiting = -1;
 	DrawSync(0);                              /* (no upload left reading the pool) */
 	pool = pool_top = pool_end = 0;           /* (the level arena is about to be reset) */
+	ram_block = 0;
 	for (int a = 0; a < num_assets; a++)
 		assets[a].state = A_DISC;
 	for (int i = 0; i < MAX_RES; i++)
@@ -1304,6 +1377,18 @@ Q_COLD void stream_map_start(uint32_t keep)
 	memset(&stream_stats, 0, sizeof stream_stats);
 	/* a lent block first, then the expanded frames' cache, the staging
 	   buffer, the pool; the lent block after the pool, at its end */
+	ram_block = 0;
+	if (ram_sectors) {                        /* the level's RAM sounds, one read (§86) */
+		uint32_t mark = mem_level_mark();
+		uint8_t *b = mem_level_alloc(ram_sectors * QST_SECTOR);
+		if (b && read_sectors(base_lba + (int32_t) ram_first, (int) ram_sectors, b, CDW_FILE, 0))
+			ram_block = b;
+		else {
+			printf("stream: the RAM sounds' block (%u KB) did not fit or read: those sounds stream from the disc\n",
+			       (unsigned) (ram_sectors * QST_SECTOR / 1024));
+			mem_level_release(mark);
+		}
+	}
 	uint32_t room = mem_level_bytes() - mem_level_used(), lend = 0;
 	if (lend_state == L_WANT) {
 		lend = room >= lend_bytes + keep + 64 ? lend_bytes : 0;
@@ -1323,9 +1408,10 @@ Q_COLD void stream_map_start(uint32_t keep)
 	lend_at  = lend && pool ? pool_end : 0;
 	stream_stats.ram_size = left;
 	regions_build();
-	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions; %u KB lent\n",
+	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions; %u KB lent; %d sounds in RAM (%u KB)\n",
 	       (unsigned) left / 1024, (unsigned) stream_stats.vram_texels / 1024, num_regions,
-	       (unsigned) (lend_at ? lend : 0) / 1024);
+	       (unsigned) (lend_at ? lend : 0) / 1024, ram_block ? ram_sounds : 0,
+	       (unsigned) (ram_block ? ram_sectors * QST_SECTOR / 1024 : 0));
 }
 
 /* the uploads the GPU took: the images' pixels go, the blocks may move */
@@ -1383,6 +1469,11 @@ void stream_frame(void)
 		int a = next_wanted();
 		if (a < 0)
 			return;
+		if (assets[a].d.kind == QSTK_SOUND && ram_block && assets[a].ram_ofs != ~0u) {
+			if (!ram_start(a))                /* (from RAM: no drive, no wait) */
+				set_stuck(a);
+			return;
+		}
 		if (assets[a].d.kind == QSTK_SOUND ? !sound_start(a) : reserve(a) < 0) {
 			set_stuck(a);
 			return;
@@ -1503,10 +1594,18 @@ Q_COLD void stream_preload(void)
 		if (a < 0)
 			break;
 		if (assets[a].d.kind == QSTK_SOUND) {
-			if (!sound_start(a))
+			if (ram_block && assets[a].ram_ofs != ~0u) {
+				if (!ram_start(a))
+					set_stuck(a);
+				else if (sread.a >= 0) {
+					SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
+					sound_done(1, 0);
+				}
+			} else if (!sound_start(a)) {
 				set_stuck(a);
-			else
+			} else {
 				sound_read_sync();
+			}
 			continue;
 		}
 		if (reserve(a) < 0) {

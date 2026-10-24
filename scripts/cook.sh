@@ -35,7 +35,10 @@
 # the zone tables' and the music's contents, qcook's own switches
 # (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP, QCOOK_SOUND_HALVE: the share of
 # its energy a sound may lose to be cooked at half its rate, in percent;
-# default 1, 0 none; docs/porting-notes.md §85). `cook.sh --stale <file>`, the
+# default 5, 0 none; QCOOK_SOUND_HALVE2 the same for a second halving, to
+# 2756 Hz, default 1; docs/porting-notes.md §85-86; QCOOK_MUSIC_RING_KB: the
+# SPU RAM the music's ring takes, 48 by default: the bank fills the rest
+# beside a swap room, §86). `cook.sh --stale <file>`, the
 # build's check before the cook (CMakeLists.txt), rewrites <file> when they
 # differ from the last cook's, and the build cooks again: a change in
 # local.env or on the command line, or a cook another build directory made
@@ -46,6 +49,7 @@
 #   cooked/id1/<map>_g0.wld     QWVF world, low geometry          -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_m0.mdl     QMM1 its own models, low          -> disc <MAP>_M0.MDL
 #   cooked/id1/<map>.snd        QSB2 its sound bank               -> disc <MAP>.SND
+#   cooked/id1/<map>.sndset     the level's sound set: `spu`/`ram` a sound (qcook section reads it)
 # and with Q1PSX_ZONE_TABLES, a map split into zones (formats/qworld.h):
 #   cooked/id1/<map>_g0.skl     QWZG its skeleton                 -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_z<N>.zon   QZN1 its chunks, textures N (1, 2) -> disc <MAP>_Z<N>.ZON
@@ -115,7 +119,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_HALVE=${QCOOK_SOUND_HALVE:-}"
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_HALVE=${QCOOK_SOUND_HALVE:-} QCOOK_SOUND_HALVE2=${QCOOK_SOUND_HALVE2:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-}"
 }
 if [ "${1:-}" = --stale ]; then
 	stamp=${2:?--stale needs the file the cook depends on}
@@ -138,7 +142,7 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
-      cooked/id1/*.skl cooked/id1/*.zon cooked/id1/*_s0.dat \
+      cooked/id1/*.skl cooked/id1/*.zon cooked/id1/*_s0.dat cooked/id1/*.sndset \
       cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat \
       cooked/settings.txt           # (written last: a cook cut short is cooked again)
 rm -rf cooked/xa                    # (the XA streams and their carousels: none since §52)
@@ -163,7 +167,7 @@ cook_one() {   # map axis level (t / g / m, 0..2)
 	name=$(echo low medium high ultra | cut -d' ' -f$(($3 + 1)))
 	case $2 in
 	t) what="--textures $name --tex4 $out.tx4" ;;
-	g) what="--geometry $name --world $out.wld --sounds cooked/id1/$1.snd" ;;
+	g) what="--geometry $name --world $out.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset" ;;
 	m) what="--models $name --mdl $out.mdl" ;;
 	esac
 	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" $what \
@@ -188,7 +192,8 @@ section_one() {   # map
 	local pak=$QUAKE_PAK0
 	case $1 in e2*|e3*|e4*|end) pak=${QUAKE_PAK1:?$1 needs QUAKE_PAK1} ;; esac
 	tools/qcook/qcook section --pak "$pak" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --stream cooked/id1/stream_0.dat \
-	                          --map "maps/$1.bsp" --out "cooked/id1/$1_s0.dat" > "$LOGS/$1_s.log" 2>&1 \
+	                          --map "maps/$1.bsp" --out "cooked/id1/$1_s0.dat" --sndset "cooked/id1/$1.sndset" \
+	                          > "$LOGS/$1_s.log" 2>&1 \
 	|| { echo "cook FAILED: $1 section"; cat "$LOGS/$1_s.log"; return 1; }
 }
 export -f section_one

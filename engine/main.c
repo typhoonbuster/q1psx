@@ -1434,12 +1434,13 @@ static void bench_zones(void)
 		printf("bench zones %s: %u frames, %u units, %u legs of %d through walls; %u switches (patch %u cycles avg, "
 		       "%u max; %u patches checked bad), %u reads (%u KB, %u frames each), %u waits for the drive; late: %u "
 		       "events, %u frames (%u through walls), the longest run %u; %u evictions, %u read errors; frames %u "
-		       "cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u, %u sounds asked, not in\n",
+		       "cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u, %u sounds asked, not in, "
+		       "%u swapped from RAM\n",
 		       world_map_name(m), frames, units, walls, nwp - 1, z->switches,
 		       z->switches ? z->switch_cycles / z->switches : 0, z->switch_max, bad, z->loads, z->load_bytes / 1024,
 		       z->loads ? z->load_frames / z->loads : 0, z->waits, z->late_events, late, late_wall, worst,
 		       z->evictions, z->read_errors, frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax,
-		       stream_stats.reads - reads0, stream_stats.snd_missing);
+		       stream_stats.reads - reads0, stream_stats.snd_missing, stream_stats.ram_swaps);
 		game_active = 0;
 		zone_sync = 1;
 	}

@@ -326,6 +326,15 @@ static const struct { const char *classname; int group; } KINDS[] = {
 	{ "monster_boss", G_BOSS },
 };
 
+/* a streamed sound's group (a monster's, or G_WORLD), 0 for a name that is none */
+int stream_sound_group(const char *name)
+{
+	for (int k = 0; k < NUM_MONSTER_SOUNDS; k++)
+		if (!strcmp(MONSTER_SOUNDS[k].file, name))
+			return MONSTER_SOUNDS[k].group;
+	return 0;
+}
+
 /* a monster entity's group (its kind's assets), 0 for any other classname */
 int stream_kind_group(const char *classname)
 {

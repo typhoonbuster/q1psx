@@ -147,6 +147,7 @@ typedef struct {
 	uint32_t vram_texels, vram_used; /* texels of the free regions, used   */
 	uint32_t reads, read_bytes;      /* since the map's start              */
 	uint32_t snd_missing;            /* streamed sounds asked to play, not in (engine/snd.c) */
+	uint32_t ram_swaps;              /* sounds put in the SPU's swap room from main RAM (§86) */
 	uint32_t evictions, failures;    /* assets dropped; placed nowhere     */
 	uint32_t halved;                 /* skins at their fallback (VRAM short) */
 	uint16_t resident, wanted;       /* assets, the last pass              */
