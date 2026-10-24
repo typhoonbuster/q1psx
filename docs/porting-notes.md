@@ -10172,6 +10172,32 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
     odd vertex, rl_order's way to `done`: one instruction each.
   - Checked: the physics diffs (0 mismatches), the monsters' and the
     crowd's lines, `ORDER_C=2` (0 mismatches over 12 views of E1M1).
+- **pmove** (`engine/pmove.s`): DOT_IN / DOT_II take their last
+  instruction as an argument, none where no multiply or divide follows
+  within two; friction moves clip_mover's address and two loads into HI/LO
+  spacers; accelerate, categorize, push_out, isqrt32's loop and
+  slide_move's bump put the way taken's first instruction in their slots.
+  pmdiff 0 mismatches; a tick without traces 2455 → 2411 cycles.
+- **The point hull's trace** (`engine/clip.s`, shots and lines of sight):
+  LEAF's slot does NODE_DSDD's `move` (t0, set again on a leaf's way), the
+  loop entering NODE_DSDD past it: a line of sight 7935 → 7850 cycles.
+  The slot first held the next node's plane `lhu`: on a leaf the pointer
+  is odd (its bit 0 tags it), so that load is misaligned, an address
+  error on the console. The dynarec does not check alignment; the
+  interpreter stopped there (`LoadAddressError` in clipdiff's traces).
+  Every load this pass put in a delay slot or above a branch was then
+  checked for the way that does not need it: each reads the scratchpad,
+  the stack, the edict, a frame of its own, or an aligned array's next
+  entry (a valid read past its end at most).
+- **The near check after a careful transform** (NZ: the record loops' and
+  the sorted models'): two SZ a turn, an odd count's first alone, 4.5
+  instructions a vertex, not 6. The 128 views −9.8 k at T = 4, the same
+  at T = 32.
+- **The flat transforms under their RTPT** (XFORM light 0 and 2: the flat
+  shading's records past 512 units, with nothing to light while the GTE
+  works): the next three vertices' pool addresses are made in the RTPT's
+  shadow (the record's first three before the loop), so its `swc2` no
+  longer waits ~23 cycles. The 128 views −22 k at T = 32, −8.6 k at T = 4.
 - **Measured and left out** (each loses at T = 32, where the game runs):
   - the split test by the edge's length in one pass (no REFINE; gp and sp
     as temporaries): −1.06 % at T = 4, +0.19 % at T = 32;

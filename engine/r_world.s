@@ -170,6 +170,7 @@ r_ysites:
 # draw distance's): each light times its vertex's factor in r_fogtab (t2 =
 # the table, by SZ / 64, 128 = as it is), t7 clobbered.
 .macro XFORM sz, loop, one, done, light=1, fog=0
+.if \light == 1
 \loop:
 	lhu     $t0, 0($t3)
 	lhu     $t1, 2($t3)
@@ -189,10 +190,44 @@ r_ysites:
 	addiu   $t3, $t3, 6
 	addiu   $t5, $t5, -3
 	RTPT
+.else
+	# (no lights to expand while the RTPT runs: the next three's pool
+	# addresses are made in its shadow instead, §81.3; the record's first
+	# three here)
+\loop:
+	lhu     $t0, 0($t3)
+	lhu     $t1, 2($t3)
+	lhu     $t6, 4($t3)
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t9
+	sll     $t1, $t1, 3
+	addu    $t1, $t1, $t9
+	sll     $t6, $t6, 3
+	addu    $t6, $t6, $t9
+\loop\()_p:                              # (t0, t1, t6: the three's addresses)
+	lwc2    C2_VXY0, 0($t0)
+	lwc2    C2_VZ0,  4($t0)
+	lwc2    C2_VXY1, 0($t1)
+	lwc2    C2_VZ1,  4($t1)
+	lwc2    C2_VXY2, 0($t6)
+	lwc2    C2_VZ2,  4($t6)
+	addiu   $t3, $t3, 6
+	addiu   $t5, $t5, -3
+	RTPT
 .if \light == 2
 	sw      $at, SP_COL+0($t4)           # the record's one colour
 	sw      $at, SP_COL+4($t4)
 	sw      $at, SP_COL+8($t4)
+.endif
+	lhu     $t0, 0($t3)                  # the next three's (past the last: the
+	lhu     $t1, 2($t3)                  #  indices' padding or the light bytes,
+	lhu     $t6, 4($t3)                  #  harmless reads)
+	sll     $t0, $t0, 3
+	sll     $t1, $t1, 3
+	sll     $t6, $t6, 3
+	addu    $t0, $t0, $t9
+	addu    $t1, $t1, $t9
+	addu    $t6, $t6, $t9
 .endif
 .if \light == 1
 	lbu     $t0, 0($at)                  # while the GTE works: the three
@@ -262,7 +297,11 @@ r_ysites:
 	swc2    C2_SZ2,  SP_SZ+4($t4)
 	swc2    C2_SZ3,  SP_SZ+8($t4)
 .endif
+.if \light == 1
 	bgtz    $t5, \loop
+.else
+	bgtz    $t5, \loop\()_p
+.endif
 	addiu   $t4, $t4, 12
 	addiu   $t5, $t5, 2                  # 0, 1 or 2 left: one RTPS each
 	blez    $t5, \done                   # (rather than a padded RTPT)
