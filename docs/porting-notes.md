@@ -10848,3 +10848,158 @@ with a seek guess to match (`MUSIC_SEEK=`), which is the redesign's.
 - **The model's reach:** a read waited for synchronously (`cd_read_sync`,
   the loads) is held too but counts no `held` polls; the pause after a read
   is PCSX-Redux's; a read's start is known to the vblank.
+
+## §84 — The disc in sections, one a level (2026-10-24)
+
+The decision on §83.8's options: the sections (A), the music's
+refills four chunks at a time (B) and the loads' files in reading order
+(D) first; a zone's sounds read with its chunk (C) next. The 1 s ring is
+out: under the drive model its refills, one chunk at a time, would take
+about 60 % of the drive even in a section; the ring's size (6 chunks, 2 s,
+or 4, 1.3 s, +16 KB of SPU RAM for the sounds) is a build knob decided on
+the bench.
+
+### 84.1 The layout (scripts/cd_image.cmake, iso/iso.xml)
+
+mkpsxiso lays the files out in the order the project lists them, so the
+project is the layout:
+
+- **The root**: SYSTEM.CNF, the executable, GAME_0.DAT, CONBACK.DAT,
+  STREAM_0.DAT (the pool of streamed assets: its directory is every
+  level's, read at boot; a level without its own file reads it), MENU.SND
+  (the release menu's bank, from `\MAPS` before).
+- **One directory a level**, `\LVL\E1M1`, its files in the order `load_level`
+  reads them, so that a load is one forward sweep of the head and every
+  read in play a hop within the section: `E1M1.SND` (the bank, first),
+  `E1M1_T2.TX4` (the textures), `E1M1_G0.WLD` (the world, or the
+  skeleton of a zoned map), `E1M1_M0.MDL` (its own models), then what the
+  game reads in play right before the track: `E1M1_Z2.ZON` (the chunks),
+  `E1M1_S0.DAT` (the level's own file of the streamed assets, §84.2), and
+  `SPU_06.DAT`, its copy of its CD track (tracks 4 to 11 go with the maps
+  that play them: 32 copies, 232 MB more).
+- **`\MUSIC`** after the levels: tracks 2 and 3 once (the title's, the
+  intermission's); every track when the disc carries no level.
+- No `\MAPS` directory any more. The levels' directories sit under `\LVL`:
+  a first try put them in the root, whose records then took two sectors;
+  ISO9660 sorts a directory's records by name, so SYSTEM.CNF and
+  Q1PSX.EXE landed in the second sector, the one the BIOS never reads, and
+  the disc did not boot (PCSX-Redux's OpenBIOS stayed in its shell).
+
+The section's hops: a level's data (1.1-1.3 MB with its streamed assets)
+then its track (5-12.5 MB): the chunks and the stream file lie right
+before the track, so the farthest music chunk is under 7200 sectors from
+them (100 ms) on every map, the 50 ms hops within the data.
+
+### 84.2 The cook (tools/qcook/section.c, tools/qcook/zones.c)
+
+- **`qcook section`** writes a map's own file of the streamed assets,
+  `<map>_s0.dat`: the pool's directory (STREAM_0.DAT's, the same 174
+  entries in the same order), each asset's sector in this file, or
+  `QST_ABSENT` for the assets the map's entities never bring; then the
+  assets' bytes copied from the pool. Which assets: the lists the XA
+  carousels used (§48; `stream_monster_needs`, `items_streamed`,
+  `sound_map_streamed` on the entities single player spawns at some
+  skill). Their order: a monster group's assets at the distance of its
+  nearest monster from the player's start (the gibs and the backpack at
+  the nearest monster's), the nearest first; the items and the world's
+  sounds after, in the pool's order: the engine's preload reads by
+  distance, so it sweeps the file forward. The 32 files: 31 to 106 of the
+  174 assets, 0.46-1.2 MB each (28 MB in all).
+- **`qcook zones`** orders the chunks in the `.ZON` file: the player's
+  start's zone and its three nearest first (the load's first reads, in
+  one sweep: the leaf found as the engine finds it, `leaf_of_point`),
+  then outward through the sets' neighbourhoods (neighbouring zones side
+  by side on the disc), any zone no set reaches last. The directory's
+  entry per zone is unchanged, only the sectors; the skeleton's bytes
+  change with them (another cook: the stamps still match).
+- `scripts/cook.sh` runs `qcook section` for every map after the stream
+  and the maps; the build's glob takes `*_s0.dat`.
+
+### 84.3 The engine
+
+- **One directory read a load** (engine/cd.c): `cd_cache_dir("\LVL\E1M1")`
+  at the load's start reads the level's directory once and keeps its
+  files (12 at most); `cd_find` answers from it for that directory's
+  files without a read (seven directory reads a load before, §83.6, each a
+  seek), and says "not there" without a read too. A directory two levels
+  deep (`\LVL\E1M1`) is looked up in its parent's records, read once, and
+  noted (`find_dir`). `cd_list_dirs("\LVL")` lists the levels:
+  `world_scan_maps` finds the disc's maps there (a directory named as a
+  map), and the levels the disc carries from one map's files. `MAX_DIRS`
+  8 → 40.
+- **The paths**: the bank, the textures, the world, the models and the
+  chunks in `\LVL\<MAP>\`; the menu's bank in the root.
+- **The stream's level file** (engine/stream.c `stream_level`, after the
+  world is in): `\<MAP>\<MAP>_S0.DAT`'s directory (two sectors) gives each
+  asset its sector in the level's file, `base_lba` the file's; an asset the
+  file lacks is `absent` and never read (a bench build prints it if it is
+  wanted all the same: the cook's lists missed it); without the file, or
+  with another pool's directory, the pool's sectors as before.
+- **The music's copy** (engine/music.c `music_level`): `music_play` takes
+  the track's copy from the level's directory when it has one (no read:
+  the cached directory), else `\MUSIC`'s.
+- **The refills** (B): `MUSIC_REFILL_CHUNKS` (CMake `Q1PSX_MUSIC_REFILL`,
+  4: 16 sectors every 1.3 s, two chunks of margin in a 6-chunk ring; 2:
+  as before). The staging buffer the refills and the sounds' pieces share
+  grows to hold a refill (stream.c `STAGE_SECTORS`: 16 sectors, 32 KB,
+  +16 KB of the level arena; a sound's pieces are 16 sectors too). The
+  seek the refills plan around a read, `MUSIC_SEEK_MS`, defaults to 100
+  (a hop within the section).
+
+### 84.4 Measured
+
+The disc read back (tools/cdsim `--table`): the root in one sector, `\LVL`
+then the 32 levels, each in the order above, `\MUSIC` last; the release
+disc 471 MB (the levels' stream files 28 MB, the track copies 232 MB); the
+longest hop from a map's chunks to its track's end 7212 sectors (E4M7, the
+track's last 12 sectors). `BENCH_MAPS=1 HASHONLY=1 PROFILE=0`: the 128
+spawn views' `H` lines identical to master's (c11c97b, built beside with
+the same cook). No `wanted, not in the level's file` in any run: the cook's
+lists hold what the walks and the loads want.
+
+§83.6's walk and loads again, on the new disc (`CDLOG=1 ZONES=1 MUSIC=1`,
+and `CDMODEL=1`; the 27 zoned maps, 33 loads):
+
+| | today's disc, PCSX-Redux | today's, a console (the model) | **the sections, PCSX-Redux** | **the sections, a console** | the sections, a console, the 1.3 s ring |
+|---|---|---|---|---|---|
+| chunk reads, frames each | 1134, 11.5 | 909, 23.9 | 1214, 7.9 | **1183, 10.9** | 1167, 11.0 |
+| late events, late frames | 271, 3845 | 445, 10 156 | 231, 2697 | **250, 3485** | 256, 3728 |
+| streamed sounds' pieces read | 7050 | 1350 | 11 293 | **8565** | 7318 |
+| music refills (sectors each), underruns | 3426 (8), 0 | 3230 (8), 0 | 1741 (16), 0 | **1708 (16), 0** | 3410 (8), 0 |
+| the walks' seeks (the model's) | 2792 s if charged | 1540 s | 1049 s if charged | **870 s** | 1006 s |
+| hops near / mid / sled | 3805 / 980 / 6868 | 1528 / 104 / 3862 | 10 076 / 4224 / 0 | **7510 / 3981 / 0** | 5391 / 6549 / 0 |
+| a load: reads, the model's seeks | 54, 5.9 s | 54, 6.0 s | 50, 3.6 s | **50, 3.6 s** | 51, 3.6 s |
+
+- **On a console** (the model): the camera's zone comes late a third as
+  often as on today's disc (10 156 → 3485 frames, fewer than today's disc
+  on the emulator, 3845); a chunk read takes 10.9 frames instead of 23.9
+  (the emulator read today's disc in 11.5); the sounds load again (8565
+  pieces against 1350); the music refills half as often (1708, 16 sectors)
+  and never runs dry; not one sled seek is left (3862 before); the drive's
+  seeks 1540 → 870 s over the walks.
+- **The 1.3 s ring** (`MUSIC_RING=4`, +16 KB of SPU RAM for the sounds):
+  with four chunks a ring the refills are of two (the rule refills when
+  fewer than three chunks are left: 3410 refills of 8 sectors), never dry;
+  late frames +7 % (3728), the seeks 1006 s. Viable; left open.
+- **The loads**: the seeks 5.9 → 3.6 s a load (no sled hop to `\MAPS`'s
+  directory, to STREAM_0.DAT or to `\MUSIC`); 50 reads a load, each one
+  after the other in the file: in the model a read that continues where
+  the last one ended costs a track jump back (the disc turned during the
+  pause: 53-147 ms, as much as a near seek), so the files in reading order
+  save the hops, not the per-read floor. A load as one read (the four
+  files are contiguous now) would.
+- The engine's `seek_us` on the new disc against cdsim's model: within
+  0.05 ms.
+
+### 84.5 Left
+
+- **C**, a zone's sounds read with its chunk: the sounds' pieces are still
+  the walks' most reads (8565 of 11 500 on a console), ten times the
+  distinct sounds.
+- The ring's size (6 or 4 chunks) and the refill's (4 or 2): build knobs,
+  a call to make on the machine.
+- A load as one read of the level's contiguous files.
+- The 1T-back cost of consecutive reads is the model's; the machine's own
+  figure is for a DuckStation run of `CDLOG=1` to show.
+- The lod-poc branch's levels of detail (§81) go into the level's stream
+  file by the same cook once merged (the pool holds them).

@@ -1976,6 +1976,27 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The disc in sections, one a level** (2026-10-24,
+  `docs/porting-notes.md` §84, the same branch): the choice among
+  §83's options (the sections, the refills by four, the loads in reading
+  order; a zone's sounds with its chunk next):
+  - one directory a level with its files in the order the load reads them
+    (bank, textures, world, models, chunks, its own file of the streamed
+    assets, its copy of its CD track); tracks 2-3 once in `\MUSIC`; no
+    `\MAPS`; `qcook section` cuts each map's streamed assets from the pool,
+    the nearest to the player's start first; `qcook zones` orders the
+    chunks from the start's zone outward;
+  - the engine reads a level's directory once (`cd_cache_dir`), takes its
+    assets' sectors from the level's file (`stream_level`) and its track's
+    copy (`music_level`); the music refills four chunks at a time
+    (`Q1PSX_MUSIC_REFILL`; the staging buffer 16 sectors, +16 KB), its seek
+    guess 100 ms;
+  - measured: the 128 spawn views identical to master's; the disc 471 MB;
+    under the drive model the zones' walk draws a third of the late frames
+    (10 156 → 3485), a chunk read takes 10.9 frames instead of 23.9, the
+    sounds load again (1350 → 8565 pieces), the music refills half as often
+    and never runs dry, no sled seek is left; a load's seeks 5.9 → 3.6 s;
+    the 1.3 s ring works (+7 % late frames, +16 KB of SPU RAM).
 - **The streaming redesign's bench** (2026-10-24,
   `docs/porting-notes.md` §83, a branch): before the per-level disc
   sections, the drive measured:
