@@ -10558,6 +10558,8 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
   - seen 48, 3 slots: +198 KB (E4M7 +138), 1.7 times today's late frames.
 
   The tables are derived from Quake's data and stay outside the repo.
+- **The cut chosen** (2026-10-24, after playing it): seen 64
+  with 4 slots, the compromise the streaming redesign starts from.
 - **Left, the bigger share:** the skeleton, 241-335 KB, always resident.
   E4M7's: nodes 126 KB, clip hulls 74, PVS 41, leaves 39, marks 14. The
   nodes also serve the entities' links and the leaf lookups, the hulls

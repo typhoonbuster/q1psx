@@ -1991,7 +1991,8 @@ followed by R0-R4.
   - with the seen tables at a 64 KB cap: 29 maps zoned, the smallest pool
     504 KB (E4M7 510; 440 and 448 with four slots), 22 lists differ with
     the same pictures identical, and the walk's late frames near today's
-    with three slots, fewer with four;
+    with three slots, fewer with four (the cut chosen after a play test:
+    seen 64, four slots);
   - the build cooks again when the cook's settings change, not only the
     cooker: `local.env`'s or the command line's zone tables and slots, the
     maps, the paks, the music, qcook's switches (`cooked/settings.txt`,
