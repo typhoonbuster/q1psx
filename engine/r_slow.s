@@ -869,12 +869,11 @@ sp_lerp_1:
 	mult    $s3, $t2                     # x
 	lw      $s3, VIEW_OFS+4($t9)
 	nop
-	nop
+	subu    $s3, $s3, $t4                # (dy, in the multiply's shadow)
 	mflo    $v0
-	subu    $s3, $s3, $t4
 	sra     $v0, $v0, 14
+	addu    $v0, $v0, $at                # (two apart from the mflo: HI/LO)
 	mult    $s3, $t2                     # y
-	addu    $v0, $v0, $at
 	sw      $v0, VIEW_OFS+0($t0)         # x
 	lw      $at, VIEW_OFS+8($t7)         # view z
 	lw      $s3, VIEW_OFS+8($t9)
