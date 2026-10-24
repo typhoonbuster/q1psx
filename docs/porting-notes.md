@@ -10521,3 +10521,11 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
 - **Also left:** drawing the camera's chunk with its neighbours' (chunks
   without the duplicated records) needs the renderer to walk more than one
   chunk's blocks.
+- **Left for later, the loads' triggers** (2026-10-24, seen 48
+  with 4 slots in play): on START, going back and forth between the
+  teleporter to E1 and the one to E3 shows zones not loaded yet on the way.
+  - START has 35 zones with seen 48, 7 with today's tables. The walk had
+    0 late frames today, 124 with 4 slots (27 on clear legs).
+  - The prefetch ranks zones by walking distance from the camera's leaf,
+    starting when that leaf's set changes, not by where the player
+    heads.
