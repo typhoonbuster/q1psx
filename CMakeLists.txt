@@ -316,7 +316,11 @@ set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
 # geometry), <MAP>_M0.MDL (its own models, low), its sound bank <MAP>.SND,
 # plus the game data GAME_0.DAT (the guns, the projectiles, the HUD). The
 # cook re-runs whenever the cooker or a format header changes, so the disc
-# never carries stale data.
+# never carries stale data; and when its settings do (local.env's or the
+# command line's: the zone tables and slots, the maps, the paks...): every
+# build first runs `scripts/cook.sh --stale`, which rewrites cook.settings
+# when they differ from the last cook's (cooked/settings.txt, shared with
+# the other build directories).
 if(_pak0_path AND EXISTS "${_pak0_path}")
 	file(GLOB _qcook_deps CONFIGURE_DEPENDS
 		${PROJECT_SOURCE_DIR}/tools/qcook/*.c
@@ -325,11 +329,18 @@ if(_pak0_path AND EXISTS "${_pak0_path}")
 		${PROJECT_SOURCE_DIR}/formats/*.h
 		${PROJECT_SOURCE_DIR}/scripts/cook.sh)
 	set(_cooked_stamp ${CMAKE_BINARY_DIR}/cooked.stamp)
+	set(_cook_settings ${CMAKE_BINARY_DIR}/cook.settings)
+	add_custom_target(cook_settings
+		COMMAND ${PROJECT_SOURCE_DIR}/scripts/cook.sh --stale ${_cook_settings}
+		BYPRODUCTS ${_cook_settings}
+		WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
+		COMMENT "Checking the cook's settings (scripts/cook.sh --stale)"
+		VERBATIM)
 	add_custom_command(
 		OUTPUT  ${_cooked_stamp}
 		COMMAND ${PROJECT_SOURCE_DIR}/scripts/cook.sh
 		COMMAND ${CMAKE_COMMAND} -E touch ${_cooked_stamp}
-		DEPENDS ${_qcook_deps}
+		DEPENDS ${_qcook_deps} ${_cook_settings}
 		WORKING_DIRECTORY ${PROJECT_SOURCE_DIR}
 		COMMENT "Cooking Quake data (scripts/cook.sh)"
 		VERBATIM)

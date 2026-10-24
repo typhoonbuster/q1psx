@@ -10466,6 +10466,18 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
   - a fifth slot (`MAX_RES` 5) only keeps the last chunk left;
   - the command line's `Q1PSX_ZONE_SLOTS` wins over `local.env`'s, as the
     tables' does.
+- **The build follows the cook's settings:** CMake cooked again only when
+  the cooker or a format changed, so other tables or slots in `local.env`
+  built nothing new.
+  - A cook writes what its output depends on to `cooked/settings.txt`: the
+    maps, the paks, the light gain, the zone tables (their path, a hash of
+    their contents) and the slots, the music's sources, and qcook's
+    `QCOOK_NOHAND`, `QCOOK_HAND` and `QCOOK_NOFMAP`.
+  - Every build first runs `scripts/cook.sh --stale <build>/cook.settings`
+    (17 ms). When the settings differ from the last cook's, it rewrites
+    that file, prints the lines that changed, and the cook runs again.
+  - The build directories share `cooked/`: one that finds another's cook
+    there, made with other settings, cooks again too.
 - **Measured** (32 maps, the arena capped as the release's, 1318 KB;
   `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`):
 

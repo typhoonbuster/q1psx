@@ -25,6 +25,19 @@
 #                its skeleton and zone chunks (docs/porting-notes.md §57),
 #                or left whole where that saves no RAM. Unset: every map
 #                whole, as before
+#   Q1PSX_ZONE_SLOTS   with the tables, the chunks resident at once (3, the
+#                default; 4: the three nearest zones; 5: and the last left)
+# The command line's Q1PSX_ZONE_TABLES and Q1PSX_ZONE_SLOTS win over
+# local.env's.
+#
+# A cook writes what its output depends on, besides the cooker's sources
+# (CMake tracks those), to cooked/settings.txt: the settings above, the paks,
+# the zone tables' and the music's contents, qcook's own switches
+# (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP). `cook.sh --stale <file>`, the
+# build's check before the cook (CMakeLists.txt), rewrites <file> when they
+# differ from the last cook's, and the build cooks again: a change in
+# local.env or on the command line, or a cook another build directory made
+# with other settings (they share cooked/).
 #
 # Output, per map (formats/qlevels.h: 0 low, 1 medium, 2 high):
 #   cooked/id1/<map>_t<N>.tx4   QTX7 4-bit textures (1, 2)        -> disc <MAP>_T<N>.TX4
@@ -74,6 +87,45 @@ case "$COOK_MAPS" in
 	     MAPS="$EP1 $RETAIL" ;;
 	*)   MAPS=$COOK_MAPS ;;
 esac
+QUAKE_MUSIC=${QUAKE_MUSIC:-"$(dirname "$QUAKE_PAK0")/../rerelease/id1/music"}
+
+settings() {   # what the cooked files depend on, besides the cooker's sources
+	echo "maps: $(for m in $MAPS; do echo "$m"; done | sort | tr '\n' ' ')"
+	local p
+	for p in "$QUAKE_PAK0" "${QUAKE_PAK1:-}"; do
+		if [ -n "$p" ]; then echo "pak: $p $(stat -Lc '%s %Y' "$p" 2>/dev/null || true)"; fi
+	done
+	echo "light gain: ${LIGHT_GAIN:-1.66}"
+	if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
+		echo "zone tables: $(cd "$Q1PSX_ZONE_TABLES" && pwd -P)," \
+		     "contents $( (cat "$Q1PSX_ZONE_TABLES"/*.zones 2>/dev/null || true) | md5sum | cut -c1-32)," \
+		     "slots ${Q1PSX_ZONE_SLOTS:-3}"
+	else
+		echo "zone tables: none"
+	fi
+	if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg > /dev/null; then
+		echo "music: $(cd "$QUAKE_MUSIC" && pwd -P)," \
+		     "$(cd "$QUAKE_MUSIC" && (stat -Lc '%n %s %Y' track*.ogg track*.mp3 track*.wav 2>/dev/null || true) | tr '\n' ' ')"
+	else
+		echo "music: none"
+	fi
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-}"
+}
+if [ "${1:-}" = --stale ]; then
+	stamp=${2:?--stale needs the file the cook depends on}
+	if [ ! -f "$stamp" ]; then                    # (a new build directory: no cook for that alone)
+		: > "$stamp"
+		touch -d @0 "$stamp"
+	fi
+	now=$(settings)
+	last=$(cat cooked/settings.txt 2>/dev/null || true)
+	if [ "$now" != "$last" ]; then
+		echo "cook: the settings differ from the last cook's${last:+ (cooked/settings.txt)}, cooking again:"
+		diff <(echo "$last") <(echo "$now") | sed -n 's/^> /  /p' || true
+		echo "$now" > "$stamp"
+	fi
+	exit 0
+fi
 
 make -s -C tools/qcook
 # start clean: the disc carries every cooked file, so a map cooked earlier
@@ -81,7 +133,8 @@ make -s -C tools/qcook
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
       cooked/id1/*.skl cooked/id1/*.zon \
-      cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat
+      cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat \
+      cooked/settings.txt           # (written last: a cook cut short is cooked again)
 rm -rf cooked/xa                    # (the XA streams and their carousels: none since §52)
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
@@ -145,7 +198,6 @@ fi
 # the music: Quake's CD tracks 2..11 (worldspawn "sounds"), from the
 # rerelease's tracks, resampled once by ffmpeg (22.05 kHz; the menu's theme,
 # track 2, 32 kHz) -> cooked/spu/trackNN.wav -> spu_NN.dat (formats/qspu.h)
-QUAKE_MUSIC=${QUAKE_MUSIC:-"$(dirname "$QUAKE_PAK0")/../rerelease/id1/music"}
 if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/dev/null; then
 	mkdir -p cooked/spu
 	tracks=""
@@ -172,3 +224,5 @@ if [ "${COOK_MUSIC:-1}" != 0 ] && [ -d "$QUAKE_MUSIC" ] && command -v ffmpeg >/d
 else
 	echo "music: none (set QUAKE_MUSIC / COOK_MUSIC=1, needs ffmpeg)"
 fi
+
+settings > cooked/settings.txt      # (what the next build's --stale compares its own with)
