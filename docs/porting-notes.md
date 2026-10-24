@@ -10368,3 +10368,44 @@ The list's items, each measured on this build or looked up in its code;
   emulator's, the waits measured), the CPU during DMA (above), the BIOS
   handler's cost (~2.7 k cycles an interrupt on PCSX-Redux, gone: §81.1),
   self-modifying code (used, above).
+
+### 81.7 The stack's room and the level arena (2026-10-24)
+
+- **Before**: the level arena was a BSS array of 1243 KB, and the stack
+  had what was left between the BSS's end and the top of RAM: 89.7 KB in
+  the release. Nobody sized it: the RAM each pass freed (§60, §77, this
+  branch) fell into that gap. The deepest stack measured: 2.0-2.5 KB on
+  every bench (the 32 maps' loads and views, the game, the monsters, E1M3's
+  crowd fight and key run, the movers), 4.3 KB in §61 on older code. The
+  explosive boxes' chain (Quake's barrel_explode within T_RadiusDamage,
+  kept: a box's blast kills its neighbour at once) goes 3 deep at most in
+  the single-player maps (e3m1).
+- **Now** (`engine/mem.c` mem_init, 12 KB chosen):
+  - the stack keeps the top `MEM_STACK_BYTES` (12 KB, CMake
+    `Q1PSX_STACK_BYTES`) under the kernel's stack top (0x801FFFF0);
+  - the level arena is every byte from the BSS's end to there, zeroed at
+    boot as the BSS was: whatever the program frees from now on goes to
+    it by itself;
+  - the stack's room is painted at boot; its lowest 1 KB is a guard
+    (`MEM_STACK_GUARD`): vid_flip checks a sixteenth of it a frame (all of
+    it in 16 frames, 16 words a frame), and a guard word written stops the
+    game on a red screen (vid_fatal: the GPU's fill, the interrupts off)
+    rather than let a deeper stack overwrite the arena unseen;
+  - scripts/ramcheck.sh fails the link when the arena comes under 1243 KB
+    (`Q1PSX_LEVEL_MIN`, its size until now); bench.sh's STACK_MIN gives way
+    to STACK_BYTES, LEVEL_MIN and LEVEL_CAP (a bench's code may leave its
+    arena more than the release's: LEVEL_CAP=<the release's> for pools as
+    the game has them).
+- **Result**: the release's level arena 1243 → 1318 KB (+75 KB), so every
+  map's stream pool +75 KB: E4M7 237 → 312 KB, E3M6 270 → 345, E3M4 273
+  → 348, E3M5 283 → 358, E2M4 313 → 388. The release's image (code, data,
+  BSS) ends at 0x800B36B0.
+- **Checked**: with the arena capped at its old 1243 KB, the six reference
+  sets identical (the mechanism alone); at full size, five identical and
+  the movers' E3M4 frames different: its start preloads 38 assets (311
+  KB) instead of 36 (267 KB), as §77.3 saw with a pool cut the other way
+  (the same packet counts, the skins placed elsewhere in VRAM); the
+  movers' reference saved again. The default bench under the
+  interpreter, the release's boot and menu loop (240 frames) under the
+  interpreter; a bench built with a 2 KB stack stops at its first frame on
+  the guard (`vid: the stack reached its guard`).

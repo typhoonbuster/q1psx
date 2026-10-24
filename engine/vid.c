@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <psxapi.h>
 #include <psxgpu.h>
 
 #include "mem.h"
@@ -327,9 +328,29 @@ void vid_text(int x, int y, const char *s)
 #endif
 }
 
+/* The stack reached its guard (mem.h MEM_STACK_GUARD): below it lies the
+   level arena, which a deeper stack would overwrite unseen. The game stops
+   here on a red screen rather than run on (docs/porting-notes.md §81.7). */
+Q_COLD void vid_fatal(void)
+{
+	printf("vid: the stack reached its guard (%u bytes never reached): stopped\n",
+	       (unsigned) mem_stack_untouched());
+	DrawSync(0);
+	FastEnterCriticalSection();
+	volatile uint32_t *gp0 = (volatile uint32_t *) 0x1f801810;
+	gp0[0] = 0x020000c0;                 /* GP0(02h) fill, red: both framebuffers */
+	gp0[0] = 0;
+	gp0[0] = (uint32_t) (2 * VID_H) << 16 | VID_W;
+	for (;;)
+		;
+}
+
 void vid_flip(void)
 {
 	vid_buffer_t *drawn = &buf[back];
+
+	if (!mem_stack_ok())
+		vid_fatal();
 
 	if (ovl_head)                        /* the overlay chain, first in its bucket */
 		addPrims(&vid_frame.ot[OT_OVERLAY], ovl_head, ovl_tail);

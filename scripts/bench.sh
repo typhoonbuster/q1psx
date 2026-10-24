@@ -32,10 +32,14 @@
 #         dumped): "bench mv.*" and "bmfcut" lines, the frame's, the ents'
 #         and the re-cut's cycles; "bmfhash": every 16th frame's hash folded
 #         (the identical-display-list check).
-#         STACK_MIN=<bytes>: the link's least stack room (default 16384;
-#         4096 with BENCH_GAME=1, whose scenarios' code leaves the stack
-#         about 6.8 KB: its "stack: N bytes never reached" line shows the
-#         room left; 10240 with BMF_C=2).
+#         STACK_BYTES=<bytes>: the stack's room (default 12288, the
+#         game's: engine/mem.h; the level arena takes what the code leaves
+#         under it); LEVEL_MIN=<bytes>: the least level arena the link
+#         accepts (default 1272832, 1243 KB); LEVEL_CAP=<bytes> caps the
+#         arena (a bench's code may leave it more than the release's: the
+#         release's `ramcheck` line gives its size, for the streams' pools as
+#         the game has them). The boot log's "stack: N bytes never reached"
+#         line shows the stack's room left after a load.
 #         VIEWS=0 skips the render views: physics checks only (fast).
 #         BENCH_MAPS=1 loads every map on the disc and benches its four spawn
 #         views instead (each map falls back to a lower level if too big).
@@ -84,8 +88,8 @@
 #         models' cut in C (engine/bmfrag.c) instead of the asm
 #         (engine/bmfrag.s), BMF_C=2 the asm checked cut by cut by the C
 #         ("bmfasm" lines: the cuts checked, any mismatch); that build
-#         carries both cuts, its stack floor lowered to 10 KB (STACK_MIN;
-#         SAMPLE=1's histogram needs 2048 there). ORDER_C=1 builds an alias
+#         carries both cuts (with SAMPLE=1 too, its level arena is under
+#         1243 KB: LEVEL_MIN= lower, or STACK_BYTES=4096). ORDER_C=1 builds an alias
 #         model's or a particle's place among its leaf's brush-model pieces
 #         in C (engine/rlist.c rl_order_c) instead of the asm (engine/
 #         rl_order.s), ORDER_C=2 the asm checked ask by ask by the C, and
@@ -149,7 +153,9 @@ WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
 BMFCHK=${BMFCHK:-0}
-STACK_MIN=${STACK_MIN:-$([ "$BENCH_GAME" = 1 ] && echo 4096 || { [ "${BMF_C:-0}" = 2 ] && echo 10240 || echo 16384; })}
+STACK_BYTES=${STACK_BYTES:-12288}
+LEVEL_MIN=${LEVEL_MIN:-1272832}
+LEVEL_CAP=${LEVEL_CAP:-0}
 VIEWS=${VIEWS:-1}
 BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
@@ -184,7 +190,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
-      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_STACK_MIN="$STACK_MIN" \
+      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \

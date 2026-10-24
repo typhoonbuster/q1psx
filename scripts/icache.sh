@@ -30,7 +30,7 @@
 # The usual round:
 #   scripts/icache.sh trace s 9,10 12
 #   scripts/icache.sh trace m 5,6 128 BENCH_MAPS=1
-#   scripts/icache.sh trace g 5,6 0 BENCH_GAME=1 STACK_MIN=4096
+#   scripts/icache.sh trace g 5,6 0 BENCH_GAME=1
 #   cmake --build build-release && scripts/icache.sh opt -n 20000
 #   cmake --build build-release      (the new order linked; check the frames)
 

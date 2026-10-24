@@ -1,10 +1,11 @@
 /*
  * q1psx — fixed memory map (architecture.md §4).
  *
- * No general-purpose heap at runtime. Each region is a static block with one
- * owner and a bump allocator:
+ * No general-purpose heap at runtime. Each region is a block with one owner
+ * and a bump allocator:
  *
- *   level arena   everything a map needs (world, PVS, clip hulls, ...);
+ *   level arena   everything a map needs (world, PVS, clip hulls, ...): every
+ *                 byte between the BSS and the stack's room (mem_init, §81.7);
  *                 reset on map load. mem_level_mark()/mem_level_release()
  *                 give a transient top-of-arena area (e.g. texture pixels on
  *                 their way to VRAM).
@@ -23,22 +24,30 @@
 
 #include <stdint.h>
 
-#define MEM_LEVEL_BYTES (1243 * 1024)  /* (1152 until 2026-10-19: with the monsters,
-                                          the streaming and the brush models' pieces
-                                          the BSS ended past the 2 MB; the stack's
-                                          16 KB checked at every link:
-                                          scripts/ramcheck.sh; 1136 + the game
-                                          arena's 108 KB once the 2D gun's packets
-                                          left it, less 2 KB for the code that
-                                          lends them: porting-notes §45; less 2 KB
-                                          for the music's streams' code, §48; less
-                                          3 KB for the alias models' order among a
-                                          leaf's pieces, the paused monsters, the
-                                          bodies' end, §50; 12 KB more from the code
-                                          the clean-up removed, §52; 6 KB less for
-                                          the zones' code, the stack's room kept:
-                                          the zoned maps' worlds give the arena
-                                          back far more, §57) */
+/* The RAM's layout (docs/porting-notes.md §81.7): the program and its BSS
+   from 0x80010000, then the level arena, every byte up to the stack's room,
+   then the stack, MEM_STACK_BYTES under the kernel's stack top. Until §81.7
+   the arena was a BSS array of 1243 KB and the stack had what was left (the
+   RAM every pass freed: 89.7 KB, of which ~2.5 KB ever used); now what the
+   program frees goes to the arena by itself. */
+#define MEM_STACK_TOP   0x801ffff0u    /* the EXE header's stack: the kernel sets sp there */
+#ifndef Q1PSX_STACK_BYTES
+#define Q1PSX_STACK_BYTES 12288        /* (CMakeLists.txt Q1PSX_STACK_BYTES) */
+#endif
+#define MEM_STACK_BYTES Q1PSX_STACK_BYTES   /* the stack's room: 12 KB (chosen
+                                          2026-10-24: every bench reaches 2.0-2.5 KB, §61's
+                                          worst was 4.3 KB) */
+#define MEM_STACK_GUARD 1024           /* its lowest bytes: painted at boot, a sixteenth
+                                          checked a frame (mem_stack_ok, all of it in 16
+                                          frames): reached, the game stops on a red
+                                          screen (vid_fatal) */
+#define MEM_LEVEL_MIN   (1243 * 1024)  /* the least level arena the link accepts
+                                          (scripts/ramcheck.sh): its size until §81.7 */
+#ifndef Q1PSX_LEVEL_CAP
+#define Q1PSX_LEVEL_CAP 0              /* the arena capped at that many bytes (0: none;
+                                          CMakeLists.txt, bench.sh LEVEL_CAP: a bench
+                                          whose code leaves more than the release's) */
+#endif
 #define MEM_LEVEL_WORLD (1136 * 1024)  /* the room a map's world may take while it
                                           loads (below it, a lower geometry level):
                                           the arena's size before §45, so the room
@@ -68,7 +77,14 @@ uint32_t mem_level_mark(void);
 void     mem_level_release(uint32_t mark);
 uint32_t mem_level_used(void);
 void     mem_level_cap(uint32_t bytes);        /* allocations past `bytes` refused
-                                                  (MEM_LEVEL_BYTES: none) */
+                                                  (mem_level_bytes(): none) */
+uint32_t mem_level_bytes(void);                /* the arena's size: the RAM between the
+                                                  BSS and the stack's room */
+void     mem_init(void);                       /* first thing at boot: the arena zeroed,
+                                                  the stack's room painted */
+uint32_t mem_stack_untouched(void);            /* the stack's room never reached, bytes */
+int      mem_stack_ok(void);                   /* 0 once the stack has reached its guard
+                                                  (a sixteenth of it checked a call) */
 
 void    *mem_game_alloc(uint32_t bytes);       /* 16-byte aligned; full: says so and stops
                                                   (boot-time tables only) */

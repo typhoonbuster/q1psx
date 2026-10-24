@@ -1969,3 +1969,10 @@ followed by R0-R4.
   executed nops (0.8-0.9 %), the scratchpad (full), the GTE's waits, the
   RAM accesses, the DMA, the ordering table, the critical sections,
   self-modifying code (in use; the boot code's RAM not taken back).
+- **The level arena takes the stack's gap** (2026-10-24,
+  `docs/porting-notes.md` §81.7): the stack keeps 12 KB at the top of RAM
+  (its deepest measured: 2.0-2.5 KB), a guard of its lowest 1 KB checked
+  each frame stops the game on a red screen before it could overwrite the
+  arena, and the level arena takes every byte between the BSS and it:
+  1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
+  237 → 312 KB); RAM freed later goes to the arena by itself.

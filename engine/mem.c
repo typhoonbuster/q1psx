@@ -1,11 +1,60 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "mem.h"
 
-static uint8_t  level_mem[MEM_LEVEL_BYTES] __attribute__((aligned(16)));
-static uint32_t level_top, level_cap = MEM_LEVEL_BYTES;
+/* The level arena: every byte from the BSS's end to the stack's room
+   (docs/porting-notes.md §81.7) */
+extern uint8_t  _end[];
+static uint8_t *level_mem;
+static uint32_t level_bytes, level_top, level_cap;
+
+/* The stack's room: painted at boot, from its lowest word up to the caller's
+   frame; mem_stack_untouched measures what was never reached, mem_stack_ok
+   whether the guard (its lowest MEM_STACK_GUARD bytes) still holds paint */
+#define STACK_PAINT  0x57ac57acu
+#define STACK_BOTTOM ((uint32_t *) (MEM_STACK_TOP - MEM_STACK_BYTES))
+
+Q_COLD void mem_init(void)
+{
+	level_mem   = (uint8_t *) (((uint32_t) _end + 15u) & ~15u);
+	level_bytes = ((MEM_STACK_TOP - MEM_STACK_BYTES) & ~15u) - (uint32_t) level_mem;
+#if Q1PSX_LEVEL_CAP
+	if (level_bytes > Q1PSX_LEVEL_CAP)
+		level_bytes = Q1PSX_LEVEL_CAP;        /* (a bench's: the release's size, an A / B) */
+#endif
+	level_cap   = level_bytes;
+	memset(level_mem, 0, level_bytes);        /* (as the BSS array was) */
+	uint32_t *p = STACK_BOTTOM, *top = (uint32_t *) __builtin_frame_address(0) - 64;
+	while (p < top)
+		*p++ = STACK_PAINT;
+}
+
+uint32_t mem_stack_untouched(void)
+{
+	const uint32_t *p = STACK_BOTTOM, *q = p;
+	while (*q == STACK_PAINT)
+		q++;
+	return (uint32_t) ((const uint8_t *) q - (const uint8_t *) p);
+}
+
+int mem_stack_ok(void)
+{
+	static uint32_t part;                       /* (a sixteenth a call: all of it in 16 frames) */
+	const uint32_t *p = STACK_BOTTOM + (part++ & 15) * (MEM_STACK_GUARD / 64);
+	uint32_t bad = 0;
+	for (int i = 0; i < MEM_STACK_GUARD / 64; i += 4)
+		bad |= (p[i] ^ STACK_PAINT) | (p[i + 1] ^ STACK_PAINT) | (p[i + 2] ^ STACK_PAINT) |
+		       (p[i + 3] ^ STACK_PAINT);
+	return !bad;
+}
+
+uint32_t mem_level_bytes(void)
+{
+	return level_bytes;
+}
 
 void mem_level_reset(void)
 {
@@ -14,7 +63,7 @@ void mem_level_reset(void)
 
 void mem_level_cap(uint32_t bytes)
 {
-	level_cap = bytes < MEM_LEVEL_BYTES ? bytes : MEM_LEVEL_BYTES;
+	level_cap = bytes < level_bytes ? bytes : level_bytes;
 }
 
 void *mem_level_alloc(uint32_t bytes)

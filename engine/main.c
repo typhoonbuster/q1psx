@@ -291,7 +291,7 @@ Q_COLD static int load_level(int map)
 	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
 	world_ok = world_load(map, settings.level[QL_TEXTURES], settings.level[QL_GEOMETRY],
 	                      settings.level[QL_MODELS], LOAD_PROGRESS);
-	mem_level_cap(MEM_LEVEL_BYTES);
+	mem_level_cap(mem_level_bytes());
 	if (world_ok) {
 		r_bind_world();
 		bmf_level();                            /* (the brush models' pieces: anew) */
@@ -3260,32 +3260,17 @@ static void release_title(void)
 }
 #endif
 
-/* The stack's high-water mark: scripts/ramcheck.sh checks its room at the
-   link, this measures what the game takes of it. The room between the
-   BSS's end and the stack is painted first thing at boot (nothing has
-   malloc'd yet); each map's load prints how much of it was never reached. */
-extern uint8_t _end[];
-#define STACK_PAINT 0x57ac57acu
-
-static void stack_paint(void)
-{
-	uint32_t *p = (uint32_t *) (((uint32_t) _end + 3) & ~3u);
-	uint32_t *top = (uint32_t *) __builtin_frame_address(0) - 64;
-	while (p < top)
-		*p++ = STACK_PAINT;
-}
-
+/* The stack's high-water mark: the stack's room (mem.h MEM_STACK_BYTES) is
+   painted first thing at boot (mem_init, with the level arena zeroed); each
+   map's load prints how much of it was never reached. */
 static uint32_t stack_untouched(void)
 {
-	const uint32_t *p = (const uint32_t *) (((uint32_t) _end + 3) & ~3u), *q = p;
-	while (*q == STACK_PAINT)
-		q++;
-	return (uint32_t) ((const uint8_t *) q - (const uint8_t *) p);
+	return mem_stack_untouched();
 }
 
 int main(void)
 {
-	stack_paint();
+	mem_init();
 	/* the BIOS console (printf) goes out on SIO1 at its boot-time baud rate;
 	   an emulator that times the serial port (PCSX-Redux since 2026-10)
 	   would cap the bench's display-list dumps at a few KB/s */

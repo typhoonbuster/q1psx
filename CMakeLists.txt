@@ -92,14 +92,19 @@ add_custom_command(TARGET q1psx POST_BUILD
 	COMMAND_EXPAND_LISTS
 	VERBATIM)
 
-# The stack's room under the BSS (scripts/ramcheck.sh): the build fails when
-# the code and the arenas leave it less than Q1PSX_STACK_MIN bytes of the
-# 2 MB (16 KB; the boot log's "stack:" line says what a map's load reached).
+# The RAM's layout (engine/mem.h, docs/porting-notes.md §81.7): the stack's
+# room at the top of the 2 MB, Q1PSX_STACK_BYTES (12 KB: the boot log's
+# "stack:" line says what a map's load reached, a guard stops the game short
+# of it), the level arena everything between the BSS and it. The build fails
+# when that arena comes under Q1PSX_LEVEL_MIN bytes (scripts/ramcheck.sh).
 find_program(Q1PSX_NM NAMES mipsel-none-elf-nm REQUIRED)
-set(Q1PSX_STACK_MIN 16384 CACHE STRING "Least stack room the link accepts, bytes")
+set(Q1PSX_STACK_BYTES 12288 CACHE STRING "The stack's room at the top of RAM, bytes (the level arena takes the rest)")
+set(Q1PSX_LEVEL_MIN 1272832 CACHE STRING "Least level arena the link accepts, bytes (1243 KB: its size until §81.7)")
+set(Q1PSX_LEVEL_CAP 0 CACHE STRING "The level arena capped at that many bytes (0: none; a bench matching the release's)")
+target_compile_definitions(q1psx PRIVATE Q1PSX_STACK_BYTES=${Q1PSX_STACK_BYTES} Q1PSX_LEVEL_CAP=${Q1PSX_LEVEL_CAP})
 add_custom_command(TARGET q1psx POST_BUILD
-	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/ramcheck.sh ${Q1PSX_NM} $<TARGET_FILE:q1psx> ${Q1PSX_STACK_MIN}
-	COMMENT "Checking the stack's room in main RAM (scripts/ramcheck.sh)"
+	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/ramcheck.sh ${Q1PSX_NM} $<TARGET_FILE:q1psx> ${Q1PSX_STACK_BYTES} ${Q1PSX_LEVEL_MIN}
+	COMMENT "Checking the level arena's room in main RAM (scripts/ramcheck.sh)"
 	VERBATIM)
 
 # Renderer counters and stage timers (debug overlay, bench breakdown). Off in

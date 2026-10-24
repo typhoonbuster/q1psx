@@ -94,7 +94,8 @@ void  vid_shift(const int v[3], int contrast);
 #define VID_HUD_BYTES 1536
 void *vid_hud_block(int previous);             /* this buffer's (0) or the other's (1) */
 
-void  vid_flip(void);
+void  vid_flip(void);                          /* (the stack's guard checked: mem_stack_ok) */
+void  vid_fatal(void);                         /* a red screen, the game stopped */
 /* the frame rate cap: 60 (none), 45, 30 or 15 frames a second. A frame is
    shown no sooner than its share of vblanks after the last (45: 1, 1, 2 in
    turn); vid_frame_vbl() is that share for the frame being built */

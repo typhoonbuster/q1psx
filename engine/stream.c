@@ -1238,7 +1238,7 @@ Q_COLD void stream_map_start(uint32_t keep)
 	memset(&stream_stats, 0, sizeof stream_stats);
 	/* a lent block first, then the expanded frames' cache, the staging
 	   buffer, the pool; the lent block after the pool, at its end */
-	uint32_t room = MEM_LEVEL_BYTES - mem_level_used(), lend = 0;
+	uint32_t room = mem_level_bytes() - mem_level_used(), lend = 0;
 	if (lend_state == L_WANT) {
 		lend = room >= lend_bytes + keep + 64 ? lend_bytes : 0;
 		lend_state = lend ? L_ROOM : L_SHORT;
