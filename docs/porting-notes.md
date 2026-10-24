@@ -10476,21 +10476,28 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
     −1.3 % cycles, E1M8.v3 from 2 vblanks to 1;
   - the pictures (pktview), E1M8's, START's, E3M6's and E1M6's 48 views:
     identical pixel for pixel. The records left out were drawn and
-    painted over.
+    painted over;
+  - pvs 64: the 128 lists identical to today's, as by construction
+    (−0.3 % cycles).
 - **The zones' walk** (`ZONES=1`, at running speed):
 
   | Tables | Switches | Reads | Late frames | Of them on clear legs |
   |---|---|---|---|---|
   | pvs 96, 3 slots (20 maps) | 360 | 764 | 2838 | 128 |
+  | pvs 64, 3 slots (the same 20) | 681 | 1491 | 6960 | 541 |
   | seen 48, 3 slots (the same 20) | 696 | 1422 | 4748 | 335 |
   | seen 48, 3 slots (30 maps) | 908 | 1789 | 5954 | 471 |
   | seen 48, 4 slots (30 maps) | 917 | 1981 | 4814 | 391 |
 
-  Smaller zones mean twice the switches and reads, and more frames drawn
-  with the last zone while the camera's is read (E1M8, 75 zones: 989, the
-  longest run 42 frames). The fourth slot takes a fifth of them back.
-  Interleaving the disc (each level's chunks next to each other, the
-  streaming redesign) would shorten every read.
+  - Smaller zones mean twice the switches and reads, and more frames drawn
+    with the last zone while the camera's is read (E1M8, 75 zones: 989,
+    the longest run 42 frames). The fourth slot takes a fifth of them back.
+  - pvs 64 is the worst of the three: its zones are small (E1M1 145, E3M6
+    129) and each still carries a big chunk (what one leaf's PVS holds, up
+    to 106 KB), so its reads are many and long. Its longest late run is 58
+    frames (E1M1).
+  - Interleaving the disc (each level's chunks next to each other, the
+    streaming redesign) would shorten every read.
 - **To take it:** `Q1PSX_ZONE_TABLES=<the analysis>/zones/seen_1536_48` and
   `Q1PSX_ZONE_SLOTS=4` (or 3) in `local.env`. The tables are derived from
   Quake's data and stay outside the repo.
