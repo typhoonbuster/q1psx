@@ -14,17 +14,20 @@
 #define SECTOR CD_SECTOR
 
 /* The disc's directories: the root and the directories in it, found at the
-   first lookup (after music_init: the drive has answered by then). A
-   lookup reads its directory's records into the level arena's top, mark
-   and release, never into the SDK's heap: psxcd's CdSearchFile and
+   first lookup (after music_init: the drive has answered by then), and a
+   directory's directories when a path asks for one (the levels' under
+   \LVL, docs/porting-notes.md §84: the root's records must fit its first
+   sector, the only one the BIOS reads, SYSTEM.CNF and the executable in
+   it). A lookup reads its directory's records into the level arena's top,
+   mark and release, never into the SDK's heap: psxcd's CdSearchFile and
    CdOpenDir malloc a whole directory from it, and the heap is what the
    executable leaves under the stack (21 KB once the monsters were in),
-   less than the 24 KB of \MAPS on a disc with every map (386 files): the
-   read went nowhere and the boot found no map. */
-#define MAX_DIRS 8
+   less than the 24 KB of a directory of every map's files (386): the read
+   went nowhere and the boot found no map. */
+#define MAX_DIRS 40                /* the root, LVL and its 32 levels, the music's */
 
 typedef struct {
-	char     name[12];       /* "" for the root                              */
+	char     name[16];       /* its path without the first backslash ("LVL\E1M1"); "" the root */
 	uint32_t lba, len;       /* its records: first sector, bytes             */
 } cd_dir;
 
@@ -362,13 +365,20 @@ static int name_eq(const char *rec, int nlen, const char *want)
 	return want[i] == 0 || want[i] == ';';
 }
 
+/* a directory's record noted under its path: arg is the parent's path
+   ("" the root's), the new one "<parent>\<name>" */
 static int note_dir(const char *name, int nlen, uint32_t lba, uint32_t size, int dir, void *arg)
 {
-	(void) arg;
-	if (!dir || num_dirs >= MAX_DIRS || nlen >= (int) sizeof dirs[0].name)
+	const char *parent = arg;
+	int plen = (int) strlen(parent);
+	if (!dir || num_dirs >= MAX_DIRS || plen + (plen > 0) + nlen >= (int) sizeof dirs[0].name)
 		return 0;
-	memcpy(dirs[num_dirs].name, name, (size_t) nlen);
-	dirs[num_dirs].name[nlen] = 0;
+	char *s = dirs[num_dirs].name;
+	memcpy(s, parent, (size_t) plen);
+	if (plen)
+		s[plen++] = '\\';
+	memcpy(s + plen, name, (size_t) nlen);
+	s[plen + nlen] = 0;
 	dirs[num_dirs].lba = lba;
 	dirs[num_dirs].len = size;
 	num_dirs++;
@@ -397,12 +407,14 @@ static int scan(void)
 		num_dirs = 0;
 		return 0;
 	}
-	dir_walk(buf, dirs[0].len, note_dir, 0);
+	dir_walk(buf, dirs[0].len, note_dir, "");
 	mem_level_release(mark);
 	return 1;
 }
 
-/* a directory by its path ("\\MAPS"; "" or "\\" the root), NULL if none */
+/* a directory by its path ("\\LVL\\E1M1"; "" or "\\" the root), NULL if
+   none: the root's are known from the scan, a deeper one is looked up in
+   its parent's records (read once) and noted */
 static const cd_dir *find_dir(const char *path, int len)
 {
 	if (len && *path == '\\')
@@ -416,7 +428,107 @@ static const cd_dir *find_dir(const char *path, int len)
 		if (k == len && !dirs[i].name[k])
 			return &dirs[i];
 	}
+	int cut = len;
+	while (cut > 0 && path[cut - 1] != '\\')
+		cut--;
+	if (!cut)
+		return NULL;                              /* (a root's directory the scan did not list) */
+	const cd_dir *parent = find_dir(path, cut - 1);
+	uint32_t mark;
+	const uint8_t *buf = parent ? dir_read(parent, &mark) : NULL;
+	if (!buf)
+		return NULL;
+	int before = num_dirs;
+	char pname[sizeof parent->name];
+	strcpy(pname, parent->name);              /* (note_dir may add to dirs[]: the parent's name copied) */
+	dir_walk(buf, parent->len, note_dir, pname);
+	mem_level_release(mark);
+	for (int i = before; i < num_dirs; i++) {
+		int k = 0;
+		while (k < len && dirs[i].name[k] && up(dirs[i].name[k]) == up(path[k]))
+			k++;
+		if (k == len && !dirs[i].name[k])
+			return &dirs[i];
+	}
 	return NULL;
+}
+
+/* The level's directory kept (cd_cache_dir): its files by name, the
+   lookups of a load answered without a read each (seven directory reads
+   a load before, each a seek: docs/porting-notes.md §83.6). */
+#define CACHE_MAX 12
+static struct {
+	char dir[16];              /* its path without the first backslash; "" none */
+	int  n;                    /* its files (CACHE_MAX: too many, not kept) */
+	struct {
+		char     name[14];
+		uint32_t lba, size;
+	} e[CACHE_MAX];
+} cache;
+
+static int cache_file(const char *name, int nlen, uint32_t lba, uint32_t size, int dir, void *arg)
+{
+	(void) arg;
+	if (dir)
+		return 0;
+	if (cache.n >= CACHE_MAX || nlen >= (int) sizeof cache.e[0].name) {
+		cache.n = CACHE_MAX;                  /* (not all of them: not trusted) */
+		return 1;
+	}
+	memcpy(cache.e[cache.n].name, name, (size_t) nlen);
+	cache.e[cache.n].name[nlen] = 0;
+	cache.e[cache.n].lba  = lba;
+	cache.e[cache.n].size = size;
+	cache.n++;
+	return 0;
+}
+
+int cd_cache_dir(const char *path)
+{
+	cache.n = 0;
+	cache.dir[0] = 0;
+	const char *p = *path == '\\' ? path + 1 : path;
+	if (strlen(p) >= sizeof cache.dir)
+		return 0;
+	const cd_dir *d = find_dir(path, (int) strlen(path));
+	uint32_t mark;
+	const uint8_t *buf = d ? dir_read(d, &mark) : NULL;
+	if (!buf)
+		return 0;
+	dir_walk(buf, d->len, cache_file, 0);
+	mem_level_release(mark);
+	if (cache.n >= CACHE_MAX) {
+		cache.n = 0;
+		return 0;
+	}
+	strcpy(cache.dir, p);
+	return cache.n;
+}
+
+/* the cached directory holds the path's: its file's place, or none there
+   (1 answered, 0 not this directory) */
+static int cache_find(const char *dir, int len, const char *file, uint32_t *lba, uint32_t *size)
+{
+	if (!cache.dir[0])
+		return 0;
+	int k = 0;
+	while (k < len && cache.dir[k] && up(cache.dir[k]) == up(dir[k]))
+		k++;
+	if (k != len || cache.dir[k])
+		return 0;
+	for (int i = 0; i < cache.n; i++)
+		if (name_eq(cache.e[i].name, (int) strlen(cache.e[i].name), file)) {
+			if (lba)
+				*lba = cache.e[i].lba;
+			if (size)
+				*size = cache.e[i].size;
+			return 1;
+		}
+	if (lba)
+		*lba = 0;
+	if (size)
+		*size = 0;
+	return 1;
 }
 
 typedef struct {
@@ -440,7 +552,15 @@ int cd_find(const char *name, uint32_t *lba, uint32_t *size)
 {
 	const char *file = strrchr(name, '\\');
 	file = file ? file + 1 : name;
-	const cd_dir *d = find_dir(name, file > name ? (int) (file - name - 1) : 0);
+	int dlen = file > name ? (int) (file - name - 1) : 0;
+	const char *dir = *name == '\\' ? name + 1 : name;
+	uint32_t at = 0;
+	if (dlen && cache_find(dir, dlen - (dir - name), file, &at, size)) {
+		if (lba)                              /* (the level's directory, read at its load) */
+			*lba = at;
+		return at != 0;
+	}
+	const cd_dir *d = find_dir(name, dlen);
 	uint32_t mark;
 	const uint8_t *buf = d ? dir_read(d, &mark) : NULL;
 	if (!buf)
@@ -475,6 +595,41 @@ static int list_file(const char *name, int nlen, uint32_t lba, uint32_t size, in
 	l->fn(s, lba, size);
 	l->n++;
 	return 0;
+}
+
+typedef struct {
+	cd_dir_fn fn;
+	int       n;
+} dlist_t;
+
+static int list_subdir(const char *name, int nlen, uint32_t lba, uint32_t size, int dir, void *arg)
+{
+	(void) lba;
+	(void) size;
+	dlist_t *l = arg;
+	if (!dir)
+		return 0;
+	char s[16];
+	if (nlen > (int) sizeof s - 1)
+		nlen = (int) sizeof s - 1;
+	memcpy(s, name, (size_t) nlen);
+	s[nlen] = 0;
+	l->fn(s);
+	l->n++;
+	return 0;
+}
+
+int cd_list_dirs(const char *path, cd_dir_fn fn)
+{
+	const cd_dir *d = find_dir(path, (int) strlen(path));
+	uint32_t mark;
+	const uint8_t *buf = d ? dir_read(d, &mark) : NULL;
+	if (!buf)
+		return 0;
+	dlist_t l = { fn, 0 };
+	dir_walk(buf, d->len, list_subdir, &l);
+	mem_level_release(mark);
+	return l.n;
 }
 
 int cd_list_dir(const char *path, cd_list_fn fn)

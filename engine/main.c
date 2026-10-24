@@ -288,6 +288,12 @@ Q_COLD static int load_level(int map)
 	zone_abort();
 	music_stop();                               /* one drive: the reads need it */
 	ui_conback_forget();                        /* (the map's textures over it) */
+	char dir[16];                               /* the level's section: its directory read
+	                                               once, every file of the load found in it
+	                                               (docs/porting-notes.md §84) */
+	q_snprintf(dir, sizeof dir, "\\LVL\\%s", world_map_name(map));
+	cd_cache_dir(dir);
+	music_level(world_map_name(map));           /* (its copy of the track) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
 	world_ok = world_load(map, settings.level[QL_TEXTURES], settings.level[QL_GEOMETRY],
@@ -295,6 +301,7 @@ Q_COLD static int load_level(int map)
 	mem_level_cap(mem_level_bytes());
 	if (world_ok) {
 		r_bind_world();
+		stream_level(world_map_name(map));      /* the streamed assets from the level's own file */
 		bmf_level();                            /* (the brush models' pieces: anew) */
 		ents_load();                            /* the map's entities */
 		monsters_map_start();

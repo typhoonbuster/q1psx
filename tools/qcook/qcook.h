@@ -183,6 +183,13 @@ int cmd_spumusic(int argc, char **argv);
    stream.c; its items' models, items.c; its entities' and ambients'
    sounds, sound.c): the XA carousels' lists until docs/porting-notes.md
    §52, kept for the streaming's redesign */
+/* the streamed assets' groups (formats/qstream.h qst_asset.group: the
+   assets of one monster share its; tools/qcook/stream.c MODELS) */
+enum {
+	G_GIBS = 1, G_BACKPACK, G_ARMY, G_DOG, G_OGRE, G_KNIGHT, G_ZOMBIE, G_WIZARD, G_DEMON,
+	G_SHAMBLER, G_BOSS, G_ITEMS, G_WORLD
+};
+int stream_kind_group(const char *classname);   /* a monster's classname: its group, 0 none */
 int stream_monster_needs(const ent_list *l, const char **list, int max);
 int items_streamed(const ent_list *l, int worldtype, const char **list, int max);
 int sound_map_streamed(const ent_list *ents, int worldtype, const char **list, int max);
@@ -337,5 +344,6 @@ int  cmd_bmf(int argc, char **argv);
 /* `qcook zones`: a cooked world split into its skeleton and its zone chunks
    from the level-chunks analysis' tables (zones.c, formats/qworld.h) */
 int  cmd_zones(int argc, char **argv);
+int  cmd_section(int argc, char **argv);   /* a map's own file of the streamed assets (section.c) */
 
 #endif

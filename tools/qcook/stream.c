@@ -36,10 +36,7 @@ typedef struct {
 	                           registered game's keys and runes)            */
 } stream_model;
 
-enum {
-	G_GIBS = 1, G_BACKPACK, G_ARMY, G_DOG, G_OGRE, G_KNIGHT, G_ZOMBIE, G_WIZARD, G_DEMON,
-	G_SHAMBLER, G_BOSS, G_ITEMS, G_WORLD
-};
+/* (the groups: qcook.h G_*) */
 
 static const stream_model MODELS[] = {
 	{ "progs/gib1.mdl",     G_GIBS,     4, 0, 0, 0, 0 },     /* player.qc ThrowGib: every monster */
@@ -318,19 +315,30 @@ int cmd_stream(int argc, char **argv)
    docs/porting-notes.md §52): each kind's group (its models, head,
    projectiles, sounds), the gibs and the backpack with any monster (the
    registered game's kinds are not streamed); their names */
+static const struct { const char *classname; int group; } KINDS[] = {
+	{ "monster_army", G_ARMY }, { "monster_dog", G_DOG }, { "monster_ogre", G_OGRE },
+	{ "monster_ogre_marksman", G_OGRE }, { "monster_knight", G_KNIGHT }, { "monster_zombie", G_ZOMBIE },
+	{ "monster_wizard", G_WIZARD }, { "monster_demon1", G_DEMON }, { "monster_shambler", G_SHAMBLER },
+	{ "monster_boss", G_BOSS },
+};
+
+/* a monster entity's group (its kind's assets), 0 for any other classname */
+int stream_kind_group(const char *classname)
+{
+	for (size_t k = 0; k < sizeof KINDS / sizeof KINDS[0]; k++)
+		if (!strcmp(classname, KINDS[k].classname))
+			return KINDS[k].group;
+	return 0;
+}
+
 int stream_monster_needs(const ent_list *l, const char **list, int max)
 {
-	static const struct { const char *classname; int group; } KINDS[] = {
-		{ "monster_army", G_ARMY }, { "monster_dog", G_DOG }, { "monster_ogre", G_OGRE },
-		{ "monster_ogre_marksman", G_OGRE }, { "monster_knight", G_KNIGHT }, { "monster_zombie", G_ZOMBIE },
-		{ "monster_wizard", G_WIZARD }, { "monster_demon1", G_DEMON }, { "monster_shambler", G_SHAMBLER },
-		{ "monster_boss", G_BOSS },
-	};
 	int have[G_WORLD + 1] = { 0 }, any = 0;
-	for (int i = 0; i < l->num; i++)
-		for (size_t k = 0; k < sizeof KINDS / sizeof KINDS[0]; k++)
-			if (!strcmp(l->ents[i].classname, KINDS[k].classname))
-				have[KINDS[k].group] = any = 1;
+	for (int i = 0; i < l->num; i++) {
+		int g = stream_kind_group(l->ents[i].classname);
+		if (g)
+			have[g] = any = 1;
+	}
 	have[G_GIBS] = have[G_BACKPACK] = any;
 	static char names[NUM_MODELS][64];
 	int n = 0;

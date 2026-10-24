@@ -113,9 +113,12 @@
 #         frames, the stream's reads and the music's underruns as on a
 #         console, in fast forward (docs/porting-notes.md §83). Both go
 #         with MUSIC=1. MUSIC_RING=<chunks> sizes the music's ring in SPU
-#         RAM (6 = 2 s, the game's; 3 = 1 s), MUSIC_SEEK=<ms> the seek its
-#         refills plan around a read (250, the game's); tools/cdsim/cdsim.py
-#         replays a journal on another disc layout.
+#         RAM (6 = 2 s, the game's; 4 = 1.3 s), MUSIC_REFILL=<chunks> a
+#         refill (4, the game's: 16 sectors every 1.3 s; 2: 8 every 0.65 s),
+#         MUSIC_SEEK=<ms> the seek its refills plan around a read (100, the
+#         game's: a hop within a level's section; docs/porting-notes.md
+#         §84); tools/cdsim/cdsim.py replays a journal on another disc
+#         layout.
 #         ENGINE_C=1 builds the C engine (CMake Q1PSX_ENGINE_C: every asm
 #         part's C version but the world renderer's, docs/porting-notes.md
 #         §55) in build-bench-c/, beside the asm's: its frames must be the
@@ -199,7 +202,8 @@ WHOLE=${WHOLE:-0}
 CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
 MUSIC_RING=${MUSIC_RING:-6}
-MUSIC_SEEK=${MUSIC_SEEK:-250}
+MUSIC_REFILL=${MUSIC_REFILL:-4}
+MUSIC_SEEK=${MUSIC_SEEK:-100}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
@@ -211,7 +215,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
-      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
+      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
 	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }

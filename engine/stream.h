@@ -39,6 +39,12 @@
 #include "qstream.h"
 #include "qworld.h"
 
+/* the map's load: its own file of the streamed assets (<MAP>_S0.DAT in
+   its section, docs/porting-notes.md §84; the pool's directory with the
+   sectors of the assets it uses): the stream's reads come from it; a map
+   without one reads the pool (STREAM_<n>.DAT) */
+void stream_level(const char *map);
+
 #define STREAM_PIN    0u            /* stream_want's score: always resident */
 /* A score is a tier + a distance: within a tier the nearest first, every
    tier after the one above it; the reaches are the distance's

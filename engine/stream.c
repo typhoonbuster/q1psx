@@ -20,6 +20,7 @@
 #include "prof.h"
 #include "q_fmt.h"
 #include "qsound.h"
+#include "qspu.h"
 #include "qtex.h"
 #include "snd.h"
 #include "stream.h"
@@ -52,6 +53,7 @@ typedef struct {
 	uint8_t   res;             /* its slot in res[] (A_READING, A_RES)          */
 	uint8_t   backoff;         /* passes before it is tried again (a read error) */
 	uint8_t   stuck;           /* ST_*: no room for it, or not readable          */
+	uint8_t   absent;          /* not in the level's file (stream_level)         */
 	uint32_t  stuck_ram;       /* ST_ROOM: what the assets wanted as much held   */
 	uint32_t  stuck_vram;      /*   then (RAM bytes, VRAM texels, SPU bytes)     */
 	uint32_t  stuck_spu;
@@ -92,7 +94,10 @@ typedef struct {
 
 static asset_t *assets;
 static int      num_assets;
-static int32_t  base_lba;      /* STREAM_<n>.DAT's first sector on the disc      */
+static int32_t  base_lba;      /* the assets' file's first sector: the level's
+                                  (stream_level), else the pool's                */
+static int32_t  pool_lba;      /* STREAM_<n>.DAT's                               */
+static uint32_t *pool_sector;  /* [num_assets]: each asset's sector in the pool  */
 
 static res_t    res[MAX_RES];
 
@@ -121,7 +126,9 @@ static uint32_t spu_lo, spu_hi;   /* the SPU pool: SPU RAM past the map's bank  
 /* a sound's read: STAGE_SECTORS at a time from the disc into the staging
    buffer, each piece's samples into its place in SPU RAM before the next
    is read */
-#define STAGE_SECTORS 8
+#define STAGE_SECTORS (MUSIC_REFILL_CHUNKS * 2 * QSPU_CHUNK / QST_SECTOR > 8 ? \
+                       MUSIC_REFILL_CHUNKS * 2 * QSPU_CHUNK / QST_SECTOR : 8)   /* (a music
+                                     refill's sectors, 8 at least: 16 with refills of 4) */
 static uint8_t *stage;            /* STAGE_SECTORS x QST_SECTOR, the level arena's */
 static struct {
 	int      a;                   /* the sound, -1 none                          */
@@ -146,7 +153,7 @@ static int read_sectors(int32_t lba, int n, void *dst, int who, int tag)
 	return cd_read_now(lba, (uint32_t) n, dst, who, tag);
 }
 
-static int stream_level = -1;   /* the model level whose STREAM_<n>.DAT is read */
+static int stream_level_n = -1;   /* the model level whose STREAM_<n>.DAT is read */
 
 /* STREAM_<level>.DAT's directory into assets[] (allocated at the first:
    every level's file holds the same assets in the same order, its models
@@ -206,10 +213,60 @@ static int load_directory(int level)
 		assets[i].group_first = (int16_t) first;
 	}
 	mem_level_release(mark);
-	base_lba     = (int32_t) lba;
-	stream_level = level;
+	base_lba = pool_lba = (int32_t) lba;
+	if (!pool_sector)
+		pool_sector = mem_game_alloc(n * sizeof *pool_sector);
+	for (uint32_t i = 0; i < n; i++)
+		pool_sector[i] = assets[i].d.sector;
+	stream_level_n = level;
 	printf("stream: %s, %d assets from sector %d\n", name, num_assets, (int) base_lba);
 	return 1;
+}
+
+/* the level's own file: the pool's directory, each asset's sector in it
+   (QST_ABSENT: not in it: the level never wants it; wanted all the same, a
+   bench build says so), read through the level arena's top */
+Q_COLD void stream_level(const char *map)
+{
+	for (int i = 0; i < num_assets; i++) {
+		assets[i].d.sector = pool_sector[i];
+		assets[i].absent   = 0;
+	}
+	base_lba = pool_lba;
+	char name[32];
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_S%d.DAT;1", map, map, stream_level_n);
+	uint32_t lba, mark = mem_level_mark();
+	qst_header *h = num_assets && cd_find(name, &lba, NULL) ? mem_level_alloc(2 * QST_SECTOR) : 0;
+	if (!h) {
+		printf("stream: no %s: the pool's reads\n", name);
+		return;
+	}
+	int ok = read_sectors((int32_t) lba, 2, h, CDW_DIR, 0) && !memcmp(h->magic, QSTREAM_MAGIC, 4) &&
+	         h->num_assets == (uint32_t) num_assets && h->dir_sectors <= 2 &&
+	         h->ofs_assets + h->num_assets * sizeof(qst_asset) <= h->dir_sectors * QST_SECTOR;
+	const qst_asset *d = (const qst_asset *) ((const uint8_t *) h + h->ofs_assets);
+	int in = 0;
+	for (int i = 0; ok && i < num_assets; i++) {
+		if (d[i].hash != assets[i].d.hash)
+			ok = 0;
+		else if (d[i].sector == QST_ABSENT)
+			assets[i].absent = 1;
+		else
+			in++;
+	}
+	if (!ok) {
+		printf("stream: %s is not the pool's directory: the pool's reads\n", name);
+		for (int i = 0; i < num_assets; i++)
+			assets[i].absent = 0;
+		mem_level_release(mark);
+		return;
+	}
+	for (int i = 0; i < num_assets; i++)
+		if (!assets[i].absent)
+			assets[i].d.sector = d[i].sector;
+	base_lba = (int32_t) lba;
+	mem_level_release(mark);
+	printf("stream: %s, %d of %d assets, from sector %d\n", name, in, num_assets, (int) base_lba);
 }
 
 #ifdef Q1PSX_BENCH
@@ -1131,6 +1188,16 @@ static int next_wanted(void)
 		uint32_t reach = as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : STREAM_REACH;
 		if ((as->last & STREAM_DIST) > reach || as->last >= STREAM_DEAD)
 			continue;
+		if (as->absent) {                     /* (not in the level's file: the cook's list
+		                                         missed it; never read) */
+#ifdef Q1PSX_BENCH
+			if (!as->backoff) {
+				printf("stream: asset %08x wanted, not in the level's file\n", (unsigned) as->d.hash);
+				as->backoff = 255;
+			}
+#endif
+			continue;
+		}
 		if (as->stuck == ST_ROOM) {
 			uint32_t ram, vram, spu;
 			if (num_held < 0)

@@ -83,6 +83,10 @@ typedef struct {
 } qst_asset;                 /* 16 bytes */
 
 #define QSTF_KEEP_SKIN 1     /* (unused yet) */
+#define QST_ABSENT 0xffffffffu   /* a level's file (<MAP>_S0.DAT, its section: the pool's
+                                    directory with the sectors of the assets the level
+                                    uses, docs/porting-notes.md §84): this asset is not
+                                    in it */
 
 /* a model asset's header */
 #define QSTM_FLAT 1          /* no directional light (QGF_FLAT)              */

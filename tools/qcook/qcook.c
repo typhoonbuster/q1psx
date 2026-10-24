@@ -439,6 +439,8 @@ int main(int argc, char **argv)
 		return cmd_spumusic(argc, argv);
 	if (argc >= 2 && !strcmp(argv[1], "zones"))
 		return cmd_zones(argc, argv);
+	if (argc >= 2 && !strcmp(argv[1], "section"))
+		return cmd_section(argc, argv);
 
 	fprintf(stderr,
 	        "usage:\n"

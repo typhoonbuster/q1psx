@@ -16,6 +16,7 @@
 #include "mem.h"
 #include "music.h"
 #include "prof.h"
+#include "q_fmt.h"
 #include "qspu.h"
 #include "settings.h"
 #include "snd.h"
@@ -43,7 +44,8 @@ static int playing;               /* the track, 0 none                   */
 #define RING_R         (RING_L + RING_CHUNKS * QSPU_CHUNK)
 #define V_LEFT         22
 #define V_RIGHT        23
-#define READ_CHUNKS    2         /* a refill: 16 KB, the staging buffer     */
+#define READ_CHUNKS    MUSIC_REFILL_CHUNKS   /* a refill (engine/music.h): its chunks fill
+                                                the staging buffer (stream.c STAGE_SECTORS) */
 #define TICKS_SAMPLE_P 393216u   /* a sample's ticks x the pitch       */
 #ifndef MUSIC_SEEK_MS
 #define MUSIC_SEEK_MS  250       /* a seek's guess (CMake Q1PSX_MUSIC_SEEK_MS;
@@ -53,7 +55,9 @@ static int playing;               /* the track, 0 none                   */
 #define SEEK_MS        MUSIC_SEEK_MS
 #define MUSIC_VOL      0x2ccc    /* as the CD's (engine/snd.c CD_VOL)        */
 
-static uint32_t track_lba[MAX_TRACK + 1];   /* SPU_<nn>.DAT's first sector, 0 none */
+static uint32_t track_lba[MAX_TRACK + 1];   /* \MUSIC\SPU_<nn>.DAT's first sector, 0 none */
+static char     level_dir[12];     /* the map loading or loaded: its section holds its
+                                      track's copy (music_level), "" none            */
 static uint32_t file_lba, chunks;  /* the playing file's first chunk, its chunks */
 static uint32_t pitch, rate;       /* its voices' pitch, its samples a second   */
 static uint32_t ticks_chunk;       /* root counter 2's ticks a chunk lasts      */
@@ -84,6 +88,27 @@ Q_COLD void music_init(void)
 	for (int t = 0; t <= MAX_TRACK; t++)
 		n += track_lba[t] != 0;
 	printf("music: %d SPU streams on the disc\n", n);
+}
+
+void music_level(const char *map)
+{
+	level_dir[0] = 0;
+	if (map && strlen(map) < sizeof level_dir)
+		strcpy(level_dir, map);
+}
+
+/* the track's file: the level's own copy (its section, found in the
+   level's directory kept by cd_cache_dir: no read), else \MUSIC's */
+static uint32_t track_file(int track)
+{
+	char name[32];
+	uint32_t lba;
+	if (level_dir[0]) {
+		q_snprintf(name, sizeof name, "\\LVL\\%s\\SPU_%02d.DAT;1", level_dir, track);
+		if (cd_find(name, &lba, NULL))
+			return lba;
+	}
+	return track_lba[track];
 }
 
 /* the chunks the voices are through, exact to the sample */
@@ -139,7 +164,10 @@ static void refill_done(void)
 void music_play(int track)
 {
 	music_stop();
-	if (track < 0 || track > MAX_TRACK || !track_lba[track])
+	if (track < 0 || track > MAX_TRACK)
+		return;
+	uint32_t file = track_file(track);
+	if (!file)
 		return;
 	buf = stream_stage();
 	if (!buf)
@@ -147,7 +175,7 @@ void music_play(int track)
 	if (!buf)
 		return;
 	const qspu_header *h = (const qspu_header *) buf;
-	if (!cd_read_now((int32_t) track_lba[track], 1, buf, CDW_DIR, track) ||
+	if (!cd_read_now((int32_t) file, 1, buf, CDW_DIR, track) ||
 	    memcmp(h->magic, QSPU_MAGIC, 4) || h->track != track || h->rate < 8000 || h->rate > 44100 ||
 	    !h->chunks) {
 		printf("music: SPU_%02d.DAT unreadable or of another version\n", track);
@@ -157,7 +185,7 @@ void music_play(int track)
 	rate     = h->rate;
 	pitch    = (rate * 4096u + 22050u) / 44100u;
 	ticks_chunk = QSPU_SAMPLES * TICKS_SAMPLE_P / pitch;
-	file_lba = track_lba[track] + 1;
+	file_lba = file + 1;
 	filled   = 0;
 	/* the ring full first (the drive's: a map's load, a track change) */
 	while (filled < RING_CHUNKS) {
@@ -183,8 +211,8 @@ void music_play(int track)
 	base = 0;
 	t_base = prof_now();
 	playing = track;
-	printf("music: track %d at %u Hz, %u chunks, the ring at SPU %05x\n", track, (unsigned) rate,
-	       (unsigned) chunks, (unsigned) RING_L);
+	printf("music: track %d at %u Hz, %u chunks, the ring at SPU %05x, %s\n", track, (unsigned) rate,
+	       (unsigned) chunks, (unsigned) RING_L, file == track_lba[track] ? "from \\MUSIC" : "the level's copy");
 }
 
 void music_stop(void)

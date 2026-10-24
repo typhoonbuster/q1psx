@@ -56,6 +56,10 @@
 # sounds; formats/qstream.h; the models low: tools/qcook/game.c
 # stream_reduce):
 #   cooked/id1/stream_0.dat     QST1                              -> disc STREAM_0.DAT
+# and, per map, its own file of them (docs/porting-notes.md §84: the pool's
+# directory with the sectors of the assets the map's entities bring, the
+# nearest to the player's start first):
+#   cooked/id1/<map>_s0.dat     QST1                              -> disc <MAP>/<MAP>_S0.DAT
 # and the music the SPU streams (formats/qspu.h): 22.05 kHz, the menu's
 # theme (track 2) 32 kHz:
 #   cooked/spu/spu_NN.dat       QSP1                              -> disc MUSIC/SPU_NN.DAT
@@ -132,7 +136,7 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
-      cooked/id1/*.skl cooked/id1/*.zon \
+      cooked/id1/*.skl cooked/id1/*.zon cooked/id1/*_s0.dat \
       cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat \
       cooked/settings.txt           # (written last: a cook cut short is cooked again)
 rm -rf cooked/xa                    # (the XA streams and their carousels: none since §52)
@@ -174,6 +178,20 @@ for m in $MAPS; do
 done | xargs -P "$(nproc)" -n 3 bash -c 'cook_one "$0" "$1" "$2"'
 
 echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures medium and high, the geometry and the models low -> $ROOT/cooked/"
+
+# each map's own file of the streamed assets (docs/porting-notes.md §84):
+# the pool's directory, the assets its entities bring, the nearest to the
+# player's start first
+section_one() {   # map
+	local pak=$QUAKE_PAK0
+	case $1 in e2*|e3*|e4*|end) pak=${QUAKE_PAK1:?$1 needs QUAKE_PAK1} ;; esac
+	tools/qcook/qcook section --pak "$pak" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --stream cooked/id1/stream_0.dat \
+	                          --map "maps/$1.bsp" --out "cooked/id1/$1_s0.dat" > "$LOGS/$1_s.log" 2>&1 \
+	|| { echo "cook FAILED: $1 section"; cat "$LOGS/$1_s.log"; return 1; }
+}
+export -f section_one
+for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c 'section_one {}'
+cat "$LOGS"/*_s.log | grep '^qcook: ' | sed 's|^qcook: .*/|section: |' || true
 
 # the world's zones (docs/porting-notes.md §57): each map with a table split
 # into its skeleton and its chunks at both texture levels (their UVs on that

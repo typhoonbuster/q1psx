@@ -39,6 +39,28 @@ static const qw_node   *NODES;      /* [num_nodes + 1] */
 static const uint8_t   *FACES;
 static const qw_vert   *VERTS;
 
+/* the leaf holding a point (world units): the engine's descent (engine/
+   zone.c leaf_at) on the file's nodes and the clip section's planes */
+static uint32_t leaf_of_point(const uint8_t *f, const int32_t pos[3])
+{
+	const qw_plane *PL = (const qw_plane *) (f + H->ofs_clip + sizeof(qw_clip_header));
+	int32_t c[3];
+	for (int k = 0; k < 3; k++)
+		c[k] = pos[k] * QW_VSCALE;
+	uint32_t at = H->root;
+	for (;;) {
+		const qw_node  *n  = &NODES[at];
+		const qw_plane *pl = (const qw_plane *) ((const int32_t *) PL + n->plane3);
+		int32_t dist = pl->dist >> 1;
+		int32_t d = pl->type < 3 ? c[pl->type] * 4096 - dist
+		          : pl->n[0] * c[0] + pl->n[1] * c[1] + pl->n[2] * c[2] - dist;
+		uint32_t ch = n->child[d <= 0];
+		if (ch & 0x80000000u)
+			return ch & 0x7fffffffu;
+		at = ch;
+	}
+}
+
 /* a node's block on `side`: [*at, *end) in the face stream */
 static void block_of(uint32_t n, int side, uint32_t *at, uint32_t *end)
 {
@@ -579,8 +601,35 @@ int cmd_zones(int argc, char **argv)
 	h.ofs_bmodels = (uint32_t) s.len; buf_put(&s, bm2, H->num_bmodels * sizeof *bm2);
 	h.ofs_ents    = (uint32_t) s.len; buf_put(&s, f + H->ofs_ents, H->ofs_strings - H->ofs_ents);
 	h.ofs_strings = (uint32_t) s.len; buf_put(&s, f + H->ofs_strings, H->len_strings); buf_align4(&s);
+	/* the chunks' order in the file: the player's start's zone and its
+	   nearest first (the load's first reads, one sweep), then outward
+	   through the sets' neighbourhoods (neighbouring zones side by side on
+	   the disc), any zone no set reaches last (docs/porting-notes.md §84) */
+	uint32_t *ord = xmalloc(nz * sizeof *ord), *rank = xmalloc(nz * sizeof *rank), no = 0;
+	for (uint32_t z = 0; z < nz; z++)
+		rank[z] = ~0u;
+#define PUSH(z) do { if ((uint32_t) (z) < nz && rank[z] == ~0u) { rank[z] = no; ord[no++] = (uint32_t) (z); } } while (0)
+	if (H->has_spawn) {
+		uint32_t l0 = leaf_of_point(f, H->spawn);
+		if (l0 < nl && T.leaf_zone[l0] >= 0) {
+			PUSH(T.leaf_zone[l0]);
+			for (int j = 0; j < 3; j++)
+				if (T.leaf_near[l0][j] >= 0)
+					PUSH(T.leaf_near[l0][j]);
+		}
+	}
+	for (uint32_t i = 0; i < no; i++)
+		for (uint32_t l = 0; l < nl; l++)
+			if (T.leaf_zone[l] == (int16_t) ord[i])
+				for (int j = 0; j < 3; j++)
+					if (T.leaf_near[l][j] >= 0)
+						PUSH(T.leaf_near[l][j]);
+	for (uint32_t z = 0; z < nz; z++)
+		PUSH(z);
+#undef PUSH
 	qw_chunk_dir *dir = xcalloc(nz, sizeof *dir);
-	for (uint32_t z = 0, sector = 1; z < nz; z++) {   /* (sector 0: the file's header) */
+	for (uint32_t i = 0, sector = 1; i < nz; i++) {   /* (sector 0: the file's header) */
+		uint32_t z = ord[i];
 		dir[z].sector = sector;
 		dir[z].bytes  = (uint32_t) chunk[z].len;
 		sector += sectors_of(dir[z].bytes);
@@ -619,7 +668,8 @@ int cmd_zones(int argc, char **argv)
 			fh.tex_level = lv && lv[1] == 't' && lv[2] >= '0' && lv[2] <= '9' ? (uint32_t) (lv[2] - '0') : 0;
 			buf_put(&zf, &fh, sizeof fh);
 			buf_align(&zf, SECTOR);
-			for (uint32_t z = 0; z < nz; z++) {
+			for (uint32_t i = 0; i < nz; i++) {
+				uint32_t z = ord[i];
 				if (zf.len != (size_t) dir[z].sector * SECTOR)
 					die("zone %u: at byte %zu, its directory says sector %u", z, zf.len, dir[z].sector);
 				size_t at = zf.len;
@@ -639,7 +689,7 @@ int cmd_zones(int argc, char **argv)
 		free(chunk[z].p);
 		free(T.member[z]);
 	}
-	free(chunk); free(dir); free(T.member); free(T.leaf_zone); free(T.leaf_near);
+	free(chunk); free(dir); free(ord); free(rank); free(T.member); free(T.leaf_zone); free(T.leaf_near);
 	free(sets); free(leaf_set); free(leaves2); free(bm2); free(s.p); free(bstream.p); pool_free(&bpool);
 	free(nodes2); free(new_of); free(old_at); free(world); free(seen); free(patched); free(f);
 	return 0;

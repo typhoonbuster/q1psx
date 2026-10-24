@@ -30,10 +30,19 @@ static int         num_disc_maps;
 static uint8_t map_on_disc[NUM_QUAKE_MAPS];
 static int     level_mask[QL_AXES];   /* the levels the disc's maps come in, per axis */
 
-/* cd_list_dir's call: a "<MAP>_G<N>.WLD" marks its map present at geometry
-   level N, a "<MAP>_T<N>.TX4" and a "<MAP>_M<N>.MDL" add texture and model
+/* cd_list_dirs's call on \LVL: a directory named as a map holds that map
+   (its section: docs/porting-notes.md §84) */
+static void note_map_dir(const char *name)
+{
+	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
+		if (!strcmp(name, quake_maps[i]))
+			map_on_disc[i] = 1;
+}
+
+/* cd_list_dir's call on one map's directory: a "<MAP>_T<N>.TX4", a
+   "<MAP>_G<N>.WLD" and a "<MAP>_M<N>.MDL" add texture, geometry and model
    level N (a disc carries one of each: the build's, docs/porting-notes.md
-   §52) */
+   §52, the same for every map) */
 static void note_map_file(const char *name, uint32_t lba, uint32_t size)
 {
 	(void) lba;
@@ -45,14 +54,8 @@ static void note_map_file(const char *name, uint32_t lba, uint32_t size)
 	int axis = !strncmp(s + 1, "T", 1) && !strncmp(s + 3, ".TX4", 4) ? QL_TEXTURES
 	         : !strncmp(s + 1, "G", 1) && !strncmp(s + 3, ".WLD", 4) ? QL_GEOMETRY
 	         : !strncmp(s + 1, "M", 1) && !strncmp(s + 3, ".MDL", 4) ? QL_MODELS : -1;
-	if (axis < 0)
-		return;
-	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
-		if (!strncmp(name, quake_maps[i], (size_t) (s - name)) && !quake_maps[i][s - name]) {
-			if (axis == QL_GEOMETRY)
-				map_on_disc[i] = 1;
-			level_mask[axis] |= 1 << (s[2] - '0');
-		}
+	if (axis >= 0)
+		level_mask[axis] |= 1 << (s[2] - '0');
 }
 
 int world_level_mask(int axis)
@@ -68,10 +71,15 @@ Q_COLD int world_scan_maps(void)
 	num_disc_maps = 0;
 	memset(level_mask, 0, sizeof level_mask);
 	memset(map_on_disc, 0, sizeof map_on_disc);
-	cd_list_dir("\\MAPS", note_map_file);         /* one directory read */
+	cd_list_dirs("\\LVL", note_map_dir);          /* (one directory read) */
 	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
 		if (map_on_disc[i])
 			disc_maps[num_disc_maps++] = quake_maps[i];
+	if (num_disc_maps) {                          /* the levels the disc carries: one map's files */
+		char path[16];
+		q_snprintf(path, sizeof path, "\\LVL\\%s", disc_maps[0]);
+		cd_list_dir(path, note_map_file);         /* (one directory read) */
+	}
 	printf("world: %d maps on the disc\n", num_disc_maps);
 	return num_disc_maps;
 }
@@ -294,11 +302,11 @@ Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn p
 	if (map < 0 || map >= num_disc_maps)
 		return 0;
 
-	char name[24], tex_name[24], mdl_name[24];
+	char name[32], tex_name[32], mdl_name[32];
 	uint32_t tex_size = 0, wld_size = 0, mdl_size = 0;
-	q_snprintf(tex_name, sizeof tex_name, "\\MAPS\\%s_T%d.TX4;1", disc_maps[map], tex);
-	q_snprintf(name, sizeof name, "\\MAPS\\%s_G%d.WLD;1", disc_maps[map], geo);
-	q_snprintf(mdl_name, sizeof mdl_name, "\\MAPS\\%s_M%d.MDL;1", disc_maps[map], models);
+	q_snprintf(tex_name, sizeof tex_name, "\\LVL\\%s\\%s_T%d.TX4;1", disc_maps[map], disc_maps[map], tex);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_G%d.WLD;1", disc_maps[map], disc_maps[map], geo);
+	q_snprintf(mdl_name, sizeof mdl_name, "\\LVL\\%s\\%s_M%d.MDL;1", disc_maps[map], disc_maps[map], models);
 	load_progress = progress;
 	if (progress) {
 		cd_exists(tex_name, &tex_size);

@@ -204,8 +204,11 @@ Q_COLD void snd_init(void)
 
 Q_COLD int snd_load_bank(const char *map)
 {
-	char name[24];
-	q_snprintf(name, sizeof name, "\\MAPS\\%s.SND;1", map);
+	char name[32];
+	if (!strcmp(map, "MENU"))                        /* (the release menu's: the root's) */
+		q_snprintf(name, sizeof name, "\\MENU.SND;1");
+	else
+		q_snprintf(name, sizeof name, "\\LVL\\%s\\%s.SND;1", map, map);   /* (the level's section, §84) */
 	bank_n = statics_n = cd_track = 0;
 	for (int i = 0; i < S_COUNT; i++)
 		named[i] = -1;

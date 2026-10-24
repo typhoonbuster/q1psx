@@ -21,8 +21,15 @@
                                             22 kHz (CMake Q1PSX_MUSIC_RING) */
 #endif
 #define MUSIC_SPU_BYTES  (2 * MUSIC_RING_CHUNKS * 4096)
+#ifndef MUSIC_REFILL_CHUNKS
+#define MUSIC_REFILL_CHUNKS 4            /* a refill: chunks a channel at a time (CMake
+                                            Q1PSX_MUSIC_REFILL; 4 = 16 sectors every 1.3 s;
+                                            the staging buffer holds 2 x 4 KB of them) */
+#endif
 
 void music_init(void);
+void music_level(const char *map);   /* the map being loaded: its section's copy of its
+                                        track plays (docs/porting-notes.md §84); NULL none */
 void music_play(int track);      /* the CD track number (2: the theme, ...) */
 void music_stop(void);
 void music_tick(void);           /* once per frame: the stream kept going  */

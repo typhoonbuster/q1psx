@@ -1,12 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-	Processed by CMake, consumed by mkpsxiso. Paths are relative to the build
-	directory unless prefixed with ${PROJECT_SOURCE_DIR}.
-
-	Cooked Quake assets (the COOKED_ENTRIES slot) come back with the cook
-	tool in roadmap step R2. pak0.pak is bundled from local.env (the PAK0_ENTRY
-	slot) for now; whether the final disc carries it raw or only cooked data is
-	decided in R2.
+	Processed by CMake (scripts/cd_image.cmake, at the build, after the
+	cook), consumed by mkpsxiso. Paths are relative to the build directory
+	unless prefixed with ${PROJECT_SOURCE_DIR}. mkpsxiso lays the files out
+	in this order: the disc's layout is the order below (docs/porting-notes.md
+	§84).
 -->
 <iso_project>
 	<track type="data">
@@ -24,17 +22,20 @@
 			<file name="SYSTEM.CNF" type="data" source="${PROJECT_SOURCE_DIR}/iso/system.cnf" />
 			<file name="Q1PSX.EXE"  type="data" source="q1psx.exe" />
 			<file name="HELLO.TXT"  type="data" source="${PROJECT_SOURCE_DIR}/iso/hello.txt" />
-			@GAME_ENTRY@
+			<!-- the root's: the game data, the console's background, the pool of
+			     streamed assets (its directory read at boot), the menu's bank -->
+			@ROOT_ENTRIES@
 			@PAK0_ENTRY@
-			<!-- in a subdirectory: the BIOS only reads the root directory's first
-			     sector, and SYSTEM.CNF must stay in it -->
-			<dir name="MAPS">
-			@COOKED_ENTRIES@
+			<!-- one directory a level under LVL (the BIOS only reads the root
+			     directory's first sector, where SYSTEM.CNF and the executable must
+			     stay: 32 more records in the root pushed them to its second): its
+			     files in the order its load reads them, what the game reads in
+			     play right before its copy of its music track -->
+			<dir name="LVL">
+			@LEVEL_DIRS@
 			</dir>
-			<!-- what is read while the game runs, last: the streamed assets, then
-			     the music next to them (the SPU music's refills go between their
-			     reads) -->
-			@STREAM_ENTRY@
+			<!-- the music played where nothing much is loaded, once: the title's
+			     track and the intermission's -->
 			<dir name="MUSIC">
 			@MUSIC_ENTRIES@
 			</dir>

@@ -279,9 +279,9 @@ Q_COLD int zone_map_start(const uint8_t *f, const char *map, int tex)
 		printf("zone: %s: bad zone tables\n", map);
 		return 0;
 	}
-	char name[24];
+	char name[32];
 	uint32_t lba, size;
-	q_snprintf(name, sizeof name, "\\MAPS\\%s_Z%d.ZON;1", map, tex);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_Z%d.ZON;1", map, map, tex);
 	if (!cd_find(name, &lba, &size)) {
 		printf("zone: no %s on the disc\n", name);
 		return 0;
