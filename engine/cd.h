@@ -45,16 +45,45 @@ uint32_t cd_last_lba(void);      /* the last file cd_load found: its first secto
      cd_seek      a Setloc for a read: the drive settled first (waited for,
                   the reads started at once), its answer checked; refused:
                   the drive's interrupts enabled again, sent again;
+     cd_read_start the read itself after the seek (CdReadRetry): every
+                  read of the disc starts here, with who asks it and for
+                  what (the bench's journal, docs/porting-notes.md §83);
      cd_poll      a read's progress (CdReadSync(1)): the sectors still to
                   come, the drive's busy time kept;
      cd_read_sync the end of a read waited for (CdReadSync(0)), likewise;
+     cd_read_cut  a read in flight broken off (CdReadBreak; its owner
+                  then waits for it with cd_read_sync, and pauses the drive);
      cd_read_now  a whole read at once (seek, read, wait). */
+enum { CDW_DIR, CDW_FILE, CDW_ZONE, CDW_MODEL, CDW_SOUND, CDW_MUSIC, CDW_N };   /* who reads: a directory
+                  or a header, a whole file, a world chunk, a streamed model, a streamed sound's
+                  piece, the music's refill */
 int   cd_ready(void);
 int   cd_seek(int32_t lba);
+int   cd_read_start(int32_t lba, uint32_t sectors, void *dst, int who, int tag);
 int   cd_poll(void);
 int   cd_read_sync(void);
-int   cd_read_now(int32_t lba, uint32_t sectors, void *dst);
+void  cd_read_cut(void);
+int   cd_read_now(int32_t lba, uint32_t sectors, void *dst, int who, int tag);
 void  cd_busy(void);              /* (a command just sent outside these: the drive settles from now) */
+
+#ifdef Q1PSX_BENCH
+/* The bench's journal and drive model (docs/porting-notes.md §83).
+     cd_log    1: a `cd` line per read when it ends: who, its tag (the zone,
+               the asset, the music's chunk), its first sector, its sectors,
+               where the head was (the last read's end), the vblanks it was
+               started and ended at, the seek the model gives it (µs), the
+               polls the model held it, its end ('.', 'e' an error, 'x' cut);
+     cd_model  1: a read ends no sooner than a real drive would end it:
+               DuckStation's seek model (from measures of the mechanism) plus
+               the sectors at double speed, from the seek command; the drive
+               is busy until then (cd_ready);
+     cd_log_mark names the phase that starts (a map's load, its walk): a
+               `cd sum` line totals the phase before it. */
+extern int cd_log, cd_model;
+void  cd_log_mark(const char *name);
+#else
+#define cd_log_mark(name) ((void) 0)
+#endif
 
 /* Is the file on the disc? (No read of the file; *size may be NULL.) Each
    call reads its directory again (a seek and a read: ~80 ms on the drive). */

@@ -69,9 +69,9 @@ void zone_patch(qw_node *nd, const uint32_t *w, uint32_t n, uint8_t *p)
 
 /* ---------------------------------------------------------- the drive -- */
 
-static int read_now(int32_t lba, uint32_t sectors, void *dst)
+static int read_now(int32_t lba, uint32_t sectors, void *dst, int who, int tag)
 {
-	return cd_read_now(lba, sectors, dst);
+	return cd_read_now(lba, sectors, dst, who, tag);
 }
 
 int zone_reading(void)
@@ -175,7 +175,8 @@ static int load_now(int z, const uint8_t want[WANT], int rank)
 	placed = -1;
 	if (s < 0)
 		return -1;
-	if (!read_now(zon_lba + (int32_t) zdir[z].sector, (zdir[z].bytes + SECTOR - 1) / SECTOR, arena + slots[s].at)) {
+	if (!read_now(zon_lba + (int32_t) zdir[z].sector, (zdir[z].bytes + SECTOR - 1) / SECTOR, arena + slots[s].at,
+	              CDW_ZONE, z)) {
 		slots[s].zone = -1;
 		zone_stats.read_errors++;
 		return -1;
@@ -232,8 +233,8 @@ static void next_read(void)
 	}
 	int s = placed;
 	placed = -1;
-	if (!cd_seek(zon_lba + (int32_t) zdir[slots[s].zone].sector) ||
-	    !CdReadRetry((int) sectors, (uint32_t *) (arena + slots[s].at), CdlModeSpeed, 3)) {
+	if (!cd_read_start(zon_lba + (int32_t) zdir[slots[s].zone].sector, sectors, arena + slots[s].at, CDW_ZONE,
+	                   slots[s].zone)) {
 		slots[s].zone = -1;
 		zone_stats.read_errors++;
 		backoff_until = frame_no + BACKOFF;
@@ -248,7 +249,7 @@ static void next_read(void)
 void zone_abort(void)
 {
 	if (reading >= 0) {
-		CdReadBreak();                            /* (the drive paused, waited for, as */
+		cd_read_cut();                            /* (the drive paused, waited for, as */
 		cd_read_sync();                           /*  stream_abort does)                */
 		CdControlB(CdlPause, 0, 0);
 		cd_busy();
@@ -289,7 +290,7 @@ Q_COLD int zone_map_start(const uint8_t *f, const char *map, int tex)
 	if (!a)
 		return 0;
 	const qz_file *fh = (const qz_file *) a;      /* (its header through the slots, empty yet) */
-	if (!read_now((int32_t) lba, 1, a) || memcmp(fh->magic, QZONES_MAGIC, 4) || fh->stamp != h->stamp ||
+	if (!read_now((int32_t) lba, 1, a, CDW_DIR, 0) || memcmp(fh->magic, QZONES_MAGIC, 4) || fh->stamp != h->stamp ||
 	    fh->num_zones != h->num_zones) {
 		printf("zone: %s is not this skeleton's (another cook?)\n", name);
 		return 0;

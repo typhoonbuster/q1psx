@@ -104,6 +104,18 @@
 #         disc, the zones' A / B (CMake Q1PSX_ZONES OFF). Every bench prints
 #         a "bench zone <map>" line per map loaded: the skeleton, the
 #         chunk arena, the stream's pool.
+#         CDLOG=1 writes the drive's journal: a "cd" line per read (who
+#         read what, where the head came from, the vblanks it took, the
+#         seek a real drive would spend) and a "cd sum" line per phase (a
+#         map's load, its walk); CDMODEL=1 ends every read no sooner than a
+#         real drive would (DuckStation's seek model, measured on the
+#         mechanism, and the sectors at double speed): the walk's late
+#         frames, the stream's reads and the music's underruns as on a
+#         console, in fast forward (docs/porting-notes.md §83). Both go
+#         with MUSIC=1. MUSIC_RING=<chunks> sizes the music's ring in SPU
+#         RAM (6 = 2 s, the game's; 3 = 1 s), MUSIC_SEEK=<ms> the seek its
+#         refills plan around a read (250, the game's); tools/cdsim/cdsim.py
+#         replays a journal on another disc layout.
 #         ENGINE_C=1 builds the C engine (CMake Q1PSX_ENGINE_C: every asm
 #         part's C version but the world renderer's, docs/porting-notes.md
 #         §55) in build-bench-c/, beside the asm's: its frames must be the
@@ -184,6 +196,10 @@ IRQTIME=${IRQTIME:-0}
 SLOWSTAT=${SLOWSTAT:-0}
 WARPDYN=${WARPDYN:-0}
 WHOLE=${WHOLE:-0}
+CDLOG=${CDLOG:-0}
+CDMODEL=${CDMODEL:-0}
+MUSIC_RING=${MUSIC_RING:-6}
+MUSIC_SEEK=${MUSIC_SEEK:-250}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
@@ -195,6 +211,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
 	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }
@@ -214,6 +231,7 @@ grep -A2 'MISMATCH' "$OUT/bench.log" | head -n 30 || true
 		"$OUT/bench.log"; }
 [ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$OUT/bench.log" || true; }
 [ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$OUT/bench.log" || true; }
+{ [ "$CDLOG" = 1 ] || [ "$CDMODEL" = 1 ]; } && { grep '^cd sum\|^music: the ring' "$OUT/bench.log" || true; }
 [ "$ZONES" = 1 ] && { grep '^zone: ' "$OUT/bench.log" || true; exit 0; }
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
 [ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$OUT/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)

@@ -38,15 +38,19 @@ static int playing;               /* the track, 0 none                   */
    sysclock / 768): a sample at the voices' pitch p (the track's rate x
    4096 / 44100) is 393216 / p of its ticks (192 at 22.05 kHz, the
    menu's 32 kHz 132.3: a chunk's ticks rounded, a tick in 0.2 s). */
-#define RING_CHUNKS    6
+#define RING_CHUNKS    MUSIC_RING_CHUNKS   /* (engine/music.h) */
 #define RING_L         (512 * 1024 - MUSIC_SPU_BYTES)
 #define RING_R         (RING_L + RING_CHUNKS * QSPU_CHUNK)
 #define V_LEFT         22
 #define V_RIGHT        23
 #define READ_CHUNKS    2         /* a refill: 16 KB, the staging buffer     */
 #define TICKS_SAMPLE_P 393216u   /* a sample's ticks x the pitch       */
-#define SEEK_MS        250       /* a seek's guess (the music files lie next
-                                    to the streamed assets: short ones)     */
+#ifndef MUSIC_SEEK_MS
+#define MUSIC_SEEK_MS  250       /* a seek's guess (CMake Q1PSX_MUSIC_SEEK_MS;
+                                    the music files lie next to the streamed
+                                    assets: short ones)                     */
+#endif
+#define SEEK_MS        MUSIC_SEEK_MS
 #define MUSIC_VOL      0x2ccc    /* as the CD's (engine/snd.c CD_VOL)        */
 
 static uint32_t track_lba[MAX_TRACK + 1];   /* SPU_<nn>.DAT's first sector, 0 none */
@@ -117,8 +121,8 @@ static int refill_start(uint32_t n)
 	uint32_t k = filled % chunks;
 	if (n > chunks - k)
 		n = chunks - k;
-	if (!cd_seek((int32_t) (file_lba + k * QSPU_CHUNK_SECTORS)) ||
-	    !CdReadRetry((int) (n * QSPU_CHUNK_SECTORS), (uint32_t *) buf, CdlModeSpeed, 3))
+	if (!cd_read_start((int32_t) (file_lba + k * QSPU_CHUNK_SECTORS), n * QSPU_CHUNK_SECTORS, buf, CDW_MUSIC,
+	                   (int) k))
 		return 0;
 	reading_n = (int) n;
 	return 1;
@@ -143,7 +147,7 @@ void music_play(int track)
 	if (!buf)
 		return;
 	const qspu_header *h = (const qspu_header *) buf;
-	if (!cd_read_now((int32_t) track_lba[track], 1, buf) ||
+	if (!cd_read_now((int32_t) track_lba[track], 1, buf, CDW_DIR, track) ||
 	    memcmp(h->magic, QSPU_MAGIC, 4) || h->track != track || h->rate < 8000 || h->rate > 44100 ||
 	    !h->chunks) {
 		printf("music: SPU_%02d.DAT unreadable or of another version\n", track);
@@ -190,7 +194,7 @@ void music_stop(void)
 		   the next command (without the wait, a map's first read after the
 		   menu's music took one of the refill's sectors: START.SND "not
 		   found", the drive's error 20h; docs/porting-notes.md §53) */
-		CdReadBreak();
+		cd_read_cut();
 		cd_read_sync();
 		CdControlB(CdlPause, 0, 0);
 		cd_busy();

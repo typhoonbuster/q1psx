@@ -16,7 +16,11 @@
 /* the SPU music's: its voices (the last two: left, right) and its ring at
    the top of SPU RAM, which the sounds leave it (engine/snd.c) */
 #define MUSIC_SPU_VOICES 2
-#define MUSIC_SPU_BYTES  (2 * 6 * 4096)  /* 6 chunks a channel: 2 s at 22 kHz */
+#ifndef MUSIC_RING_CHUNKS
+#define MUSIC_RING_CHUNKS 6              /* chunks a channel, 0.325 s each: 2 s at
+                                            22 kHz (CMake Q1PSX_MUSIC_RING) */
+#endif
+#define MUSIC_SPU_BYTES  (2 * MUSIC_RING_CHUNKS * 4096)
 
 void music_init(void);
 void music_play(int track);      /* the CD track number (2: the theme, ...) */

@@ -283,6 +283,7 @@ Q_COLD static int load_level(int map)
 {
 	world_ok = 0;
 	load_map = map;
+	cd_log_mark(world_map_name(map));           /* (the bench's drive journal: the load's phase) */
 	stream_abort();                             /* (the arena is reset, the drive taken) */
 	zone_abort();
 	music_stop();                               /* one drive: the reads need it */
@@ -1354,6 +1355,7 @@ static void bench_zones(void)
 		game_spawn();
 		game_active = 1;
 		zone_sync = 0;
+		cd_log_mark("walk");                    /* (the drive journal's phase: the walk's reads) */
 		/* the waypoints: the start, then the items and the monsters */
 		static int32_t wp[ZW_WAYPOINTS][3];
 		int nwp = 0, n = 0;
@@ -1397,6 +1399,8 @@ static void bench_zones(void)
 				cam.pitch = cam.roll = 0;
 				uint32_t sw0 = zone_stats.switches;
 				run_frame(0, 0);
+				music_tick();                   /* (the music's refills as in play: the
+				                                   drive shared with the chunks' reads) */
 				frames++;
 				since_wall = through ? 0 : since_wall + 1;
 				uint32_t fc = prof_stage[PROF_FRAME];
@@ -3071,6 +3075,7 @@ static void bench_key(void)
 static void bench_done(void)
 {
 	extern int irq_stack_room(void);
+	cd_log_mark("end");                         /* (the drive journal's last phase totalled) */
 	printf("isr stack: %d bytes never reached\n", irq_stack_room());
 	printf("bench done\n");
 }

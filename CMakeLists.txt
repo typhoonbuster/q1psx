@@ -230,8 +230,11 @@ set(Q1PSX_BENCH_GPUTIME 0 CACHE STRING "1: each frame's display list drawn alone
 set(Q1PSX_BENCH_RES 0 CACHE STRING "The 3D view's internal resolution the bench renders with: engine/render.c r_res_table's index (0: 320, the screen's)")
 set(Q1PSX_BENCH_WORLD_HZ 30 CACHE STRING "The world's tick rate the bench runs at: 60 or 30 (the game's default; the player's: 60)")
 set(Q1PSX_BENCH_ZONES 0 CACHE STRING "1: the zones' walk: every zoned map walked through its items, the chunk reads, switches and late frames (bench zones lines)")
+set(Q1PSX_BENCH_CDLOG 0 CACHE STRING "1: the drive's journal: a cd line per read (who, where, when; engine/cd.h)")
+set(Q1PSX_BENCH_CDMODEL 0 CACHE STRING "1: every read ends no sooner than a real drive would end it (DuckStation's seek model; engine/cd.c)")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
+		Q1PSX_BENCH_CDLOG=${Q1PSX_BENCH_CDLOG} Q1PSX_BENCH_CDMODEL=${Q1PSX_BENCH_CDMODEL}
 		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_IRQTIME=${Q1PSX_BENCH_IRQTIME}
@@ -310,6 +313,11 @@ endif()
 # bench's disc has none (Q1PSX_MUSIC OFF unless Q1PSX_BENCH_MUSIC).
 option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
 set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
+# the music's ring in SPU RAM (engine/music.h: chunks a channel, 0.325 s
+# each; 6 = 2 s) and the seek its refills plan with (engine/music.c)
+set(Q1PSX_MUSIC_RING 6 CACHE STRING "The SPU music's ring: chunks a channel (0.325 s each; 6 = 2 s, 3 = 1 s)")
+set(Q1PSX_MUSIC_SEEK_MS 250 CACHE STRING "The seek the music's refills plan a read around, in ms")
+target_compile_definitions(q1psx PRIVATE MUSIC_RING_CHUNKS=${Q1PSX_MUSIC_RING} MUSIC_SEEK_MS=${Q1PSX_MUSIC_SEEK_MS})
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h, qworld.h,
 # qgame.h, qlevels.h). Every cooked map ships as <MAP>_T<N>.TX4 (its 4-bit
 # textures at the build's level: 1 medium, 2 high), <MAP>_G0.WLD (its low

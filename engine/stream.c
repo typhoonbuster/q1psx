@@ -141,9 +141,9 @@ static uint32_t frame_no;
 /* ------------------------------------------------------------ directory -- */
 
 /* a synchronous read of whole sectors (boot, the loading screen) */
-static int read_sectors(int32_t lba, int n, void *dst)
+static int read_sectors(int32_t lba, int n, void *dst, int who, int tag)
 {
-	return cd_read_now(lba, (uint32_t) n, dst);
+	return cd_read_now(lba, (uint32_t) n, dst, who, tag);
 }
 
 static int stream_level = -1;   /* the model level whose STREAM_<n>.DAT is read */
@@ -162,7 +162,7 @@ static int load_directory(int level)
 	}
 	uint32_t mark = mem_level_mark();
 	qst_header *h = mem_level_alloc(QST_SECTOR);
-	if (!h || !read_sectors((int32_t) lba, 1, h) || memcmp(h->magic, QSTREAM_MAGIC, 4) ||
+	if (!h || !read_sectors((int32_t) lba, 1, h, CDW_DIR, 0) || memcmp(h->magic, QSTREAM_MAGIC, 4) ||
 	    h->dir_sectors < 1 || h->dir_sectors > 16) {
 		printf("stream: %s unreadable or of another version\n", name);
 		mem_level_release(mark);
@@ -172,7 +172,7 @@ static int load_directory(int level)
 	if (dir > 1) {
 		mem_level_release(mark);
 		h = mem_level_alloc(dir * QST_SECTOR);
-		if (!h || !read_sectors((int32_t) lba, (int) dir, h)) {
+		if (!h || !read_sectors((int32_t) lba, (int) dir, h, CDW_DIR, 0)) {
 			mem_level_release(mark);
 			return 0;
 		}
@@ -231,7 +231,7 @@ static void bench_scan(void)
 		bench_keep[a] = ALIGN16(as->d.size);
 		bench_nframes[a] = 0;
 		bench_fmap_at[a] = 0xffff;
-		if (as->d.kind != QSTK_MODEL || !b || !read_sectors(base_lba + (int32_t) as->d.sector, 1, b))
+		if (as->d.kind != QSTK_MODEL || !b || !read_sectors(base_lba + (int32_t) as->d.sector, 1, b, CDW_DIR, a))
 			continue;
 		const qst_model *m = (const qst_model *) b;
 		bench_keep[a]    = ALIGN16(m->images[0].ofs);
@@ -918,8 +918,7 @@ static int sound_read_piece(void)
 		n = STAGE_SECTORS;
 	sread.sectors = (uint16_t) n;
 	sread.step    = SR_READ;
-	return cd_seek(base_lba + (int32_t) as->d.sector + sread.sector) &&
-	       CdReadRetry(n, (uint32_t *) stage, CdlModeSpeed, 3);
+	return cd_read_start(base_lba + (int32_t) as->d.sector + sread.sector, (uint32_t) n, stage, CDW_SOUND, sread.a);
 }
 
 /* the piece read: its samples to their place (the SPU's DMA: whole 64-byte
@@ -1031,7 +1030,7 @@ static void sound_read_sync(void)
 		if (n > STAGE_SECTORS)
 			n = STAGE_SECTORS;
 		sread.sectors = (uint16_t) n;
-		if (!read_sectors(base_lba + (int32_t) as->d.sector + sread.sector, n, stage)) {
+		if (!read_sectors(base_lba + (int32_t) as->d.sector + sread.sector, n, stage, CDW_SOUND, sread.a)) {
 			sound_done(0, 0);
 			return;
 		}
@@ -1108,7 +1107,7 @@ static void start_read(int a)
 	asset_t *as = &assets[a];
 	res_t *r = &res[as->res];
 	int n = (int) ((as->d.size + QST_SECTOR - 1) / QST_SECTOR);
-	if (!cd_seek(base_lba + (int32_t) as->d.sector) || !CdReadRetry(n, (uint32_t *) r->ram, CdlModeSpeed, 3)) {
+	if (!cd_read_start(base_lba + (int32_t) as->d.sector, (uint32_t) n, r->ram, CDW_MODEL, a)) {
 		read_done(a, 0);
 		return;
 	}
@@ -1205,7 +1204,7 @@ static void pass(void)
 void stream_abort(void)
 {
 	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ)) {
-		CdReadBreak();                        /* (the drive paused, waited for, before the */
+		cd_read_cut();                        /* (the drive paused, waited for, before the */
 		cd_read_sync();                       /*  next command: music.c music_stop's)       */
 		CdControlB(CdlPause, 0, 0);
 		cd_busy();
@@ -1415,7 +1414,7 @@ void stream_preload_at(const int32_t org[3])
 Q_COLD void stream_preload(void)
 {
 	if (lend_state == L_ROOM &&               /* the lent block (the map's start gave it room) */
-	    read_sectors(lend_lba, (int) (lend_bytes / QST_SECTOR), lend_at)) {
+	    read_sectors(lend_lba, (int) (lend_bytes / QST_SECTOR), lend_at, CDW_FILE, 0)) {
 		lend_state = L_IN;
 		lend_reads++;
 	}
@@ -1448,7 +1447,7 @@ Q_COLD void stream_preload(void)
 			continue;
 		}
 		int n = (int) ((assets[a].d.size + QST_SECTOR - 1) / QST_SECTOR);
-		int ok = read_sectors(base_lba + (int32_t) assets[a].d.sector, n, res[assets[a].res].ram);
+		int ok = read_sectors(base_lba + (int32_t) assets[a].d.sector, n, res[assets[a].res].ram, CDW_MODEL, a);
 		read_done(a, ok);
 		DrawSync(0);                          /* the images uploaded: their pixels go */
 		for (int i = 0; i < MAX_RES; i++)
