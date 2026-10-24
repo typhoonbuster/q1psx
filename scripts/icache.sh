@@ -22,8 +22,10 @@
 #             the words the cache fills as the release links now (sim), or
 #             the search for a better order (opt: engine/icache.ld written);
 #             the reference is build-release (configure and build it first,
-#             cmake --preset release). Default traces: s:10:2 m:6 g:6:4 (the
-#             default bench's views, the 128 spawn views, the game).
+#             cmake --preset release). Default traces: s:10 m:6 g:6:2 (the
+#             default bench's views, the 128 spawn views, the game twice);
+#             opt keeps the hot list to the sections the bench's link (the
+#             first trace's) and the release's hold alike, C included.
 #
 # The usual round:
 #   scripts/icache.sh trace s 9,10 12
@@ -127,7 +129,7 @@ sim|opt)
 	opts=()
 	while [ $# -gt 0 ] && [ "${1#-}" != "$1" ]; do opts+=("$1" "$2"); shift 2; done
 	specs=("$@")
-	[ ${#specs[@]} -gt 0 ] || specs=(s:10:2 m:6 g:6:4)
+	[ ${#specs[@]} -gt 0 ] || specs=(s:10 m:6 g:6:2)
 	traces=()
 	for s in "${specs[@]}"; do
 		tag=${s%%:*}; rest=${s#*:}
@@ -137,8 +139,10 @@ sim|opt)
 	if [ "$cmd" = sim ]; then
 		"$ROOT/tools/icache/icache" sim "$ref/q1psx.elf" "$ref/q1psx.ldmap" "${traces[@]}"
 	else
+		# (the C both links hold alike, -c -m: the first trace's bench link beside the release's)
+		first=${specs[0]%%:*}
 		"$ROOT/tools/icache/icache" opt "$ref/q1psx.elf" "$ref/q1psx.ldmap" "$ROOT/engine/icache.ld" \
-			-k "$ROOT/engine/icache.ld" "${opts[@]}" "${traces[@]}"
+			-k "$ROOT/engine/icache.ld" -c -m "$DIR/$first.ldmap" "${opts[@]}" "${traces[@]}"
 	fi
 	;;
 *)
