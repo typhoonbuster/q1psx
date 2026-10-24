@@ -1960,9 +1960,9 @@ followed by R0-R4.
   order `engine/icache.ld` gives; `tools/icache` simulates the 4 KB cache
   over every fetch of traced frames (`scripts/icache.sh`: PCSX-Redux's
   interpreter, a Lua breakpoint) and searches the order. The words the
-  cache fills a frame: START's views −48.8 %, the 128 views −42.9 %, the
-  game −46.2 %; no instruction changed (PCSX-Redux, which has no instruction
-  cache, counts the same); `scripts/iccheck.sh` fails a chain that falls
+  cache fills a frame: START's views −50.6 %, the 128 views −45.2 %, the
+  game −49.1 %; no instruction changed (PCSX-Redux, which has no instruction
+  cache, counts within 0.003 %); `scripts/iccheck.sh` fails a chain that falls
   through.
 - **The rest of the optimization list** (2026-10-24,
   `docs/porting-notes.md` §81.6): each item measured or looked up: the

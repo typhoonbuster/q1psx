@@ -10266,35 +10266,35 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
     r_set_res) were offsets from r_render, which the chains no longer keep:
     each pair is a word now (the first's address, the second's distance in
     bits 21-30, unused by a RAM address), the tables' size unchanged.
-  - engine/icache.ld from tools/icache's search: 73 sections, 23.8 KB
-    (the asm's with more than 0.01 % of the fetches: the renderer's
-    chains, the slow path, the interrupt handler, the entities' and the
-    models' asm, and the SDK's memset), ordered by a hill climb on the
+  - engine/icache.ld from tools/icache's search: 100 sections, 34.2 KB
+    (those with more than 0.01 % of the fetches that the bench's and the
+    release's links hold alike: the renderer's chains, the slow path, the
+    interrupt handler, the entities' and the models' asm, memset, the
+    render list's and the stream's C), ordered by a hill climb on the
     simulated fills (START's views, half of the 128 views, the game twice;
-    four seeds, then four more from the best). The C's sections stay out:
-    they differ between the bench's and the release's links and move with
-    every edit; so does any asm section the bench's link lacks or holds at
-    another size (`-m`: dl_restore_asm, touch_gather), so the hot code lies
-    at the same addresses in both and the bench measures the release's.
-    The search with the C in found 4 % fewer fills on the release and lost
-    them on the bench's link.
+    seeds in parallel, then more from the best). A section the bench's link
+    lacks or holds at another size stays out (`-m`: dl_restore_asm,
+    touch_gather, the C that the bench builds otherwise): the hot code lies
+    at the same addresses in both links, so the bench measures what the
+    release runs.
 - **Result** (the release's link, the same traces):
 
   | Frames | Words filled before | After | |
   |---|---|---|---|
-  | START's 12 views | 533 646 | 273 157 | −48.8 % |
-  | 64 of the 128 views (searched on) | 1 890 356 | 1 050 700 | −44.4 % |
-  | the other 64 (not searched on) | 1 601 884 | 943 429 | −41.1 % |
-  | the game bench, 12 frames | 1 128 089 | 606 621 | −46.2 % |
+  | START's 12 views | 533 646 | 263 745 | −50.6 % |
+  | 64 of the 128 views (searched on) | 1 890 356 | 992 659 | −47.5 % |
+  | the other 64 (not searched on) | 1 601 884 | 921 296 | −42.5 % |
+  | the game bench, 12 frames | 1 128 089 | 574 604 | −49.1 % |
 
-  New traces of the bench's link with this order agree: 274 593 words on
-  START's views, 622 446 on the game's. A frame of START's views fills
-  ~22.8 k words instead of 44.5 k, one of the 128 views 15.6 k instead of
-  27.3 k, one of the game 50.6 k instead of 94 k: in DuckStation's count
-  21.7 k, 11.7 k and 43.4 k cycles a frame (3.8 %, 2.1 % and 7.7 % of a
+  New traces of the bench's link with this order agree: 267 511 words on
+  START's views, 574 047 on the game's. A frame of START's views fills
+  ~22 k words instead of 44.5 k, one of the 128 views 15 k instead of
+  27.3 k, one of the game 47.9 k instead of 94 k: in DuckStation's count
+  22.5 k, 12.3 k and 46 k cycles a frame (4.0 %, 2.2 % and 8.1 % of a
   vblank); more on the machine.
-- **Cost**: no instruction changes, so PCSX-Redux's counts and every
-  display list stay the same; 40 bytes of code (the pairs' decoding in
+- **Cost**: no instruction changes, so every display list stays the same
+  and PCSX-Redux's counts barely move (+0.003 %: its dynarec's blocks fall
+  elsewhere); 40 bytes of code (the pairs' decoding in
   r_set_viewport). The order holds while the hot code keeps its size: an
   edit in it shifts what follows, `scripts/icache.sh` makes the order again
   (trace the three sets, `opt`, link).
