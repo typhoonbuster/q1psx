@@ -10137,6 +10137,12 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
 - **The hull trace** (`engine/clip.s`): the split's |den| and fm, the
   clamp and the open sweep's end fill four delay slots; ct_done returns
   in four instructions. −7 cycles a trace, −23 a pmove tick.
+- **CAREFUL's ranges** (`engine/r_world.s`, every record loop): the last
+  MINMAX's delay slot held a nop. A triangle's y0 now loads in the x
+  range's slot (into t6, free in a triangle), and 2 T2 zmin (`mflo`) in
+  the y range's; W + H moves to t9. Two instructions fewer for a careful
+  triangle, one for a quad: the 128 views −0.18 % at T = 4, −0.12 % at
+  T = 32.
 - **Measured and left out** (each loses at T = 32, where the game runs):
   - the split test by the edge's length in one pass (no REFINE; gp and sp
     as temporaries): −1.06 % at T = 4, +0.19 % at T = 32;

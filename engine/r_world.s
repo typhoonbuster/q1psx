@@ -402,7 +402,7 @@ r_ysites:
 # (A corner the GTE saturated, |x| or |y| >= 1023, needs no test of its
 # own: W + H <= 500 puts the whole polygon off screen then.) Expects t3..t5
 # (t6: quad) = the corners' cache addresses; clobbers t0-t2, t7, t9, v0, v1
-# (reloaded with clut / tpage).
+# (reloaded with clut / tpage), and t6 for a triangle (its y0).
 .macro CAREFUL quad, far, var, near
 	lw      $t0, SP_SZ($t3)
 	lw      $t1, SP_SZ($t4)
@@ -442,28 +442,29 @@ r_ysites:
 	lh      $t9, SP_SXY($t6)
 	MINMAX4D $t0, $t1, $t2, $t9, $v0, $v1, "lh $t2, SP_SXY+2($t5)"
 .else
-	MINMAX3 $t0, $t1, $t2, $v0
-.endif
+	MINMAX3 $t0, $t1, $t2, $v0, "lh $t6, SP_SXY+2($t3)"   # (y0: t6, free in a
+.endif                                   #  triangle, in the last delay slot)
 	subu    $v1, $t1, $t0                # W
+.if \quad
 	lh      $t0, SP_SXY+2($t3)           # y
 	lh      $t1, SP_SXY+2($t4)
-.if \quad
 	lh      $t9, SP_SXY+2($t6)
-	MINMAX4 $t0, $t1, $t2, $t9, $v0
+	MINMAX4 $t0, $t1, $t2, $t9, $v0, "mflo $v0"   # (2 T2 zmin, in the last
+	subu    $t0, $t1, $t0                # H            delay slot)
 .else
-	lh      $t2, SP_SXY+2($t5)
-	MINMAX3 $t0, $t1, $t2, $v0
+	lh      $t0, SP_SXY+2($t4)           # y1, y2 (the compares read y0, y1
+	lh      $t1, SP_SXY+2($t5)           #  first)
+	MINMAX3 $t6, $t0, $t1, $v0, "mflo $v0"   # (2 T2 zmin, in the last delay slot)
+	subu    $t0, $t0, $t6                # H
 .endif
-	subu    $t0, $t1, $t0                # H
-	mflo    $t9                          # 2 T2 zmin
-	addu    $v0, $v1, $t0                # W + H
-	sltiu   $t0, $v0, 501                # (r_slow.c SPAN)
-	mult    $v0, $t7                     # (W + H) x depth range
+	addu    $t9, $v1, $t0                # W + H
+	sltiu   $t0, $t9, 501                # (r_slow.c SPAN)
+	mult    $t9, $t7                     # (W + H) x depth range
 	beqz    $t0, \far
 	lw      $v1, SP_TPAGE16($t8)         # (clut / tpage back; the far and
-	mflo    $v0                          #  slow paths reload them)
-	sltu    $v0, $t9, $v0
-	bnez    $v0, \far
+	mflo    $t9                          #  slow paths reload them)
+	sltu    $t9, $v0, $t9
+	bnez    $t9, \far
 	lw      $v0, SP_CLUT16($t8)
 .endm
 
