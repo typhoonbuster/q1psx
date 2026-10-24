@@ -159,7 +159,7 @@
 # SQD r, p, x, y, z: r = the squared distance of corner p (3 halfwords)
 # from (x, y, z), unsigned as the C's sum: the GTE's SQR of the differences
 # (each within int16: a polygon's extent). Clobbers t6, t8.
-.macro SQD r, p, x, y, z
+.macro SQD r, p, x, y, z, w1=nop, w2=nop
 	lh      \r, 0(\p)
 	lh      $t6, 2(\p)
 	lh      $t8, 4(\p)
@@ -169,8 +169,8 @@
 	mtc2    \r, C2_IR1
 	mtc2    $t6, C2_IR2
 	mtc2    $t8, C2_IR3
-	nop
-	nop
+	\w1                                  # (the caller's, if any: two
+	\w2                                  #  before the GTE reads them)
 	SQR     0                            # MAC1-3 = their squares
 	mfc2    \r, C2_MAC1
 	mfc2    $t6, C2_MAC2
@@ -179,7 +179,8 @@
 	addu    \r, \r, $t8
 .endm
 
-# MAXU m, r: m = max(m, r), unsigned. Clobbers v0, at.
+# MAXU m, r: m = max(m, r), unsigned. Clobbers v0, at. (pr_radius has it
+# inline, its last instruction in the loop's delay slot.)
 .macro MAXU m, r
 	sltu    $at, \m, \r
 	subu    $v0, \r, \m
@@ -232,16 +233,14 @@
 	sra     \r, \r, 1
 .endm
 
-# COPYV d, s: a corner (3 words). Clobbers v0.
+# COPYV d, s: a corner (3 words). Clobbers v0, at (two in turn: no load
+# delay left empty, §81.3).
 .macro COPYV d, s
 	lw      $v0, 0(\s)
-	nop
+	lw      $at, 4(\s)
 	sw      $v0, 0(\d)
-	lw      $v0, 4(\s)
-	nop
-	sw      $v0, 4(\d)
 	lw      $v0, 8(\s)
-	nop
+	sw      $at, 4(\d)
 	sw      $v0, 8(\d)
 .endm
 
@@ -490,9 +489,8 @@ cr_sph_gen:
 	nop
 	MVMVA   0, 0, 0, 3, 0                # MAC1 = sc . n
 	mfc2    $t5, C2_MAC1
-	nop
 	b       cr_sph_d
-	subu    $t5, $t5, $t3                # (delay)
+	subu    $t5, $t5, $t3                # (delay: the second after the mfc2)
 cr_sph_leaf:
 	lb      $t0, LF_CONTENTS - 1($a0)    # (the tag bit)
 	li      $t1, CONTENTS_SOLID
@@ -508,15 +506,16 @@ cr_poly:
 	slti    $t1, $s4, BMF_PIECES / 2 + 1
 	slt     $t2, $s6, $t0
 	beqz    $t2, cr_end                  # every polygon cut
-	nop
-	bnez    $t1, cr_unpack
-	lw      $t0, BS_NQ($fp)              # (delay)
+	lw      $t0, BS_NQ($fp)              # (delay; cr_end leaves t0)
+	bnez    $t1, cr_unpack_1
+	lw      $at, BS_LIGHT($fp)           # (delay: cr_unpack's first)
 	jal     put_pieces                   # half the room taken: the pieces put
 	nop                                  # (s4 0, s7 the first slot after)
 	beqz    $v0, cr_fail
 	lw      $t0, BS_NQ($fp)              # (delay)
 cr_unpack:
 	lw      $at, BS_LIGHT($fp)
+cr_unpack_1:
 	lw      $a1, BS_OFF+0($fp)
 	lw      $a2, BS_OFF+4($fp)
 	lw      $a3, BS_OFF+8($fp)
@@ -572,15 +571,13 @@ cr_unpack:
 	sw      $t7, 8($a0)
 	bnez    $v0, 6b
 	addiu   $a0, $a0, V_SIZE             # (delay)
-	bnez    $t8, 7f                      # a triangle's box as a quad's: corner 2
-	nop                                  # again as the fourth, never drawn
-	lw      $t0, PC_V + 24($s7)
+	bnez    $t8, 71f                     # a triangle's box as a quad's: corner 2
+	move    $t6, $s7                     # again as the fourth, never drawn
+	lw      $t0, PC_V + 24($s7)          # (the box's cursor in the delay slot)
 	lw      $t1, PC_V + 28($s7)
-	nop
 	sw      $t0, PC_V + 36($s7)
 	sw      $t1, PC_V + 40($s7)
-7:	move    $t6, $s7                     # the box, axis by axis
-	li      $t7, 3
+71:	li      $t7, 3                       # the box, axis by axis
 8:	lh      $t0, PC_V + 0($t6)
 	lh      $t1, PC_V + 12($t6)
 	lh      $t2, PC_V + 24($t6)
@@ -605,6 +602,7 @@ cr_desc:
 	# ---- the polygon as it is: its box, or its corners on the GTE ----------
 fd_node:
 	andi    $t0, $a0, 1
+fd_node_1:
 	bnez    $t0, fd_leaf
 	move    $t9, $a0                     # (delay) the node
 	lhu     $t1, N_PLANE3($t9)
@@ -628,8 +626,8 @@ fd_node:
 fd_side:
 	bnez    $t7, 1f
 	nop
-	bnez    $t8, fd_node                 # all >= 0, one > 0: the front
-	nop
+	bnez    $t8, fd_node_1               # all >= 0, one > 0: the front
+	andi    $t0, $a0, 1                  # (delay: fd_node's first)
 	b       fd_node                      # all on the plane: the back (Quake's
 	move    $a0, $a1                     # d <= 0)
 1:	beqz    $t8, fd_node                 # all <= 0, one < 0: the back
@@ -732,6 +730,7 @@ cr_ret1:
 	# corner (the C's cut_poly) -----------------------------------------------
 gs_node:
 	andi    $t0, $a0, 1
+gs_node_1:
 	bnez    $t0, gs_leaf
 	move    $t9, $a0                     # (delay) the node
 	lhu     $t1, N_PLANE3($t9)
@@ -761,8 +760,8 @@ gs_node:
 	addiu   $t5, $t5, -1
 	bnez    $t5, 1b
 	addiu   $t6, $t6, 4
-	b       gs_side
-	nop
+	b       gs_side_1
+	srl     $t7, $t7, 31                 # (delay: gs_side's first)
 gs_gen:                                   # the normal as R1 (the plane's words:
 	lw      $t4, PL_N+0($t1)             # R13 = n2, R21 its type, not used)
 	lw      $t5, PL_N+4($t1)
@@ -776,23 +775,23 @@ gs_gen:                                   # the normal as R1 (the plane's words:
 	addiu   $t4, $t4, V_SIZE
 	mtc2    $v0, C2_VZ0
 	addiu   $t5, $t5, -1
-	nop
+	addiu   $t6, $t6, 4                  # (two before the GTE reads it)
 	MVMVA   0, 0, 0, 3, 0                # MAC1 = n . corner
 	mfc2    $v0, C2_MAC1
 	nop
 	subu    $v0, $v0, $t3
-	sw      $v0, 0($t6)
+	sw      $v0, -4($t6)
 	or      $t7, $t7, $v0
 	subu    $v0, $zero, $v0
-	or      $t8, $t8, $v0
 	bnez    $t5, 2b
-	addiu   $t6, $t6, 4
+	or      $t8, $t8, $v0                # (delay)
 gs_side:
 	srl     $t7, $t7, 31                 # one behind
+gs_side_1:
 	bnez    $t7, 3f
 	srl     $t8, $t8, 31                 # (delay) one in front
-	bnez    $t8, gs_node                 # all >= 0, one > 0: the front
-	nop
+	bnez    $t8, gs_node_1               # all >= 0, one > 0: the front
+	andi    $t0, $a0, 1                  # (delay: gs_node's first)
 	b       gs_node                      # all on the plane: the back
 	move    $a0, $v1
 3:	beqz    $t8, gs_node                 # all <= 0: the back
@@ -821,6 +820,7 @@ gs_side:
 	move    $t4, $zero                   # the back's
 gs_corner:
 	slti    $v0, $t3, BMF_CORNERS - 1    # 11 corners on a side: too cut up
+gs_corner_1:                             # (the loop's way back: slti in its slot)
 	beqz    $v0, cr_overflow
 	slti    $v0, $t4, BMF_CORNERS - 1    # (delay)
 	beqz    $v0, cr_overflow
@@ -842,52 +842,50 @@ gs_corner:
 	sll     $t8, $t0, 1
 	addu    $t8, $t8, $t0
 	sll     $t8, $t8, 2
-	bgtz    $t7, 7f                      # the front: d[i] > 0, or 0 with a
-	addu    $t8, $a1, $t8                # (delay) corner i        neighbour > 0
-	bnez    $t7, 8f
-	nop
-	bgtz    $t5, 7f
-	nop
+	addu    $t8, $a1, $t8                # corner i
+	# the front: d[i] > 0, or 0 with a neighbour > 0; the back: d[i] < 0,
+	# or 0 with a neighbour < 0 (d[i] < 0 straight to the back, d[i] > 0
+	# past the back's tests; each way's first instruction in the slots)
+	bgtz    $t7, 7f
+	sll     $a0, $t3, 1                  # (7's first)
+	bltz    $t7, 9f
+	sll     $a0, $t4, 1                  # (9's first)
+	bgtz    $t5, 7f                      # d[i] 0: by its neighbours
+	sll     $a0, $t3, 1
 	blez    $t6, 8f
-	nop
-7:	sll     $a0, $t3, 1
-	addu    $a0, $a0, $t3
+	sll     $a0, $t3, 1
+7:	addu    $a0, $a0, $t3
 	sll     $a0, $a0, 2
 	addu    $a0, $t1, $a0
 	COPYV   $a0, $t8
 	addiu   $t3, $t3, 1
-8:	bltz    $t7, 9f                      # the back: d[i] < 0, or 0 with a
-	nop                                  # neighbour < 0
-	bnez    $t7, 10f
-	nop
-	bltz    $t5, 9f
-	nop
+	bgtz    $t7, 101f                    # d[i] > 0: not the back, and no
+	xor     $v0, $t7, $t6                # (10's)           zero to test
+8:	bltz    $t5, 9f                      # (d[i] 0 here)
+	sll     $a0, $t4, 1
 	bgez    $t6, 10f
-	nop
-9:	sll     $a0, $t4, 1
-	addu    $a0, $a0, $t4
+	sll     $a0, $t4, 1
+9:	addu    $a0, $a0, $t4
 	sll     $a0, $a0, 2
 	addu    $a0, $t2, $a0
 	COPYV   $a0, $t8
 	addiu   $t4, $t4, 1
 10:	beqz    $t7, 11f                     # an edge crossing: d[i] and d[j] of
 	xor     $v0, $t7, $t6                # (delay)        opposite signs
-	beqz    $t6, 11f
-	nop
-	bgez    $v0, 11f
-	nop
-	sll     $a0, $t3, 1                  # into the front's next corner
+101:	beqz    $t6, 11f
+	sll     $a0, $t3, 1                  # (the crossing's first two in the
+	bgez    $v0, 11f                     #  slots)
 	addu    $a0, $a0, $t3
-	sll     $a0, $a0, 2
+	sll     $a0, $a0, 2                  # into the front's next corner
 	addu    $a0, $t1, $a0
 	move    $t5, $t8                     # a = corner i (da = d[i] in t7)
 	move    $t8, $t6                     # db = d[j]
 	addiu   $v0, $t0, 1                  # corner j
-	bne     $v0, $a2, 12f
-	nop
+	bne     $v0, $a2, 121f
+	sll     $at, $v0, 1                  # (12's first)
 	move    $v0, $zero
 12:	sll     $at, $v0, 1
-	addu    $at, $at, $v0
+121:	addu    $at, $at, $v0
 	sll     $at, $at, 2
 	jal     cross
 	addu    $t6, $a1, $at                # (delay) b = corner j
@@ -899,8 +897,8 @@ gs_corner:
 	addiu   $t3, $t3, 1
 	addiu   $t4, $t4, 1
 11:	addiu   $t0, $t0, 1
-	bne     $t0, $a2, gs_corner
-	nop
+	bne     $t0, $a2, gs_corner_1
+	slti    $v0, $t3, BMF_CORNERS - 1    # (gs_corner's first)
 	lw      $t5, BS_PENT($fp)            # the back piece: the far child, later
 	lw      $t6, N_CHILD+4($t9)
 	sw      $t4, PD_N($t5)
@@ -960,8 +958,8 @@ gs_pop:
 	addiu   $t5, $t5, V_SIZE
 	bnez    $t7, 15b
 	addiu   $t6, $t6, V_SIZE
-	b       gs_node
-	nop
+	b       gs_node_1
+	andi    $t0, $a0, 1                  # (delay: gs_node's first)
 
 # -----------------------------------------------------------------------------
 # cross: where the edge a-b (t5, t6: corners; t7, t8 their distances, of
@@ -1000,14 +998,12 @@ cross:
 	subu    $t8, $zero, $t8
 3:	slt     $v0, $t8, $at
 	bnez    $v0, 4f                      # den < 1 << 19: (num << 12) fits
-	nop
+	sll     $v0, $t7, 12                 # (delay) num << 12
 	sra     $t7, $t7, 1
 	b       3b
 	sra     $t8, $t8, 1
-4:	sll     $t7, $t7, 12
-	div     $zero, $t7, $t8
+4:	div     $zero, $v0, $t8
 	li      $v0, 3                       # (while it divides: x, y, z)
-	nop
 	mflo    $at                          # t
 5:	lh      $t7, 0($t5)                  # a coordinate: a + ((b - a) t + 2048 >> 12)
 	lh      $t8, 0($t6)
@@ -1018,7 +1014,6 @@ cross:
 	addiu   $t6, $t6, 2
 	mflo    $t8
 	addiu   $a0, $a0, 2
-	nop
 	addiu   $t8, $t8, 2048
 	sra     $t8, $t8, 12
 	addu    $t7, $t7, $t8
@@ -1034,7 +1029,6 @@ cross:
 	addiu   $t6, $t6, 1
 	mflo    $t8
 	addiu   $a0, $a0, 1
-	nop
 	addiu   $t8, $t8, 2048
 	sra     $t8, $t8, 12
 	addu    $t7, $t7, $t8
@@ -1192,6 +1186,7 @@ pr_many:
 	move    $t4, $zero                   # triangles
 pr_count:
 	lw      $t5, 0($t0)
+pr_count_1:                              # (the loop's way back: lw in its slot)
 	addiu   $t0, $t0, 4
 	lw      $t6, PC_N($t5)               # n | cut << 8 | quad << 16
 	nop
@@ -1210,8 +1205,8 @@ pr_count:
 	addu    $t3, $t3, $t8
 	andi    $t8, $t7, 1
 	addu    $t4, $t4, $t8
-2:	bne     $t0, $t1, pr_count
-	nop
+2:	bne     $t0, $t1, pr_count_1
+	lw      $t5, 0($t0)                  # (pr_count's first; after the last: harmless)
 	addiu   $t5, $t2, 2                  # the sizes: nidx = (nv + 2) / 3 x 3
 	li      $t6, 171                     # (x 171 >> 9: / 3 for x < 128)
 	multu   $t5, $t6
@@ -1341,37 +1336,31 @@ pr_bpiece:
 	andi    $a0, $t6, 0x100
 	bnez    $a0, pr_bcut
 	andi    $a1, $t6, 0xff               # (delay) its corners
-	lh      $t6, PC_BOX+0($t9)
-	nop
+	lh      $t6, PC_BOX+0($t9)           # (t6 and a0 in turn: no load delay
+	lh      $a0, PC_BOX+2($t9)           #  left empty, §81.3)
 	MINW    $t0, $t6
-	lh      $t6, PC_BOX+2($t9)
-	nop
-	MINW    $t1, $t6
 	lh      $t6, PC_BOX+4($t9)
-	nop
+	MINW    $t1, $a0
+	lh      $a0, PC_BOX+6($t9)
 	MINW    $t2, $t6
-	lh      $t6, PC_BOX+6($t9)
-	nop
-	MAXW    $t3, $t6
 	lh      $t6, PC_BOX+8($t9)
-	nop
+	MAXW    $t3, $a0
+	lh      $a0, PC_BOX+10($t9)
 	MAXW    $t4, $t6
-	lh      $t6, PC_BOX+10($t9)
-	nop
-	MAXW    $t5, $t6
+	subu    $v0, $a0, $t5                # (MAXW t5, a0, its last in the slot)
+	sra     $at, $v0, 31
+	and     $v0, $v0, $at
 	b       pr_bnext
-	nop
+	subu    $t5, $a0, $v0
 pr_bcut:
 	addiu   $t9, $t9, PC_V
 8:	lh      $t6, 0($t9)
-	nop
+	lh      $a0, 2($t9)
 	MINW    $t0, $t6
 	MAXW    $t3, $t6
-	lh      $t6, 2($t9)
-	nop
-	MINW    $t1, $t6
-	MAXW    $t4, $t6
 	lh      $t6, 4($t9)
+	MINW    $t1, $a0
+	MAXW    $t4, $a0
 	addiu   $a1, $a1, -1
 	MINW    $t2, $t6
 	MAXW    $t5, $t6
@@ -1406,11 +1395,13 @@ pr_radius:                                # (sc: t0, t1, t2)
 	sll     $t3, $t3, 3
 	addu    $t9, $t9, $t3                # the record's first vertex
 	move    $t2, $zero                   # r2
-9:	SQD     $t5, $t9, $t0, $t1, $t7
-	addiu   $t4, $t4, -1
-	MAXU    $t2, $t5
+9:	SQD     $t5, $t9, $t0, $t1, $t7, "addiu $t4, $t4, -1", "addiu $t9, $t9, 8"
+	sltu    $at, $t2, $t5                # (MAXU t2, t5, its last in the slot)
+	subu    $v0, $t5, $t2
+	subu    $at, $zero, $at
+	and     $v0, $v0, $at
 	bnez    $t4, 9b
-	addiu   $t9, $t9, 8
+	addu    $t2, $t2, $v0
 	ISQRT
 	addiu   $t3, $t3, 1                  # sr = isqrt + 1
 

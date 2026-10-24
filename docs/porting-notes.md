@@ -10143,6 +10143,21 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
   the y range's; W + H moves to t9. Two instructions fewer for a careful
   triangle, one for a quad: the 128 views −0.18 % at T = 4, −0.12 % at
   T = 32.
+- **The brush models' cut** (`engine/bmfrag.s`), checked cut by cut
+  against its C (`BMF_C=2`, dynarec and interpreter: 6165 cuts, 0
+  mismatches):
+  - pr_radius's loop: the counter and the pointer in the GTE's two
+    spacing slots, MAXU's last in the loop's delay slot;
+  - COPYV (a corner, 3 words) with v0 and at in turn: 6 instructions,
+    not 9;
+  - gs_corner's sides: a corner behind goes straight to the back copy, one
+    in front skips the back's tests; each way's first instruction in the
+    slots, gs_corner's first in the loop's;
+  - the box (pr_bpiece, pr_bcut) with t6 and a0 in turn; cross without
+    its three needless nops; the slots of fd_side, gs_side, gs_gen,
+    cr_poly, cr_sph_gen, pr_count filled.
+  - The cut of the three movers bench: E1M6's train −1.8 %, E1M3's −2.7 %,
+    E3M4's door −2.0 % (385 k → 379 k cycles a frame for the train).
 - **Measured and left out** (each loses at T = 32, where the game runs):
   - the split test by the edge's length in one pass (no REFINE; gp and sp
     as temporaries): −1.06 % at T = 4, +0.19 % at T = 32;
