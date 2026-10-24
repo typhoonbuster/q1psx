@@ -10189,22 +10189,22 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
   checked for the way that does not need it: each reads the scratchpad,
   the stack, the edict, a frame of its own, or an aligned array's next
   entry (a valid read past its end at most).
-- **The near check after a careful transform** (NZ: the record loops' and
-  the sorted models'): two SZ a turn, an odd count's first alone, 4.5
-  instructions a vertex, not 6. The 128 views −9.8 k at T = 4, the same
-  at T = 32.
-- **The flat transforms under their RTPT** (XFORM light 0 and 2: the flat
-  shading's records past 512 units, with nothing to light while the GTE
-  works): the next three vertices' pool addresses are made in the RTPT's
-  shadow (the record's first three before the loop), so its `swc2` no
-  longer waits ~23 cycles. The 128 views −22 k at T = 32, −8.6 k at T = 4.
-- **Measured and left out** (each loses at T = 32, where the game runs):
+- **Measured and left out** (each loses at T = 32, where the game runs,
+  or costs RAM: the RAM comes first):
   - the split test by the edge's length in one pass (no REFINE; gp and sp
     as temporaries): −1.06 % at T = 4, +0.19 % at T = 32;
   - REFINE with gp and sp, kept on slow_poly's entry: −0.28 % at T = 4,
     +0.04 % at T = 32;
   - MIDLOOK's found test's delay slot: no instruction to put there that
-    the other path does not pay back.
+    the other path does not pay back;
+  - the near check after a careful transform (NZ: the record loops' and
+    the sorted models') two SZ a turn, an odd count's first alone (4.5
+    instructions a vertex, not 6): the 128 views −9.8 k cycles at T = 4
+    and at T = 32, for 360 bytes of code (its ten copies);
+  - the flat transforms (XFORM light 0 and 2, nothing to light while the
+    GTE works) making the next three vertices' pool addresses in the
+    RTPT's shadow: the 128 views −22 k at T = 32, −8.6 k at T = 4, for
+    216 bytes (a prologue in each of its six copies).
 
 ### 81.4 The interrupts' handler, again
 

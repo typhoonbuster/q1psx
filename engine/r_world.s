@@ -170,7 +170,6 @@ r_ysites:
 # draw distance's): each light times its vertex's factor in r_fogtab (t2 =
 # the table, by SZ / 64, 128 = as it is), t7 clobbered.
 .macro XFORM sz, loop, one, done, light=1, fog=0
-.if \light == 1
 \loop:
 	lhu     $t0, 0($t3)
 	lhu     $t1, 2($t3)
@@ -185,30 +184,6 @@ r_ysites:
 	lwc2    C2_VXY1, 0($t1)
 	lwc2    C2_VZ1,  4($t1)
 	addu    $t6, $t6, $t9
-	lwc2    C2_VXY2, 0($t6)
-	lwc2    C2_VZ2,  4($t6)
-	addiu   $t3, $t3, 6
-	addiu   $t5, $t5, -3
-	RTPT
-.else
-	# (no lights to expand while the RTPT runs: the next three's pool
-	# addresses are made in its shadow instead, §81.3; the record's first
-	# three here)
-\loop:
-	lhu     $t0, 0($t3)
-	lhu     $t1, 2($t3)
-	lhu     $t6, 4($t3)
-	sll     $t0, $t0, 3
-	addu    $t0, $t0, $t9
-	sll     $t1, $t1, 3
-	addu    $t1, $t1, $t9
-	sll     $t6, $t6, 3
-	addu    $t6, $t6, $t9
-\loop\()_p:                              # (t0, t1, t6: the three's addresses)
-	lwc2    C2_VXY0, 0($t0)
-	lwc2    C2_VZ0,  4($t0)
-	lwc2    C2_VXY1, 0($t1)
-	lwc2    C2_VZ1,  4($t1)
 	lwc2    C2_VXY2, 0($t6)
 	lwc2    C2_VZ2,  4($t6)
 	addiu   $t3, $t3, 6
@@ -218,16 +193,6 @@ r_ysites:
 	sw      $at, SP_COL+0($t4)           # the record's one colour
 	sw      $at, SP_COL+4($t4)
 	sw      $at, SP_COL+8($t4)
-.endif
-	lhu     $t0, 0($t3)                  # the next three's (past the last: the
-	lhu     $t1, 2($t3)                  #  indices' padding or the light bytes,
-	lhu     $t6, 4($t3)                  #  harmless reads)
-	sll     $t0, $t0, 3
-	sll     $t1, $t1, 3
-	sll     $t6, $t6, 3
-	addu    $t0, $t0, $t9
-	addu    $t1, $t1, $t9
-	addu    $t6, $t6, $t9
 .endif
 .if \light == 1
 	lbu     $t0, 0($at)                  # while the GTE works: the three
@@ -297,11 +262,7 @@ r_ysites:
 	swc2    C2_SZ2,  SP_SZ+4($t4)
 	swc2    C2_SZ3,  SP_SZ+8($t4)
 .endif
-.if \light == 1
 	bgtz    $t5, \loop
-.else
-	bgtz    $t5, \loop\()_p
-.endif
 	addiu   $t4, $t4, 12
 	addiu   $t5, $t5, 2                  # 0, 1 or 2 left: one RTPS each
 	blez    $t5, \done                   # (rather than a padded RTPT)
@@ -430,30 +391,6 @@ r_ysites:
 	\tail
 	move    \b, \c
 3:
-.endm
-
-# NZ loop: the exact near check after a careful record's transform: a2 = 1
-# when one of its t5 (= nv, 3 or more) vertices lies nearer than t7 (SZ),
-# the cache at t4; two at a time, an odd count's first alone (§81.3: 4.5
-# instructions a vertex, not 6). Clobbers t0, at, t4, t5.
-.macro NZ loop
-	andi    $t0, $t5, 1
-	beqz    $t0, \loop                   # an even count: pairs
-	move    $a2, $zero                   # (any real vertex near?)
-	lw      $t0, SP_SZ($t4)              # odd: the first alone
-	addiu   $t5, $t5, -1
-	addiu   $t4, $t4, 4
-	sltu    $a2, $t0, $t7
-\loop:
-	lw      $t0, SP_SZ($t4)
-	lw      $at, SP_SZ+4($t4)
-	addiu   $t5, $t5, -2
-	sltu    $t0, $t0, $t7
-	sltu    $at, $at, $t7
-	or      $a2, $a2, $t0
-	or      $a2, $a2, $at
-	bgtz    $t5, \loop
-	addiu   $t4, $t4, 8
 .endm
 
 # CAREFUL quad, skip, var: a conservative test, per polygon of a record the
@@ -1197,7 +1134,14 @@ r_ysites:
 	andi    $t0, $a2, 4                  # big or warping: careful regardless
 	bnez    $t0, \p\()_polys
 	move    $t5, $t2
-	NZ      \p\()_nz                     # exact check: any real vertex near?
+	move    $a2, $zero                   # exact check: any real vertex near?
+\p\()_nz:
+	lw      $t0, SP_SZ($t4)
+	addiu   $t5, $t5, -1
+	sltu    $t0, $t0, $t7
+	or      $a2, $a2, $t0
+	bgtz    $t5, \p\()_nz
+	addiu   $t4, $t4, 4
 
 	POLYS   \p, \var, 0, \p\()_rec_1
 
@@ -1307,7 +1251,14 @@ r_ysites:
 	andi    $t0, $a2, 4                  # big or warping: careful regardless
 	bnez    $t0, \p\()f_polys
 	move    $t5, $t2
-	NZ      \p\()_fnz                    # exact check: any real vertex near?
+	move    $a2, $zero                   # exact check: any real vertex near?
+\p\()_fnz:
+	lw      $t0, SP_SZ($t4)
+	addiu   $t5, $t5, -1
+	sltu    $t0, $t0, $t7
+	or      $a2, $a2, $t0
+	bgtz    $t5, \p\()_fnz
+	addiu   $t4, $t4, 4
 	POLYS   \p\()f, \var, 1, \p\()_rec_1
 .endif
 .endif
@@ -2800,7 +2751,14 @@ ds_xf_done:
 	bnez    $t0, ds_polys                # big or warping: careful regardless
 	move    $t4, $t8
 	move    $t5, $t2
-	NZ      ds_nz                        # exact check: any real vertex near?
+	move    $a2, $zero                   # exact check: any real vertex near?
+ds_nz:
+	lw      $t0, SP_SZ($t4)
+	addiu   $t5, $t5, -1
+	sltu    $t0, $t0, $t7
+	or      $a2, $a2, $t0
+	bgtz    $t5, ds_nz
+	addiu   $t4, $t4, 4
 
 	# its triangles (a sorted model has no quads), each, turned toward the
 	# eye (NCLIP, as POLYS), at the head of its bucket's chain
