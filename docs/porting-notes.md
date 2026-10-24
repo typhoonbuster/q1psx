@@ -11049,14 +11049,14 @@ E4M1, END).
 
 ### 85.2 The cook (tools/qcook/sound.c)
 
-`QCOOK_SOUND_HALVE=<percent>` (default 5 since §86; 0
-none; `cooked/settings.txt` records it, so the build cooks again when it
+`QCOOK_SOUND_HALVE=<percent>` (default 1, then 5 in §86; 0 none;
+`cooked/settings.txt` records it, so the build cooks again when it
 changes): every sound the cook loads, the banks' and the streamed ones
 alike, whose halving would lose no more than that share of its energy is
-cooked at half its rate (`halve_by_class`, in `sound_add`); a second
-halving, 5512 → 2756 Hz, follows for a sound whose spectrum at 5512 Hz
-holds no more than `QCOOK_SOUND_HALVE2` (default 1 %) above 1.38 kHz: the
-rumbles, hums and low cries keep what they have. The loss is the spectrum's share
+cooked at half its rate (`halve_by_class`, in `sound_add`); §86 added a
+second halving, 5512 → 2756 Hz, for a sound whose spectrum at 5512 Hz
+held no more than `QCOOK_SOUND_HALVE2` (1 %) above 1.38 kHz. §87 replaces
+both by a rate per sound (`QCOOK_SOUND_KEEP`). The loss is the spectrum's share
 above a quarter of the rate, by an FFT over the sound (`halve_loss`): a
 first try measured it as the energy `wav_halve`'s 9-tap half-band filter
 removed, and that filter is soft (0.82 at a tenth of the rate, 0.56 at
@@ -11256,3 +11256,75 @@ bank and their swap room the models stream by distance as they should.
   DuckStation; `QCOOK_SOUND_HALVE=0` restores today's.
 - The music's ring at 4 chunks (`Q1PSX_MUSIC_RING=4`, +16 KB: the cook's
   `QCOOK_MUSIC_RING_KB=32` to match) stays a knob.
+
+## §87 — A rate per sound, at a constant share of its energy (2026-10-24)
+
+The observation after §86: the halvings gave an uneven fidelity —
+a sound losing 1 % of its energy beside one losing 5 %, where the ear
+starts to notice — and the very low sounds could go lower still. The lever
+asked for: a sample rate of its own for every sound, chosen for a constant
+fidelity, the SPU playing it at the pitch of that rate (which is what the
+halvings did in steps of two). A second idea, subsampling a sound whose
+band is narrow and restoring it by the pitch, buys nothing beyond it: the
+SPU's pitch multiplies every frequency (a resampling), it shifts no band,
+so a sound with content up to f₂ needs 2 f₂ samples a second whatever its
+lowest frequency, unless it is transposed, which would not be Quake's
+sound.
+
+### 87.1 Measured first
+
+Over the 225 sounds, the lowest rate keeping a share of each one's energy
+(the spectrum's cumulative energy, 15 % of room above the frequency it
+reaches the share at, 2756 Hz at the least), and the maps' sets (§86's,
+beside the 426 KB SPU RAM leaves for a bank with a 34 KB swap room):
+
+| energy kept | the 225 sounds | maps whole in the SPU | the biggest RAM block | RAM over the 32 maps |
+|---|---|---|---|---|
+| 95 % | 834 KB | 29 | 7 KB | 15 KB |
+| 97 % | 912 KB | 23 | 53 KB | 265 KB |
+| 98 % | 975 KB | 18 | 90 KB | 662 KB |
+| 99 % | 1078 KB | 8 | 143 KB | 1713 KB |
+| 99.5 % | 1187 KB | 1 | 203 KB | 3145 KB |
+| §86's halvings (5 %, then 1 %) | 884 KB | 10 | 155 KB | 1619 KB |
+| native | 1903 KB | 0 | 516 KB | 11 218 KB |
+
+The halvings were the most compressive rule but the least even: at 99 %
+`weapons/guncock` keeps 10 036 Hz where §86 halved it (it loses 2.3 % at
+5512), `player/death5` goes to 3671 Hz where §86 kept 5512. A perceptual
+rule, keeping every 1/6-octave band within 40 dB of the loudest, keeps the
+noise floor too and saves almost nothing (1529 KB).
+
+### 87.2 The cook (tools/qcook/sound.c)
+
+`QCOOK_SOUND_KEEP=<percent>` (default 95; 100 or 0: a
+sound's own rate; `cooked/settings.txt` records it) replaces
+`QCOOK_SOUND_HALVE` and `QCOOK_SOUND_HALVE2`. For every sound the cook
+loads: `keep_freq` reads off the spectrum the frequency below which the
+share of its energy lies; the rate is 2.3 times it (15 % of room above
+the Nyquist), 2756 Hz at the least, rounded to a pitch the SPU has
+(`rate × 4096 / 44100` whole); `wav_resample` takes the sound there: the
+clean halvings of §85 while the rate allows, then one step by a
+windowed-sinc resampler at a ratio in (1/2, 1] (Blackman, 95 taps, the
+low-pass at 0.45 of the new rate, unity gain), the loop's start scaled
+with it. The bank's and the streamed sounds' headers carry the pitch as
+before; nothing changes in the engine.
+
+### 87.3 Measured
+
+At 95 %, the 32 maps cooked again: **29 maps whole in the SPU** (banks
+235-436 KB), E1M3 and E4M3 with one sound (19 KB) in RAM, E2M4 one (5
+KB); STREAM_0.DAT 1770 → 1618 KB. E1M1's 93 sounds: 7 at 11 025 Hz
+(`ric1`, `tink1`, `armor1`, `secret`, `lock4`, `pkup`, `h2ohit1`...), 55
+between 2778 and 10 530 Hz (`gib` 10 530, `r_tele5` 7730, `pain5` 5017,
+`death5` 3101, `water1` 3338), 30 at the 2756 Hz floor (`guncock`,
+`r_exp3`, `wind2`, the ogre's and the player's low sounds...). The maps all
+load (`BENCH_MAPS=1 VIEWS=0`: no bank out of bounds, no block refused).
+
+### 87.4 Left
+
+- **The ear decides the share**: 95 % puts the shotgun's `guncock`
+  and the explosions' `r_exp3` at 2756 Hz; 97 % keeps 23 maps whole for
+  more highs; the knob is per cook.
+- The 15 % of room and the 2756 Hz floor are constants of
+  `halve_by_class`; the floor could go lower for the hums if
+  wanted.

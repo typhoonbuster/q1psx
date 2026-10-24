@@ -619,13 +619,14 @@ static size_t sound_bytes(const bank_sound *s)
    SPU RAM follow its rate, and the rate is the one lever on them. Most of
    Quake's sounds are 11 025 Hz 8-bit; many hold next to nothing above
    2.76 kHz (rumbles, hums, the player's cries), some are all highs (the
-   ricochets, the metal tinks, the pickups). QCOOK_SOUND_HALVE=<percent>
-   (default 5; 0: none) halves the rate of every sound, the bank's and the
-   streamed ones alike, whose spectrum holds no more than that share of its
-   energy above a quarter of its rate (what the halving cuts; an FFT;
-   docs/porting-notes.md §85). Over the game's 225
-   sounds, 1 % takes 100 of the 217 at 11 kHz and 5 of the 8 at 22 kHz,
-   5 % takes 57 more. The budget below still halves others for room. */
+   ricochets, the metal tinks, the pickups). Every sound, the bank's and
+   the streamed ones alike, is cooked at its own rate: the lowest that
+   keeps QCOOK_SOUND_KEEP percent of its energy (default 95; 100 or 0:
+   its own rate), read off its spectrum (an FFT), with 15 % of room above
+   that frequency and 2756 Hz at the least; the SPU plays it at the pitch
+   of that rate (docs/porting-notes.md §85, §87: the halvings of §85-86
+   gave an uneven fidelity, a sound losing 5 % of its energy beside one
+   losing nothing). The budget below still halves sounds for room. */
 /* an in-place radix-2 FFT (re, im interleaved), n a power of two */
 static void fft(double *z, int n)
 {
@@ -658,72 +659,105 @@ static void fft(double *z, int n)
 	}
 }
 
-/* the share of a sound's energy above a quarter of its rate: what halving
-   the rate cuts (its spectrum, by an FFT over the sound zero-padded) */
-static double halve_loss(const wav_t *w)
+/* the frequency below which `keep` of a sound's energy lies (its
+   spectrum, by an FFT over the sound zero-padded), in Hz */
+static double keep_freq(const wav_t *w, double keep)
 {
 	int n = 1;
 	while (n < w->n)
 		n <<= 1;
-	double *z = xcalloc((size_t) n * 2, sizeof *z), e_all = 0, e_hi = 0;
+	double *z = xcalloc((size_t) n * 2, sizeof *z), e_all = 0, acc = 0;
 	for (int i = 0; i < w->n; i++)
 		z[2 * i] = w->s[i];
 	fft(z, n);
-	for (int k = 0; k <= n / 2; k++) {              /* (the real signal's half) */
-		double p = z[2 * k] * z[2 * k] + z[2 * k + 1] * z[2 * k + 1];
-		e_all += p;
-		if (k > n / 4)
-			e_hi += p;
+	for (int k = 0; k <= n / 2; k++)                /* (the real signal's half) */
+		e_all += z[2 * k] * z[2 * k] + z[2 * k + 1] * z[2 * k + 1];
+	int k = 0;
+	for (; k < n / 2 && e_all > 0; k++) {
+		acc += z[2 * k] * z[2 * k] + z[2 * k + 1] * z[2 * k + 1];
+		if (acc >= keep * e_all)
+			break;
 	}
 	free(z);
-	return e_all > 0 ? e_hi / e_all : 0;
+	return (double) k * w->rate / n;
 }
 
-static double halve_threshold(void)
+/* the sound at `rate` (below its own): the halvings first (wav_halve's
+   clean low-pass while the rate allows), then the last step by a
+   windowed-sinc resampler at a ratio in (1/2, 1], its low-pass at 0.45 of
+   the new rate (Blackman, HALVE_TAPS taps); the loop's start follows */
+static void wav_resample(wav_t *w, int rate)
+{
+	while (w->rate / 2 >= rate && w->rate > 2756)
+		wav_halve(w);
+	if (rate >= w->rate || w->n < 2)
+		return;
+	double ratio = (double) rate / w->rate, fc = 0.45 * ratio;   /* (cycles a sample of the old rate) */
+	double half = (HALVE_TAPS + 1) / 2.0;
+	int n2 = (int) lround(w->n * ratio);
+	if (n2 < 1)
+		n2 = 1;
+	int16_t *o = xmalloc((size_t) n2 * sizeof *o);
+	for (int j = 0; j < n2; j++) {
+		double t = j / ratio, a = 0, wsum = 0;    /* (the output sample's time, in old samples) */
+		int c = (int) floor(t);
+		for (int k = c - (HALVE_TAPS - 1) / 2; k <= c + (HALVE_TAPS + 1) / 2; k++) {
+			double d = k - t;
+			if (fabs(d) >= half)
+				continue;
+			double x = M_PI * (d / half + 1);        /* the Blackman window over (-half, half) */
+			double win = 0.42 - 0.5 * cos(x) + 0.08 * cos(2 * x);
+			double h = (d == 0 ? 2 * fc : sin(2 * M_PI * fc * d) / (M_PI * d)) * win;
+			int kk = k < 0 ? 0 : k >= w->n ? w->n - 1 : k;
+			a    += h * w->s[kk];
+			wsum += h;
+		}
+		if (wsum > 0)
+			a /= wsum;                            /* (unity gain) */
+		if (a > 32767) a = 32767;
+		if (a < -32768) a = -32768;
+		o[j] = (int16_t) lround(a);
+	}
+	free(w->s);
+	w->s = o;
+	w->n = n2;
+	if (w->loopstart >= 0)
+		w->loopstart = (int) lround(w->loopstart * ratio);
+	w->rate = rate;
+}
+
+static double keep_share(void)
 {
 	static double t = -1;
 	if (t < 0) {
-		const char *e = getenv("QCOOK_SOUND_HALVE");
-		t = e ? atof(e) : 5.0;
-		if (t < 0)
-			t = 0;
+		const char *e = getenv("QCOOK_SOUND_KEEP");
+		t = e ? atof(e) : 95.0;
+		if (t <= 0 || t >= 100)
+			t = 0;                                /* (none: the sound's own rate) */
 	}
-	return t;
+	return t / 100;
 }
 
-static int    class_halved_n;
+static int    class_halved_n;                     /* the sounds at a rate under their own, the bytes saved */
 static size_t class_halved_saved;
-
-/* the second halving (5512 -> 2756 Hz) asks for a stricter share:
-   QCOOK_SOUND_HALVE2 (default 1 %; 0: never) */
-static double halve_threshold2(void)
-{
-	static double t = -1;
-	if (t < 0) {
-		const char *e = getenv("QCOOK_SOUND_HALVE2");
-		t = e ? atof(e) : 1.0;
-		if (t < 0)
-			t = 0;
-	}
-	return t;
-}
 
 static void halve_by_class(bank_sound *s)
 {
-	double t = halve_threshold(), t2 = halve_threshold2();
-	int steps = 0;
-	/* twice at most (11 025 -> 5512 -> 2756 Hz), each step judged on the
-	   spectrum at the rate it starts from, the second against the stricter
-	   share: a sound at 2756 Hz keeps 1.4 kHz */
-	while (s->wav.n >= 64 && s->wav.rate > 2756 && steps < 2 &&
-	       (steps == 0 ? t : t2) > 0 && halve_loss(&s->wav) * 100 <= (steps == 0 ? t : t2)) {
-		size_t before = sound_bytes(s);
-		wav_halve(&s->wav);
-		s->halved = 1;
-		class_halved_saved += before - sound_bytes(s);
-		if (!steps++)
-			class_halved_n++;
-	}
+	double keep = keep_share();
+	if (keep <= 0 || s->wav.n < 64 || s->wav.rate <= 2756)
+		return;
+	double fc = keep_freq(&s->wav, keep);
+	int rate = (int) lround(2 * fc * 1.15);        /* (15 % above the Nyquist the energy asks for) */
+	if (rate < 2756)
+		rate = 2756;
+	if (rate >= s->wav.rate)
+		return;
+	rate = (int) lround(lround(rate * 4096.0 / 44100) * 44100.0 / 4096);   /* (a pitch the SPU has) */
+	size_t before = sound_bytes(s);
+	wav_resample(&s->wav, rate);
+	s->halved = 1;
+	class_halved_n++;
+	class_halved_saved += before - sound_bytes(s);
 }
 
 void sound_class_halved(int *n, size_t *saved)

@@ -33,10 +33,10 @@
 # A cook writes what its output depends on, besides the cooker's sources
 # (CMake tracks those), to cooked/settings.txt: the settings above, the paks,
 # the zone tables' and the music's contents, qcook's own switches
-# (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP, QCOOK_SOUND_HALVE: the share of
-# its energy a sound may lose to be cooked at half its rate, in percent;
-# default 5, 0 none; QCOOK_SOUND_HALVE2 the same for a second halving, to
-# 2756 Hz, default 1; docs/porting-notes.md §85-86; QCOOK_MUSIC_RING_KB: the
+# (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP, QCOOK_SOUND_KEEP: the share of
+# its energy every sound keeps, each cooked at the lowest rate that does,
+# in percent; default 95, 100 or 0 its own rate; docs/porting-notes.md
+# §87; QCOOK_MUSIC_RING_KB: the
 # SPU RAM the music's ring takes, 48 by default: the bank fills the rest
 # beside a swap room, §86). `cook.sh --stale <file>`, the
 # build's check before the cook (CMakeLists.txt), rewrites <file> when they
@@ -119,7 +119,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_HALVE=${QCOOK_SOUND_HALVE:-} QCOOK_SOUND_HALVE2=${QCOOK_SOUND_HALVE2:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-}"
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-}"
 }
 if [ "${1:-}" = --stale ]; then
 	stamp=${2:?--stale needs the file the cook depends on}

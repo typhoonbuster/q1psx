@@ -1976,6 +1976,14 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **A rate per sound, at a constant share of its energy**
+  (2026-10-24, `docs/porting-notes.md` §87):
+  the halvings gave an uneven fidelity; every sound is now cooked at the
+  lowest rate keeping `QCOOK_SOUND_KEEP` percent of its energy (default
+  95; a windowed-sinc resampler to any rate, the SPU's pitch restoring the
+  time), replacing `QCOOK_SOUND_HALVE` and `QCOOK_SOUND_HALVE2`. At 95 %:
+  29 of 32 maps whole in the SPU (banks 235-436 KB), the three others
+  5-19 KB in RAM; 97 % keeps 23 whole, 99 % 8.
 - **Every sound of a level resident** (2026-10-24,
   `docs/porting-notes.md` §86, the same branch): the cook builds each
   level's exact sound set from the entities single player spawns, the
