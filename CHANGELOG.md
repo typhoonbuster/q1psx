@@ -1987,4 +1987,8 @@ followed by R0-R4.
     E4M7 414 → 552; 477 and 504 with four slots);
   - 27 of the 128 spawn views' lists differ, their pictures identical on
     the 4 maps checked (48 views); twice the chunk reads in
-    the zones' walk.
+    the zones' walk;
+  - with the seen tables at a 64 KB cap: 29 maps zoned, the smallest pool
+    504 KB (E4M7 510; 440 and 448 with four slots), 22 lists differ with
+    the same pictures identical, and the walk's late frames near today's
+    with three slots, fewer with four.

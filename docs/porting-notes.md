@@ -10430,18 +10430,26 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
     tables, 345 the smallest then, E3M6 whole).
 - **The floor of a finer cut:** a chunk can be no smaller than what one
   camera leaf sees. Exported with smaller caps (the analysis outside the
-  repo: `analysis/export.py`, `ZSETS=pvs:64,seen:48,seen:32`):
+  repo: `analysis/export.py`, `ZSETS=pvs:64,seen:48,seen:32`; the
+  export's estimates, over the 32 maps):
 
   | Tables | Zones a map | The biggest chunk (the slot) |
   |---|---|---|
-  | pvs, cap 96 (today) | 7-17 | 82-154 KB |
+  | pvs, cap 96 (today) | 1-25 | 78-149 KB |
   | pvs, cap 64 | 3-148 | 58-106 KB |
-  | seen, cap 48 | 7-75 | 44-66 KB |
+  | seen, cap 64 | 2-25 | 56-65 KB |
+  | seen, cap 48 | 7-75 | 44-65 KB |
   | seen, cap 32 | 24-286 | 31-65 KB |
 
   "seen" keeps only the records the analysis' 2048 px renders saw from
   the camera places sampled (§56, §57.8). Below 48 KB the slots no longer
   shrink, and the zones multiply.
+- **§57's tables** (pvs 96 and seen 64, exported 2026-10-22) count the
+  brush models' leaves one by one, as the worlds had them before §58. The
+  cook takes them, the world's own leaves being the same. Exported again
+  from today's worlds, they cook to the same bytes (the skeletons and
+  chunks of the 20 and 29 maps they zone); only the zones' byte counts
+  moved, which the cook does not read.
 - **The halfword sets** (the format `QWZG`, was `QWZF`):
   - a leaf's zone set is a `uint16_t`, no longer a byte; the finer
     tables make more than 255 sets (E2M5: the cook stopped there);
@@ -10466,6 +10474,8 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
   | none (the default build) | 0 | E4M7 312 | 312 |
   | pvs 96, 3 slots (today's tables) | 20 | E3M6 345, E3M4 354, E4M7 414 | 414 |
   | pvs 64, 3 slots | 27 | E3M6 409, E3M4 474, E4M7 480 | 480 |
+  | seen 64, 3 slots | 29 | E3M4 504, E4M7 510, E3M6 543 | 510 |
+  | seen 64, 4 slots | 27 | E3M4 440, E4M7 448, E3M6 477 | 448 |
   | seen 48, 3 slots | 30 | E3M6 543, E3M4 546, E4M7 552 | 552 |
   | seen 48, 4 slots | 27 | E3M6 477, E3M4 496, E4M7 504 | 504 |
   | seen 48, 5 slots | 26 | E3M6 411, E3M4 446, E4M7 456 | 456 |
@@ -10474,33 +10484,51 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
     pools 926 KB and more), and the pools grow 106-198 KB. With 4 slots
     E1M6, E1M8 and E3M2 stay whole too (pools of 600-795 KB), with 5 one
     more map.
+  - With seen 64 and 3 slots E3M2 stays whole too (694 KB), with 4 slots
+    E1M6 and E1M8 as well. Its smallest pools and E4M7's are 37-56 KB
+    under seen 48's with as many slots.
   - In every run the spots where a visible monster lacks its model are the
     same two, E1M7's (Chthon, out of reach).
-- **The frames** (`BENCH_MAPS=1 HASHONLY=1`, the 128 spawn views, seen 48
-  against today's tables):
-  - 27 display lists differ, the records the renders never saw left out:
-    −1.3 % cycles, E1M8.v3 from 2 vblanks to 1;
+- **The frames** (`BENCH_MAPS=1 HASHONLY=1`, the 128 spawn views, against
+  today's tables):
+  - seen 48: 27 display lists differ, the records the renders never saw
+    left out: −1.3 % cycles, E1M8.v3 from 2 vblanks to 1;
+  - seen 64: 22 differ, −1.0 % cycles, E1M8.v3 from 2 vblanks to 1 too;
   - the pictures (pktview), E1M8's, START's, E3M6's and E1M6's 48 views:
-    identical pixel for pixel. The records left out were drawn and
-    painted over;
+    identical pixel for pixel with either (10 of seen 64's 22 differing
+    lists among them). The records left out were drawn and painted over;
   - pvs 64: the 128 lists identical to today's, as by construction
     (−0.3 % cycles).
 - **The zones' walk** (`ZONES=1`, at running speed):
 
-  | Tables | Switches | Reads | Late frames | Of them on clear legs |
-  |---|---|---|---|---|
-  | pvs 96, 3 slots (20 maps) | 360 | 764 | 2838 | 128 |
-  | pvs 64, 3 slots (the same 20) | 681 | 1491 | 6960 | 541 |
-  | seen 48, 3 slots (the same 20) | 696 | 1422 | 4748 | 335 |
-  | seen 48, 3 slots (30 maps) | 908 | 1789 | 5954 | 471 |
-  | seen 48, 4 slots (30 maps) | 917 | 1981 | 4814 | 391 |
-  | seen 48, 3 slots (the 26 maps zoned with 5) | 892 | 1764 | 5885 | 471 |
-  | seen 48, 4 slots (the same 26) | 901 | 1942 | 4748 | 391 |
-  | seen 48, 5 slots (the same 26) | 904 | 1803 | 4425 | 397 |
+  | Tables | Maps | Switches | Reads | Late frames | Of them on clear legs | The longest run |
+  |---|---|---|---|---|---|---|
+  | pvs 96, 3 slots (today's) | the 20 they zone | 360 | 764 | 2838 | 128 | 44 |
+  | pvs 64, 3 slots | the same 20 | 681 | 1491 | 6960 | 541 | 58 |
+  | seen 64, 3 slots | the same 20 | 477 | 952 | 3015 | 156 | 33 |
+  | seen 64, 4 slots | the same 20 | 485 | 1001 | 2300 | 110 | 32 |
+  | seen 48, 3 slots | the same 20 | 696 | 1422 | 4748 | 335 | 39 |
+  | seen 48, 4 slots | the same 20 | 702 | 1576 | 3943 | 317 | 54 |
+  | seen 48, 5 slots | the same 20 | 705 | 1478 | 3733 | 327 | 54 |
+  | pvs 64, 3 slots | the 27 they zone | 898 | 1916 | 8629 | 779 | 58 |
+  | seen 64, 3 slots | the 29 they zone | 702 | 1350 | 4284 | 411 | 36 |
+  | seen 64, 4 slots | the 27 they zone | 629 | 1225 | 2766 | 174 | 32 |
+  | seen 48, 3 slots | the 30 they zone | 1037 | 2077 | 7370 | 828 | 45 |
+  | seen 48, 3 slots | the 27 zoned with 4 | 908 | 1789 | 5954 | 471 | 39 |
+  | seen 48, 4 slots | the same 27 | 917 | 1981 | 4814 | 391 | 54 |
+  | seen 48, 3 slots | the 26 zoned with 5 | 892 | 1764 | 5885 | 471 | 39 |
+  | seen 48, 4 slots | the same 26 | 901 | 1942 | 4748 | 391 | 54 |
+  | seen 48, 5 slots | the same 26 | 904 | 1803 | 4425 | 397 | 54 |
 
   - Smaller zones mean twice the switches and reads, and more frames drawn
-    with the last zone while the camera's is read (E1M8, 75 zones: 989,
-    the longest run 42 frames). The fourth slot takes a fifth of them back.
+    with the last zone while the camera's is read (E1M8, 75 zones with
+    seen 48: 989, the longest run 42 frames). The fourth slot takes a fifth
+    of them back with seen 48, a quarter with seen 64.
+  - seen 64 has two thirds of seen 48's switches and reads on the 20 maps
+    (fewer zones, each bigger): its late frames stay near today's with 3
+    slots (3015 against 2838, 156 against 128 on clear legs) and go under
+    them with 4 (2300 and 110), its longest runs the shortest (32-33
+    frames).
   - The fifth slot saves some reads when the eye comes back (−7 % late
     frames) but none on the clear legs, for 45-66 KB of every map's pool:
     four is the better trade.
@@ -10510,9 +10538,14 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
     frames (E1M1).
   - Interleaving the disc (each level's chunks next to each other, the
     streaming redesign) would shorten every read.
-- **To take it:** `Q1PSX_ZONE_TABLES=<the analysis>/zones/seen_1536_48` and
-  `Q1PSX_ZONE_SLOTS=4` (or 3) in `local.env`. The tables are derived from
-  Quake's data and stay outside the repo.
+- **To take it:** `Q1PSX_ZONE_TABLES=<the analysis>/zones/seen_1536_64` (or
+  `seen_1536_48`) and `Q1PSX_ZONE_SLOTS=3` or `4` in `local.env`:
+  - seen 64, 3 slots: the smallest pool +159 KB (E4M7 +96), the walk's
+    late frames near today's;
+  - seen 64, 4 slots: +95 KB (E4M7 +34), fewer late frames than today's;
+  - seen 48, 3 slots: +198 KB (E4M7 +138), 1.7 times today's late frames.
+
+  The tables are derived from Quake's data and stay outside the repo.
 - **Left, the bigger share:** the skeleton, 241-335 KB, always resident.
   E4M7's: nodes 126 KB, clip hulls 74, PVS 41, leaves 39, marks 14. The
   nodes also serve the entities' links and the leaf lookups, the hulls
