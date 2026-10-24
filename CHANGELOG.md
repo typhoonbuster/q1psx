@@ -1976,6 +1976,29 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The streaming redesign's bench** (2026-10-24,
+  `docs/porting-notes.md` §83, a branch): before the per-level disc
+  sections, the drive measured:
+  - every read of the disc through one entry (`cd_read_start`: who reads,
+    what for); the bench's journal (`CDLOG=1`: a `cd` line per read, a
+    `cd sum` per map load and walk);
+  - a console drive's seeks in the bench (`CDMODEL=1`): DuckStation's seek
+    model (from measures of the mechanism) holds every read's end; PCSX-Redux
+    charges 3 µs a sector of distance where a console pays 50 ms to 0.9 s;
+  - the music's ring and its seek guess as build knobs (`Q1PSX_MUSIC_RING`,
+    `Q1PSX_MUSIC_SEEK_MS`); the zones' walk ticks the music (it never
+    refilled before);
+  - `tools/cdsim/cdsim.py`: a journal replayed on another disc layout
+    (copies, parts, condensed subsets);
+  - measured on today's disc: the head hops 8900-59500 sectors between a
+    map's chunks, STREAM_0.DAT and its SPU track (0.3-0.44 s each on a
+    console); the walks' reads are mostly the streamed sounds' pieces,
+    re-read ten times over (97-133 KB of SPU room); the engine idles 2-3
+    vblanks between reads. Under the model the zones' walk draws 2.6 times
+    the late frames and the sounds mostly never load (the music holds); a
+    1 s ring stops every other read. Replayed on per-level sections, the
+    walks' seek time falls from 125 % of the time to 44 %, with no sled
+    seek left; what remains is 50-100 ms a read times the reads.
 - **The zones cut finer** (2026-10-24). §82:
   - a leaf's zone set on a halfword (`QWZG`): the finer tables need more
     than 255 sets;

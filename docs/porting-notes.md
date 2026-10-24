@@ -10576,3 +10576,275 @@ cut should be more aggressive, the adjacent chunks being loaded anyway.
   - The prefetch ranks zones by walking distance from the camera's leaf,
     starting when that leaf's set changes, not by where the player
     heads.
+
+## §83 — The streaming redesign, its first milestone: the drive's journal, a real drive's seeks, the layouts replayed (2026-10-24)
+
+A branch of its own (on master c11c97b
+with §82's cut: the seen tables at 64 KB, four slots). The redesign
+wanted: one section of the disc per level, holding the level and every
+resource it uses (its chunks, its streamed models and sounds, its SPU
+music), duplicated into the section when the image is built and
+interleaved with the level's data, so that the head is always near the
+next read; the goal is the fewest seeks, and the SPU music's ring back from
+2 s to 1 s, the SPU RAM freed for the level's sounds. The music tracks 4 to
+11 duplicated once a map that plays them add 232 MB (tracks 2 and 3,
+the title's and the intermission's, stay once). The disc's format and the
+memory's architecture being structural, this first step measures before
+it builds: a bench tool whose spec was validated, the measure of
+today's disc with it, and the layouts' options for a decision.
+
+### 83.1 Why a new bench
+
+§82's walk (`ZONES=1 scripts/bench.sh`) made 1225 chunk reads over the 27
+zoned maps, 47.5 KB each, in 8.8 frames a read on PCSX-Redux: the transfer
+alone at double speed is 9.6 frames. PCSX-Redux (src/core/cdrom.cc
+`computeSeekDelay`) charges a seek 3 µs a sector of distance plus 1 ms: 1 to
+180 ms over the whole disc, and the bench's disc carried no music. So that
+bench could not show what the redesign saves: the seeks.
+
+What a console's drive spends on a seek, DuckStation's model (src/core/
+cdrom.cpp `GetTicksForSeek`, from measures of the mechanism):
+
+| the hop | DuckStation | PCSX-Redux |
+|---|---|---|
+| ahead within a track (8 to 22 sectors) | the sectors' time (13-147 ms) | 1 ms |
+| under 60 to 330 sectors (by the place on the disc) | 50 ms | 1-2 ms |
+| under 7200 sectors (14.7 MB) | 100 ms | up to 22 ms |
+| farther, the sled | 50 ms + 340 ms × ln d / ln 324000 + 510 ms × d / 324000: 200 ms at 7200, 300 ms at 8000, 400 ms at 42000, 900 ms across a 74-minute disc | 25-180 ms |
+
+### 83.2 Today's disc
+
+The release disc (150 MB): `\MAPS` at sectors 9531-29505 (each map's SND,
+ZON, WLD, MDL, TX4 in a row), `STREAM_0.DAT` at 29505 (1138 sectors,
+2.3 MB), `\MUSIC` at 30644-75918 (tracks 2 to 11, 1801-6381 sectors each).
+In play the head goes between three places:
+
+| the hop | sectors | a console (DuckStation's model) |
+|---|---|---|
+| a map's ZON ↔ STREAM_0.DAT | 500 (START) to 19 800 (E1M1) | 100 ms under 7200, else 300-340 ms |
+| a map's ZON ↔ its SPU track | 8900 to 59 500 | 310-440 ms |
+| STREAM_0.DAT ↔ a SPU track | 8500 to 42 500 | 310-400 ms |
+
+The music's ring (6 chunks of 0.325 s a channel) is refilled 2 chunks at a
+time, 8 sectors (53 ms of transfer) every 0.65 s; on a console each refill
+from the data's place costs a sled seek there and another back: about
+0.7 s of the drive for 53 ms of music. A chunk read (24 sectors, 160 ms)
+costs the same two seeks around it.
+
+### 83.3 The drive's journal (engine/cd.c)
+
+Every read of the disc now starts through one function,
+`cd_read_start(lba, sectors, dst, who, tag)` (the seek, then
+`CdReadRetry`), with who asks it (`CDW_DIR` a directory or a header,
+`CDW_FILE` a whole file, `CDW_ZONE` a world chunk, `CDW_MODEL` a streamed
+model, `CDW_SOUND` a streamed sound's piece, `CDW_MUSIC` the music's
+refill) and for what (the zone, the asset, the music's chunk);
+`cd_read_now` takes the same, and `cd_read_cut` replaces the raw
+`CdReadBreak` of a read broken off. The release builds ignore the two
+arguments. In the bench build (`CDLOG=1 scripts/bench.sh`, CMake
+`Q1PSX_BENCH_CDLOG`):
+
+- a `cd` line per read, when it ends: `cd <who> <tag> <lba> <sectors>
+  <from> <start> <end> <seek_us> <held> <status>`: the head's place before
+  it (the last read's end), the vblanks it was started and ended at, the
+  seek the model below gives it, the polls the model held it, and `.`,
+  `e` (an error) or `x` (cut);
+- `cd_log_mark(name)` names the phase that begins (`load_level`: the map;
+  the zones' walk: `walk`; the bench's end: `end`) and prints a `cd sum`
+  line totalling the phase before it: the reads and sectors by who, the
+  vblanks, the modeled seeks, the transfer, the polls held, the hops by
+  class (near: under 330 sectors; mid: under 7200; sled) and the longest.
+
+The zones' walk now ticks the music every frame (`music_tick`, as the
+game's frame does): until now the bench's walk never refilled the ring,
+so a bench disc with the music played the ring's first two seconds round
+and round, and the drive never saw the refills.
+
+### 83.4 The drive's model (`CDMODEL=1`, CMake `Q1PSX_BENCH_CDMODEL`)
+
+DuckStation's seek model ported to the engine's bench build (integer
+microseconds: a 16-step table for log2, the sectors-a-track table by
+minute, the sled's logarithm and linear parts; checked on the host against
+the float model over 1124 pairs of places: within 91 µs). When a read's
+real end comes (PCSX-Redux's), `cd_poll` answers "still reading" and
+`cd_ready` "busy" until the modeled drive would be done: the seek from the
+head's place plus 28224 ticks of root counter 2 a sector (6.667 ms at
+double speed), counted from the seek command. `cd_read_sync` waits
+likewise. So the zones' late frames, the stream's reads and the music's
+underruns come out as on a console's drive, in fast forward.
+
+What the model leaves out: the pause after each read is PCSX-Redux's (the
+real one is in the same range); the engine's own gaps are real either way
+(two vblanks of settle before each command, engine/cd.h; the reads polled
+once a frame). PCSX-Redux's seek lies inside the modeled one, never past
+it, so nothing is counted twice.
+
+Two knobs for the music, in every build (CMake `Q1PSX_MUSIC_RING`,
+`Q1PSX_MUSIC_SEEK_MS`; `MUSIC_RING=` and `MUSIC_SEEK=` in bench.sh): the
+ring's chunks a channel (6 = 2 s, 3 = 1 s) and the seek `music_read_ok`
+plans around a read (250 ms: three of them, before a read may start).
+
+### 83.5 The replay on another layout (tools/cdsim/cdsim.py)
+
+The host tool (Python, the repo's first; the analysis' scripts outside the
+repo are Python too) reads a journal and the image it was recorded on
+(its ISO9660 directories give every file's sectors), and charges each
+read a seek by a model (`--model duck`, the default, or `redux`) and its
+transfer, per phase and in all (the loads, the walks). With `--layout`
+(another image, or a table of `<lba> <sectors> <bytes> <path>` lines;
+`--table` writes one) every read is first moved to where its file is on
+that layout: a read is a (file, offset) through the recording disc, and
+lands on the nearest copy of the file that holds that offset — a path may
+appear several times (a resource duplicated), as parts (`<path>@<sector>`:
+the file from that sector on, a track cut around a level's data) or
+condensed (`<path>~`: a level's subset of the streamed assets, a read
+landing at its offset scaled to the copy's size). `--no-dir` leaves the
+directory and header reads out (a layout whose levels carry their own
+sector tables reads none); `--check` compares the engine's seek figures
+with the tool's.
+
+### 83.6 Measured: today's disc
+
+`CDLOG=1 ZONES=1 MUSIC=1 scripts/bench.sh 1500` on the bench disc (the 32
+maps, the music; PCSX-Redux in fast forward, the drive PCSX-Redux's):
+
+- **The walks** (27 zoned maps, 2242 s of walking): 11 653 reads. 1134
+  chunks (24 sectors each, 11.5 frames a read), 7050 pieces of streamed
+  sounds (1 to 8 sectors), 43 streamed models, 3426 music refills (8
+  sectors, one every 39 vblanks: 0.65 s). Late frames 3845 (§82 measured
+  2766 on the same maps with a disc without the music: the refills now take
+  the drive's turns).
+- **The sounds are read ten times over.** A walk reads 33 to 67 distinct
+  sounds in 380 to 580 pieces: the SPU room the streamed sounds get is
+  97-133 KB (512 KB less the capture buffers, the map's bank of 327-367 KB
+  and the music's 48 KB ring), the eye runs through the map at 320 units a
+  second, and the sounds within reach change faster than the room holds
+  them. Each piece is its own seek.
+- **The engine's gaps:** two to three vblanks between a read's end and the
+  next one's start (the settle before a command, the reads polled once a
+  frame), 4.2 on average over the walks' 11 653 reads: 70 ms of idle drive
+  a read.
+- **The loads** (33, START twice): 54 reads a load on average (7 directory
+  reads of 27 sectors, 4 files, 4 chunks, 20-26 models, 17-20 sound
+  pieces, the ring's 3 fills), 10.7 s each on PCSX-Redux.
+
+The same journal charged a console drive's seeks (tools/cdsim, DuckStation's
+model):
+
+| | reads | seeks | of the time | the music's | transfer | hops near / mid / sled |
+|---|---|---|---|---|---|---|
+| the walks | 11 653 | 2793 s | **125 %** | 1212 s | 549 s (24.5 %) | 3805 / 980 / 6868 |
+| the loads | 1786 | 194 s (5.9 s a load) | 55 % | 10 s | 165 s (5 s a load) | 1184 / 312 / 290 |
+
+Today's disc cannot be played as the walk plays it on a console: the seeks
+alone would take longer than the walk (every music refill a sled seek
+there and one back, 0.35 s each). A map's load would take about 16 s
+(PCSX-Redux's 10.7 s less its seeks, plus 5.9 s of a console's). What a
+console does instead, the model in the engine shows below.
+
+### 83.7 The layouts replayed (tools/cdsim)
+
+Candidate layouts written as tables from the bench disc's files (a
+generator in the session's scratch; the real one is the redesign's build
+step): one section a map, holding the map's five files, its streamed
+assets (the subset the walk and the load read, 167-530 sectors, as a
+condensed copy of STREAM_0.DAT) and its track whole (`sections`), or with
+the map's data in the middle of the track (`middle`); the root's files
+first, tracks 2 and 3 once at the end; the directory reads left out
+(`--no-dir`: a level carries its own table of sectors). The same journal
+on each:
+
+| layout | the walks' seeks | of the time | the music's | hops near / mid / sled | the loads' seeks |
+|---|---|---|---|---|---|
+| today (the directory reads left out too) | 2793 s | 125 % | 1212 s | 3805 / 980 / 6868 | 124 s |
+| sections | 983 s | 44 % | 339 s | 5518 / 6135 / 0 | 105 s |
+| middle | 988 s | 44 % | 342 s | 4760 / 6890 / 3 | 106 s |
+
+- The sections take every sled seek away: each music refill costs 100 ms
+  (a hop within the section, over 330 sectors) instead of 350, each
+  chunk read likewise, the sounds' pieces 50 or 100 ms. The disc: 367 MB
+  of sections (3205 to 7504 sectors each), 14 MB of tracks 2 and 3, 20 MB
+  of root files (PAK0 included): 403 MB.
+- Four sections pass 7200 sectors (E2M6, E2M7, E3M6, E4M7: tracks 4 and 7
+  with the biggest data), where a hop from one end to the other would be a
+  200 ms sled seek; the data in the middle of the track keeps every hop
+  under it (3 of 11 653 sled in the replay, none that matter).
+- A carousel (the data repeated along the track) does not fit the disc at
+  double speed: every 60 s of music, 881 MB with half the stream data;
+  every 120 s, 631 MB; and a hop to the next copy is still over 330 sectors
+  (100 ms), the same as the section's.
+- What the layout cannot take away is the floor: 50 to 100 ms a read, and
+  11 653 reads a walk set: 983 s. Of them the music's refills are 3426
+  (339 s), the sounds' pieces 7050 (about 590 s), the chunks 1134 (about
+  60 s).
+
+### 83.8 What the measures say for the design
+
+The seeks of today's disc are the sled ones (the music 40 000 sectors
+away, STREAM_0.DAT 20 000): the sections remove them and divide the walks'
+seek time by 2.8. The rest is the count of reads times the drive's floor,
+and three things decide it:
+
+1. **The music's refills.** 8 sectors every 0.65 s is 92 seeks a minute
+   (and 92 back). Refilling 4 chunks at a time (16 sectors, every 1.3 s,
+   two chunks of margin) halves them; a 1 s ring (3 chunks) refilling a
+   chunk at a time doubles them (184 a minute, each 100 ms there and 50-100
+   back): the 1 s ring needs the refills to be near-free, which only
+   reading them in the same sweep as the data would make them.
+2. **The sounds' pieces.** 7050 of the walks' 11 653 reads; the same sound
+   read ten times over. The room (97-133 KB, +24 KB with a 1 s ring), the
+   eviction (by distance, the nearest kept) and the piece (a sound at a
+   time, 1 to 8 sectors) are the engine's; a zone's sounds read with its
+   chunk (one read, the sounds laid next to the chunk) would be one seek a
+   zone.
+3. **The loads.** 47 reads a load, in a known order (the bank, the
+   skeleton, the textures, the models, the chunks' header, the spawn's
+   chunks, the preload's assets by distance, the ring's fill): laid out in
+   that order, a load is one sweep (the seeks' 5.9 s to about 0.5 s).
+
+**The same walk under the drive model** (`CDMODEL=1`, the music's 2 s
+ring):
+
+| | today's drive (PCSX-Redux) | a console's (the model) |
+|---|---|---|
+| chunk reads, frames each | 1134, 11.5 | 909, 23.9 |
+| late events, late frames | 271, 3845 | 445, **10 156** |
+| streamed sounds' pieces read | 7050 | **1350** |
+| streamed models read | 43 | 5 |
+| music refills, underruns | 3426, 0 | 3230, 0 |
+| seeks (modeled), the drive busy | 2792 s if charged | 1540 s, 84 % |
+
+On a console the music holds (the others wait for its room:
+`music_read_ok`), the camera's zone comes late 2.6 times as many frames,
+and the sounds mostly never come: the stream reads a fifth of the pieces
+it reads on the emulator. That is today's disc played at running speed on
+the machine, by the model.
+
+**The 1 s ring under the model** (`MUSIC_RING=3 CDMODEL=1`): the music
+refills a chunk at a time (4 sectors every 19.5 vblanks, 5843 refills over
+the walks, never dry), and nothing else gets the drive: 4 chunk reads and 3
+of the stream's in 27 walks, 35 306 late frames of 97 200. `music_read_ok`
+lets a read start only when the ring holds the music for it, its refill
+after and three seeks of 250 ms: a 0.975 s ring never does. The 1 s ring
+asks for refills that cost next to nothing — on a layout where they do,
+with a seek guess to match (`MUSIC_SEEK=`), which is the redesign's.
+
+### 83.9 Left
+
+- **The layout's decision** is left open (§83.8): the sections with the
+  data in the middle of the track, the refills' size, the sounds' reads,
+  the loads' order.
+- **The build step** that writes the sections: each level's files and its
+  subset of the streamed assets (the carousel cook of §48 listed a map's
+  assets from its entities, `map_needs` in e49202c's tools/qcook/
+  carousel.c; it went with §52), the track copied, a per-level table of
+  sectors in place of the directory reads, mkpsxiso's file order. The
+  engine then takes a level's assets from its section (the stream's
+  directory per level, the music's track by its copy).
+- **Calibration:** the model is DuckStation's, from measures of the
+  mechanism; a DuckStation run of `CDLOG=1 ZONES=1 MUSIC=1` gives
+  the emulator's own vblanks per read to set against the `seek_us` figures,
+  the machine the final word.
+- **The model's reach:** a read waited for synchronously (`cd_read_sync`,
+  the loads) is held too but counts no `held` polls; the pause after a read
+  is PCSX-Redux's; a read's start is known to the vblank.
