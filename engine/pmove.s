@@ -62,10 +62,12 @@
 	sw      $zero, \d+8($s7)
 .endm
 
-# DOT_IN rd, va, na: rd = va (int32[3]) . na (int16[3]); DOT_II for two
-# int32[3]. rd must not be t0-t3 (clobbered). Ends HI/LO-safe: a mult / div
-# may follow directly.
-.macro DOT_IN rd, va, na
+# DOT_IN rd, va, na [, tail]: rd = va (int32[3]) . na (int16[3]); DOT_II
+# for two int32[3]. rd must not be t0-t3 (clobbered). tail: the last
+# instruction, two after the last mflo (default nop: a mult / div may then
+# follow directly; "": none, when no mult / div comes within the next
+# two, §81.3).
+.macro DOT_IN rd, va, na, tail=nop
 	lw      $t0, 0(\va)
 	lh      $t1, 0(\na)
 	lw      $t2, 4(\va)
@@ -81,10 +83,10 @@
 	mult    $t0, $t1
 	mflo    $t2
 	addu    \rd, \rd, $t2
-	nop
+	\tail
 .endm
 
-.macro DOT_II rd, va, vb
+.macro DOT_II rd, va, vb, tail=nop
 	lw      $t0, 0(\va)
 	lw      $t1, 0(\vb)
 	lw      $t2, 4(\va)
@@ -100,7 +102,7 @@
 	mult    $t0, $t1
 	mflo    $t2
 	addu    \rd, \rd, $t2
-	nop
+	\tail
 .endm
 
 # PMCOPY to, tb, from, fb: the 21 words of a pmove_t from from(fb) to
@@ -806,7 +808,7 @@ water_move:
 1:	addu    $t0, $t0, $t1
 	sw      $t0, PS_WV+8($s7)
 	addiu   $t9, $s7, PS_WV
-	DOT_II  $a0, $t9, $t9
+	DOT_II  $a0, $t9, $t9, ""           # (isqrt32: no mult / div)
 	jal     isqrt32
 	nop
 	move    $s2, $v0                     # len = |wishvel| x64
@@ -856,7 +858,7 @@ water_move:
 	mflo    $t3
 	sw      $t3, PM_VEL+8($s7)
 	addiu   $t9, $s7, PM_VEL
-	DOT_II  $a0, $t9, $t9
+	DOT_II  $a0, $t9, $t9, ""
 	jal     isqrt32
 	nop
 	beqz    $s3, 9f                      # no wish
@@ -924,16 +926,15 @@ water_jump:
 # onto it and kill downward speed.
 categorize:
 	addiu   $sp, $sp, -8
-	sw      $ra, 0($sp)
 	lw      $t0, PM_VEL+8($s7)
-	nop
+	sw      $ra, 0($sp)                  # (the load's delay)
 	slti    $t1, $t0, 181                # rising fast (jumped): airborne
-	bnez    $t1, 1f
-	nop
+	bnez    $t1, 11f
+	lw      $t0, PM_POS+0($s7)           # (delay: 1's)
 	b       9f
 	sw      $zero, PM_ONGROUND($s7)
 1:	lw      $t0, PM_POS+0($s7)
-	lw      $t1, PM_POS+4($s7)
+11:	lw      $t1, PM_POS+4($s7)
 	lw      $t2, PM_POS+8($s7)
 	sw      $t0, PS_TO+0($s7)
 	sw      $t1, PS_TO+4($s7)
@@ -950,20 +951,21 @@ categorize:
 	beqz    $t0, 2f                      # nothing below
 	slti    $t1, $t1, FLOOR_NZ
 	beqz    $t1, 3f
-	nop
+	lh      $t0, PS_TRB+TR_ENT($s7)      # (delay: 3's) on the ground: 1 + what
 2:	b       9f                           # too steep
 	sw      $zero, PM_ONGROUND($s7)
-3:	lh      $t0, PS_TRB+TR_ENT($s7)      # on the ground: 1 + what (the trace's ent)
-	nop
+3:	lw      $t1, PS_TRB+TR_ALLSOLID($s7)
+	lw      $t2, PS_TRB+TR_STARTSOLID($s7)
 	addiu   $t0, $t0, 1
 	sw      $t0, PM_ONGROUND($s7)
-	lw      $t0, PS_TRB+TR_STARTSOLID($s7)
-	lw      $t1, PS_TRB+TR_ALLSOLID($s7)
-	nop
-	or      $t0, $t0, $t1
-	bnez    $t0, 4f
-	nop
-	VCOPY   PM_POS, PS_TRB+TR_ENDPOS
+	or      $t1, $t1, $t2
+	bnez    $t1, 4f
+	lw      $t0, PS_TRB+TR_ENDPOS+0($s7) # (delay: the copy's first)
+	lw      $t1, PS_TRB+TR_ENDPOS+4($s7)
+	lw      $t2, PS_TRB+TR_ENDPOS+8($s7)
+	sw      $t0, PM_POS+0($s7)
+	sw      $t1, PM_POS+4($s7)
+	sw      $t2, PM_POS+8($s7)
 4:	lw      $t0, PM_VEL+8($s7)
 	nop
 	bgez    $t0, 9f
@@ -988,8 +990,8 @@ friction:
 	lw      $t1, PM_VEL+4($s7)
 	mult    $t0, $t0
 	mflo    $a0
-	nop
-	nop
+	lui     $t5, %hi(clip_mover)         # (below's: isqrt32 leaves t5; in the
+	addiu   $t5, $t5, %lo(clip_mover)    #  HI/LO spacers)
 	mult    $t1, $t1
 	mflo    $t2
 	jal     isqrt32
@@ -1004,9 +1006,8 @@ friction:
 	lw      $t3, PM_POS+4($s7)
 	sll     $t1, $t1, 7
 	lw      $t4, PM_POS+8($s7)
-	lui     $t5, %hi(clip_mover)         # (a point, the player's entry
-	addiu   $t5, $t5, %lo(clip_mover)    # passed, nomonsters, a sight)
-	li      $t6, 1
+	li      $t6, 1                       # (a point, the player's entry passed,
+	                                     #  nomonsters, a sight: t5 clip_mover)
 	sw      $zero, MV_BOX+0($t5)
 	sw      $zero, MV_BOX+4($t5)
 	sw      $zero, MV_BOX+8($t5)
@@ -1049,20 +1050,19 @@ friction:
 2:	mult    $t1, $t2
 	li      $t2, PM_HZ
 	mflo    $t1
-	nop
-	nop
+	lw      $t3, PM_VEL+4($s7)           # (below's, in the HI/LO spacers)
+	li      $t5, 0x8000
 	div     $zero, $t1, $t2
 	mflo    $t1                          # drop
 	subu    $t1, $v0, $t1                # newspeed
-	bgez    $t1, 3f
-	nop
+	bgez    $t1, 31f
+	sll     $t1, $t1, 16                 # (delay: 3's)
 	move    $t1, $zero
 3:	sll     $t1, $t1, 16
-	divu    $zero, $t1, $v0
-	li      $t5, 0x8000
+31:	divu    $zero, $t1, $v0
 	mflo    $t1                          # scale = newspeed / speed, 0.16
 	lw      $t2, PM_VEL+0($s7)
-	lw      $t3, PM_VEL+4($s7)
+	nop                                  # (two apart from the mflo: HI/LO)
 	mult    $t2, $t1
 	lw      $t4, PM_VEL+8($s7)
 	mflo    $t2
@@ -1158,25 +1158,24 @@ wall_friction:
 accelerate:
 	addiu   $t9, $s7, PM_VEL
 	addiu   $t8, $s7, PS_WISH
-	DOT_II  $v0, $t9, $t8
+	DOT_II  $v0, $t9, $t8, ""
 	sra     $v0, $v0, 12                 # current speed along wishdir
 	subu    $v0, $a0, $v0                # add = cap - cur
 	blez    $v0, 9f
 	lw      $t0, PS_DT10($s7)            # PM_ACCEL x dt
-	nop
+	li      $t1, PM_HZ                   # (the load's delay)
 	mult    $a1, $t0
-	li      $t1, PM_HZ
 	mflo    $t0
 	nop
 	nop
 	div     $zero, $t0, $t1
 	mflo    $t0                          # accel
 	slt     $t1, $v0, $t0
-	beqz    $t1, 1f
-	nop
+	beqz    $t1, 11f
+	lw      $t1, PS_WISH+0($s7)          # (delay: 1's)
 	move    $t0, $v0                     # min(accel, add)
 1:	lw      $t1, PS_WISH+0($s7)
-	lw      $t2, PS_WISH+4($s7)
+11:	lw      $t2, PS_WISH+4($s7)
 	mult    $t1, $t0
 	lw      $t3, PM_VEL+0($s7)
 	lw      $t4, PM_VEL+4($s7)
@@ -1343,7 +1342,7 @@ sm_try:
 	addiu   $t9, $s7, PS_PLANES
 	addu    $t9, $t9, $t0
 	addiu   $t7, $s7, PS_NEWVEL
-	DOT_IN  $v0, $t7, $t9
+	DOT_IN  $v0, $t7, $t9, ""
 	bltz    $v0, 10f                     # into plane j: try the next i
 	nop
 9:	b       8b
@@ -1394,7 +1393,7 @@ sm_crease:                               # two planes: slide along their crease
 	sra     $t6, $t6, 12
 	sw      $t6, PS_DIR+8($s7)
 	addiu   $t9, $s7, PS_DIR
-	DOT_II  $a0, $t9, $t9
+	DOT_II  $a0, $t9, $t9, ""
 	jal     isqrt32                      # len = |dir|
 	nop
 	beqz    $v0, sm_stop                 # parallel planes: wedged
@@ -1436,7 +1435,7 @@ sm_crease:                               # two planes: slide along their crease
 sm_check:                                # reverses the original push: stop
 	addiu   $t9, $s7, PS_SVEL
 	addiu   $t8, $s7, PS_PRIMAL
-	DOT_II  $v0, $t9, $t8
+	DOT_II  $v0, $t9, $t8, ""
 	blez    $v0, sm_stop
 	li      $t4, PM_HZ
 	lw      $t9, PS_DT8($s7)
@@ -1498,7 +1497,7 @@ sm_done:
 clip_velocity:
 	addiu   $sp, $sp, -8
 	sw      $ra, 0($sp)
-	DOT_IN  $v0, $a0, $a1
+	DOT_IN  $v0, $a0, $a1, ""
 	sra     $v0, $v0, 12                 # backoff
 	lh      $t0, 0($a1)
 	lw      $t1, 0($a0)
@@ -1548,10 +1547,9 @@ clip_velocity:
 # change, on n's dominant axis (the first of the largest |n|).
 # Clobbers t0-t5, v0, v1, a2.
 push_out:
-	DOT_IN  $v0, $a0, $a1
+	DOT_IN  $v0, $a0, $a1, ""
 	bgez    $v0, 9f
-	nop
-	lh      $t0, 0($a1)
+	lh      $t0, 0($a1)                  # (delay; out: unused)
 	lh      $t1, 2($a1)
 	lh      $t2, 4($a1)
 	move    $t4, $zero                   # m * 4
@@ -1563,22 +1561,22 @@ push_out:
 	xor     $a2, $t1, $t5
 	subu    $a2, $a2, $t5
 	slt     $t5, $t3, $a2
-	beqz    $t5, 1f
-	nop
+	beqz    $t5, 11f
+	sra     $t5, $t2, 31                 # (1's first)
 	move    $t3, $a2
 	move    $v1, $t1
 	li      $t4, 4
 1:	sra     $t5, $t2, 31
-	xor     $a2, $t2, $t5
+11:	xor     $a2, $t2, $t5
 	subu    $a2, $a2, $t5
 	slt     $t5, $t3, $a2
-	beqz    $t5, 2f
-	nop
+	beqz    $t5, 21f
+	subu    $t0, $t3, $v0                # (2's first)
 	move    $t3, $a2
 	move    $v1, $t2
 	li      $t4, 8
 2:	subu    $t0, $t3, $v0                # s = (-d + a - 1) / a
-	addiu   $t0, $t0, -1
+21:	addiu   $t0, $t0, -1
 	divu    $zero, $t0, $t3
 	addu    $t4, $a0, $t4
 	lw      $t1, 0($t4)
@@ -1606,14 +1604,14 @@ isqrt32:
 	li      $t0, 1
 	sllv    $t0, $t0, $t1                # first bit <= a0
 2:	addu    $t1, $v0, $t0
-	sltu    $t2, $a0, $t1
+21:	sltu    $t2, $a0, $t1
 	bnez    $t2, 3f
 	srl     $v0, $v0, 1
 	subu    $a0, $a0, $t1
 	addu    $v0, $v0, $t0
 3:	srl     $t0, $t0, 2
-	bnez    $t0, 2b
-	nop
+	bnez    $t0, 21b
+	addu    $t1, $v0, $t0                # (delay: 2's first; done: unused)
 4:	jr      $ra
 	nop
 
