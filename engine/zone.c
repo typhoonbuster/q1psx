@@ -23,7 +23,8 @@ zone_stats_t zone_stats;
 
 #define SECTOR    CD_SECTOR
 #define MAX_RES   4        /* slots at most (the cook's num_slots)   */
-#define SET_NONE  0x100u   /* zone_rt.set before any call: no byte equals it */
+#define WANT      4        /* zones a set wants at most: its own, its three nearest */
+#define SET_NONE  0x10000u /* zone_rt.set before any call: no halfword equals it */
 #define BACKOFF   30       /* frames before a read that failed is tried again */
 
 typedef struct {
@@ -38,6 +39,7 @@ static const qw_zone_set    *zsets;
 static uint8_t  *arena;                   /* num_slots x slot_bytes */
 static int32_t   zon_lba;
 static uint32_t  skel_bytes, nslots;
+static int       nwant = 3;        /* the zones a set wants: one a slot, WANT at most */
 static slot_t    slots[MAX_RES];
 static int       cur_slot = -1;           /* the chunk drawn                     */
 static int       cur_zone = -1;
@@ -92,7 +94,7 @@ static int slot_of(int z)
 	return -1;
 }
 
-static int is_wanted(int z, const uint8_t want[3], int upto)
+static int is_wanted(int z, const uint8_t want[WANT], int upto)
 {
 	for (int i = 0; i < upto; i++)
 		if (want[i] == z)
@@ -120,16 +122,16 @@ static void make_current(int s)
    camera's zone): a free one, else the one holding a chunk no set wants
    now, else the one holding the least wanted below z (never the drawn
    one). Its index (not ready), or -1. No read in flight. */
-static int place(int z, const uint8_t want[3], int rank)
+static int place(int z, const uint8_t want[WANT], int rank)
 {
 	int v = -1;
 	for (uint32_t i = 0; i < nslots && v < 0; i++)
 		if (slots[i].zone < 0)
 			v = (int) i;
 	for (uint32_t i = 0; i < nslots && v < 0; i++)
-		if ((int) i != cur_slot && !is_wanted(slots[i].zone, want, 3))
+		if ((int) i != cur_slot && !is_wanted(slots[i].zone, want, nwant))
 			v = (int) i;
-	for (int r = 2; v < 0 && r > rank; r--)
+	for (int r = nwant - 1; v < 0 && r > rank; r--)
 		if (want[r] != QZ_NONE && (v = slot_of(want[r])) == cur_slot)
 			v = -1;
 	if (v < 0)
@@ -161,7 +163,7 @@ static void read_done(int ok)
 
 /* a zone's chunk read at once into a place for it (the map's start, the
    bench): its slot, or -1. Any read in flight is waited for first. */
-static int load_now(int z, const uint8_t want[3], int rank)
+static int load_now(int z, const uint8_t want[WANT], int rank)
 {
 	if (reading >= 0)
 		read_done(cd_read_sync() >= 0);
@@ -188,13 +190,15 @@ static int load_now(int z, const uint8_t want[3], int rank)
 	return s;
 }
 
-/* the wanted zones of a set, by rank: its own, then its two nearest */
-static void wanted(uint32_t set, uint8_t want[3])
+/* the wanted zones of a set, by rank: its own, then its nearest (two, or
+   three with a fourth slot) */
+static void wanted(uint32_t set, uint8_t want[WANT])
 {
 	const qw_zone_set *st = &zsets[set];
 	want[0] = st->zone;
 	want[1] = st->near[0];
 	want[2] = st->near[1];
+	want[3] = nwant > 3 ? st->near[2] : QZ_NONE;
 }
 
 /* the next chunk to read, placed; its read started when the drive is free */
@@ -202,13 +206,13 @@ static void next_read(void)
 {
 	if (want_set >= zh->num_sets)
 		return;
-	uint8_t want[3];
+	uint8_t want[WANT];
 	wanted(want_set, want);
-	if (placed >= 0 && !is_wanted(slots[placed].zone, want, 3)) {
+	if (placed >= 0 && !is_wanted(slots[placed].zone, want, nwant)) {
 		slots[placed].zone = -1;                  /* (the camera went elsewhere first) */
 		placed = -1;
 	}
-	for (int i = 0; i < 3 && placed < 0; i++) {
+	for (int i = 0; i < nwant && placed < 0; i++) {
 		if (want[i] == QZ_NONE || slot_of(want[i]) >= 0)
 			continue;
 		if (frame_no < backoff_until)
@@ -269,7 +273,7 @@ Q_COLD int zone_map_start(const uint8_t *f, const char *map, int tex)
 {
 	zone_abort();
 	const qw_zone_header *h = (const qw_zone_header *) (f + sizeof(qw_header));
-	if (!h->num_zones || h->num_zones >= QZ_NONE || !h->num_sets || h->num_sets > QZ_NONE ||
+	if (!h->num_zones || h->num_zones >= QZ_NONE || !h->num_sets || h->num_sets >= QZ_LEAF_NONE ||
 	    !h->num_slots || h->num_slots > MAX_RES || !h->slot_bytes || (h->slot_bytes & (SECTOR - 1))) {
 		printf("zone: %s: bad zone tables\n", map);
 		return 0;
@@ -296,13 +300,14 @@ Q_COLD int zone_map_start(const uint8_t *f, const char *map, int tex)
 	arena   = a;
 	zon_lba = (int32_t) lba;
 	nslots  = h->num_slots;
+	nwant   = nslots < WANT ? (int) nslots : WANT;
 	for (uint32_t i = 0; i < nslots; i++) {
 		slots[i].zone = -1;
 		slots[i].at   = i * h->slot_bytes;
 	}
 	skel_bytes = h->ofs_sets + h->num_sets * (uint32_t) sizeof(qw_zone_set);
 	zone_rt.leaves   = (uint32_t) world.leaves & 0x00ffffffu;
-	zone_rt.leaf_set = f + h->ofs_leaf_set;
+	zone_rt.leaf_set = (const uint16_t *) (f + h->ofs_leaf_set);
 	zone_rt.set      = SET_NONE;
 	memset(&zone_stats, 0, sizeof zone_stats);
 	frame_no = backoff_until = 0;
@@ -339,9 +344,9 @@ Q_COLD void zone_preload(const int32_t eye[3])
 	uint32_t set = zone_rt.leaf_set[leaf_at(eye)];
 	if (set >= zh->num_sets)
 		set = 0;                                  /* (the eye in solid) */
-	uint8_t want[3];
+	uint8_t want[WANT];
 	wanted(set, want);
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < nwant; i++)
 		if (want[i] != QZ_NONE && slot_of(want[i]) < 0)
 			load_now(want[i], want, i);
 	int s = slot_of(want[0]);
@@ -370,7 +375,7 @@ void zone_enter(uint32_t set)
 	}
 #ifdef Q1PSX_BENCH
 	if (zone_sync) {
-		uint8_t want[3];
+		uint8_t want[WANT];
 		wanted(set, want);
 		if ((s = load_now(z, want, 0)) >= 0) {
 			zone_stats.sync_loads++;
@@ -417,7 +422,7 @@ void zone_bench_frame(const int32_t pos[3])
 	uint32_t set = zone_rt.leaf_set[leaf_at(pos)];
 	if (set >= zh->num_sets)
 		return;
-	uint8_t want[3];
+	uint8_t want[WANT];
 	wanted(set, want);
 	int s = slot_of(want[0]);
 	if (s < 0 || !slots[s].ready) {

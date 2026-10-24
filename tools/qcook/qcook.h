@@ -11,7 +11,7 @@
  *             sound bank and the player start
  *   sound.c   the map's sound bank -> QSND (formats/qsound.h)
  *   bmf.c     the brush models' room for their cut pieces (engine/bmfrag.c)
- *   zones.c   a world split into its skeleton and zone chunks (QWZF, QZN1)
+ *   zones.c   a world split into its skeleton and zone chunks (QWZG, QZN1)
  *
  * See docs/architecture.md §6-§7, formats/qworld.h / qtex.h / qlevels.h.
  */

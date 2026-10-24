@@ -1976,3 +1976,15 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The zones cut finer** (2026-10-24, not
+  merged). §82:
+  - a leaf's zone set on a halfword (`QWZG`): the finer tables need more
+    than 255 sets;
+  - four chunk slots on request (`Q1PSX_ZONE_SLOTS=4`): the camera's zone
+    and its three nearest;
+  - measured with the analysis' finer tables (seen, cap 48 KB): 30 maps of
+    32 zoned, the stream pools +106-198 KB (the smallest 345 → 543 KB,
+    E4M7 414 → 552; 477 and 504 with four slots);
+  - 27 of the 128 spawn views' lists differ, their pictures identical on
+    the 4 maps checked (48 views); twice the chunk reads in
+    the zones' walk.

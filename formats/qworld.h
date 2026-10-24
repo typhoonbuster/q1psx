@@ -457,7 +457,7 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
  * the one drawn, and the zones nearest to it by walking distance,
  * prefetched (engine/zone.c).
  *
- *   <MAP>_G<n>.WLD  the skeleton, "QWZF": a QWVF file's header and
+ *   <MAP>_G<n>.WLD  the skeleton, "QWZG": a QWVF file's header and
  *                   sections, a qw_zone_header right after the header, the
  *                   face stream and the vertex pool holding the brush
  *                   models' records only (their UVs mapped by the loader,
@@ -485,9 +485,11 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
  * is in pieces, would take 10-80 KB less a map, but moving the drawn
  * chunk costs a frame: docs/porting-notes.md §57.)
  */
-#define QWORLD_ZONED_MAGIC "QWZF"   /* (QWVZ until §59: the entities of QWVE) */
+#define QWORLD_ZONED_MAGIC "QWZG"   /* (QWVZ until §59: the entities of QWVE; QWZF
+                                       until the zones' finer cut: a byte a leaf's set) */
 #define QZONES_MAGIC       "QZN1"
-#define QZ_NONE            0xffu    /* a qw_zone_set's empty entry; a leaf in no set */
+#define QZ_NONE            0xffu    /* a qw_zone_set's empty entry                   */
+#define QZ_LEAF_NONE       0xffffu  /* a leaf in no set (the camera in solid)        */
 
 typedef struct {
 	uint32_t num_zones;
@@ -496,8 +498,8 @@ typedef struct {
 	uint32_t world_nodes;    /* the nodes the patch lists set, the end node next */
 	uint32_t num_sets;
 	uint32_t ofs_chunks;     /* qw_chunk_dir[num_zones]                         */
-	uint32_t ofs_leaf_set;   /* uint8_t[num_leaves]: the leaf's set, QZ_NONE for
-	                            leaf 0 (the camera in solid keeps its zone)     */
+	uint32_t ofs_leaf_set;   /* uint16_t[num_leaves]: the leaf's set, QZ_LEAF_NONE
+	                            for leaf 0 (the camera in solid keeps its zone) */
 	uint32_t ofs_sets;       /* qw_zone_set[num_sets]                            */
 	uint32_t reach;          /* world units: the tables hold every record the
 	                            PVS lets the PSX draw within this depth (the
@@ -505,7 +507,7 @@ typedef struct {
 	uint32_t stamp;          /* the chunks' file carries the same               */
 	uint32_t whole_records;  /* statistics: the world's records, its .wld's    */
 	uint32_t whole_bytes;    /*   bytes (what a whole load took)               */
-} qw_zone_header;            /* 48 bytes, at sizeof(qw_header) in a QWZF file  */
+} qw_zone_header;            /* 48 bytes, at sizeof(qw_header) in a QWZG file  */
 
 typedef struct {
 	uint32_t sector;         /* the chunk's first sector in the .ZON file       */

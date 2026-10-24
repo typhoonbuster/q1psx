@@ -10409,3 +10409,96 @@ The list's items, each measured on this build or looked up in its code;
   interpreter, the release's boot and menu loop (240 frames) under the
   interpreter; a bench built with a 2 KB stack stops at its first frame on
   the guard (`vid: the stack reached its guard`).
+
+## §82 — The zones cut finer: the sets on a halfword, four slots (2026-10-24)
+
+A branch of its own. The request: the levels and their BSP
+are not split enough; with more monsters' models to stream (their levels of
+detail, §81's POC on its branch), the stream pool must grow, and the chunks'
+cut should be more aggressive, the adjacent chunks being loaded anyway.
+
+- **What the cut is today** (§57):
+  - a zone's chunk holds every record the PSX may draw from any of its
+    leaves within 1536 units, so the chunks overlap (E1M1: 9761 records
+    in its chunks for the world's 4390);
+  - only the camera's zone is drawn. The two nearest are read ahead, not
+    drawn with it;
+  - the zones are merged while their chunk fits the cap (96 KB × 0.94),
+    and a slot is the map's biggest chunk;
+  - the default build has no tables (`local.env`), so every map is
+    whole. E4M7's 312 KB pool is its whole world's (414 KB with the
+    tables, 345 the smallest then, E3M6 whole).
+- **The floor of a finer cut:** a chunk can be no smaller than what one
+  camera leaf sees. Exported with smaller caps (the analysis outside the
+  repo: `analysis/export.py`, `ZSETS=pvs:64,seen:48,seen:32`):
+
+  | Tables | Zones a map | The biggest chunk (the slot) |
+  |---|---|---|
+  | pvs, cap 96 (today) | 7-17 | 82-154 KB |
+  | pvs, cap 64 | 3-148 | 58-106 KB |
+  | seen, cap 48 | 7-75 | 44-66 KB |
+  | seen, cap 32 | 24-286 | 31-65 KB |
+
+  "seen" keeps only the records the analysis' 2048 px renders saw from
+  the camera places sampled (§56, §57.8). Below 48 KB the slots no longer
+  shrink, and the zones multiply.
+- **The halfword sets** (the format `QWZG`, was `QWZF`):
+  - a leaf's zone set is a `uint16_t`, no longer a byte; the finer
+    tables make more than 255 sets (E2M5: the cook stopped there);
+  - `QZ_LEAF_NONE` (0xffff) marks the camera in solid;
+  - engine/zone.s `zone_mark` reads a halfword at twice the index (one
+    instruction more, only when the camera's leaf changes);
+  - the skeleton +1 KB a map, and no other change with today's tables
+    (the 32 maps' pools the same).
+- **Four slots** (`Q1PSX_ZONE_SLOTS=4`, cook.sh → `qcook zones
+  --resident 4`): engine/zone.c wants as many zones as it has slots, the
+  camera's and its three nearest (the tables' `near[2]`). With 3 slots,
+  nothing changes.
+- **Measured** (32 maps, the arena capped as the release's, 1318 KB;
+  `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`):
+
+  | Tables | Maps zoned | The smallest pools (KB) | E4M7 |
+  |---|---|---|---|
+  | none (the default build) | 0 | E4M7 312 | 312 |
+  | pvs 96, 3 slots (today's tables) | 20 | E3M6 345, E3M4 354, E4M7 414 | 414 |
+  | pvs 64, 3 slots | 27 | E3M6 409, E3M4 474, E4M7 480 | 480 |
+  | seen 48, 3 slots | 30 | E3M6 543, E3M4 546, E4M7 552 | 552 |
+  | seen 48, 4 slots | 27 | E3M6 477, E3M4 496, E4M7 504 | 504 |
+
+  - With seen 48 and 3 slots every map but E1M7 and END is zoned (their
+    pools 926 KB and more), and the pools grow 106-198 KB. With 4 slots
+    E1M6, E1M8 and E3M2 stay whole too (pools of 600-795 KB).
+  - In every run the spots where a visible monster lacks its model are the
+    same two, E1M7's (Chthon, out of reach).
+- **The frames** (`BENCH_MAPS=1 HASHONLY=1`, the 128 spawn views, seen 48
+  against today's tables):
+  - 27 display lists differ, the records the renders never saw left out:
+    −1.3 % cycles, E1M8.v3 from 2 vblanks to 1;
+  - the pictures (pktview), E1M8's, START's, E3M6's and E1M6's 48 views:
+    identical pixel for pixel. The records left out were drawn and
+    painted over.
+- **The zones' walk** (`ZONES=1`, at running speed):
+
+  | Tables | Switches | Reads | Late frames | Of them on clear legs |
+  |---|---|---|---|---|
+  | pvs 96, 3 slots (20 maps) | 360 | 764 | 2838 | 128 |
+  | seen 48, 3 slots (the same 20) | 696 | 1422 | 4748 | 335 |
+  | seen 48, 3 slots (30 maps) | 908 | 1789 | 5954 | 471 |
+  | seen 48, 4 slots (30 maps) | 917 | 1981 | 4814 | 391 |
+
+  Smaller zones mean twice the switches and reads, and more frames drawn
+  with the last zone while the camera's is read (E1M8, 75 zones: 989, the
+  longest run 42 frames). The fourth slot takes a fifth of them back.
+  Interleaving the disc (each level's chunks next to each other, the
+  streaming redesign) would shorten every read.
+- **To take it:** `Q1PSX_ZONE_TABLES=<the analysis>/zones/seen_1536_48` and
+  `Q1PSX_ZONE_SLOTS=4` (or 3) in `local.env`. The tables are derived from
+  Quake's data and stay outside the repo.
+- **Left, the bigger share:** the skeleton, 241-335 KB, always resident.
+  E4M7's: nodes 126 KB, clip hulls 74, PVS 41, leaves 39, marks 14. The
+  nodes also serve the entities' links and the leaf lookups, the hulls
+  every monster's moves, and the PVS the AI too. Splitting them by zone
+  means deciding what the game does where no chunk is loaded.
+- **Also left:** drawing the camera's chunk with its neighbours' (chunks
+  without the duplicated records) needs the renderer to walk more than one
+  chunk's blocks.

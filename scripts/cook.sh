@@ -32,7 +32,7 @@
 #   cooked/id1/<map>_m0.mdl     QMM1 its own models, low          -> disc <MAP>_M0.MDL
 #   cooked/id1/<map>.snd        QSB2 its sound bank               -> disc <MAP>.SND
 # and with Q1PSX_ZONE_TABLES, a map split into zones (formats/qworld.h):
-#   cooked/id1/<map>_g0.skl     QWZF its skeleton                 -> disc <MAP>_G0.WLD
+#   cooked/id1/<map>_g0.skl     QWZG its skeleton                 -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_z<N>.zon   QZN1 its chunks, textures N (1, 2) -> disc <MAP>_Z<N>.ZON
 # the game data (the guns, the projectiles, the HUD; formats/qgame.h):
 #   cooked/id1/game_0.dat       QGM8, low                         -> disc GAME_0.DAT
@@ -123,12 +123,14 @@ echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures medium and high, the
 # the world's zones (docs/porting-notes.md §57): each map with a table split
 # into its skeleton and its chunks at both texture levels (their UVs on that
 # set's tiles: after the textures' jobs), or left whole where that saves no
-# RAM (the cook says which)
+# RAM (the cook says which); Q1PSX_ZONE_SLOTS the chunks resident at once
+# (3: the camera's zone and its two nearest; 4: its three nearest)
 if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 	export Q1PSX_ZONE_TABLES
+	export Q1PSX_ZONE_SLOTS=${Q1PSX_ZONE_SLOTS:-3}
 	for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c \
 	    't="$Q1PSX_ZONE_TABLES/{}.zones"; [ -f "$t" ] || exit 0
-	     tools/qcook/qcook zones --world cooked/id1/{}_g0.wld --tables "$t" --skeleton cooked/id1/{}_g0.skl \
+	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}_g0.wld --tables "$t" --skeleton cooked/id1/{}_g0.skl \
 	         --tex4 cooked/id1/{}_t1.tx4 --chunks cooked/id1/{}_z1.zon \
 	         --tex4 cooked/id1/{}_t2.tx4 --chunks cooked/id1/{}_z2.zon > "$LOGS/{}_z.log" 2>&1 \
 	     || { echo "cook FAILED: zones {}"; cat "$LOGS/{}_z.log"; exit 1; }'

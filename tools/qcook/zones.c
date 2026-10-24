@@ -1,6 +1,6 @@
 /*
  * q1psx — `qcook zones`: a cooked world (QWVF) split into its skeleton
- * (QWZF) and its zone chunks (QZN1), from the level-chunks analysis'
+ * (QWZG) and its zone chunks (QZN1), from the level-chunks analysis'
  * tables (formats/qworld.h "zones", docs/porting-notes.md §56, §57).
  *
  *   qcook zones --world <map>_g0.wld --tables <dir>/<map>.zones
@@ -490,13 +490,14 @@ int cmd_zones(int argc, char **argv)
 		pool_free(&pool);
 	}
 
-	/* the camera leaves' sets: (zone, its three nearest), deduplicated */
-	qw_zone_set sets[QZ_NONE];
+	/* the camera leaves' sets: (zone, its three nearest), deduplicated (a
+	   halfword a leaf: the finer cuts make more than 255) */
+	qw_zone_set *sets = xmalloc(nl * sizeof *sets);
 	uint32_t nsets = 0;
-	uint8_t *leaf_set = xmalloc(nl);
+	uint16_t *leaf_set = xmalloc(nl * sizeof *leaf_set);
 	for (uint32_t l = 0; l < nl; l++) {
 		if (!l || l > H->num_visleafs) {
-			leaf_set[l] = QZ_NONE;            /* the camera in solid: its zone kept (the
+			leaf_set[l] = QZ_LEAF_NONE;       /* the camera in solid: its zone kept (the
 			                                     brush models' leaves: never the camera's) */
 			continue;
 		}
@@ -508,11 +509,11 @@ int cmd_zones(int argc, char **argv)
 		while (i < nsets && memcmp(&sets[i], &st, sizeof st))
 			i++;
 		if (i == nsets) {
-			if (nsets >= QZ_NONE)
-				die("%s: more than %u zone sets", tab, QZ_NONE);
+			if (nsets >= QZ_LEAF_NONE)
+				die("%s: more than %u zone sets", tab, QZ_LEAF_NONE);
 			sets[nsets++] = st;
 		}
-		leaf_set[l] = (uint8_t) i;
+		leaf_set[l] = (uint16_t) i;
 	}
 
 	/* the slots: `want` of them (but no more than the zones), each the
@@ -585,7 +586,7 @@ int cmd_zones(int argc, char **argv)
 		sector += sectors_of(dir[z].bytes);
 	}
 	zh.ofs_chunks   = (uint32_t) s.len; buf_put(&s, dir, nz * sizeof *dir);
-	zh.ofs_leaf_set = (uint32_t) s.len; buf_put(&s, leaf_set, nl); buf_align4(&s);
+	zh.ofs_leaf_set = (uint32_t) s.len; buf_put(&s, leaf_set, nl * sizeof *leaf_set); buf_align4(&s);
 	zh.ofs_sets     = (uint32_t) s.len; buf_put(&s, sets, nsets * sizeof *sets);
 	memcpy(s.p, &h, sizeof h);
 	memcpy(s.p + sizeof h, &zh, sizeof zh);
@@ -639,7 +640,7 @@ int cmd_zones(int argc, char **argv)
 		free(T.member[z]);
 	}
 	free(chunk); free(dir); free(T.member); free(T.leaf_zone); free(T.leaf_near);
-	free(leaf_set); free(leaves2); free(bm2); free(s.p); free(bstream.p); pool_free(&bpool);
+	free(sets); free(leaf_set); free(leaves2); free(bm2); free(s.p); free(bstream.p); pool_free(&bpool);
 	free(nodes2); free(new_of); free(old_at); free(world); free(seen); free(patched); free(f);
 	return 0;
 }

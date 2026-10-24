@@ -50,8 +50,9 @@ zone_mark:                               # (zone_rt is 16-byte aligned: one %hi 
 	lw      $t2, %lo(zone_rt + ZR_LEAFSET)($t0)
 	lw      $t4, %lo(zone_rt + ZR_SET)($t0)
 	mfhi    $t1                          # the index (exact while 3 x it < 2^32;
-	addu    $t2, $t2, $t1                #  waits for the product)
-	lbu     $t2, 0($t2)                  # the leaf's set
+	sll     $t1, $t1, 1                  #  waits for the product), a halfword a leaf
+	addu    $t2, $t2, $t1
+	lhu     $t2, 0($t2)                  # the leaf's set
 	lw      $t9, %lo(zone_rt + ZR_MARK)($t0)
 	bne     $t2, $t4, zm_enter
 	nop
