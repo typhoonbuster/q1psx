@@ -608,8 +608,41 @@ void snd_update(const int32_t origin[3], int yaw, int pitch, int roll, int ticks
    sounds, by their distance from the listener (Chebyshev, world units)
    over their reach as a full one's (ATTN_STATIC's 333 units weigh as
    ATTN_NORM's 1000) */
+/* the teleporters' fogs kept in the swap room: two of the five (their
+   variant index), the next to come in */
+static int tele_pin[2] = { 0, 1 }, tele_next = 2;
+
+int snd_tele_fog(void)
+{
+	int can[5], n = 0, pinned = 0;
+	for (int v = 0; v < 5; v++) {
+		int s = named[S_R_TELE1 + v];
+		sfx_t o;
+		if (s >= 0 && sfx_get(s, &o))              /* (the bank's, or in the swap room) */
+			can[n++] = v;
+	}
+	for (int k = 0; k < 2; k++)
+		pinned += named[S_R_TELE1 + tele_pin[k]] >= SND_STREAM;
+	int v = n ? can[(int) ((q_rand() & 0x7fff) * n / 0x8000)] : (int) ((q_rand() & 0x7fff) * 5 / 0x8000);   /* random () * n */
+	if (pinned)                                    /* a RAM one played: the next of the five takes
+	                                                  its place in the swap room at the next pass */
+		for (int k = 0; k < 2; k++)
+			if (tele_pin[k] == v) {
+				tele_pin[k] = tele_next;
+				tele_next = (tele_next + 1) % 5;
+				if (tele_next == tele_pin[1 - k])
+					tele_next = (tele_next + 1) % 5;
+			}
+	return S_R_TELE1 + v;
+}
+
 void snd_stream_wants(void)
 {
+	for (int k = 0; k < 2; k++) {                  /* the two teleporter fogs the swap room keeps */
+		int s = named[S_R_TELE1 + tele_pin[k]];
+		if (s >= SND_STREAM)
+			stream_want(s - SND_STREAM, STREAM_PIN);
+	}
 	const static_t *st = (const static_t *) statics;
 	for (int i = 0; i < statics_n; i++, st++) {
 		int s = static_sfx[st->voice];

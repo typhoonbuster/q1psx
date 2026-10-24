@@ -157,10 +157,10 @@ static void counter_use(edict_t *self)
 
 static void play_teleport(edict_t *self)
 {
-	int v = (int) ((q_rand() & 0x7fff) * 5 / 0x8000);   /* random () * 5 */
 	int32_t org[3];
 	__builtin_memcpy(org, self->origin, sizeof org);
-	snd_start(ENT_EDICT + (int) (self - edicts), CHAN_VOICE, S_R_TELE1 + v, org, 255, ATTN_NORM);
+	snd_start(ENT_EDICT + (int) (self - edicts), CHAN_VOICE, snd_tele_fog(), org, 255, ATTN_NORM);   /* random () * 5
+	                                                  among the fogs in (engine/snd.h) */
 	ent_remove(self);
 }
 

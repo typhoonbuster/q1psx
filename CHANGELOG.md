@@ -1980,10 +1980,13 @@ followed by R0-R4.
   (2026-10-24, `docs/porting-notes.md` §87):
   the halvings gave an uneven fidelity; every sound is now cooked at the
   lowest rate keeping `QCOOK_SOUND_KEEP` percent of its energy (default
-  95; a windowed-sinc resampler to any rate, the SPU's pitch restoring the
-  time), replacing `QCOOK_SOUND_HALVE` and `QCOOK_SOUND_HALVE2`. At 95 %:
-  29 of 32 maps whole in the SPU (banks 235-436 KB), the three others
-  5-19 KB in RAM; 97 % keeps 23 whole, 99 % 8.
+  98, after a try at 95; a windowed-sinc resampler to any rate, the SPU's
+  pitch restoring the time), replacing `QCOOK_SOUND_HALVE` and
+  `QCOOK_SOUND_HALVE2`. The teleporters' five fogs leave the always set
+  for main RAM first, two of them pinned in the SPU's swap room and
+  rotated after each teleport (`snd_tele_fog`); the other random variants
+  weigh less in the split. At 98 %: 23 of 32 maps whole in the SPU (banks
+  265-434 KB), the nine others 10-80 KB in RAM; at 95 % 29 were whole.
 - **Every sound of a level resident** (2026-10-24,
   `docs/porting-notes.md` §86, the same branch): the cook builds each
   level's exact sound set from the entities single player spawns, the

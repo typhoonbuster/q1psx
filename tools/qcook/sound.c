@@ -59,11 +59,6 @@ static const sound_spec ALWAYS[] = {
 	{ "player/gasp2.wav",   SG_WATER },
 	{ "player/h2odeath.wav", SG_WATER },
 	{ "misc/talk.wav",      SG_CORE },
-	{ "misc/r_tele1.wav",   SG_TELE },
-	{ "misc/r_tele2.wav",   SG_TELE },
-	{ "misc/r_tele3.wav",   SG_TELE },
-	{ "misc/r_tele4.wav",   SG_TELE },
-	{ "misc/r_tele5.wav",   SG_TELE },
 	{ "weapons/lock4.wav",  SG_ITEMS },   /* ammo pick up                        */
 	{ "weapons/pkup.wav",   SG_ITEMS },   /* weapon up                           */
 	{ "items/armor1.wav",   SG_ITEMS },
@@ -203,6 +198,14 @@ static const ent_sound_spec ENT_SOUNDS[] = {
 	{ "misc_explobox",    ANY, ANY, "weapons/r_exp3.wav" },
 	{ "misc_explobox2",   ANY, ANY, "weapons/r_exp3.wav" },
 };
+/* the teleporters' fog, one of five at random (misc.qc spawn_tfog): the
+   rarest sounds a map plays, the first to leave SPU RAM for main RAM in the
+   split (docs/porting-notes.md §87.5), where the engine keeps two of them
+   in the swap room and rotates after each teleport */
+static const char *const TELE_SOUNDS[5] = {
+	"misc/r_tele1.wav", "misc/r_tele2.wav", "misc/r_tele3.wav", "misc/r_tele4.wav", "misc/r_tele5.wav",
+};
+
 static const char *const KEY_DOOR_SOUNDS[3][2] = {
 	{ "doors/medtry.wav", "doors/meduse.wav" },
 	{ "doors/runetry.wav", "doors/runeuse.wav" },
@@ -621,7 +624,7 @@ static size_t sound_bytes(const bank_sound *s)
    2.76 kHz (rumbles, hums, the player's cries), some are all highs (the
    ricochets, the metal tinks, the pickups). Every sound, the bank's and
    the streamed ones alike, is cooked at its own rate: the lowest that
-   keeps QCOOK_SOUND_KEEP percent of its energy (default 95; 100 or 0:
+   keeps QCOOK_SOUND_KEEP percent of its energy (default 98; 100 or 0:
    its own rate), read off its spectrum (an FFT), with 15 % of room above
    that frequency and 2756 Hz at the least; the SPU plays it at the pitch
    of that rate (docs/porting-notes.md §85, §87: the halvings of §85-86
@@ -731,7 +734,7 @@ static double keep_share(void)
 	static double t = -1;
 	if (t < 0) {
 		const char *e = getenv("QCOOK_SOUND_KEEP");
-		t = e ? atof(e) : 95.0;
+		t = e ? atof(e) : 98.0;
 		if (t <= 0 || t >= 100)
 			t = 0;                                /* (none: the sound's own rate) */
 	}
@@ -961,7 +964,28 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			}
 		}
 	}
+	if (have[SG_TELE])                           /* the teleporters' fog: the last class */
+		for (int k = 0; k < 5; k++) {
+			int i = sound_add(TELE_SOUNDS[k], SG_TELE, pak, pak_len, pak0, pak0_len);
+			sounds[i].cls = 4;
+			sounds[i].weight = 1;
+		}
 	ents_free(&ents);
+	/* a variant among several (a name ending in a digit, siblings in the
+	   set: the deaths, the ricochets, a monster's idles...) is played a
+	   fraction of the times its event is: its weight shrinks by the count,
+	   so it leaves SPU RAM before the sound every event plays (§87.5); the
+	   always set keeps its place */
+	for (int i = 0; i < nsounds; i++) {
+		size_t ln = strlen(sounds[i].name);
+		if (sounds[i].cls == 0 || ln < 6 || sounds[i].name[ln - 5] < '0' || sounds[i].name[ln - 5] > '9')
+			continue;
+		int siblings = 0;
+		for (int j = 0; j < nsounds; j++)
+			siblings += strlen(sounds[j].name) == ln && !strncmp(sounds[j].name, sounds[i].name, ln - 5);
+		if (siblings > 1)
+			sounds[i].weight = sounds[i].weight / siblings > 0 ? sounds[i].weight / siblings : 1;
+	}
 
 	/* The split (§86): SPU RAM holds, beside the music's ring and a swap
 	   room, as many as fit, the always set first, then the ambients, the
@@ -987,11 +1011,11 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 		}
 	size_t swap = 32 * 1024, spu_budget = 0, in_spu = 0, in_ram = 0;
 	int nram = 0;
-	for (int pass = 0; pass < 4; pass++) {
+	for (int pass = 0; pass < 6; pass++) {
 		spu_budget = QS_SPU_BYTES - ring - swap;
 		in_spu = in_ram = 0;
 		nram = 0;
-		size_t biggest_ram = 0;
+		size_t biggest_ram = 0, tele1 = 0, tele2 = 0;   /* (the two biggest teleporter fogs in RAM: pinned) */
 		for (int k = 0; k < nsounds; k++) {
 			bank_sound *sn = &sounds[order[k]];
 			size_t bytes = sound_bytes(sn);
@@ -999,15 +1023,21 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			if (sn->ram) {
 				in_ram += bytes;
 				nram++;
-				if (bytes > biggest_ram)
+				if (sn->cls == 4) {
+					if (bytes > tele1) { tele2 = tele1; tele1 = bytes; }
+					else if (bytes > tele2) tele2 = bytes;
+				} else if (bytes > biggest_ram) {
 					biggest_ram = bytes;
+				}
 			} else {
 				in_spu += bytes;
 			}
 		}
-		if (!nram || biggest_ram + 16 * 1024 <= swap)
+		/* the swap room: the two pinned fogs, the biggest other RAM sound, 16 KB of play */
+		size_t need = tele1 + tele2 + biggest_ram + 16 * 1024;
+		if (!nram || need <= swap)
 			break;
-		swap = biggest_ram + 16 * 1024;
+		swap = need;
 	}
 	if (sndset_path) {
 		FILE *sf = fopen(sndset_path, "w");
@@ -1127,6 +1157,8 @@ int sound_streamed(const char **list, int max)
 	for (int w = 0; w < 3; w++)
 		for (int k = 0; k < 2; k++)
 			list_add(list, &n, max, KEY_DOOR_SOUNDS[w][k]);
+	for (int k = 0; k < 5; k++)
+		list_add(list, &n, max, TELE_SOUNDS[k]);
 	return n;
 }
 

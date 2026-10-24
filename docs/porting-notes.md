@@ -11296,8 +11296,9 @@ noise floor too and saves almost nothing (1529 KB).
 
 ### 87.2 The cook (tools/qcook/sound.c)
 
-`QCOOK_SOUND_KEEP=<percent>` (default 95; 100 or 0: a
-sound's own rate; `cooked/settings.txt` records it) replaces
+`QCOOK_SOUND_KEEP=<percent>` (default 98, chosen after a first
+try at 95; 100 or 0: a sound's own rate; `cooked/settings.txt` records it)
+replaces
 `QCOOK_SOUND_HALVE` and `QCOOK_SOUND_HALVE2`. For every sound the cook
 loads: `keep_freq` reads off the spectrum the frequency below which the
 share of its energy lies; the rate is 2.3 times it (15 % of room above
@@ -11309,9 +11310,9 @@ low-pass at 0.45 of the new rate, unity gain), the loop's start scaled
 with it. The bank's and the streamed sounds' headers carry the pitch as
 before; nothing changes in the engine.
 
-### 87.3 Measured
+### 87.3 Measured, at 95 % first
 
-At 95 %, the 32 maps cooked again: **29 maps whole in the SPU** (banks
+At 95 %, the 32 maps cooked again: 29 maps whole in the SPU (banks
 235-436 KB), E1M3 and E4M3 with one sound (19 KB) in RAM, E2M4 one (5
 KB); STREAM_0.DAT 1770 → 1618 KB. E1M1's 93 sounds: 7 at 11 025 Hz
 (`ric1`, `tink1`, `armor1`, `secret`, `lock4`, `pkup`, `h2ohit1`...), 55
@@ -11319,12 +11320,68 @@ between 2778 and 10 530 Hz (`gib` 10 530, `r_tele5` 7730, `pain5` 5017,
 `death5` 3101, `water1` 3338), 30 at the 2756 Hz floor (`guncock`,
 `r_exp3`, `wind2`, the ogre's and the player's low sounds...). The maps all
 load (`BENCH_MAPS=1 VIEWS=0`: no bank out of bounds, no block refused).
+The shotgun and the explosions at 2756 Hz were the point to hear; what
+else could make room was looked at, and 98 % chosen with §87.5.
 
-### 87.4 Left
+### 87.4 The loops, the variants, what is rarely heard (measured)
 
-- **The ear decides the share**: 95 % puts the shotgun's `guncock`
-  and the explosions' `r_exp3` at 2756 Hz; 97 % keeps 23 maps whole for
-  more highs; the knob is per cook.
+- **The loops**: 23 sounds loop, the big ones the ambients (`drip1` 12.5 s
+  and 34 KB, `swamp1`/`swamp2` 6.2 s and 25 KB each, `buzz1` 16, `comp1`
+  16, `suck1` 10 s and 15 KB, `fl_hum1` 12, `fire1` 10). None has a
+  shorter period repeating within the loop at 3 or 10 % error: they are
+  noises (drips, bubbles, crackle), not hums; a shorter loop would bring
+  the same drips back more often. About 70 KB on the maps that have them,
+  the ear's call; not done.
+- **The variants Quake draws at random**: the teleporters' fog
+  `misc/r_tele1-5` (24 KB, on nearly every map), the swamps' two ambients
+  (two entities, 51 KB), `weapons/ric1-3` (10 KB), the player's five
+  deaths (9 KB) and six pains (6 KB), a monster's two idles... Keeping
+  fewer would need the engine to pick among the kept (three silent
+  teleports in five otherwise) and departs from Quake's variety; the fogs
+  are handled by §87.5 instead, the rest weighted down there.
+- **Rarely used, or not grave to lose**: little is left, the cook already
+  filtering by the map's contents, teleporters, items, kinds and weapons;
+  `misc/talk` (1 KB), the menu's three clicks (2.7 KB, the pause menu's),
+  the drowning sounds (3-8 KB, water maps only).
+
+### 87.5 The teleporters' fog in main RAM, two in the swap room (2026-10-24)
+
+The idea for the rarest sounds: keep two of the five fogs
+resident, pick among those two, bring another in after each teleport;
+from main RAM rather than the disc (the five take 24-31 KB of a pool of
+400-1000 KB, where two slots reloaded from disc copies would save 15 KB
+for reads in play).
+
+- **The cook**: the five fogs leave the always set for the pool
+  (`TELE_SOUNDS`, in `sound_streamed`) and join a map's set when it has
+  teleporters, in a last class of the split (4): the first to go to main
+  RAM when a map does not fit. Any other variant among several (a name
+  ending in a digit with siblings in the set) has its weight divided by
+  their count: it leaves the SPU before the sound every event plays. The
+  swap room is the two biggest fogs in RAM (pinned), the biggest other RAM
+  sound, and 16 KB.
+- **The engine** (engine/snd.c `snd_tele_fog`, `snd_stream_wants`;
+  engine/triggers.c `play_teleport`): `named[S_R_TELE*]` resolve to the
+  bank's or the stream's as before (`sound_of_hash`); each pass pins two
+  fog variants (`STREAM_PIN`: in the swap room, never evicted) where they
+  are the stream's; a teleport plays one at random among the fogs playable
+  now (the bank's five on a whole map, the two pinned on the others:
+  `random() * n`, Quake's arithmetic), and a played pinned one gives its
+  place to the next of the five, brought in from RAM by the next pass's
+  DMA. A map without teleporters has them absent (never wanted).
+
+**Measured at 98 %**: 23 maps whole in the SPU (banks 265-434 KB); nine
+with a RAM block: E1M2 10 KB (one fog), E4M5 10, E2M6 18 (two fogs),
+E1M5 23 (three), E2M7 43 (the five fogs, `damage`, `damage2`), E4M7 57
+(four fogs, the keys' `medkey`/`runekey`, `inv3`), E2M4 60 (the fogs,
+`basesec1`, `doormv1`, `r_item2`, the pentagram's three...), E1M3 69 and
+E4M3 80 (the fogs, then the secret doors', the pentagram's, the plats');
+the swap room 32-52 KB; STREAM_0.DAT 1706 KB. Every map loads
+(`BENCH_MAPS=1 VIEWS=0`).
+
+### 87.6 Left
+
+- A listen at 98 % (`QCOOK_SOUND_KEEP`, per cook).
 - The 15 % of room and the 2756 Hz floor are constants of
-  `halve_by_class`; the floor could go lower for the hums if
-  wanted.
+  `halve_by_class`; the floor could go lower for the hums.
+- The long noise loops shortened (§87.4), if the 70 KB are wanted.

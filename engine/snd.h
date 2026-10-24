@@ -76,6 +76,14 @@ void snd_map_start(void);
 
 /* S_StartSound; `sfx` an S_* id (missing from this map's bank: nothing) */
 void snd_start(int entnum, int entchannel, int sfx, const int32_t origin[3], int vol, int atten);
+
+/* The teleporters' fog (misc.qc spawn_tfog: one of misc/r_tele1-5 at
+   random). On a map whose bank holds them, any of the five; where the
+   cook put them in main RAM (docs/porting-notes.md §87.5), two are kept in
+   the SPU's swap room (pinned by snd_stream_wants), the pick is one of
+   those two, and the one played gives its place to the next of the five
+   at the next pass. Returns the S_R_TELE* sound to play. */
+int  snd_tele_fog(void);
 void snd_stop_all(void);
 
 /* the sound of that name (the QC's names: "doors/drclos4.wav"): the bank's
