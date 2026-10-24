@@ -156,7 +156,8 @@ sp_ctab:                                 # children by split mask (1..7)
 # |dy| (3 % under to 7 % over the true one: |dx| + |dy| was up to 41 % over,
 # on a diagonal) passes the same test: (max + 3/8 min) |dz| <= zta + ztb;
 # over the span (|dx| + |dy| > SPAN: the GPU's) it splits all the same.
-# Clobbers at, v0, t9.
+# Clobbers at, v0, t9 and a0 (dz: what were three delay slots' nops do
+# work, §81.3; sp_refine sets a0 again for sp_emit).
 .macro REFINE xa, ya, za, zta, xb, yb, zb, ztb, bit
 	andi    $at, $s3, \bit
 	beqz    $at, 9f                      # (not marked: whole already)
@@ -165,26 +166,24 @@ sp_ctab:                                 # children by split mask (1..7)
 	subu    $v0, \ya, \yb
 	subu    $at, $zero, $at              # |dx|
 1:	bgez    $v0, 2f
-	nop
+	subu    $a0, \za, \zb                # (dz)
 	subu    $v0, $zero, $v0              # |dy|
 2:	addu    $t9, $at, $v0
 	sltiu   $t9, $t9, SPAN + 1
 	beqz    $t9, 9f                      # over the span: it splits
 	sltu    $t9, $at, $v0
 	beqz    $t9, 3f                      # at the max, v0 the min
-	nop
+	sll     $t9, $v0, 1                  # (2 min, if so)
 	xor     $at, $at, $v0
 	xor     $v0, $v0, $at
 	xor     $at, $at, $v0
-3:	sll     $t9, $v0, 1
-	addu    $t9, $t9, $v0
+	sll     $t9, $v0, 1                  # 2 min
+3:	addu    $t9, $t9, $v0
 	sra     $t9, $t9, 3
+	bgez    $a0, 4f
 	addu    $at, $at, $t9                # max + 3/8 min
-	subu    $v0, \za, \zb
-	bgez    $v0, 4f
-	nop
-	subu    $v0, $zero, $v0              # |dz|
-4:	mult    $at, $v0
+	subu    $a0, $zero, $a0              # |dz|
+4:	mult    $at, $a0
 	addu    $t9, \zta, \ztb              # T2 (za + zb)
 	mflo    $at
 	sltu    $at, $t9, $at                # 1: over all the same: it splits
@@ -585,6 +584,9 @@ sp_refine:
 	REFINE  $t6, $t7, $s1, $ra, $t0, $t1, $t2, $s0, 4   # p2-p0
 	bnez    $s3, sp_split
 	sltu    $t2, $s7, $s6                # (sp_emit's arena test)
+	sll     $a0, $s2, 5                  # (p0 again: REFINE took a0)
+	andi    $a0, $a0, 0x3fe0
+	addu    $a0, $a0, $v1
 	b       sp_emit
 	lui     $t9, CODE_GT3 >> 16
 
@@ -670,6 +672,9 @@ sp_c4:                                   # p2-p0
 	# a forced leaf (max depth, pool full): only if the GPU takes it
 sp_leaf_max:
 	STAT    8, $at, $v0                  # (forced leaves)
+	sll     $a0, $s2, 5                  # (p0 again: from sp_split, REFINE
+	andi    $a0, $a0, 0x3fe0             #  took a0)
+	addu    $a0, $a0, $v1
 	move    $at, $t0                     # max x - min x <= 1023?
 	slt     $v0, $t3, $at
 	beqz    $v0, 1f

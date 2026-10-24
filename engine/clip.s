@@ -221,12 +221,11 @@
 	li      $a0, -DIST_EPS
 3:	subu    $a0, $a0, $t5                # num = +-DIST_EPS - ds
 	bgez    $a1, 4f
-	nop
+	move    $t7, $zero                   # (fm = 0, for 6f)
 	subu    $a0, $zero, $a0
 	subu    $a1, $zero, $a1
 4:	blez    $a0, 6f                      # fm <= 0
-	move    $t7, $zero
-	slt     $t4, $a0, $a1
+	slt     $t4, $a0, $a1                # (6f sets t4 again)
 	beqz    $t4, 6f                      # num >= den: fm = F_ONE
 	lui     $t7, 1
 	mtc2    $a1, C2_LZCS                 # shift so den fits 15 bits
@@ -246,13 +245,13 @@
 6:	slt     $t4, $t7, $s4                # clamp fm to [f1, f2]
 	bnez    $t4, 7f
 	slt     $t4, $s5, $t7
-	beqz    $t4, 8f
-	nop
-	b       8f
+	beqz    $t4, 81f
+	addiu   $sp, $sp, -16                # (the push's first, below)
+	b       81f
 	move    $t7, $s5
 7:	move    $t7, $s4
-8:	addiu   $sp, $sp, -16                # push the split (t9 already holds
-	or      $t4, $t0, $t8                # a child: push the node pointer)
+	addiu   $sp, $sp, -16                # push the split (t9 already holds
+81:	or      $t4, $t0, $t8                # a child: push the node pointer)
 	sw      $t4, 0($sp)
 	sw      $s4, 4($sp)
 	sw      $t7, 8($sp)
@@ -279,10 +278,9 @@
 	sw      $t1, TR_INWATER($s0)
 2:	sw      $t1, TR_STARTSOLID($s0)
 3:	beqz    $s6, ct_done                 # the whole sweep is open
-	nop
+	lw      $t4, 0($sp)                  # (the split's, below; ct_done leaves t4)
 
 	# the near side of the innermost split was open: its far side
-	lw      $t4, 0($sp)
 	lw      $t5, 4($sp)                  # f1
 	lw      $t7, 8($sp)                  # fm
 	lw      $t6, 12($sp)                 # f2
@@ -942,7 +940,9 @@ ct_core:
 	CT_LOOP 1, c0
 
 ct_done:
+	lw      $ra, PS_CORERA($s7)
 	sll     $t0, $s6, 4
+	jr      $ra
 	addu    $sp, $sp, $t0                # drop any pending splits
 ct_core_ret:
 	lw      $ra, PS_CORERA($s7)

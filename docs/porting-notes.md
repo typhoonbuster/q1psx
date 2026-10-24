@@ -10121,3 +10121,26 @@ The release's stack room: 86200 → 90184 B (−3984 B of code).
 - **Left**: a check on DuckStation and the machine (the pad,
   digital and analog, plugged in and out while playing). PCSX-Redux
   answers the receive interrupt: the last byte comes by it.
+
+### 81.3 The asm, instruction by instruction
+
+The rule: every change that saves cycles and costs none anywhere, however
+few, goes in; a change that wins at one setting and loses at another is
+measured at both and left out. The views are measured at the bench's
+T = 4 (its floor, the dearest) and at T = 32: the game's warp control
+holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
+
+- **The slow path's REFINE** (`engine/r_slow.s`): three of its four delay
+  slots held nops, for want of a register. dz now goes in a0 (MIDLOOK and
+  sm_new reset it, sp_refine and sp_leaf_max set it again for sp_emit):
+  the 128 views −0.34 % at T = 4, −0.05 % at T = 32.
+- **The hull trace** (`engine/clip.s`): the split's |den| and fm, the
+  clamp and the open sweep's end fill four delay slots; ct_done returns
+  in four instructions. −7 cycles a trace, −23 a pmove tick.
+- **Measured and left out** (each loses at T = 32, where the game runs):
+  - the split test by the edge's length in one pass (no REFINE; gp and sp
+    as temporaries): −1.06 % at T = 4, +0.19 % at T = 32;
+  - REFINE with gp and sp, kept on slow_poly's entry: −0.28 % at T = 4,
+    +0.04 % at T = 32;
+  - MIDLOOK's found test's delay slot: no instruction to put there that
+    the other path does not pay back.
