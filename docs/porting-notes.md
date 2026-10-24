@@ -10165,3 +10165,26 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
     +0.04 % at T = 32;
   - MIDLOOK's found test's delay slot: no instruction to put there that
     the other path does not pay back.
+
+### 81.4 The interrupts' handler, again
+
+- **The pad's middle bytes by a short way** (`engine/irq.s` q_irq): when
+  SIO0 is the only source pending and the poll is in its middle bytes
+  (not the id byte, not the last), five registers are kept, the answer
+  stored, the next byte sent and the handler left, as `poll_isr` does
+  (the poll's state is `pad_poll` in `engine/pad.c`, at irq.s's PP_*
+  offsets). 7 of an analog pad's 9 bytes go that way. Interrupts: 3 800 →
+  3 130 cycles a frame (`IRQTIME=1`, START's one-vblank views).
+- **EPC kept on the way in**: a callback that made a syscall
+  (EnterCriticalSection...) would take over EPC, k0 and k1 in the
+  kernel's handler, so q_full stores EPC with the registers and q_ret sets
+  k1 again.
+- **The rest**: Cause is read in the vector's delay slot (the jump has its
+  target); the return's GTE test runs before the registers come back, its
+  load delay filled; the dispatch's handler-table address loads in a load
+  delay, the pass starts again in the callback's return's slot.
+- **A note on the interpreter's logs**: with 12 interrupts a frame,
+  PCSX-Redux's interpreter now and then lands one on the BIOS's `putchar`
+  call. Its console then shows that character twice (`bbench`, a hash
+  with a doubled digit). The frames themselves are identical; a diff of
+  the dumps must drop the doubled character first.

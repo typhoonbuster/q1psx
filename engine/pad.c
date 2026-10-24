@@ -130,31 +130,43 @@ static uint16_t          last_held;      /* the last taken poll's buttons */
 
 static volatile int   driver_on;
 
+/* The poll's state. engine/irq.s reads and writes it too: its short way
+   for SIO0 sends the middle bytes (§81.4), at the PP_* offsets there. */
+typedef struct {
+	volatile uint8_t  busy;          /* +0  a poll in flight              */
+	volatile uint8_t  i, n;          /* +1, +2  the answers in, its length */
+	uint8_t           pad0;
+	volatile uint16_t t;             /* +4  timer 2 at its last byte      */
+	uint8_t           pad1[2];
+	uint8_t           rx[9];         /* +8  the answers                   */
+	uint8_t           tx[9];         /* +17 the bytes sent                */
+} pad_poll_t;
+pad_poll_t pad_poll = {
+	.tx = { 0x01, PAD_CMD_READ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+};
+_Static_assert(__builtin_offsetof(pad_poll_t, t) == 4 && __builtin_offsetof(pad_poll_t, rx) == 8 &&
+               __builtin_offsetof(pad_poll_t, tx) == 17, "irq.s's PP_* offsets");
+
 #if !Q1PSX_PADSCRIPT
-static const uint8_t poll_tx[9] = { 0x01, PAD_CMD_READ, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-static uint8_t           poll_rx[9];
-static volatile uint8_t  poll_busy;      /* a poll in flight */
-static uint8_t           poll_n, poll_i; /* its length, the answers in */
-static volatile uint16_t poll_t;         /* timer 2 at its last byte */
 
 static void snap_poll(volatile pad_snap *s);
 
 /* (interrupts off) the poll ended: its answer into pad_buf, then the ring */
 static void poll_end(void)
 {
-	int got = poll_i, n = poll_n;
+	int got = pad_poll.i, n = pad_poll.n;
 	if (got == n - 1 && (SIO_STAT(0) & 0x0002))
-		poll_rx[got++] = SIO_DATA(0);      /* (the last answer, its interrupt not taken yet) */
+		pad_poll.rx[got++] = SIO_DATA(0);  /* (the last answer, its interrupt not taken yet) */
 	SIO_CTRL(0) = 0x0010;                  /* deselected, any flag cleared */
-	poll_busy = 0;
+	pad_poll.busy = 0;
 	uint8_t *b = pad_buf[0];
-	if (got >= 5 && got >= n && poll_rx[1] != 0xff) {
+	if (got >= 5 && got >= n && pad_poll.rx[1] != 0xff) {
 		b[0] = 0;                          /* PADTYPE: stat, id, buttons, sticks */
-		b[1] = poll_rx[1];
-		b[2] = poll_rx[3];
-		b[3] = poll_rx[4];
+		b[1] = pad_poll.rx[1];
+		b[2] = pad_poll.rx[3];
+		b[3] = pad_poll.rx[4];
 		for (int i = 5; i < 9; i++)
-			b[i - 1] = got > i ? poll_rx[i] : 0x80;
+			b[i - 1] = got > i ? pad_poll.rx[i] : 0x80;
 	} else {
 		b[0] = 0xff;
 	}
@@ -163,29 +175,31 @@ static void poll_end(void)
 	ring_head = h + 1;
 }
 
-/* SIO0's interrupt: the answer to byte poll_i came */
+/* SIO0's interrupt: the answer to byte i came (the middle bytes take
+   engine/irq.s's short way, the same steps; the id byte and the last one
+   come here) */
 static void poll_isr(void)
 {
-	if (!poll_busy) {
+	if (!pad_poll.busy) {
 		SIO_CTRL(0) = 0x0010;              /* (one after the poll ended) */
 		return;
 	}
-	int i = poll_i;
-	poll_rx[i++] = SIO_DATA(0);
-	poll_i = i;
+	int i = pad_poll.i;
+	pad_poll.rx[i++] = SIO_DATA(0);
+	pad_poll.i = i;
 	if (i == 2) {                          /* the id byte: the poll's length */
-		int id = poll_rx[1], len = id & 0xf, n = id == 0xff || len == 0xf ? 2 : 3 + 2 * len;
-		poll_n = n > 9 ? 9 : n;
+		int id = pad_poll.rx[1], len = id & 0xf, n = id == 0xff || len == 0xf ? 2 : 3 + 2 * len;
+		pad_poll.n = n > 9 ? 9 : n;
 	}
-	if (i >= poll_n) {
+	if (i >= pad_poll.n) {
 		poll_end();
 		return;
 	}
 	/* the flag cleared, the pad still selected; the last answer by the
 	   receive interrupt (no /ACK follows it), the others by /ACK */
-	SIO_CTRL(0) = i == poll_n - 1 ? 0x0813 : 0x1013;
-	SIO_DATA(0) = poll_tx[i];
-	poll_t = (uint16_t) TIMER_VALUE(2);
+	SIO_CTRL(0) = i == pad_poll.n - 1 ? 0x0813 : 0x1013;
+	SIO_DATA(0) = pad_poll.tx[i];
+	pad_poll.t = (uint16_t) TIMER_VALUE(2);
 }
 
 static void poll_start(void)
@@ -193,11 +207,11 @@ static void poll_start(void)
 	SIO_CTRL(0) = 0x1003;                  /* TX on, port 1 selected, /ACK raises the IRQ */
 	for (volatile int i = 0; i < 40; i++)
 		;                                  /* (the select settles) */
-	poll_i    = 0;
-	poll_n    = 9;
-	poll_busy = 1;
-	SIO_DATA(0) = poll_tx[0];
-	poll_t = (uint16_t) TIMER_VALUE(2);
+	pad_poll.i    = 0;
+	pad_poll.n    = 9;
+	pad_poll.busy = 1;
+	SIO_DATA(0) = pad_poll.tx[0];
+	pad_poll.t = (uint16_t) TIMER_VALUE(2);
 }
 #endif
 
@@ -291,7 +305,7 @@ static void pad_vblank(void)
 	snap_poll(&ring[h & (PAD_RING - 1)]);
 	ring_head = h + 1;
 #else
-	if (poll_busy)
+	if (pad_poll.busy)
 		poll_end();                        /* the last one, as far as it went */
 	poll_start();
 #endif
@@ -304,7 +318,7 @@ static void driver_start(void)
 	SIO_BAUD(0) = 0x0088;                  /* 250 kbps */
 	SIO_CTRL(0) = 0x0010;
 #if !Q1PSX_PADSCRIPT
-	poll_busy = 0;
+	pad_poll.busy = 0;
 	InterruptCallback(IRQ_SIO0, poll_isr);
 #endif
 	driver_on = 1;
@@ -318,7 +332,7 @@ static void driver_stop(void)
 #if !Q1PSX_PADSCRIPT
 	FastEnterCriticalSection();
 	InterruptCallback(IRQ_SIO0, 0);
-	poll_busy = 0;
+	pad_poll.busy = 0;
 	SIO_CTRL(0) = 0x0010;
 	FastExitCriticalSection();
 #endif
@@ -353,11 +367,11 @@ static void snap_to_pad(const volatile pad_snap *s, pad_t *p)
 
 static void poll_wait(void)
 {
-	while (poll_busy && (uint16_t) ((uint16_t) TIMER_VALUE(2) - poll_t) < POLL_WAIT)
+	while (pad_poll.busy && (uint16_t) ((uint16_t) TIMER_VALUE(2) - pad_poll.t) < POLL_WAIT)
 		;
-	if (poll_busy) {
+	if (pad_poll.busy) {
 		FastEnterCriticalSection();
-		if (poll_busy)
+		if (pad_poll.busy)
 			poll_end();
 		FastExitCriticalSection();
 	}
