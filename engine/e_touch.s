@@ -72,7 +72,7 @@ touch_gather:                            # a0 = e, a1 = out, a2 = w
 	li      $t6, 1
 
 1:	addiu   $t6, $t6, -1                 # a node off the stack
-	addu    $v0, $sp, $t6
+11:	addu    $v0, $sp, $t6
 	lbu     $t5, 16($v0)                 # a
 	lui     $at, %hi(clip_areas)
 	sll     $v0, $t5, 3
@@ -118,10 +118,9 @@ touch_gather:                            # a0 = e, a1 = out, a2 = w
 	lhu     $v1, 0($v0)                  # l = head[a] (slot + 1)
 	nop
 	beqz    $v1, 7f
-	nop
+	sll     $v0, $v1, 4                  # (delay: the loop's first)
 
-4:	sll     $v0, $v1, 4
-	addu    $v0, $t1, $v0                # the slot, at -16
+4:	addu    $v0, $t1, $v0                # the slot, at -16 (v0 = l x 16)
 	.if ASM_BENCH
 	addiu   $a2, $a2, 1
 	.endif
@@ -155,10 +154,10 @@ touch_gather:                            # a0 = e, a1 = out, a2 = w
 	lhu     $v1, -2($v0)                 # l = next[l - 1]
 	nop
 	bnez    $v1, 4b
-	nop
+	sll     $v0, $v1, 4                  # (delay: the loop's first)
 
-7:	bnez    $t6, 1b                      # nodes left
-	nop
+7:	bnez    $t6, 11b                     # nodes left
+	addiu   $t6, $t6, -1                 # (delay: 1's first; done: unused)
 
 8:
 	.if ASM_BENCH

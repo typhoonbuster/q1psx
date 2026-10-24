@@ -10158,6 +10158,20 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
     cr_poly, cr_sph_gen, pr_count filled.
   - The cut of the three movers bench: E1M6's train −1.8 %, E1M3's −2.7 %,
     E3M4's door −2.0 % (385 k → 379 k cycles a frame for the train).
+- **The entities' asm** (`engine/e_tick.s`, `e_touch.s`, `e_seen.s`,
+  `w_leaf.s`, `ent_mat.s`, `mdl_expand.s`, `rl_order.s`), their slots
+  filled where an instruction of the way taken fits:
+  - e_tick: the word's two loads swapped; `negu`, the edict loop's first
+    instruction, in the two slots that lead there; the monster's health
+    in the monster test's slot; 70's first load in the slots of the ways
+    that end there;
+  - e_touch: the slot loop's first instruction in both slots that enter
+    it, the node loop's in its own (`touchdiff` 830 → 807 cycles a walk);
+  - w_leaf: two of a general plane's four HI/LO spacers do work; e_seen's
+    found way and leaf lookup, ent_mat's untransformed way, mdl_expand's
+    odd vertex, rl_order's way to `done`: one instruction each.
+  - Checked: the physics diffs (0 mismatches), the monsters' and the
+    crowd's lines, `ORDER_C=2` (0 mismatches over 12 views of E1M1).
 - **Measured and left out** (each loses at T = 32, where the game runs):
   - the split test by the edge's length in one pass (no REFINE; gp and sp
     as temporaries): −1.06 % at T = 4, +0.19 % at T = 32;

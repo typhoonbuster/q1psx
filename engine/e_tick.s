@@ -60,16 +60,14 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 	lui     $t0, %hi(edicts)
 	lw      $s6, %lo(edicts)($t0)
 
-1:	lw      $t0, 0($s0)                  # a word
-	lw      $t1, 0($s1)
-	nop
+1:	lw      $t1, 0($s1)                  # a word
+	lw      $t0, 0($s0)
 	or      $t1, $t1, $s2
 	and     $s4, $t0, $t1                # its bits this tick
 	beqz    $s4, 90f
-	nop
+	negu    $t0, $s4                     # (2's first, in the slots that lead there)
 
-2:	negu    $t0, $s4                     # an edict: the lowest bit
-	and     $s8, $s4, $t0
+2:	and     $s8, $s4, $t0                # an edict: the lowest bit (t0 = -s4)
 	lui     $t1, 0x077c
 	ori     $t1, $t1, 0xb531
 	multu   $s8, $t1                     # (de Bruijn)
@@ -115,46 +113,45 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 
 4:	lh      $t5, E_MASSET($s7)
 	bnez    $t4, 5f                      # a monster
-	nop
+	lh      $t6, E_HEALTH($s7)           # (delay: 5's)
 	bltz    $t5, 60f                     # neither monster nor thrown model
 	nop
-	b       7f                           # a thrown model: no body, no pause
-	nop
-5:	lh      $t6, E_HEALTH($s7)
-	nop
+	b       71f                          # a thrown model: no body, no pause
+	li      $t3, MT_STEP                 # (delay: 7's first)
+5:	lui     $t7, %hi(ent_time)           # (the health's load delay)
 	bgtz    $t6, 6f                      # alive
-	lui     $t7, %hi(ent_time)           # (delay)
-	lw      $t7, %lo(ent_time)($t7)      # a body: its end?
+	lw      $t7, %lo(ent_time)($t7)      # (delay) a body: its end?
 	lw      $t8, E_PAIN_FINISHED($s7)
-	nop
+	move    $a0, $s7                     # (ent_remove's)
 	subu    $t7, $t7, $t8
 	bltz    $t7, 6f
 	nop
 	jal     ent_remove                   # a body's end
-	move    $a0, $s7
-	b       70f
 	nop
+	b       701f
+	lbu     $t0, E_INUSE($s7)            # (delay: 70's first)
 6:	bltz    $t5, 7f                      # no model of its own: not paused
 	nop
 	jal     stream_model
 	move    $a0, $t5                     # (delay)
-	beqz    $v0, 70f                     # its model not in: paused
-	nop
+	beqz    $v0, 701f                    # its model not in: paused
+	lbu     $t0, E_INUSE($s7)            # (delay: 70's first)
 	lbu     $t2, E_MOVETYPE($s7)         # (the call took t2)
 7:	li      $t3, MT_STEP
-	bne     $t2, $t3, 20f
+71:	bne     $t2, $t3, 20f
 	lw      $t0, E_FLAGS($s7)            # (delay) a step mover:
 	lui     $t1, %hi(ent_time)
 	lw      $t1, %lo(ent_time)($t1)
+	lw      $t3, E_NEXTTHINK($s7)
 	andi    $t0, $t0, FL_GROUND_FLY_SWIM
 	beqz    $t0, 10f                     # falling: the physics
-	lw      $t3, E_NEXTTHINK($s7)        # (delay)
-	nop
-	blez    $t3, 8f                      # no think
 	slt     $t4, $t1, $t3                # (delay) ent_time < nextthink: not due
+	blez    $t3, 81f                     # no think
+	lb      $t5, E_WATERTYPE($s7)        # (delay: 8's first)
 	beqz    $t4, 10f                     # due
 	nop
 8:	lb      $t5, E_WATERTYPE($s7)
+81:
 	lw      $t6, E_ORIGIN+0($s7)
 	beqz    $t5, 10f                     # no contents taken yet
 	lw      $t7, E_WATER_AT+0($s7)       # (delay)
@@ -165,12 +162,12 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 	bne     $t8, $t9, 10f
 	lw      $t7, E_WATER_AT+8($s7)       # (delay)
 	nop
-	beq     $t6, $t7, 70f                # nothing to do
-	nop
+	beq     $t6, $t7, 701f               # nothing to do
+	lbu     $t0, E_INUSE($s7)            # (delay: 70's first)
 10:	jal     ai_physics_step
 	move    $a0, $s7
-	b       70f
-	nop
+	b       701f
+	lbu     $t0, E_INUSE($s7)            # (delay: 70's first)
 20:	sltiu   $t3, $t2, MT_FLY             # toss, fly, bounce, a missile: their physics
 	bnez    $t3, 30f                     # (none, walk: the think)
 	li      $t3, MT_PUSH                 # (delay)
@@ -180,12 +177,12 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 	nop
 	jal     ai_physics_toss
 	move    $a0, $s7
-	b       70f
-	nop
+	b       701f
+	lbu     $t0, E_INUSE($s7)            # (delay: 70's first)
 30:	jal     ents_run_think
 	move    $a0, $s7
-	b       70f
-	nop
+	b       701f
+	lbu     $t0, E_INUSE($s7)            # (delay: 70's first)
 
 60:	jal     ents_run_think               # another edict: the think, then the move
 	move    $a0, $s7
@@ -193,25 +190,25 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 	lbu     $t2, E_MOVETYPE($s7)
 	beqz    $t0, 80f
 	li      $t3, MT_TOSS                 # (delay)
-	bne     $t2, $t3, 70f
-	nop
+	bne     $t2, $t3, 701f
+	lbu     $t0, E_INUSE($s7)            # (delay: 70's first)
 	jal     items_physics
 	move    $a0, $s7
 
 70:	lbu     $t0, E_INUSE($s7)            # asleep?
-	lw      $t1, E_NEXTTHINK($s7)
+701:	lw      $t1, E_NEXTTHINK($s7)
 	beqz    $t0, 80f                     # out of use
 	lw      $t2, E_MOVE_TICKS($s7)       # (delay)
 	bgtz    $t1, 85f                     # a think
 	lw      $t3, E_MDEF($s7)             # (delay)
 	bnez    $t2, 85f                     # a move
 	lh      $t4, E_MASSET($s7)           # (delay)
-	bnez    $t3, 72f                     # a monster's,
-	nop
+	bnez    $t3, 721f                    # a monster's,
+	lbu     $t5, E_MOVETYPE($s7)         # (delay: 72's first)
 	bltz    $t4, 74f                     # (neither)
 	nop
 72:	lbu     $t5, E_MOVETYPE($s7)         # or a thrown model's: falling?
-	lw      $t6, E_FLAGS($s7)
+721:	lw      $t6, E_FLAGS($s7)
 	sltiu   $t7, $t5, MT_STEP
 	bnez    $t7, 74f
 	li      $t7, MT_PUSH                 # (delay)
@@ -229,7 +226,7 @@ ents_tick_loop:                          # a0 = active, a1 = pushers, a2 = half,
 	and     $t0, $t0, $t1
 	sw      $t0, 0($s0)
 85:	bnez    $s4, 2b                      # the word's next
-	nop
+	negu    $t0, $s4                     # (2's first)
 
 90:	addiu   $s5, $s5, 32                 # the next word
 	addiu   $s0, $s0, 4

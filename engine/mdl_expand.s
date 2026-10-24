@@ -40,8 +40,7 @@ mdl_expand:
 	bgez    $at, 1b
 	addiu   $a0, $a0, 16
 2:	blez    $a2, 3f                      # the last one, n odd
-	nop
-	lw      $t1, 0($a1)
+	lw      $t1, 0($a1)                  # (delay; n even: a harmless read)
 	nop
 	srl     $t2, $t1, 8
 	and     $t1, $t1, $t0

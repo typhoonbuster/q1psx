@@ -220,8 +220,8 @@ skip:	beqz    $t1, done                    # t1: the next pieces item x 16 (0: n
 	sll     $t1, $t1, 4
 	bnez    $t1, 1b
 	addu    $v1, $t9, $t1
-	b       done
-	nop
+	b       done_1
+	lw      $v0, OR_OVER($a2)            # (delay: done's first)
 
 run1:	# v1: the first item of model t8 in a run: can the model hide the point,
 	# the segment from the eye to it crossing its box?
@@ -485,6 +485,7 @@ find:	# item v1's node: the last whose groups' records start at or before its
 done:	# the last pieces item over the point (its address, 0: none) is the
 	# item's place; a model's, after the models nearer than it that follow
 	lw      $v0, OR_OVER($a2)
+done_1:
 	lw      $a1, OR_N($a2)
 	lw      $a0, OR_LIST($a2)
 	addiu   $a3, $a1, 1                  # n + 1

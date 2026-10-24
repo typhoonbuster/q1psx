@@ -94,6 +94,5 @@ rl_ent_matrix:
 	sw      $t2, RE_TR+4($a0)
 	jr      $ra
 	sw      $t3, RE_TR+8($a0)
-2:	nop                                  # (two apart from the V0 load)
-	b       1b
-	nop
+2:	b       1b                           # (two apart from the V0 load: the
+	nop                                  #  branch and its slot)

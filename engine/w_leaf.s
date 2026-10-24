@@ -77,16 +77,14 @@ world_point_leaf_from:                   # a0 = at, a1 = pos
 	lh      $t4, PL_N+2($t6)
 	mult    $t0, $t3
 	lh      $t5, PL_N+4($t6)
-	sra     $t8, $t8, 1                  # dist >> 1
 	mflo    $t3
-	nop                                  # (no mult within two of an mflo)
-	nop
+	sra     $t8, $t8, 1                  # dist >> 1 (no mult within two of
+	nop                                  #  an mflo)
 	mult    $t1, $t4
 	mflo    $t4
-	nop
+	addu    $t3, $t3, $t4
 	nop
 	mult    $t2, $t5
-	addu    $t3, $t3, $t4
 	mflo    $t5
 	addu    $t3, $t3, $t5
 	sll     $t3, $t3, 2                  # x 4: n . p

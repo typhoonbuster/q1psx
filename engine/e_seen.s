@@ -70,21 +70,18 @@ ents_seen_streamed:
 	bltz    $t3, 1b                      # none
 	lhu     $t0, L_VISFRAME($v0)         # (delay; no leaf yet: a read at 6, harmless)
 	beqz    $v0, 3f                      # its leaf not found yet
-	nop
-2:	bne     $t0, $s3, 1b                 # the PVS does not see it
-	nop
-	subu    $v0, $s0, $s2                # this one: (entry + 1 - list) / 2 - 1
-	sra     $v0, $v0, 1
+	subu    $v0, $s0, $s2                # (delay; the leaf read already) this
+2:	bne     $t0, $s3, 1b                 # the PVS does not see it  one:
+	sra     $v0, $v0, 1                  # (delay) (entry + 1 - list) / 2 - 1
 	b       8f
 	addiu   $v0, $v0, -1
 
 3:	jal     ent_model_leaf               # (ents.c)
 	nop
 	beqz    $v0, 1b                      # outside the world
-	nop
-	lhu     $t0, L_VISFRAME($v0)
-	b       2b                           # (not loaded in the delay slot: 2's first
-	nop                                  #  instruction reads it)
+	lhu     $t0, L_VISFRAME($v0)         # (delay; at 0: a harmless read at 6)
+	b       2b                           # (2's first reads t0: the load two
+	subu    $v0, $s0, $s2                #  back) (2's other half)
 
 9:	subu    $v0, $s1, $s2                # n
 	sra     $v0, $v0, 1
