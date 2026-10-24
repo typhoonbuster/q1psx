@@ -5,7 +5,9 @@
 # Usage:  scripts/headless.sh [image.bin] [max-seconds] [stop-regex]
 #
 # Runs until `stop-regex` appears in the console output, a CPU exception is
-# reported, or `max-seconds` elapse (default 20), then kills the emulator.
+# reported (PCSX-Redux's interpreter: "First chance exception", "Unaligned
+# address": a misaligned load the dynarec does not check), or `max-seconds`
+# elapse (default 20), then kills the emulator.
 # The full log is written to $LOG (default: build/headless.log) and its tail
 # is printed. Exit status: 0 = stop pattern seen (or no pattern given and the
 # run timed out cleanly), 1 = exception / crash marker found, 2 = timed out
@@ -26,7 +28,7 @@ STOP=${3:-}
 EMU=${EMU:-$(sed -n 's/^[[:space:]]*EMU[[:space:]]*=[[:space:]]*//p' "$ROOT/local.env" 2>/dev/null | tail -n 1 || true)}
 : "${EMU:?set EMU (the PCSX-Redux AppImage) in local.env or the environment}"
 LOG=${LOG:-"$ROOT/build/headless.log"}
-CRASH='break 0x|Unrecoverable|Exception|PANIC|Sys_Error|panic|Program counter|=== halting ==='
+CRASH='break 0x|Unrecoverable|Exception|First chance exception|Unaligned address|PANIC|Sys_Error|panic|Program counter|=== halting ==='
 
 mkdir -p "$(dirname "$LOG")"
 # stdout to a file is block-buffered by the emulator; force line buffering so
