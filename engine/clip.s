@@ -44,11 +44,11 @@
 # Clobbers t1-t4, v1.
 .macro NODE_DSDD h0, first=1
 	.if \h0
-	.if \first
 	lhu     $t1, N_PLANE3($t9)
-	.endif
 	lw      $a2, N_CHILD+0($t9)
+	.if \first
 	move    $t0, $t9
+	.endif
 	.else
 	sll     $t2, $t9, 1
 	addu    $t0, $t0, $t2                # num * 6
@@ -131,8 +131,10 @@
 
 # LEAF h0, node [, slot]: branch to `node` if t9 is a node; else t9 becomes
 # its contents (hull 0: the leaf's byte). The delay slot does NODE_*'s
-# first step (hull 0: slot, its plane's load when node is past it; else a
-# nop).
+# first step (hull 0: slot, NODE_DSDD's `move` when node is past it; else
+# a nop). The slot runs for a leaf too, whose pointer is odd: no halfword
+# or word load from it there (an address error on the console and the
+# interpreter; the dynarec does not check).
 .macro LEAF h0, node, slot=nop
 	.if \h0
 	andi    $t0, $t9, 1
@@ -200,7 +202,7 @@
 
 \p\()_node:
 	.if \h0
-	lhu     $t1, N_PLANE3($t9)           # (NODE_DSDD's first: the next's slot
+	move    $t0, $t9                     # (NODE_DSDD's move: the next's slot
 \p\()_node_1:                            #  does it, \p\()_next)
 	NODE_DSDD \h0, 0
 	.else
@@ -272,7 +274,8 @@
 	move    $t9, $a3
 \p\()_next:
 	.if \h0
-	LEAF    \h0, \p\()_node_1, "lhu $t1, N_PLANE3($t9)"   # (a leaf: t1 unused)
+	LEAF    \h0, \p\()_node_1, "move $t0, $t9"   # (a leaf: t0 set again there;
+	                                     #  not the plane's lhu: t9 odd)
 	.else
 	LEAF    \h0, \p\()_node
 	.endif
