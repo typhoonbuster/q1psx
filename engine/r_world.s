@@ -393,6 +393,30 @@ r_ysites:
 3:
 .endm
 
+# NZ loop: the exact near check after a careful record's transform: a2 = 1
+# when one of its t5 (= nv, 3 or more) vertices lies nearer than t7 (SZ),
+# the cache at t4; two at a time, an odd count's first alone (§81.3: 4.5
+# instructions a vertex, not 6). Clobbers t0, at, t4, t5.
+.macro NZ loop
+	andi    $t0, $t5, 1
+	beqz    $t0, \loop                   # an even count: pairs
+	move    $a2, $zero                   # (any real vertex near?)
+	lw      $t0, SP_SZ($t4)              # odd: the first alone
+	addiu   $t5, $t5, -1
+	addiu   $t4, $t4, 4
+	sltu    $a2, $t0, $t7
+\loop:
+	lw      $t0, SP_SZ($t4)
+	lw      $at, SP_SZ+4($t4)
+	addiu   $t5, $t5, -2
+	sltu    $t0, $t0, $t7
+	sltu    $at, $at, $t7
+	or      $a2, $a2, $t0
+	or      $a2, $a2, $at
+	bgtz    $t5, \loop
+	addiu   $t4, $t4, 8
+.endm
+
 # CAREFUL quad, skip, var: a conservative test, per polygon of a record the
 # sphere flags, before the subdivision's exact one (engine/r_slow.c): every
 # corner at SZ >= 96 (var = 1: SP_SZCLIP, a model's own bound, one more
@@ -1134,14 +1158,7 @@ r_ysites:
 	andi    $t0, $a2, 4                  # big or warping: careful regardless
 	bnez    $t0, \p\()_polys
 	move    $t5, $t2
-	move    $a2, $zero                   # exact check: any real vertex near?
-\p\()_nz:
-	lw      $t0, SP_SZ($t4)
-	addiu   $t5, $t5, -1
-	sltu    $t0, $t0, $t7
-	or      $a2, $a2, $t0
-	bgtz    $t5, \p\()_nz
-	addiu   $t4, $t4, 4
+	NZ      \p\()_nz                     # exact check: any real vertex near?
 
 	POLYS   \p, \var, 0, \p\()_rec_1
 
@@ -1251,14 +1268,7 @@ r_ysites:
 	andi    $t0, $a2, 4                  # big or warping: careful regardless
 	bnez    $t0, \p\()f_polys
 	move    $t5, $t2
-	move    $a2, $zero                   # exact check: any real vertex near?
-\p\()_fnz:
-	lw      $t0, SP_SZ($t4)
-	addiu   $t5, $t5, -1
-	sltu    $t0, $t0, $t7
-	or      $a2, $a2, $t0
-	bgtz    $t5, \p\()_fnz
-	addiu   $t4, $t4, 4
+	NZ      \p\()_fnz                    # exact check: any real vertex near?
 	POLYS   \p\()f, \var, 1, \p\()_rec_1
 .endif
 .endif
@@ -2751,14 +2761,7 @@ ds_xf_done:
 	bnez    $t0, ds_polys                # big or warping: careful regardless
 	move    $t4, $t8
 	move    $t5, $t2
-	move    $a2, $zero                   # exact check: any real vertex near?
-ds_nz:
-	lw      $t0, SP_SZ($t4)
-	addiu   $t5, $t5, -1
-	sltu    $t0, $t0, $t7
-	or      $a2, $a2, $t0
-	bgtz    $t5, ds_nz
-	addiu   $t4, $t4, 4
+	NZ      ds_nz                        # exact check: any real vertex near?
 
 	# its triangles (a sorted model has no quads), each, turned toward the
 	# eye (NCLIP, as POLYS), at the head of its bucket's chain
