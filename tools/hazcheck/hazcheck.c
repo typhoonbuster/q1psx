@@ -6,6 +6,9 @@
  * The engine's renderer is hand-written with `.set noreorder`, so the
  * assembler does not protect us. Four rules are checked:
  *
+ *   (The straight-line rules stop at an unconditional jump's or a call's
+ *   delay slot: the code the link puts next is not what runs next.)
+ *
  *   load delay   the instruction right after a load (lw/lh/lhu/lb/lbu/lwl/lwr)
  *                or a coprocessor move (mfc2/cfc2/mfc0) must not read its
  *                destination register: the R3000 still sees the OLD value.
@@ -116,6 +119,17 @@ static int target(const insn *i)
 	return end == p ? -1 : at(a);
 }
 
+/* Does the flow leave the straight line after instruction m? It does when m
+   is the delay slot of an unconditional jump, branch or call: the next
+   instruction run is the target's, not m + 1 (the link may put an unrelated
+   chain of code right after: engine/r_defs.inc ICSEC). The rules on the
+   instructions that follow in a straight line then stop at m. */
+static int flow_ends(int m)
+{
+	static const char *const away[] = { "b", "j", "jr", "jal", "jalr", "bal", NULL };
+	return m > 0 && is_one_of(ins[m - 1].op, away);
+}
+
 int main(void)
 {
 	static char line[512];
@@ -145,7 +159,7 @@ int main(void)
 
 	for (int k = 0; k + 1 < n; k++) {
 		const insn *a = &ins[k];
-		if (is_one_of(a->op, loads)) {
+		if (is_one_of(a->op, loads) && !flow_ends(k)) {
 			char dst[16];
 			sscanf(a->args, "%15[^,]", dst);
 			if (strcmp(dst, "zero") && reads(&ins[k + 1], dst)) {
@@ -166,7 +180,7 @@ int main(void)
 				found++;
 			}
 		}
-		for (int j = 1; j <= 2 && k + j < n; j++) {
+		for (int j = 1; j <= 2 && k + j < n && !flow_ends(k + j - 1); j++) {
 			if (is_one_of(a->op, gte_writes) && !strcmp(ins[k + j].op, "c2")) {
 				printf("GTE: %s %s %s  ->  %s c2 %s (%d after)\n", a->addr, a->op, a->args,
 				       ins[k + j].addr, ins[k + j].args, j);

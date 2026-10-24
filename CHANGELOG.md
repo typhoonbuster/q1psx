@@ -1940,3 +1940,32 @@ followed by R0-R4.
   §81.2): each byte's /ACK interrupt sends the next one, the CPU no
   longer waits for the port; interrupts 10.7 k → 3.8 k cycles a vblank;
   the game −2.8 / −3.7 %; the bench's `IRQTIME=1` times the handler.
+- **The asm, instruction by instruction** (2026-10-24,
+  `docs/porting-notes.md` §81.3, §81.4): the delay slots and the load,
+  HI/LO and GTE spacers of every asm file do work where an instruction of
+  the way taken fits (the slow path's REFINE, CAREFUL's ranges, the hull
+  traces, the brush models' cut, the entities, pmove); the pad's middle
+  bytes by a short way through the interrupt handler (3.8 k → 3.1 k
+  cycles a vblank); START's views −1.5 %, the 128 views −1.2 %, the
+  movers' cuts −1.8 to −2.7 %, a pmove tick without traces 2455 → 2411
+  cycles; every display list identical under the dynarec and the
+  interpreter. Two gains that cost code (NZ two vertices a turn, the flat
+  transforms' addresses under the RTPT: 576 bytes) were taken back out.
+  A misaligned load in a delay slot (the point hull's leaf test) that the
+  dynarec ran and the interpreter stopped on was fixed before release;
+  `headless.sh` now ends a run on the interpreter's exception messages.
+- **The instruction cache's layout** (2026-10-24, `docs/porting-notes.md`
+  §81.5): the renderer's asm cut into chains (ICSEC) and linked by the
+  project's own script (`engine/q1psx.ld`), the hot ones first in the
+  order `engine/icache.ld` gives; `tools/icache` simulates the 4 KB cache
+  over every fetch of traced frames (`scripts/icache.sh`: PCSX-Redux's
+  interpreter, a Lua breakpoint) and searches the order. The words the
+  cache fills a frame: START's views −48.8 %, the 128 views −42.9 %, the
+  game −46.2 %; no instruction changed (PCSX-Redux, which has no instruction
+  cache, counts the same); `scripts/iccheck.sh` fails a chain that falls
+  through.
+- **The rest of the optimization list** (2026-10-24,
+  `docs/porting-notes.md` §81.6): each item measured or looked up: the
+  executed nops (0.8-0.9 %), the scratchpad (full), the GTE's waits, the
+  RAM accesses, the DMA, the ordering table, the critical sections,
+  self-modifying code (in use; the boot code's RAM not taken back).

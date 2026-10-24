@@ -10228,3 +10228,143 @@ holds the 128 spawn views at T 28 on average (`WARPDYN=1`).
   call. Its console then shows that character twice (`bbench`, a hash
   with a doubled digit). The frames themselves are identical; a diff of
   the dumps must drop the doubled character first.
+
+### 81.5 The instruction cache
+
+- **The cache** (psx-spx): 4 KB, direct mapped, 256 lines of 16 bytes; a
+  miss fills its line from the missed word to the line's end. The data
+  have none (the scratchpad stands for it). PCSX-Redux does not model it:
+  no bench count ever showed it. DuckStation counts a cycle a word filled
+  in its interpreter and with its recompiler's "ICache" option (off by
+  default); the machine pays at least that, RAM's latency on top.
+- **Measured** (`scripts/icache.sh trace`): PCSX-Redux's interpreter with
+  its debugger, a Lua breakpoint over all of RAM records every fetch of
+  the bench's frames (from prof_frame_reset to vid_flip, run-length
+  coded); tools/icache simulates the cache over them. The traces: START's
+  12 views, the 128 spawn views (2 frames each), the game bench (the
+  weapons, the HUDs, the walk). As linked until now, 17-20 % of the
+  fetched words came from a fill: 44.5 k words a frame on START's views,
+  25-30 k on the 128 views, 94 k in the game. The renderer's hot loops
+  sat on the same lines by chance: sp_o_bounds (the slow path's off-screen
+  test), dro3_xf (the release's transform) and the walk's node test on
+  lines 0x5f0-0x707; dro3_quad, sp_refine and walk_leaf on 0x754-0x8c7.
+  They evicted each other polygon by polygon.
+- **Done**:
+  - r_world.s and r_slow.s cut into chains (ICSEC, r_defs.inc): runs of
+    code only a jump enters, each ending with an unconditional jump or
+    return and its slot, each in a section of its own. scripts/iccheck.sh
+    fails the build when one falls through; tools/hazcheck's straight-line
+    rules stop at such a jump's slot (the next chain is not what runs
+    next).
+  - The link's own script, engine/q1psx.ld: the SDK's exe.ld with
+    engine/icache.ld's sections first in .text (from 0x80010000, a 4 KB
+    boundary: the hot code's lines no longer move with the code before
+    it), then the renderer's other chains (within a branch's reach: a
+    branch spans 128 KB), then the rest in the old order. The link also
+    writes q1psx.ldmap.
+  - The patch sites of the far tests and the frustum (render.c
+    r_set_res) were offsets from r_render, which the chains no longer keep:
+    each pair is a word now (the first's address, the second's distance in
+    bits 21-30, unused by a RAM address), the tables' size unchanged.
+  - engine/icache.ld from tools/icache's search: 73 sections, 23.8 KB
+    (the asm's with more than 0.01 % of the fetches: the renderer's
+    chains, the slow path, the interrupt handler, the entities' and the
+    models' asm, and the SDK's memset), ordered by a hill climb on the
+    simulated fills (START's views, half of the 128 views, the game twice;
+    four seeds, then four more from the best). The C's sections stay out:
+    they differ between the bench's and the release's links and move with
+    every edit; so does any asm section the bench's link lacks or holds at
+    another size (`-m`: dl_restore_asm, touch_gather), so the hot code lies
+    at the same addresses in both and the bench measures the release's.
+    The search with the C in found 4 % fewer fills on the release and lost
+    them on the bench's link.
+- **Result** (the release's link, the same traces):
+
+  | Frames | Words filled before | After | |
+  |---|---|---|---|
+  | START's 12 views | 533 646 | 273 157 | −48.8 % |
+  | 64 of the 128 views (searched on) | 1 890 356 | 1 050 700 | −44.4 % |
+  | the other 64 (not searched on) | 1 601 884 | 943 429 | −41.1 % |
+  | the game bench, 12 frames | 1 128 089 | 606 621 | −46.2 % |
+
+  New traces of the bench's link with this order agree: 274 593 words on
+  START's views, 622 446 on the game's. A frame of START's views fills
+  ~22.8 k words instead of 44.5 k, one of the 128 views 15.6 k instead of
+  27.3 k, one of the game 50.6 k instead of 94 k: in DuckStation's count
+  21.7 k, 11.7 k and 43.4 k cycles a frame (3.8 %, 2.1 % and 7.7 % of a
+  vblank); more on the machine.
+- **Cost**: no instruction changes, so PCSX-Redux's counts and every
+  display list stay the same; 40 bytes of code (the pairs' decoding in
+  r_set_viewport). The order holds while the hot code keeps its size: an
+  edit in it shifts what follows, `scripts/icache.sh` makes the order again
+  (trace the three sets, `opt`, link).
+- **Left**: a check on DuckStation (the interpreter, or the
+  recompiler with "Enable Recompiler ICache") and on the machine.
+
+### 81.6 The rest of the list, item by item
+
+The list's items, each measured on this build or looked up in its code;
+§81.1-81.5 cover the interrupts, the delay slots and the instruction cache.
+
+- **The frame's budget**: an NTSC frame is 263 lines of 3413 video cycles,
+  about 566 000 CPU cycles (33.8688 MHz); the bench counts each frame's
+  vblanks (`vbl=100`: one) and its cycles. 580 000 is not a figure this
+  project uses.
+- **Load and branch delay slots** (the list's "up to 10 % nops"): the asm
+  objects of the release hold 493 nops in 13 774 instructions on master
+  (3.6 %), 373 in 13 989 now (2.7 %); the whole program 7.2 % (the C's, as
+  GCC schedules it). Executed (the traces of §81.5): 0.8 % of the
+  instructions of START's views, 0.9 % of the game's.
+- **The scratchpad** (1 KB): full (r_defs.inc's SP_* map, from 0x000 to
+  0x3ff): the walk's stack, a record's vertices' SXY / SZ / colour, the
+  loops' state and constants; the physics borrows its first part. The
+  largest reader of RAM left is the slow path's vertex pool (sp_o_bounds'
+  `lh`, 16 KB of entries): it does not fit. PCSX-Redux charges RAM and
+  scratchpad alike; on the machine a RAM read waits (DuckStation counts
+  RAM_READ_TICKS, 6) where the scratchpad's does not.
+- **The GTE** (§3): the commands' costs (psx-spx: RTPS 15, RTPT 23, NCLIP
+  8, MVMVA 8, AVSZ3 5, SQR 5; the bench's emulator charges the first three
+  the same, §21's table); a register written two instructions before the
+  command that reads it
+  (tools/hazcheck checks every link); each result read was ranked by its
+  wait in the profile (a scratchpad tool). The longest left is the flat
+  transforms' `swc2` after their RTPT: filling it costs 216 bytes (§81.3,
+  left out).
+- **RAM accesses and their width** (§4.1, §4.3): loads and stores are 26 %
+  of the executed instructions on START's views, 29 % in the game. The
+  hot halfword loads are the scratchpad's (the SXY halves: no wait on the
+  machine) and the slow path pool's; a word and shifts in their place
+  cost PCSX-Redux 2 cycles more a vertex (`lh` 3, `lw` 2 and two ALU
+  instructions of 2): left out (§34.1's 4-`lbu` case, the same verdict).
+- **DMA** (§4.2): already wherever there is a channel: the display lists
+  (GPU, linked list), the ordering table's clear (OTC, the world's 8
+  entries), the CD's sectors, the SPU's and VRAM's uploads. RAM to RAM
+  has no channel: the stream's copies stay the CPU's. The CPU waits on a
+  burst: the OT's clear is 8 words; the GPU's linked-list transfer runs
+  while the CPU builds the next frame (two buffers, vid.c).
+- **The ordering table** (§5): the world's polygons go to their buckets in
+  the BSP's order, one prepend each, no list walked; the models through
+  a 16-node depth ring (§63); the table and the packet arena are double
+  buffered (the GPU draws one frame while the CPU builds the next).
+- **Interrupts off** (§6.3): only at boot (the SDK's ResetGraph and CdInit,
+  irq.c's ResetCallback) and in two short Fast critical sections (COP0's
+  SR: the pad driver's stop, the CD's interrupt repair); none in a frame.
+- **Self-modifying code** (§7.1): in use. The graphics options patch the
+  record loops' entries and thresholds (render.c r_set_options), the
+  internal resolution the far tests, the frustum's planes and the slow
+  path's projection (r_set_res), the draw distance mark_pvs's call; each
+  then flushes the instruction cache. The memory recovery the list cites
+  (code that only boots, its RAM taken back): the release's boot-only
+  functions come to ~4.6-5.8 KB by the static call graph (tail calls and
+  function pointers make it a lower bound to check by hand). The buffers
+  that could lie over them are touched during the boot itself (projs,
+  particles: game_init clears them) or are bigger than the code (r_ents
+  10 KB, r_items 6.4 KB); an overlay file loaded at boot above the BSS
+  would do it. Not done: a caller missed is a crash on a rare way.
+- **Asm for the critical code** (§7.2): the renderer, the physics, the
+  entities' hot loops (§55: the C engine's frames +88 to +94 %), the
+  interrupts (§81.1); memcpy / memset are the SDK's.
+- **The open points** (§10): the budget (above), the GTE's costs (the
+  emulator's, the waits measured), the CPU during DMA (above), the BIOS
+  handler's cost (~2.7 k cycles an interrupt on PCSX-Redux, gone: §81.1),
+  self-modifying code (used, above).

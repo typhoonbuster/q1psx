@@ -34,8 +34,10 @@ SECTIONS {
 		__text_start = .;
 
 		/* the hot code first, from the 4 KB boundary .text starts on: the
-		   chains a frame runs most, each where it evicts the least */
+		   chains a frame runs most, each where it evicts the least; then
+		   the renderer's other chains, within a branch's reach of them */
 		INCLUDE icache.ld
+		*(.text.ic.*)
 
 		*(.text .text.* .gnu.linkonce.t.*)
 		*(.plt .MIPS.stubs)

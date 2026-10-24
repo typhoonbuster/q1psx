@@ -56,6 +56,7 @@ rogue/
 /tools/pktview/pktview
 /tools/pktview/wldref
 /tools/hazcheck/hazcheck
+/tools/icache/icache
 /tools/pmsim/pmsim
 
 # --- Editor / OS ---
