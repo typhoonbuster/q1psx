@@ -1528,6 +1528,8 @@ static void bench_maps(void)
 			printf("ents view %s: %d models drawn of %d, %d in the PVS, %d leaves in front, items %d, lists %d\n",
 			       names[v & 3], ents_stat[0], ents_stat[3], ents_stat[1], ents_stat[2], rl_num_items(),
 			       rl_num_lists());
+			printf("lod view %s: %d streamed models drawn, %d cut to a band (the farthest %d)\n", names[v & 3],
+			       monsters_drawn, rl_lod_cut, rl_lod_band_hi);
 			rl_order_print(names[v & 3]);
 			if (Q1PSX_BENCH_TICKS && v >= nviews)
 				bench_view_ticks(names[v & 3]);
@@ -2784,6 +2786,7 @@ static void clear_map(void)
 	pl.items |= IT_ROCKET_LAUNCHER;
 	game_give_weapon(W_RLAUNCHER);
 	int killed = 0, peak = 0, skipped = 0;
+	uint32_t ctot = 0, cframes = 0, cdrawn = 0, ccut = 0;   /* the fights' frames */
 	static uint8_t tried[1024];
 	memset(tried, 0, sizeof tried);
 	for (;;) {
@@ -2837,6 +2840,10 @@ static void clear_map(void)
 			game_tick(&cmd);
 			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 			run_frame(0, 0);
+			ctot += prof_stage[PROF_FRAME] >> 8;
+			cframes++;
+			cdrawn += (uint32_t) monsters_drawn;
+			ccut += (uint32_t) rl_lod_cut;
 		}
 		cmd.fire = 0;
 		for (int u = 0; u < 60; u++) {            /* its death, its gibs */
@@ -2869,6 +2876,8 @@ static void clear_map(void)
 	printf("clear done %s: %d killed, %d alive (%d with no spot), edicts %d (peak %d) of %d, stack %u never "
 	       "reached, level arena %u KB\n", world.map_name, killed, alive, skipped, used, peak, max,
 	       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024));
+	printf("clear frames %s: %u fight frames, %u x 256 cycles, %u streamed models drawn, %u cut to a band\n",
+	       world.map_name, (unsigned) cframes, (unsigned) ctot, (unsigned) cdrawn, (unsigned) ccut);
 }
 
 /* MONSTERS=4: MAP (E1M3) loaded and cleared. MONSTERS=5: from MAP (E1M1),

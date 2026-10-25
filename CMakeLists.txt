@@ -191,6 +191,11 @@ else()
 endif()
 target_compile_definitions(q1psx PRIVATE Q1PSX_ENGINE_C=$<BOOL:${Q1PSX_ENGINE_C}>
 	Q1PSX_BMF_C=${_bmf_c} Q1PSX_ORDER_C=${_order_c} Q1PSX_DLIGHT_C=${_dlight_c})
+# The monsters' level of detail by their vertices' order (formats/qstream.h
+# QSTM_LOD, docs/porting-notes.md §88): 1 on, 0 the whole model at every
+# distance (an A / B: the cooked order stays)
+set(Q1PSX_LOD 1 CACHE STRING "The streamed models' level of detail: 1 on, 0 off (the whole model at every distance)")
+target_compile_definitions(q1psx PRIVATE Q1PSX_LOD=${Q1PSX_LOD})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${_dlight_c}>)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_SLOW_C=${_slow_c}>)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ZONE_C=${_zone_c}>)   # (engine/zone.s)

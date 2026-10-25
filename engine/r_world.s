@@ -2474,6 +2474,62 @@ lr_done:
 	jr      $ra
 	nop
 
+# light_recs for a sorted body (QSTM_SORT, formats/qstream.h QSTM_LOD): of
+# each record the slots its level-of-detail table gives for the band
+# (SP_LODBAND: the entry's offset; the table is the record's last
+# QST_LOD_REC_BYTES bytes, two a band: slots, triangles), none skipped. The
+# same registers as light_recs's, and t5 (a1 = the records, a2 their end,
+# a3 the light table, t1 the light, t4 the pool; t0, t5-t7, v0, v1 used).
+	ICSEC   light_recs_lod
+light_recs_lod:
+lrl_rec:
+	beq     $a1, $a2, lrl_done
+	lw      $t0, SP_LODBAND($t8)         # (at the end: a harmless read)
+	lhu     $t5, R_SIZE($a1)
+	lhu     $t7, R_POLYS($a1)
+	lbu     $v0, R_NVERTS($a1)           # (its light bytes: polys - ((nv + 3) & ~3))
+	addu    $t5, $t5, $a1                # the next record
+	addu    $t0, $t0, $t5
+	lbu     $t6, -QST_LOD_REC_BYTES($t0) # the band's slots of it
+	addiu   $v0, $v0, 3
+	andi    $v0, $v0, 0xfc
+	addu    $t7, $t7, $a1
+	subu    $t7, $t7, $v0                # the light bytes
+	addiu   $v1, $a1, R_VERTS            # the indices
+	beqz    $t6, lrl_rec                 # none at this band: the next
+	move    $a1, $t5
+	beqz    $a3, lrl_flat
+	nop
+lrl_v:
+	lhu     $t0, 0($v1)
+	addiu   $v1, $v1, 2
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t4
+	lbu     $t0, 6($t0)                  # the normal index
+	addiu   $t6, $t6, -1
+	addu    $t0, $t0, $a3
+	lbu     $t0, 0($t0)                  # its factor
+	addiu   $t7, $t7, 1
+	mult    $t0, $t1
+	mflo    $t0
+	srl     $t0, $t0, 7
+	bnez    $t6, lrl_v
+	sb      $t0, -1($t7)
+	b       lrl_rec
+	nop
+	ICSEC   lrl_flat
+lrl_flat:
+	sb      $t1, 0($t7)
+	addiu   $t6, $t6, -1
+	bnez    $t6, lrl_flat
+	addiu   $t7, $t7, 1
+	b       lrl_rec
+	nop
+	ICSEC   lrl_done
+lrl_done:
+	jr      $ra
+	nop
+
 # -----------------------------------------------------------------------------
 # draw_model: a0 = an r_ent_t (rlist.h). Its records go through the record
 # loop (RECLOOP de; a monster's, RE_SORT, through ds_records: dm_sort)
@@ -2525,9 +2581,19 @@ dm_draw:                                 # kept for the farther world's records
 	lw      $a2, RE_RECS_END($a0)
 	lw      $a3, RE_DOTS($a0)
 	lw      $t1, RE_LIGHT($a0)
-	jal     light_recs
+	andi    $t3, $t2, RE_SORT            # a monster: its records' level-of-detail
+	lw      $t0, RE_LODBAND($a0)         # tables, read at its band (SP_LODBAND:
+	beqz    $t3, dm_lit                  # light_recs_lod, ds_records)
 	move    $t4, $t5
+	jal     light_recs_lod
+	sw      $t0, SP_LODBAND($t8)
+	b       dm_lit_done
 	li      $t7, -32768
+dm_lit:
+	jal     light_recs
+	nop
+	li      $t7, -32768
+dm_lit_done:
 	andi    $t3, $t2, RE_VIEW | RE_SORT
 	beqz    $t3, 1f                      # an alias model: on
 	andi    $t2, $t2, RE_SORT
@@ -2670,7 +2736,13 @@ dm_sort:
 # they cut. Its records' face ids are not looked at (a model's are 0, the
 # stamp); a texture change closes no run (a streamed model's two images
 # share their window, none: stream.c), dm_exit_1 giving the table its one
-# window command, drawn before it.
+# window command, drawn before it. The level of detail (formats/qstream.h
+# QSTM_LOD, §88): each record ends with a table, two bytes a band, the
+# slots and the triangles still drawn at that band (their prefixes: the
+# cook orders them by the band they last serve); SP_LODBAND holds the
+# model's entry, SP_LODCNT the record's two counts: the slots transformed
+# (its light bytes stay the record's own) and the triangles emitted; a
+# record with no triangle at the band is passed over before its sphere.
 	ICSEC   ds_records
 	.globl  ds_records
 ds_records:
@@ -2688,6 +2760,15 @@ ds_rec:
 .else
 	beq     $a0, $a1, ds_exit
 .endif
+	lw      $t0, SP_LODBAND($t8)         # the band's entry of its table (at the
+	addu    $t1, $a0, $t2                # end: a harmless read): the record's end,
+	addu    $t1, $t1, $t0                # the entry
+	lbu     $t0, -QST_LOD_REC_BYTES+1($t1)   # its triangles at this band
+	lbu     $t1, -QST_LOD_REC_BYTES+0($t1)   # its slots
+	beqz    $t0, ds_cull                 # none: the next record
+	sll     $t0, $t0, 8
+	or      $t0, $t0, $t1
+	sw      $t0, SP_LODCNT($t8)
 	lh      $t9, R_SC+4($a0)             # its bounding sphere (as RECLOOP's)
 	lwc2    C2_VXY0, R_SC+0($a0)
 	lhu     $t3, R_SR($a0)
@@ -2766,16 +2847,18 @@ ds_o_dcull:
 	sw      $v0, SP_CLUT16($t8)          # (the slow path's copies)
 	sw      $v1, SP_TPAGE16($t8)
 ds_tex_done:
-.if R_PROFILE
-	lw      $t1, SP_RECORDS($t8)
-	lw      $t9, SP_VERTS($t8)
-	addiu   $t1, $t1, 1
-	addu    $t9, $t9, $t2
-	sw      $t1, SP_RECORDS($t8)
-	sw      $t9, SP_VERTS($t8)
-.endif
+	lw      $t4, SP_LODCNT($t8)          # the band's slots of it (the transform's
 	addiu   $t1, $t2, 3                  # light bytes: polys - ((nv + 3) & ~3)
-	andi    $t1, $t1, 0xfc
+	andi    $t1, $t1, 0xfc               #  count; the light bytes the record's own)
+	andi    $t4, $t4, 0xff
+.if R_PROFILE
+	lw      $t9, SP_RECORDS($t8)
+	lw      $t2, SP_VERTS($t8)
+	addiu   $t9, $t9, 1
+	addu    $t2, $t2, $t4
+	sw      $t9, SP_RECORDS($t8)
+	sw      $t2, SP_VERTS($t8)
+.endif
 	addu    $t0, $t0, $a0
 	subu    $at, $t0, $t1
 	.globl  ds_o_fogz
@@ -2783,6 +2866,7 @@ ds_o_fogz:
 	slti    $t0, $t3, 0                  # farthest depth before the fog?
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
 	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
+	move    $t2, $t4
 	addiu   $t5, $t2, -2                 # (vertices left - 2: RTPT while 3+)
 	beqz    $t0, ds_fog                  # reaching into the fog: the fogged
 	move    $t4, $t8                     #  transform (cache cursor)
@@ -2806,14 +2890,16 @@ ds_nz:
 	# eye (NCLIP, as POLYS), at the head of its bucket's chain
 ds_polys:
 	lhu     $t0, R_POLYS($a0)
-	lbu     $at, R_NTRIS($a0)
+	lw      $at, SP_LODCNT($t8)          # the band's triangles of it
 .if R_PROFILE
 	lw      $t1, SP_POLYS($t8)
 	addu    $a3, $a0, $t0                # the first triangle
+	srl     $at, $at, 8
 	addu    $t1, $t1, $at
 	sw      $t1, SP_POLYS($t8)
 .else
 	addu    $a3, $a0, $t0                # the first triangle
+	srl     $at, $at, 8
 .endif
 	lw      $t0, 0($a3)                  # (none: a harmless read)
 	beqz    $at, ds_next
@@ -3014,9 +3100,10 @@ ds_fog:
 	addiu   $t2, $t2, %lo(r_fogtab)
 	XFORM   1, ds_xfg, ds_oneg, ds_xfg_done, 1, 1
 ds_xfg_done:
-	lbu     $t2, R_NVERTS($a0)           # (the vertex count and SZ_FAST back:
-	b       ds_xf_done                   #  the table and the fog's temporary
-	lw      $t7, SP_SZFAST($t8)          #  had their registers)
+	lw      $t2, SP_LODCNT($t8)          # (the band's slot count and SZ_FAST back:
+	lw      $t7, SP_SZFAST($t8)          #  the table and the fog's temporary
+	b       ds_xf_done                   #  had their registers)
+	andi    $t2, $t2, 0xff
 
 	ICSEC   ds_full
 ds_full:

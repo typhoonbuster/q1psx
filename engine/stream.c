@@ -763,6 +763,25 @@ Q_COLD static int frames_ok(const qst_model *m, uint32_t size)
 			if (i >= stored && i != QST_NOFRAME)
 				return 0;
 		}
+	if ((m->flags & QSTM_SORT) && !(m->flags & QSTM_LOD))   /* (a sorted body's records carry */
+		return 0;                                             /*  their tables: ds_records) */
+	if (m->flags & QSTM_LOD) {                    /* its level of detail (§88): the block */
+		uint32_t at = sizeof *m + qst_map_bytes(m->flags, m->num_frames);
+		if (at + sizeof(qst_lod) > m->ofs_frames)
+			return 0;
+		const qst_lod *l = qst_lod_of(m);
+		if (l->num_min > m->num_verts || at + qst_lod_bytes(m->num_verts, l->num_min) > m->ofs_frames ||
+		    stored >= 2048)
+			return 0;
+		for (int b = 0; b < QST_LOD_BANDS; b++)
+			if (l->num_verts[b] > m->num_verts || l->num_verts[b] < l->num_min ||
+			    (b && l->num_verts[b] > l->num_verts[b - 1]))
+				return 0;
+		const uint16_t *par = qst_lod_parents(l);
+		for (uint32_t v = l->num_min; v < m->num_verts; v++)
+			if (par[v - l->num_min] >= v)
+				return 0;
+	}
 	return 1;
 }
 
@@ -868,6 +887,11 @@ static int install_model(int a)
 		qw_record *rec = (qw_record *) p;
 		if (!rec->size)
 			break;
+		if ((m->flags & QSTM_LOD) &&              /* (its table at its end: ds_records reads it) */
+		    rec->size < rec->polys + rec->num_tris * sizeof(qw_tri) + QST_LOD_REC_BYTES) {
+			printf("stream: asset %08x: a record without its level-of-detail table\n", (unsigned) as->d.hash);
+			return -1;
+		}
 		int k = rec->tex < nimg ? rec->tex : 0;
 		uint16_t add = (uint16_t) (at[k].u | at[k].v << 8);
 		int x0f = full[k].x0, x0h = img[k].x0;

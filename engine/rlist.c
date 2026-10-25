@@ -31,11 +31,16 @@ static uint32_t order_calls, order_cycles;
 extern int ents_debug;
 #endif
 
+#ifdef Q1PSX_BENCH
+int rl_lod_cut, rl_lod_band_hi;
+#endif
+
 void rl_begin(void)
 {
 	n_items = n_ents = n_lists = 0;
 	mdl_new_frame();
 #ifdef Q1PSX_BENCH
+	rl_lod_cut = rl_lod_band_hi = 0;
 	if (ents_debug)                             /* (the debug frame's places: rl_order_print) */
 		order_calls = order_cycles = 0;
 #endif
@@ -179,32 +184,32 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
    for the roundings; summed over three corners, 6 rho), on R_SORT_N - 2
    buckets, so that the range, starting anywhere on the ring, never meets
    itself; at most 1365, OTZ within 16 bits down to SZ 65535. znear: the
-   range's nearest bucket, x 4. The origin's depth by the GTE, which
-   rl_ent_matrix left with the view's rotation and translation. */
+   range's nearest bucket, x 4. z: the origin's depth, vertex units
+   (rl_model_stream's). */
 #define R_SORT_MARGIN 8                      /* SZ units */
 
-static void ent_sort(r_ent_t *e, int radius, const int16_t ov[4])
+static void ent_sort(r_ent_t *e, int radius, int32_t z)
 {
 	int32_t rho = (radius * 3 >> 1) + R_SORT_MARGIN;
 	int32_t zsf = 16384 * (R_SORT_N - 2) / (6 * rho);
 	if (zsf > 1365)
 		zsf = 1365;
-	int32_t z;
-	gte_ldv0(ov);
-	gte_rtv0tr();                              /* MAC3: the origin's depth */
-	gte_stlvnl2(&z);
 	z -= rho;
 	if (z < 0)
 		z = 0;                                 /* (SZ: 0 behind the eye) */
 	e->zsf   = (uint32_t) zsf;
 	e->znear = ((uint32_t) (zsf * 3 * z) >> 14 & (R_SORT_N - 1)) << 2;
-	e->flags = RE_SORT;
+	e->flags |= RE_SORT;
 }
 
 /* A streamed model (formats/qstream.h): its frame expanded (engine/mdl.c),
    its matrix the model-to-world columns scaled by its steps (Quake's
    R_AliasSetUpTransform folds the scale in the same way), the origin moved
-   by its own origin turned with it; a monster's ordering table. */
+   by its own origin turned with it; a monster's ordering table; its level
+   of detail's band from its origin's depth (formats/qstream.h QSTM_LOD,
+   docs/porting-notes.md §88: the frame cache expands the band's vertices,
+   r_world.s draws of each record the slots and triangles its table gives
+   for the band; a nearer band with the same vertices stands for it). */
 r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pitch, int roll, int light)
 {
 	const qst_model *m = stream_model(a);
@@ -212,11 +217,7 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 		return 0;
 	if (frame < 0 || frame >= m->num_frames)
 		frame = 0;
-	const qw_vert *pool = mdl_frame(a, m, frame);
-	if (!pool)
-		return 0;
-	r_ent_t *e = &r_ents[n_ents++];
-	e->pool     = (uint32_t) pool;
+	r_ent_t *e = &r_ents[n_ents];                 /* (taken once its frame is in the cache) */
 	e->recs     = (uint32_t) ((const uint8_t *) m + m->ofs_records);
 	e->recs_end = e->recs + m->len_records;
 	e->tex      = (uint32_t) stream_model_tex(a);
@@ -225,6 +226,7 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 	e->light = (uint32_t) light;
 	e->dots  = 0;
 	e->flags = 0;
+	e->lod_band = 0;
 	int32_t f[3], r[3], u[3];
 	angle_vectors(-pitch, yaw, roll, f, r, u);
 	int16_t cols[3][4], o[4], ov[4];
@@ -239,8 +241,41 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 	cols[0][3] = cols[1][3] = cols[2][3] = 0;
 	o[3] = ov[3] = 0;
 	rl_ent_matrix(e, (const int16_t (*)[4]) cols, o);
+	int32_t z = 0;                                /* the origin's depth, vertex units (the */
+	if (m->flags & (QSTM_SORT | QSTM_LOD)) {      /* GTE holds the view's rotation and */
+		gte_ldv0(ov);                             /* translation: rl_ent_matrix) */
+		gte_rtv0tr();
+		gte_stlvnl2(&z);
+	}
+	int band = 0;
+#if Q1PSX_LOD
+	if (m->flags & QSTM_LOD) {
+		const qst_lod *l = qst_lod_of(m);
+		band = z >> 8;                            /* QST_LOD_BAND world units = 256 vertex units */
+		if (band < 0)
+			band = 0;
+		if (band >= QST_LOD_BANDS)
+			band = QST_LOD_BANDS - 1;
+		while (band && l->num_verts[band - 1] == l->num_verts[band])
+			band--;                               /* (the nearest band of the same cut: one
+		                                             expansion in the cache for them all) */
+		e->lod_band = (uint32_t) band * 2;        /* (its entry in the records' tables) */
+#ifdef Q1PSX_BENCH
+		if (band) {
+			rl_lod_cut++;
+			if (band > rl_lod_band_hi)
+				rl_lod_band_hi = band;
+		}
+#endif
+	}
+#endif
+	const qw_vert *pool = mdl_frame(a, m, frame, band << 11);
+	if (!pool)
+		return 0;
+	n_ents++;
+	e->pool = (uint32_t) pool;
 	if (m->flags & QSTM_SORT)
-		ent_sort(e, m->radius, ov);
+		ent_sort(e, m->radius, z);
 	if (!(m->flags & QSTM_FLAT))
 		e->dots = (uint32_t) (gdata.dots + ((yaw * QG_LIGHT_YAWS / ANG_TURN) & (QG_LIGHT_YAWS - 1)) * QG_NORMALS);
 	return e;

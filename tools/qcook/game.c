@@ -38,6 +38,7 @@
 #include "../../formats/qworld.h"
 #include "../../formats/qgame.h"
 #include "../../formats/qstream.h"
+#include "lod.h"
 
 static const float anorms[QG_NORMALS][3] = {
 #include "anorms.h"
@@ -2778,6 +2779,7 @@ struct qc_mdl {
 	int        bw, bh;
 	int        sort;                /* a monster's body: QSTM_SORT         */
 	const struct frame_plan *fplan; /* its frames stored (QSTM_FMAP), NULL: all */
+	const lod_plan *lplan;          /* its level of detail (QSTM_LOD), NULL: none */
 };
 
 void qc_set_palette(const uint8_t *pal)
@@ -3124,14 +3126,9 @@ typedef struct frame_plan {
 	int      *src;                 /* [nstored]: the frame each one is      */
 } frame_plan;
 
-/* a body's frames stored: those played, each once (its vertices' words, in
-   the shared numbering `order`, the nv the high level keeps: equal there,
-   equal at every level); 0 when every frame would be stored */
-static int frame_plan_make(const mdl_t *m, const char *file, const int *order, int nv, frame_plan *fp)
+/* the frames a body plays: played[f] (MOB_FRAMES's left out) */
+static void mob_played_frames(const mdl_t *m, const char *file, uint8_t *played)
 {
-	if (getenv("QCOOK_NOFMAP"))
-		return 0;
-	uint8_t *played = xmalloc((size_t) m->nframes);
 	memset(played, 1, (size_t) m->nframes);
 	for (size_t i = 0; i < sizeof MOB_FRAMES / sizeof MOB_FRAMES[0]; i++)
 		if (!strcmp(MOB_FRAMES[i].file, file))
@@ -3142,6 +3139,17 @@ static int frame_plan_make(const mdl_t *m, const char *file, const int *order, i
 						die("%s: frame %d never played, of %d", file, f, m->nframes);
 					played[f] = 0;
 				}
+}
+
+/* a body's frames stored: those played, each once (its vertices' words, in
+   the shared numbering `order`, the nv the high level keeps: equal there,
+   equal at every level); 0 when every frame would be stored */
+static int frame_plan_make(const mdl_t *m, const char *file, const int *order, int nv, frame_plan *fp)
+{
+	if (getenv("QCOOK_NOFMAP"))
+		return 0;
+	uint8_t *played = xmalloc((size_t) m->nframes);
+	mob_played_frames(m, file, played);
 	fp->nframes = m->nframes;
 	fp->nstored = 0;
 	fp->map     = xmalloc((size_t) m->nframes * sizeof *fp->map);
@@ -3245,6 +3253,47 @@ static void stream_reduce_free(mdl_t *r)
 	free(r->frames);
 }
 
+/* ------------------------- the level of detail by the vertices' order (§88) -- */
+
+/* A body's plan (tools/qcook/lod.c) on its hand-made model, over the frames
+   it plays, at QCOOK_LOD_PX pixels of tolerance (1 by default) up to the
+   draw distance; QCOOK_NOLOD=1 cooks today's order (an A / B). 0: none. */
+#define LOD_DRAW_DIST (QST_LOD_BANDS * QST_LOD_BAND)   /* 1536: the game's draw distance */
+
+static int lod_plan_body(const mdl_t *m, const char *file, lod_plan *plan)
+{
+	if (getenv("QCOOK_NOLOD"))
+		return 0;
+	const char *px = getenv("QCOOK_LOD_PX");
+	double tol = px && *px ? atof(px) : 1.0;
+	if (!(tol > 0))
+		die("QCOOK_LOD_PX=%s: not a tolerance in pixels", px);
+	uint8_t *played = xmalloc((size_t) m->nframes);
+	mob_played_frames(m, file, played);
+	int nf = 0;
+	for (int f = 0; f < m->nframes; f++)
+		nf += played[f];
+	double *pos = xmalloc((size_t) nf * m->nverts * 3 * sizeof *pos);
+	int (*st)[3] = xmalloc((size_t) m->nverts * sizeof *st);
+	for (int f = 0, i = 0; f < m->nframes; f++) {
+		if (!played[f])
+			continue;
+		for (int v = 0; v < m->nverts; v++)
+			for (int k = 0; k < 3; k++)
+				pos[((size_t) i * m->nverts + v) * 3 + k] = m->frames[f][v].v[k] * m->scale[k] + m->origin[k];
+		i++;
+	}
+	for (int v = 0; v < m->nverts; v++)
+		for (int k = 0; k < 3; k++)
+			st[v][k] = m->st[v][k];
+	lod_mesh mesh = { m->nverts, m->ntris, nf, pos, (const int (*)[4]) m->tris, (const int (*)[3]) st, m->skinw };
+	lod_plan_make(&mesh, tol, LOD_DRAW_DIST, plan);
+	free(pos);
+	free(st);
+	free(played);
+	return 1;
+}
+
 /* a model's compact asset (formats/qstream.h qst_model) from its triangles
    and vertices as given (a level's, numbered for the shared asset) */
 static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
@@ -3292,11 +3341,20 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 
 	/* records: each half's triangles in file order, preferring among the
 	   next WINDOW the one sharing the most vertices with the record being
-	   built; the indices are the model's own vertices */
+	   built; the indices are the model's own vertices. A sorted body
+	   (QSTM_SORT) gets the level of detail's tables (§88): its slots and
+	   triangles ordered by the band they last serve (q->lplan's, every
+	   band without a plan), a table of their counts per band at its end */
 	enum { WINDOW = 24 };
 	buf_t recs = { 0 };
 	uint8_t *done = xcalloc((size_t) m->ntris, 1);
 	int nrec = 0;
+	const lod_plan *lp = q->lplan;
+	if (lp && (lp->ntris != m->ntris || lp->nverts != m->nverts))
+		die("%s: a level of detail of %d triangles, %d vertices for %d, %d", q->file, lp->ntris, lp->nverts,
+		    m->ntris, m->nverts);
+	int lod_tris[QST_LOD_BANDS] = { 0 }, lod_slots[QST_LOD_BANDS] = { 0 };   /* over the records */
+	uint8_t rg[REC_MAX_TRIS];                     /* the record's triangles' bands */
 	#define EXP(f, vi, k) ((double) (m->frames[f][vi].v[k] << shift))
 	#define VU(f, vi, k)  ((m->frames[f][vi].v[k] * m->scale[k] + m->origin[k]) * QW_VSCALE)
 	for (int img = 0; img < (two ? 2 : 1); img++) {
@@ -3326,6 +3384,66 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 			if (best < 0 || r.nt >= REC_MAX_TRIS) {
 				if (!r.nt)
 					break;
+				/* the level of detail's order and table (a sorted body): each
+				   slot by the farthest band of its triangles, each triangle by
+				   its band, descending (stable); the table's counts per band */
+				uint8_t lodtab[QST_LOD_REC_BYTES];
+				if (q->sort) {
+					int sg[QW_MAX_VERTS], sperm[QW_MAX_VERTS], srank[QW_MAX_VERTS], tperm[REC_MAX_TRIS];
+					for (int i = 0; i < r.nv; i++) {
+						sg[i] = 0;
+						sperm[i] = i;
+					}
+					for (int i = 0; i < r.nt; i++) {
+						tperm[i] = i;
+						for (int k = 0; k < 3; k++) {
+							int sl = r.t[i].idx[k] / 4;
+							if (rg[i] > sg[sl])
+								sg[sl] = rg[i];
+						}
+					}
+					for (int i = 1; i < r.nv; i++) {      /* (insertion sorts: stable) */
+						int x = sperm[i], j = i;
+						while (j > 0 && sg[sperm[j - 1]] < sg[x]) {
+							sperm[j] = sperm[j - 1];
+							j--;
+						}
+						sperm[j] = x;
+					}
+					for (int i = 1; i < r.nt; i++) {
+						int x = tperm[i], j = i;
+						while (j > 0 && rg[tperm[j - 1]] < rg[x]) {
+							tperm[j] = tperm[j - 1];
+							j--;
+						}
+						tperm[j] = x;
+					}
+					mrec r2 = r;
+					uint8_t rg2[REC_MAX_TRIS];
+					for (int i = 0; i < r.nv; i++) {
+						srank[sperm[i]] = i;
+						r2.mv[i] = r.mv[sperm[i]];
+					}
+					for (int i = 0; i < r.nt; i++) {
+						r2.t[i] = r.t[tperm[i]];
+						rg2[i]  = rg[tperm[i]];
+						for (int k = 0; k < 3; k++)
+							r2.t[i].idx[k] = (uint8_t) (srank[r.t[tperm[i]].idx[k] / 4] * 4);
+					}
+					r = r2;
+					memcpy(rg, rg2, sizeof rg);
+					for (int b = 0; b < QST_LOD_BANDS; b++) {
+						int nv = 0, nt = 0;
+						for (int i = 0; i < r.nv; i++)
+							nv += sg[sperm[i]] > b;
+						for (int i = 0; i < r.nt; i++)
+							nt += rg[i] > b;
+						lodtab[2 * b]     = (uint8_t) nv;
+						lodtab[2 * b + 1] = (uint8_t) nt;
+						lod_slots[b] += nv;
+						lod_tris[b]  += nt;
+					}
+				}
 				qw_record h;
 				memset(&h, 0, sizeof h);
 				h.num_verts = (uint8_t) r.nv;
@@ -3335,7 +3453,7 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 				int ibytes  = (nidx * 2 + 3) & ~3;
 				int cbytes  = (r.nv + 3) & ~3;
 				h.polys     = (uint16_t) (sizeof h + ibytes + cbytes);
-				h.size      = (uint16_t) (h.polys + r.nt * sizeof(qw_tri));
+				h.size      = (uint16_t) (h.polys + r.nt * sizeof(qw_tri) + (q->sort ? QST_LOD_REC_BYTES : 0));
 				/* the sphere: the box of its vertices over every frame in the
 				   expanded units (its centre), the farthest in vertex units */
 				double lo[3] = { 1e9, 1e9, 1e9 }, hi[3] = { -1e9, -1e9, -1e9 };
@@ -3373,6 +3491,8 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 				memset(col, 128, sizeof col);
 				buf_put(&recs, col, (size_t) cbytes);
 				buf_put(&recs, r.t, (size_t) r.nt * sizeof(qw_tri));
+				if (q->sort)
+					buf_put(&recs, lodtab, sizeof lodtab);
 				nrec++;
 				r.nv = r.nt = 0;
 				continue;
@@ -3383,6 +3503,7 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 			int s[3];
 			for (int k = 0; k < 3; k++)
 				s[k] = rec_slot(&r, m->tris[t][k + 1]);
+			rg[r.nt] = lp ? lp->group[t] : QST_LOD_BANDS;
 			qw_tri *tri = &r.t[r.nt++];
 			memset(tri, 0, sizeof *tri);
 			int x0 = img ? bx0 : 0, x1 = img ? im->w : fx1;
@@ -3414,6 +3535,30 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	int fx1q = two ? (half + 2 * div - 1) / (2 * div) : im2->w, bx0q = two ? half / (2 * div) : 0;
 	if (fx1q > im2->w) fx1q = im2->w;
 
+	/* the level of detail's block (formats/qstream.h qst_lod, a sorted
+	   body): per band the vertices expanded, then the parents of the
+	   vertices that collapse within the draw distance (a plan; without
+	   one: every vertex at every band, no parent) */
+	buf_t lodb = { 0 };
+	int nmin = lp ? lp->nv[QST_LOD_BANDS - 1] : m->nverts;
+	if (q->sort) {
+		qst_lod l;
+		memset(&l, 0, sizeof l);
+		l.num_min = (uint16_t) nmin;
+		for (int b = 0; b < QST_LOD_BANDS; b++)
+			l.num_verts[b] = (uint16_t) (lp ? lp->nv[b] : m->nverts);
+		buf_put(&lodb, &l, sizeof l);
+		for (int v = nmin; v < m->nverts; v++) {
+			if (lp->parent[v] >= v)
+				die("%s: vertex %d's parent is %d", q->file, v, lp->parent[v]);
+			buf_put(&lodb, &lp->parent[v], 2);
+		}
+		buf_align4(&lodb);
+		if (lodb.len != qst_lod_bytes((uint32_t) m->nverts, (uint32_t) nmin))
+			die("%s: a level of detail block of %zu bytes, not %u", q->file, lodb.len,
+			    (unsigned) qst_lod_bytes((uint32_t) m->nverts, (uint32_t) nmin));
+	}
+
 	/* the asset: header, the frame map (QSTM_FMAP), the frames (those
 	   stored), records, images */
 	const frame_plan *fp = q->fplan;
@@ -3425,9 +3570,11 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	h.num_frames  = (uint16_t) m->nframes;
 	h.num_verts   = (uint16_t) m->nverts;
 	h.num_records = (uint16_t) nrec;
-	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (q->sort ? QSTM_SORT : 0) | (fp ? QSTM_FMAP : 0) |
-	                            (m->flags & 0xff) << 8);
-	h.ofs_frames  = sizeof h + qst_map_bytes(h.flags, (uint32_t) m->nframes);
+	h.flags       = (uint16_t) ((ms->sp->flat ? QSTM_FLAT : 0) | (q->sort ? QSTM_SORT | QSTM_LOD : 0) |
+	                            (fp ? QSTM_FMAP : 0) | (m->flags & 0xff) << 8);
+	if (q->sort && nstored >= 2048)
+		die("%s: %d frames stored, past the frame cache's key with a level of detail", q->file, nstored);
+	h.ofs_frames  = sizeof h + qst_map_bytes(h.flags, (uint32_t) m->nframes) + (uint32_t) lodb.len;
 	h.ofs_records = h.ofs_frames + (uint32_t) nstored * (uint32_t) m->nverts * 4;
 	h.len_records = (uint32_t) recs.len;
 	h.shift       = (uint8_t) shift;
@@ -3472,6 +3619,10 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 		buf_put(out, fp->map, (size_t) m->nframes * 2);
 		buf_put(out, zero, qst_map_bytes(h.flags, (uint32_t) m->nframes) - (size_t) m->nframes * 2);
 	}
+	if (q->sort) {
+		buf_put(out, lodb.p, lodb.len);
+		free(lodb.p);
+	}
 	for (int i = 0; i < nstored; i++) {
 		int f = fp ? fp->src[i] : i;
 		for (int v = 0; v < m->nverts; v++) {
@@ -3488,6 +3639,15 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	       two ? "halves" : "whole", h.images[0].w, h.images[0].h, two ? " + " : "", two ? h.images[1].w : 0,
 	       two ? h.images[1].h : 0, h.small[0].w, h.small[0].h, shift, out->len - start,
 	       (size_t) nstored * m->nverts * 4);
+	if (lp) {
+		printf("qcook: %-22s lod: %d collapses within %d units (errors to %.2f units), %d vertices with a parent, "
+		       "%u + %d x %d B;", q->file, lp->nerr_dist, LOD_DRAW_DIST,
+		       lp->nerr_dist ? lp->err[lp->nerr_dist - 1] : 0.0, m->nverts - nmin,
+		       (unsigned) qst_lod_bytes((uint32_t) m->nverts, (uint32_t) nmin), nrec, QST_LOD_REC_BYTES);
+		for (int b = 0; b < QST_LOD_BANDS; b++)
+			printf(" %d/%d/%d", lp->nv[b], lod_slots[b], lod_tris[b]);
+		printf(" (verts/slots/tris a band of %d units)\n", QST_LOD_BAND);
+	}
 }
 
 /* The three model levels of a streamed model (formats/qstream.h
@@ -3515,18 +3675,24 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 		}
 		nv[l] = red[l].nverts;
 	}
+	/* a hand-made body's level of detail (§88): the same model at every
+	   level, its vertices numbered by their relevance */
+	lod_plan lplan;
+	q->lplan = hand && lod_plan_body(&red[0], q->file, &lplan) ? &lplan : NULL;
 	/* the shared numbering: low's vertices in low's order, then medium's
-	   others in medium's, then high's */
+	   others in medium's, then high's (a level of detail: its order) */
 	int *rank = xmalloc((size_t) m->nverts * sizeof *rank), *order = xmalloc((size_t) m->nverts * sizeof *order);
 	int n = 0, prefix[3];
 	for (int v = 0; v < m->nverts; v++)
 		rank[v] = -1;
 	for (int l = 0; l < 3; l++) {
-		for (int i = 0; i < nv[l]; i++)
-			if (rank[orig[l][i]] < 0) {
-				rank[orig[l][i]] = n;
-				order[n++] = orig[l][i];
+		for (int i = 0; i < nv[l]; i++) {
+			int ov = orig[l][q->lplan ? q->lplan->perm[i] : i];
+			if (rank[ov] < 0) {
+				rank[ov] = n;
+				order[n++] = ov;
 			}
+		}
 		prefix[l] = n;
 		if (prefix[l] != nv[l])
 			die("%s: the model levels' vertices are not nested (level %d: %d of %d)", q->file, l, nv[l],
@@ -3593,6 +3759,12 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 		sh.num_stored = (uint16_t) q->fplan->nstored;
 		buf_put(&sb, out[2].p + sizeof(qst_model), qst_map_bytes(sh.flags, sh.num_frames));
 	}
+	if (sh.flags & QSTM_LOD) {                    /* the level of detail: every level's */
+		uint32_t at = (uint32_t) sizeof(qst_model) + qst_map_bytes(sh.flags, sh.num_frames);
+		sh.ofs_lod = (uint32_t) sb.len;
+		sh.len_lod = h[2]->ofs_frames - at;
+		buf_put(&sb, out[2].p + at, sh.len_lod);
+	}
 	sh.ofs_frames = (uint32_t) sb.len;
 	buf_put(&sb, out[2].p + h[2]->ofs_frames, (size_t) qst_stored_frames(h[2]) * h[2]->num_verts * 4);
 	for (int l = 0; l < 3; l++) {
@@ -3641,6 +3813,10 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 		free(plan.map);
 		free(plan.src);
 		q->fplan = NULL;
+	}
+	if (q->lplan) {
+		lod_plan_free(&lplan);
+		q->lplan = NULL;
 	}
 	for (int l = 0; l < 3; l++) {
 		if (reduced[l])

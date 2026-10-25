@@ -4,12 +4,16 @@
 #
 #   void mdl_expand(qw_vert *dst, const uint32_t *src, int n);
 #   void mdl_expand_shift(qw_vert *dst, const uint32_t *src, int n, int shift);
+#   void mdl_lod_copy(qw_vert *dst, const uint16_t *par, int n, const qw_vert *pool);
 #
 # Word w gives x | y << 16 = w & 0x00ff00ff and z | normal << 16 =
 # (w >> 8) & 0x00ff00ff: two ANDs and a shift, two stores. Two vertices a
 # turn (n odd: the last one apart). The shift's variant (a big model: its
 # steps doubled or more, its matrix within the GTE's range) shifts x, y and
-# z left, the normal kept. Clobbers t0-t7.
+# z left, the normal kept. mdl_lod_copy (a level of detail's band, formats/
+# qstream.h QSTM_LOD): n collapsed vertices from dst on, each its parent's
+# two words (par[i] the parent's index in the pool, lower than its own: in
+# order, the parent's are final). Clobbers t0-t7.
 
 	.set noreorder
 	.set noat
@@ -74,3 +78,24 @@ mdl_expand_shift:
 	addiu   $a0, $a0, 8
 2:	jr      $ra
 	nop
+
+	.section .text.mdl_lod_copy, "ax", @progbits
+	.global mdl_lod_copy
+	.type mdl_lod_copy, @function
+mdl_lod_copy:
+	lhu     $t0, 0($a1)
+	addiu   $a2, $a2, -1
+1:	addiu   $a1, $a1, 2
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $a3                # the parent's qw_vert
+	lw      $t1, 0($t0)
+	lw      $t2, 4($t0)
+	lhu     $t0, 0($a1)                  # (the next one's parent, ahead)
+	sw      $t1, 0($a0)
+	sw      $t2, 4($a0)
+	addiu   $a2, $a2, -1
+	bgez    $a2, 1b
+	addiu   $a0, $a0, 8
+	jr      $ra
+	nop
+	.size mdl_lod_copy, . - mdl_lod_copy

@@ -1976,6 +1976,25 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The monsters' level of detail by their vertices' order**
+  (2026-10-25, `docs/porting-notes.md` §88): the cook orders each hand-made body's
+  vertices by what the eye would lose without them (half-edge collapses,
+  the cheapest first, over the frames played: `tools/qcook/lod.c`), keeps
+  in the asset a band table (24 bands of 64 units of depth: the vertices
+  to expand) and the collapsed vertices' parents, and ends each record
+  with its own table (per band its slots and triangles still drawn, the
+  record's slots and triangles ordered by the band they last serve); the
+  engine takes the band from the depth the sort already has, expands the
+  band's vertices and copies the others from their parents in the frame
+  cache (the band in the key), and draws of each record the band's prefix
+  (`ds_records`, `light_recs_lod`). `QCOOK_LOD_PX` the tolerance in pixels
+  (1), `QCOOK_NOLOD=1` today's order (nothing cut), `LOD=0` the engine's
+  A / B. Measured against master: the 128 spawn views −2.0 % (−4.9 % over
+  the 28 with a cut body, up to −11 %), E1M1 cleared −3.8 %, the E1M3
+  fight −2.3 to −4.2 % while bodies are in view, the game bench −7.8 %;
+  the assets +0.3-1.1 KB a body, the release's arena −1 KB. A first cut
+  as a prefix of the records, measured and dropped (the vanish order
+  packs the records badly: +1 % on near bodies).
 - **A rate per sound, at a constant share of its energy**
   (2026-10-24, `docs/porting-notes.md` §87):
   the halvings gave an uneven fidelity; every sound is now cooked at the

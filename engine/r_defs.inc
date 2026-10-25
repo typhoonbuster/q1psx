@@ -83,6 +83,8 @@
                         # 2 (RE_BMODEL): a brush model, its subtree walked (draw_bmodel);
                         # 4 (RE_SORT): a monster, its triangles sorted far to near
 .set RE_CAM,     60     # RE_BMODEL: the camera in the model's space, vertex units
+.set RE_LODBAND, 60     # RE_SORT: the level of detail's band x 2: the entry in each
+                        #   record's table (rlist.h lod_band; 0 the whole model)
 .set RE_ZSF,     72     # RE_SORT: ZSF3 for its triangles' buckets (rlist.c ent_sort)
 .set RE_ZNEAR,   76     # RE_SORT: its nearest bucket x 4
 .set RE_VIEW,    1
@@ -132,12 +134,19 @@
 .set R_POLYS,    18     # byte offset of the first quad / tri
 .set R_VERTS,    20
 .set POLY_SIZE,  12
+.set QST_LOD_REC_BYTES, 48   # a sorted body's record ends with its level-of-detail table:
+                             #   two bytes a band (slots, triangles), QST_LOD_BANDS bands
+                             #   (formats/qstream.h)
 
 # ---- scratchpad map (base 0x1F800000) ---------------------------------------
 .set SP_STACK,    0x000   # walk stack: +4..+0xff, 63 words (spills to RAM beyond)
 .set SP_SXY,      0x100   # projected XY per record vertex (index x4), 42 words
 .set SP_SZ,       0x1a8   # SZ per record vertex, 42 words
 .set SP_COL,      0x250   # light per record vertex as 0x00cccccc, 42 words
+.set SP_LODBAND,  0x2f8   # draw_model, a sorted model: its RE_LODBAND (the entry of each
+                          #   record's level-of-detail table, formats/qstream.h §88)
+.set SP_LODCNT,   0x2fc   # ds_records: the record's slots (bits 0-7) and triangles (8-15)
+                          #   at that band
 .set SP_CAM,      0x300   # cam[3], vertex units
 .set SP_FVBASE,   0x30c
 .set SP_SZFAST,   0x310

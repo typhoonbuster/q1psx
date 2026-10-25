@@ -48,6 +48,24 @@
  * Quake's order, a frame equal to an earlier one (every vertex's word)
  * not stored again.
  *
+ * A body's level of detail by its vertices' order (QSTM_LOD, docs/
+ * porting-notes.md §88): the cook numbers the vertices by what the eye
+ * would lose without them, the most needed first, collapsing them one by
+ * one onto a neighbour (the parent, always of a lower index); a frame's
+ * first vertices are a band's, the others take their parent's place when
+ * the frame is expanded (engine/mdl.c). After the frame map, a qst_lod:
+ * for each band of QST_LOD_BAND world units of the model's depth the
+ * vertices to expand, then the parents of the vertices that collapse
+ * within the draw distance, uint16_t[num_verts - num_min], padded to 4;
+ * the frames follow (ofs_frames). Each record's slots are ordered by the
+ * band their last triangle vanishes at and its triangles by theirs, the
+ * longest-lasting first, and the record ends with its own table
+ * (QST_LOD_REC_BYTES: per band its slots and its triangles still drawn,
+ * uint8_t each): the renderer transforms and draws those alone
+ * (engine/r_world.s ds_records, light_recs_lod). Every sorted body has
+ * the block and the tables; QCOOK_NOLOD=1 cooks today's order with
+ * nothing cut at any band, QCOOK_LOD_PX the tolerance (scripts/cook.sh).
+ *
  * Little-endian; offsets from the asset's start (models) or the file's
  * start (the directory).
  */
@@ -104,6 +122,8 @@ typedef struct {
                                 its radius the table's range              */
 #define QSTM_FMAP 4          /* a frame map after the header (the frames
                                 stored: qst_frame_index)                  */
+#define QSTM_LOD  8          /* the vertices in relevance order, a qst_lod
+                                after the frame map (above, §88)          */
 #define QST_NOFRAME 0xffffu  /* the map's entry for a frame not stored    */
 #define QSTM_EF(flags) ((flags) >> 8)   /* the MDL's own flags (its EF_*: the client's
                                            rotation, trails and light) */
@@ -174,6 +194,50 @@ static inline uint32_t qst_frame_index(const qst_model *m, int frame)
 	return s == QST_NOFRAME ? 0 : s;
 }
 
+/* The level of detail (QSTM_LOD): band b is a model whose origin's depth
+   is within [b, b + 1) x QST_LOD_BAND world units (the last band: from its
+   start, the draw distance). Band 0 is the whole model (nothing collapses
+   at an error of 0). */
+#define QST_LOD_BANDS 24
+#define QST_LOD_BAND  64         /* world units */
+#define QST_LOD_NONE  0xffffu    /* (a parent no vertex has) */
+
+typedef struct {
+	uint16_t num_min;        /* num_verts[QST_LOD_BANDS - 1]: the first vertex
+	                            with a parent                               */
+	uint16_t pad;
+	uint16_t num_verts[QST_LOD_BANDS];   /* each band's vertices to expand: a
+	                            frame's first; the others copy their parent's
+	                            qw_vert (non-increasing; [0] = the model's) */
+	/* uint16_t parent[num_verts - num_min]: vertex num_min + i's parent (a
+	   lower index), padded to 4 bytes */
+} qst_lod;                   /* 52 bytes */
+
+_Static_assert(sizeof(qst_lod) == 4 + 2 * QST_LOD_BANDS, "qstream.h: qst_lod");
+
+/* a record's table (QSTM_LOD): its last QST_LOD_REC_BYTES bytes, per band
+   its slots to transform (a prefix of its index list) and its triangles
+   to draw (a prefix of its polygons), uint8_t each */
+#define QST_LOD_REC_BYTES (2 * QST_LOD_BANDS)
+
+/* the model's qst_lod (QSTM_LOD): after its frame map */
+static inline const qst_lod *qst_lod_of(const qst_model *m)
+{
+	return (const qst_lod *) ((const uint8_t *) (m + 1) + qst_map_bytes(m->flags, m->num_frames));
+}
+
+/* its parents */
+static inline const uint16_t *qst_lod_parents(const qst_lod *l)
+{
+	return (const uint16_t *) (l + 1);
+}
+
+/* a qst_lod's bytes, the parents and their padding included */
+static inline uint32_t qst_lod_bytes(uint32_t num_verts, uint32_t num_min)
+{
+	return (uint32_t) sizeof(qst_lod) + (((num_verts - num_min) * 2 + 3) & ~3u);
+}
+
 /* the frames stored (the frame map's: up to the records) */
 static inline uint32_t qst_stored_frames(const qst_model *m)
 {
@@ -219,8 +283,10 @@ typedef struct {
 	uint32_t ofs_map;            /* QSTM_FMAP: the frame map (every level's)       */
 	uint16_t num_stored;         /* QSTM_FMAP: the frames stored                   */
 	uint16_t pad;
-} qst_shared;                    /* 148 bytes */
-_Static_assert(sizeof(qst_shared) == 148, "qstream.h: qst_shared");
+	uint32_t ofs_lod, len_lod;   /* QSTM_LOD: the qst_lod block (every level's: a
+	                                body is the same model at each), 0 none       */
+} qst_shared;                    /* 156 bytes */
+_Static_assert(sizeof(qst_shared) == 156, "qstream.h: qst_shared");
 
 /* the level's asset header (qst_model) from the shared one; its size */
 static inline uint32_t qst_level_model(const qst_shared *s, int level, qst_model *m)
@@ -232,7 +298,7 @@ static inline uint32_t qst_level_model(const qst_shared *s, int level, qst_model
 	m->num_verts   = s->level[level].num_verts;
 	m->num_records = s->level[level].num_records;
 	m->flags       = s->flags;
-	m->ofs_frames  = sizeof *m + qst_map_bytes(s->flags, s->num_frames);
+	m->ofs_frames  = sizeof *m + qst_map_bytes(s->flags, s->num_frames) + s->len_lod;
 	m->ofs_records = m->ofs_frames + (uint32_t) (s->flags & QSTM_FMAP ? s->num_stored : s->num_frames) *
 	                                 s->level[level].num_verts * 4;
 	m->len_records = s->level[level].len_records;
@@ -278,7 +344,8 @@ typedef struct {
 	uint32_t ofs_records, len_records;   /* the level's records                 */
 	uint32_t ofs_images, len_images;
 	uint32_t ofs_map, len_map;     /* the frame map (QSTM_FMAP), 0 none          */
-} qst_layout;                      /* 40 bytes */
+	uint32_t ofs_lod, len_lod;     /* the qst_lod block (QSTM_LOD), 0 none       */
+} qst_layout;                      /* 48 bytes */
 
 static inline void qst_layout_of(const qst_shared *s, int level, qst_layout *l)
 {
@@ -292,6 +359,8 @@ static inline void qst_layout_of(const qst_shared *s, int level, qst_layout *l)
 	l->len_images  = s->len_images;
 	l->ofs_map     = s->ofs_map;
 	l->len_map     = qst_map_bytes(s->flags, s->num_frames);
+	l->ofs_lod     = s->ofs_lod;
+	l->len_lod     = s->len_lod;
 }
 
 /* the shared asset's bytes [ofs, ofs + n) (src) into the level's asset
@@ -303,12 +372,17 @@ static inline void qst_assemble(const qst_layout *l, uint32_t ofs, const uint8_t
 {
 	uint32_t end = ofs + n, fh = l->frame_bytes, nl = l->level_bytes;
 	uint32_t f0 = l->ofs_frames, f1 = f0 + l->frames * fh;
-	uint32_t fd = (uint32_t) sizeof(qst_model) + l->len_map;   /* the level's frames */
+	uint32_t fd = (uint32_t) sizeof(qst_model) + l->len_map + l->len_lod;   /* the level's frames */
 	uint32_t rec = fd + l->frames * nl;
 	uint32_t m0 = l->ofs_map, m1 = m0 + l->len_map;
 	if (end > m0 && ofs < m1) {                              /* the frame map */
 		uint32_t lo = ofs > m0 ? ofs : m0, hi = end < m1 ? end : m1;
 		qst_copy(dst + sizeof(qst_model) + (lo - m0), src + (lo - ofs), hi - lo);
+	}
+	uint32_t d0 = l->ofs_lod, d1 = d0 + l->len_lod;
+	if (end > d0 && ofs < d1) {                              /* the level of detail */
+		uint32_t lo = ofs > d0 ? ofs : d0, hi = end < d1 ? end : d1;
+		qst_copy(dst + sizeof(qst_model) + l->len_map + (lo - d0), src + (lo - ofs), hi - lo);
 	}
 	if (end > f0 && ofs < f1 && nl) {                        /* the frames */
 		uint32_t a = ofs > f0 ? ofs : f0, b = end < f1 ? end : f1;

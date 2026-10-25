@@ -119,6 +119,13 @@
 #         game's: a hop within a level's section; docs/porting-notes.md
 #         §84); tools/cdsim/cdsim.py replays a journal on another disc
 #         layout.
+#         LOD=0 draws every streamed model whole at every distance (CMake
+#         Q1PSX_LOD; the level of detail by the vertices' order,
+#         docs/porting-notes.md §88): an A / B of the engine's cut alone,
+#         the cook's order kept (QCOOK_NOLOD=1 cooks today's order). Every
+#         view prints a "lod view" line: the streamed models drawn, those
+#         cut to a band; MONSTERS=4 a "clear frames" line: the fights'
+#         frames, their cycles, the models drawn and cut.
 #         ENGINE_C=1 builds the C engine (CMake Q1PSX_ENGINE_C: every asm
 #         part's C version but the world renderer's, docs/porting-notes.md
 #         §55) in build-bench-c/, beside the asm's: its frames must be the
@@ -198,6 +205,7 @@ GPUTIME=${GPUTIME:-0}
 IRQTIME=${IRQTIME:-0}
 SLOWSTAT=${SLOWSTAT:-0}
 WARPDYN=${WARPDYN:-0}
+LOD=${LOD:-1}
 WHOLE=${WHOLE:-0}
 CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
@@ -214,7 +222,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \

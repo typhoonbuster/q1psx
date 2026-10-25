@@ -68,8 +68,13 @@ typedef struct {
 	uint32_t flags;      /* +56 RE_VIEW: the view model: no warp subdivision (the
 	                             cook cut it), the near clip at 5 units;
 	                             RE_BMODEL: a brush model: its subtree walked   */
-	int32_t  cam[3];     /* +60 RE_BMODEL: the camera in the model's space,
-	                             vertex units (the walk's plane tests)         */
+	union {
+		int32_t  cam[3];     /* +60 RE_BMODEL: the camera in the model's space,
+		                             vertex units (the walk's plane tests)         */
+		uint32_t lod_band;   /* +60 RE_SORT: the level of detail's band x 2 (its
+		                             entry in each record's table, formats/qstream.h
+		                             QST_LOD_REC_BYTES; 0: the whole model)        */
+	};
 	uint32_t zsf;        /* +72 RE_SORT: the GTE's ZSF3 for its triangles'
 	                             buckets (AVSZ3's OTZ / 4: its depth range on
 	                             R_SORT_N - 2 of them)                          */
@@ -88,7 +93,8 @@ typedef struct {
 
 _Static_assert(sizeof(r_item_t) == 16, "r_defs.inc RI_*");
 _Static_assert(sizeof(r_ent_t) == 80 && __builtin_offsetof(r_ent_t, cam) == 60 &&
-               __builtin_offsetof(r_ent_t, zsf) == 72, "r_defs.inc RE_*");
+               __builtin_offsetof(r_ent_t, lod_band) == 60 && __builtin_offsetof(r_ent_t, zsf) == 72,
+               "r_defs.inc RE_*");
 
 extern r_item_t r_items[RL_MAX_ITEMS];
 extern uint16_t r_lists[256];           /* list id -> first item + 1; the upper
@@ -96,6 +102,11 @@ extern uint16_t r_lists[256];           /* list id -> first item + 1; the upper
 
 /* per frame: before anything is added */
 void rl_begin(void);
+
+#ifdef Q1PSX_BENCH
+extern int rl_lod_cut;      /* this frame's streamed models cut to a band past 0 */
+extern int rl_lod_band_hi;  /* the farthest band among them */
+#endif
 
 /* an entity for a model's frame, positioned (1/R_POS_SUB world units) and
    oriented (binary degrees, Quake's entity angles: pitch, yaw, roll), lit

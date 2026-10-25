@@ -36,7 +36,9 @@
 # (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP, QCOOK_SOUND_KEEP: the share of
 # its energy every sound keeps, each cooked at the lowest rate that does,
 # in percent; default 95, 100 or 0 its own rate; docs/porting-notes.md
-# §87; QCOOK_MUSIC_RING_KB: the
+# §87; QCOOK_LOD_PX: the monsters' level of detail's tolerance in pixels,
+# 1 by default, QCOOK_NOLOD=1 none, the vertices in today's order, §88;
+# QCOOK_MUSIC_RING_KB: the
 # SPU RAM the music's ring takes, 48 by default: the bank fills the rest
 # beside a swap room, §86). `cook.sh --stale <file>`, the
 # build's check before the cook (CMakeLists.txt), rewrites <file> when they
@@ -119,7 +121,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-}"
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-}"
 }
 if [ "${1:-}" = --stale ]; then
 	stamp=${2:?--stale needs the file the cook depends on}

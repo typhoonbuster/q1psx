@@ -61,7 +61,7 @@ void mdl_new_frame(void)
 	mdl_cache.now++;
 }
 
-const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f)
+const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f, uint32_t bkey)
 {
 	mdl_cache_t *c = &mdl_cache;
 	uint32_t need = (uint32_t) m->num_verts * sizeof(qw_vert);
@@ -121,17 +121,28 @@ const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f)
 			return 0;
 		}
 	}
-	c->key[slot]   = (uint32_t) a << 16 | f;
+	c->key[slot]   = (uint32_t) a << 16 | bkey | f;
 	c->ofs[slot]   = at;
 	c->end[slot]   = at + need;
 	c->stamp[slot] = c->now;
 	head = at + need;
 	qw_vert *dst = (qw_vert *) (c->ring + at);
 	const uint32_t *src = (const uint32_t *) ((const uint8_t *) m + m->ofs_frames) + f * m->num_verts;
+	/* the level of detail's band (QSTM_LOD): its vertices expanded, the
+	   others copied from their parents (the first n of a frame are the
+	   band's: formats/qstream.h) */
+	int n = m->num_verts;
+	const qst_lod *l = 0;
+	if (bkey) {
+		l = qst_lod_of(m);
+		n = l->num_verts[bkey >> 11];
+	}
 	if (m->shift)
-		mdl_expand_shift(dst, src, m->num_verts, m->shift);
+		mdl_expand_shift(dst, src, n, m->shift);
 	else
-		mdl_expand(dst, src, m->num_verts);
+		mdl_expand(dst, src, n);
+	if (n < m->num_verts)
+		mdl_lod_copy(dst + n, qst_lod_parents(l) + (n - l->num_min), m->num_verts - n, dst);
 	mdl_stat_expanded++;
 	return dst;
 }
@@ -140,15 +151,15 @@ const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f)
 /* engine/mdl_frame.s in C (the C engine, CMake Q1PSX_ENGINE_C): the key
    looked for from the first entry, the sentinel past the last ending the
    scan */
-const qw_vert *mdl_frame(int a, const qst_model *m, int frame)
+const qw_vert *mdl_frame(int a, const qst_model *m, int frame, uint32_t bkey)
 {
-	uint32_t f = qst_frame_index(m, frame), key = (uint32_t) a << 16 | f;
+	uint32_t f = qst_frame_index(m, frame), key = (uint32_t) a << 16 | bkey | f;
 	mdl_cache.key[ENTRIES] = key;
 	int i = 0;
 	while (mdl_cache.key[i] != key)
 		i++;
 	if (i == ENTRIES)
-		return mdl_expand_new(a, m, f);
+		return mdl_expand_new(a, m, f, bkey);
 	mdl_cache.stamp[i] = mdl_cache.now;
 	return (const qw_vert *) (mdl_cache.ring + mdl_cache.ofs[i]);
 }
@@ -175,5 +186,13 @@ void mdl_expand_shift(qw_vert *dst, const uint32_t *src, int n, int shift)
 		d[2 * i]     = (w & 0x00ff00ff) << shift;
 		d[2 * i + 1] = (w >> 8 & 0xff) << shift | (w >> 8 & 0x00ff0000);
 	}
+}
+
+/* engine/mdl_expand.s's mdl_lod_copy in C (the C engine): in order, each
+   collapsed vertex its parent's qw_vert */
+void mdl_lod_copy(qw_vert *dst, const uint16_t *par, int n, const qw_vert *pool)
+{
+	for (int i = 0; i < n; i++)
+		dst[i] = pool[par[i]];
 }
 #endif

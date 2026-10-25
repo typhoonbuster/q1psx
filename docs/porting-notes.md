@@ -11385,3 +11385,234 @@ the swap room 32-52 KB; STREAM_0.DAT 1706 KB. Every map loads
 - The 15 % of room and the 2756 Hz floor are constants of
   `halve_by_class`; the floor could go lower for the hums.
 - The long noise loops shortened (§87.4), if the 70 KB are wanted.
+
+## §88 — The level of detail by the vertices' order (2026-10-25)
+
+The idea for the monsters' cost at a distance, after §81's level
+POC (three whole models swapped by distance, −2.75 % on E1M1's views
+for +125 KB of RAM and a visible switch, not merged): store a model's
+vertices in the order of their visual relevance, the most needed first,
+and keep in the model's asset a small table giving, as a function of the
+distance, how many of them to draw; beyond its distance a vertex is
+simply absent, nothing is swapped and no second model is held. A proof
+of concept on the hand-made soldier (on a branch of its own,
+throwaway: `tools/lodpoc/mdl_lod.py`, a page with a distance slider,
+Quake's data kept outside the repository) set the ordering; this section
+is the cook and the engine.
+
+### 88.1 The order
+
+`tools/qcook/lod.c` (`lod_plan_make`) ports the POC's ordering to the
+cook, on a body's hand-made model (§62, §64: the `MOBS` table applied
+first, the frames `MOB_FRAMES` never plays left out). It collapses the
+vertices one by one onto a neighbour, the cheapest first (a progressive
+mesh by half-edge collapses):
+
+- the cost of collapsing v onto u is v's move seen along the normals of
+  its live triangles, the root of the sum of the squares, the worst of
+  the frames played, plus the error v already carries from earlier
+  collapses onto it (the accumulated error of the chain), times 3 when
+  the skin would stretch across the model (the two corners' texels more
+  than 24 apart on the triangle's side of the skin);
+- a collapse that turns any triangle over in any frame is refused;
+- after a collapse the costs of the vertices around v and u are worked
+  out again (the POC only re-evaluated those around u: a vertex whose
+  only triangle with the target vanished kept a stale cost, and its
+  cached target could be a vertex already gone; here a parent is always
+  alive when its child collapses, so a parent always has a lower new
+  index);
+- the collapses stop when four triangles are left (in practice a body's
+  last collapses are refused long before: 102 of the soldier's 141
+  vertices, 148 of the dog's 216, 93 of the boss's 281 within the draw
+  distance).
+
+The errors are made monotonic along the order; a collapse takes effect
+beyond the depth where its error projects to the tolerance, `error x 160
+/ tolerance` (the GTE's H is 160 at 320 wide, a 90-degree field:
+`r_proj_h`). `QCOOK_LOD_PX` is the tolerance in pixels, 1 by default
+(part of `scripts/cook.sh`'s settings line: a change cooks again),
+`QCOOK_NOLOD=1` cooks today's order with nothing cut (an A / B). The
+table is cut in bands of 64 world units of the model's depth up to the
+draw distance of 1536 units (24 bands, `QST_LOD_BANDS`): band b takes
+the collapses whose depth is under its near edge, so a vertex at its
+threshold moves by at most the tolerance anywhere in its band, and band
+0 is the whole model (an error of 0 collapses nothing there). No
+hysteresis: a vertex appears or goes at a move of at most the tolerance.
+The nine bodies order in 2 s.
+
+The soldier at 1 px (its vertices / its triangles, the band's near edge
+in units): 0: 141/270, 192: 137/262, 384: 122/232, 576: 105/198, 768:
+90/168, 1152: 61/110, 1472: 43/74 (the POC gave 137/262 at 200, 121/230
+at 400, 103/194 at 600, 86/160 at 800, 56/102 at 1200, 37/64 at 1536:
+the same order within the band's quantization). At 2 px: 192: 131/250,
+384: 112/212, 768: 65/118, 1472: 27/38. The nine bodies at 1 px, the
+vertices at the bands 0 / 384 / 768 / 1472 (and the collapses that
+happen within the draw distance): soldier 141 / 122 / 90 / 43 (102), dog
+216 / 151 / 101 / 70 (148), ogre 140 / 113 / 93 / 54 (88), knight 96 /
+84 / 61 / 33 (63), zombie 124 / 92 / 57 / 32 (95), wizard 72 / 63 / 49 /
+30 (43), demon 140 / 134 / 109 / 65 (76), shambler 141 / 138 / 127 / 89
+(52), boss 281 / 215 / 211 / 190 (93: its vertices' grid is four times
+coarser, §64, its first collapses cost 0.4 units and go at 64 units).
+
+### 88.2 The asset
+
+`formats/qstream.h`, `QSTM_LOD`, set on every sorted body (`QSTM_SORT`:
+the nine monsters; with `QCOOK_NOLOD=1` too, nothing cut):
+
+- the vertices renumbered by the order: those never collapsed first,
+  then the collapses from the last to the first, so that a band's
+  vertices are a frame's first `num_verts[b]`; the frames' words and the
+  records' indices follow it (`frame_plan_make`, `cook_compact` through
+  the levels' `order`);
+- after the frame map, a `qst_lod`: `num_verts[QST_LOD_BANDS]` and
+  `num_min` (the last band's), then the parents of the vertices that
+  collapse within the draw distance, `uint16_t[num_verts - num_min]`
+  (a parent is the collapse's target through the collapses before it,
+  always a lower index), 52 + 196-328 bytes a body;
+- the records are the ones the cook packed before (the file's order, the
+  window preferring the triangle sharing the most vertices: the same
+  count and the same slots as master's), but inside each one the slots
+  are ordered by the farthest band of their triangles and the triangles
+  by their band, the longest-lasting first, and the record ends with its
+  own table (`QST_LOD_REC_BYTES`, 48: per band its slots and its
+  triangles still drawn, a byte each), so that what a band draws of a
+  record is a prefix of its index list and a prefix of its polygons;
+  the record's size field covers the table, `polys` is unchanged;
+- the shared asset the cook checks each level against (`qst_shared`,
+  `qst_assemble`) carries the block (`ofs_lod`, `len_lod`).
+
+The nine bodies grow by 328-1064 bytes each (the soldier 83 316 →
+83 996, the dog 93 504 → 94 568, the boss 145 276 → 146 136), STREAM_0.DAT
+by 10 KB (1802 → 1812 KB); on a map only the kinds present are resident
+(5-8 of the nine: 2-6 KB).
+
+### 88.3 The engine
+
+- `engine/rlist.c` `rl_model_stream`: the origin's depth, which the sort
+  already took from the GTE (`ent_sort`, the view's rotation and
+  translation left by `rl_ent_matrix`), gives the band (`z >> 8`: 64
+  world units are 256 vertex units; clamped to the last); a nearer band
+  with the same vertex count stands for it (one expansion in the cache
+  for the bands of one cut). The band is the entity's `lod_band` (x 2,
+  its entry in each record's table; it shares `cam`'s word, a brush
+  model's) and goes into the frame cache's key as `band << 11`
+  (`mdl_frame`'s fourth argument, or'ed into the key after the frame
+  stored: a body stores fewer than 2048 frames, the cook checks it;
+  `mdl_forget` compares the asset's half as before).
+- `engine/mdl.c` `mdl_expand_new`: the band's vertices expanded
+  (`mdl_expand`, the first `num_verts[b]`), the others copied from their
+  parents in index order (`engine/mdl_expand.s` `mdl_lod_copy`: two
+  loads and two stores a vertex, the next parent's index loaded ahead; a
+  parent's slot is final when its child's is written). The pool keeps its
+  `num_verts x 8` bytes: the records index it as before, a collapsed
+  vertex's slot holding its parent's position and normal, so a corner
+  whose vertex went reads its own texels at the surviving vertex's place
+  (the POC's default) with the parent's light.
+- `engine/r_world.s`: `draw_model` puts a sorted model's band in
+  `SP_LODBAND` and lights it through `light_recs_lod` (light_recs with
+  the band's slot count of each record read from its table: the dead
+  slots are not lit); `ds_records` reads each record's two counts first
+  (the band's entry at the record's end: a load, two adds, two byte
+  loads; a record with no triangle left at the band is passed over before
+  its sphere test), keeps them in `SP_LODCNT`, transforms the band's
+  slots (the light bytes stay the record's own: their offset uses the
+  full count) and emits the band's triangles. Nothing in the asset is
+  written: the same records serve every monster of the kind at its own
+  band in the same frame. The world's and the items' record loops
+  (`RECLOOP de`) are untouched: only sorted bodies carry tables.
+- The C engine (`ENGINE_C=1`): `mdl_frame`'s key and `mdl_lod_copy` in
+  C (`engine/mdl.c`); the renderer stays asm.
+- `Q1PSX_LOD=0` (CMake; `LOD=0 scripts/bench.sh`) draws band 0 at every
+  distance, the engine's A / B.
+- The bench: a `lod view` line per view (the streamed models drawn, those
+  cut to a band past 0, the farthest band), a `clear frames` line for
+  `MONSTERS=4` (the fights' frames, their cycles, the models drawn and
+  cut).
+
+### 88.4 A first cut, measured and dropped
+
+The first engine built drew a band as a prefix of the records: the
+triangles sorted by the band they vanish at, the records cut in that
+order (per image, since a record has one texture), and the table giving
+per band the last record of each image and its live triangles, the
+renderer patching those two records' counts and the first image's last
+record's size (a step over its dead records to the second image's first)
+for the draw and putting them back after. It measured −1.42 % on the 128
+spawn views (−3.53 % on the 28 with a cut model) but lost on near
+monsters (E3M4.v2 +1.0 %, E4M5.v0 +1.2 %, E3M7.v3 +0.35 %): the vanish
+order scatters a band's triangles over the body, so the records packed
+badly, 12 instead of 9 for the soldier with 472 instead of 341 record
+slots to transform (+8 % to +50 % over the nine), and the near bands paid
+it at every frame. The per-record tables keep master's packing and cut
+inside every record instead; they cost a few loads a record and 48
+bytes a record, and beat the prefix everywhere (below).
+
+### 88.5 Measured
+
+PCSX-Redux in fast forward, this branch against master bb97a2c built
+beside it (a detached worktree with the same cooked data; the stream
+cooked by each side's cook):
+
+- `BENCH_MAPS=1 HASHONLY=1 PROFILE=0`, the 128 spawn views: 100 `H` lines
+  identical (no body cut there), 28 differ, every one of them cheaper:
+  −4.93 % over the 28 (17 676 287 → 16 805 060 cycles; the best E4M3.v3
+  −11.0 %, E4M3.v1 −9.6 %, START.v0 −10.4 %; the least E4M5.v0 −0.26 %,
+  one body at band 3), −1.99 % over the 128.
+- `MAP=E1M1 MONSTERS=4` (the map cleared): the 333 fight frames
+  1 371 337 → 1 319 179 x 256 cycles (−3.80 %), the same 1525 streamed
+  models drawn, 593 of them cut to a band past 0; the stack's margin
+  9960 → 9944 bytes never reached.
+- `MAP=E1M3 MONSTERS=3` (the crowd, then a minute of fight): the fight's
+  first 1500 frames −2.3 % to −4.2 % a 300-frame window (682 445 →
+  657 810, 681 236 → 652 913, 650 810 → 632 120, 710 362 → 687 715,
+  825 602 → 806 908 cycles a frame), the last 2100 +0.01 % to +0.02 %
+  (one streamed model drawn a frame, near: the tables' reads); the crowd
+  itself (the entities' tick) unchanged; the stack 10 112 → 10 104.
+- `BENCH_GAME=1 HASHONLY=1 PROFILE=0`: −7.8 % over the twelve scenarios
+  (12 160 808 → 11 210 184 cycles), −6.6 % (grlauncher) to −9.4 %
+  (gglauncher): the start of E1M1 looks down its hall at the soldiers
+  and the dog far away.
+- RAM: the release's level arena 1 344 048 → 1 343 008 bytes (−1040: the
+  code), the assets above.
+- The checks (TESTING 11.61): the C engine (`ENGINE_C=1`) gives the asm's
+  128 `H` lines; `LOD=0` gives master's `Q` line (the packet set) on each
+  of the 28 views whose `H` differs (the slots and triangles reordered
+  inside master's records; +0.05 % of cycles over the 128: the tables'
+  reads); the `QCOOK_NOLOD=1` cook gives master's `H` lines on the 128
+  views and the game bench's (the engine's new code is neutral with
+  nothing cut); the pictures of E1M8's and E3M7's twelve views each,
+  master's beside the branch's (pktview, a host diff): the differing
+  pixels lie within the bodies' boxes alone, none at all on most of the
+  cut bodies (E1M8.v1 at band 7, v3 at 16, E3M7.v2, v5 with six bodies to
+  band 18, v8 to band 22), 15-59 on the far ones (E1M8.v0, v7, v8, v9:
+  one to two pixels along an edge), and the ogre of E3M7.v4 at band 1
+  (64-128 units, 19 vertices of an error under 0.4 units gone) has 1463 of
+  its box's 2618 pixels changed by a texel's shift, 924 of them by 32 or
+  less on a channel, 490 by 64 or less, the shape the same; hazcheck and
+  iccheck pass at every link.
+
+### 88.6 Left
+
+- The tolerance is a call to make on DuckStation (`QCOOK_LOD_PX`, 1 cooked
+  here; at 2 the soldier keeps 112 vertices at 384 units and 27 at 1472:
+  §88.1), and so is the band's edge (the near one here: a vertex moves by
+  at most the tolerance anywhere in its band; the band's middle would cut
+  more).
+- The band comes from the origin's depth: a big model's near side is
+  nearer than its origin (the shambler's by 40 units), its vertices there
+  a little over the tolerance at the band's near edge.
+- The other alias models (the items, the heads, the gibs): the same cook
+  path would order them (no hand table: every frame counts), but their
+  record loop (`RECLOOP de`) has no table lookup, their triangles are
+  drawn in the records' order (a painter's order, not sorted: reordering
+  them inside the records changes which triangle shows where two
+  overlap), and few of them are far and large; measured nothing, left.
+- The records' tables cost a load, two adds and two byte loads a record
+  and 48 bytes a record; a model with no cut at its band pays them too
+  (+0.01-0.02 % a frame with one near body drawn). A per-model "whole"
+  flag in `SP_LODBAND` would spare them at band 0, for a branch a record.
+- The frame cache holds one expansion per (asset, frame, band of a
+  distinct cut): bands of one cut fold onto the nearest, but a body
+  walking through the bands expands its frames again at each (an
+  expansion is ~4 cycles a vertex plus 12 a parent copy); no refusal seen
+  in the benches.
