@@ -1988,11 +1988,14 @@ followed by R0-R4.
   band's vertices and copies the others from their parents in the frame
   cache (the band in the key), and draws of each record the band's prefix
   (`ds_records`, `light_recs_lod`). `QCOOK_LOD_PX` the tolerance in pixels
-  (1), `QCOOK_NOLOD=1` today's order (nothing cut), `LOD=0` the engine's
-  A / B. Measured against master: the 128 spawn views −2.0 % (−4.9 % over
-  the 28 with a cut body, up to −11 %), E1M1 cleared −3.8 %, the E1M3
-  fight −2.3 to −4.2 % while bodies are in view, the game bench −7.8 %;
-  the assets +0.3-1.1 KB a body, the release's arena −1 KB. A first cut
+  (2, chosen; 1 measured first), `QCOOK_NOLOD=1` today's order
+  (nothing cut), `LOD=0` the engine's A / B. Measured against master at
+  1 px: the 128 spawn views −2.0 % (−4.9 % over the 28 with a cut body,
+  up to −11 %), E1M1 cleared −3.8 %, the E1M3 fight −2.3 to −4.2 % while
+  bodies are in view, the game bench −7.8 %; the assets +0.3-1.1 KB a
+  body, the release's arena −1 KB; at 2 px the 128 views −3.6 % (−9.0 %
+  over the 28, up to −21.7 %), E1M1 cleared −7.7 %, the E1M3 fight −4.7
+  to −7.1 %, the game bench −8.8 %. A first cut
   as a prefix of the records, measured and dropped (the vanish order
   packs the records badly: +1 % on near bodies).
 - **A rate per sound, at a constant share of its energy**

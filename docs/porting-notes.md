@@ -11429,8 +11429,9 @@ mesh by half-edge collapses):
 The errors are made monotonic along the order; a collapse takes effect
 beyond the depth where its error projects to the tolerance, `error x 160
 / tolerance` (the GTE's H is 160 at 320 wide, a 90-degree field:
-`r_proj_h`). `QCOOK_LOD_PX` is the tolerance in pixels, 1 by default
-(part of `scripts/cook.sh`'s settings line: a change cooks again),
+`r_proj_h`). `QCOOK_LOD_PX` is the tolerance in pixels, 2 by default
+(chosen after the first measurements at 1; part of
+`scripts/cook.sh`'s settings line: a change cooks again),
 `QCOOK_NOLOD=1` cooks today's order with nothing cut (an A / B). The
 table is cut in bands of 64 world units of the model's depth up to the
 draw distance of 1536 units (24 bands, `QST_LOD_BANDS`): band b takes
@@ -11440,19 +11441,26 @@ threshold moves by at most the tolerance anywhere in its band, and band
 hysteresis: a vertex appears or goes at a move of at most the tolerance.
 The nine bodies order in 2 s.
 
-The soldier at 1 px (its vertices / its triangles, the band's near edge
-in units): 0: 141/270, 192: 137/262, 384: 122/232, 576: 105/198, 768:
-90/168, 1152: 61/110, 1472: 43/74 (the POC gave 137/262 at 200, 121/230
-at 400, 103/194 at 600, 86/160 at 800, 56/102 at 1200, 37/64 at 1536:
-the same order within the band's quantization). At 2 px: 192: 131/250,
-384: 112/212, 768: 65/118, 1472: 27/38. The nine bodies at 1 px, the
-vertices at the bands 0 / 384 / 768 / 1472 (and the collapses that
-happen within the draw distance): soldier 141 / 122 / 90 / 43 (102), dog
-216 / 151 / 101 / 70 (148), ogre 140 / 113 / 93 / 54 (88), knight 96 /
-84 / 61 / 33 (63), zombie 124 / 92 / 57 / 32 (95), wizard 72 / 63 / 49 /
-30 (43), demon 140 / 134 / 109 / 65 (76), shambler 141 / 138 / 127 / 89
-(52), boss 281 / 215 / 211 / 190 (93: its vertices' grid is four times
-coarser, §64, its first collapses cost 0.4 units and go at 64 units).
+The soldier at 2 px, the cooked default (its vertices / its triangles,
+the band's near edge in units): 0: 141/270, 128: 131/250, 192: 122/232,
+384: 112/212, 576: 90/168, 768: 65/118, 1152: 32/48, 1472: 27/38 (the
+POC gave 86/160 at 400, 37/64 at 800, 23/34 at 1536). At 1 px, the first
+cooked: 192: 137/262, 384: 122/232, 576: 105/198, 768: 90/168, 1152:
+61/110, 1472: 43/74 (the POC: 137/262 at 200, 121/230 at 400, 103/194 at
+600, 86/160 at 800, 56/102 at 1200, 37/64 at 1536: the same order within
+the band's quantization). The nine bodies at 2 px, the vertices at the
+bands 0 / 384 / 768 / 1472 (and the collapses that happen within the
+draw distance): soldier 141 / 112 / 65 / 27 (116), dog 216 / 137 / 80 /
+55 (161), ogre 140 / 110 / 79 / 32 (109), knight 96 / 76 / 55 / 14 (82),
+zombie 124 / 78 / 41 / 25 (99), wizard 72 / 62 / 44 / 15 (59), demon 140
+/ 127 / 88 / 37 (105), shambler 141 / 137 / 104 / 46 (99), boss 281 /
+215 / 206 / 147 (136: its vertices' grid is four times coarser, §64, its
+first collapses cost 0.4 units and go at 64 units). At 1 px: soldier
+141 / 122 / 90 / 43 (102), dog 216 / 151 / 101 / 70 (148), ogre 140 /
+113 / 93 / 54 (88), knight 96 / 84 / 61 / 33 (63), zombie 124 / 92 / 57
+/ 32 (95), wizard 72 / 63 / 49 / 30 (43), demon 140 / 134 / 109 / 65
+(76), shambler 141 / 138 / 127 / 89 (52), boss 281 / 215 / 211 / 190
+(93).
 
 ### 88.2 The asset
 
@@ -11468,7 +11476,7 @@ the nine monsters; with `QCOOK_NOLOD=1` too, nothing cut):
   `num_min` (the last band's), then the parents of the vertices that
   collapse within the draw distance, `uint16_t[num_verts - num_min]`
   (a parent is the collapse's target through the collapses before it,
-  always a lower index), 52 + 196-328 bytes a body;
+  always a lower index), 168-376 bytes a body at 2 px (136-344 at 1);
 - the records are the ones the cook packed before (the file's order, the
   window preferring the triangle sharing the most vertices: the same
   count and the same slots as master's), but inside each one the slots
@@ -11481,10 +11489,10 @@ the nine monsters; with `QCOOK_NOLOD=1` too, nothing cut):
 - the shared asset the cook checks each level against (`qst_shared`,
   `qst_assemble`) carries the block (`ofs_lod`, `len_lod`).
 
-The nine bodies grow by 328-1064 bytes each (the soldier 83 316 →
-83 996, the dog 93 504 → 94 568, the boss 145 276 → 146 136), STREAM_0.DAT
-by 10 KB (1802 → 1812 KB); on a map only the kinds present are resident
-(5-8 of the nine: 2-6 KB).
+The nine bodies grow by 360-1096 bytes each at 2 px (the soldier 83 316
+→ 84 028, the dog 93 504 → 94 600, the boss 145 276 → 146 220; 328-1064
+at 1 px), STREAM_0.DAT by 10 KB (1802 → 1812 KB); on a map only the
+kinds present are resident (5-8 of the nine: 2-6 KB).
 
 ### 88.3 The engine
 
@@ -11551,29 +11559,42 @@ bytes a record, and beat the prefix everywhere (below).
 
 PCSX-Redux in fast forward, this branch against master bb97a2c built
 beside it (a detached worktree with the same cooked data; the stream
-cooked by each side's cook):
+cooked by each side's cook), at 1 px first, then at the 2 px
+chosen:
 
 - `BENCH_MAPS=1 HASHONLY=1 PROFILE=0`, the 128 spawn views: 100 `H` lines
-  identical (no body cut there), 28 differ, every one of them cheaper:
-  −4.93 % over the 28 (17 676 287 → 16 805 060 cycles; the best E4M3.v3
-  −11.0 %, E4M3.v1 −9.6 %, START.v0 −10.4 %; the least E4M5.v0 −0.26 %,
-  one body at band 3), −1.99 % over the 128.
+  identical (no body cut there), 28 differ, every one of them cheaper.
+  At 1 px −4.93 % over the 28 (17 676 287 → 16 805 060 cycles; the best
+  E4M3.v3 −11.0 %, E4M3.v1 −9.6 %, START.v0 −10.4 %; the least E4M5.v0
+  −0.26 %, one body at band 3), −1.99 % over the 128. At 2 px −9.01 %
+  over the 28 (→ 16 084 097; E4M3.v3 −21.7 %, E4M3.v1 −18.9 %, E3M7.v2
+  −17.5 %, E3M6.v0 −15.3 %, E1M5.v0 −14.9 %; the least E4M5.v0 −2.4 %),
+  −3.64 % over the 128.
 - `MAP=E1M1 MONSTERS=4` (the map cleared): the 333 fight frames
-  1 371 337 → 1 319 179 x 256 cycles (−3.80 %), the same 1525 streamed
-  models drawn, 593 of them cut to a band past 0; the stack's margin
-  9960 → 9944 bytes never reached.
+  1 371 337 → 1 319 179 x 256 cycles at 1 px (−3.80 %), → 1 265 844 at 2 px
+  (−7.69 %), the same 1525 streamed models drawn, 593 of them cut to a
+  band past 0; the stack's margin 9960 → 9944 bytes never reached.
 - `MAP=E1M3 MONSTERS=3` (the crowd, then a minute of fight): the fight's
-  first 1500 frames −2.3 % to −4.2 % a 300-frame window (682 445 →
-  657 810, 681 236 → 652 913, 650 810 → 632 120, 710 362 → 687 715,
-  825 602 → 806 908 cycles a frame), the last 2100 +0.01 % to +0.02 %
-  (one streamed model drawn a frame, near: the tables' reads); the crowd
-  itself (the entities' tick) unchanged; the stack 10 112 → 10 104.
-- `BENCH_GAME=1 HASHONLY=1 PROFILE=0`: −7.8 % over the twelve scenarios
-  (12 160 808 → 11 210 184 cycles), −6.6 % (grlauncher) to −9.4 %
-  (gglauncher): the start of E1M1 looks down its hall at the soldiers
-  and the dog far away.
+  first 1500 frames, a 300-frame window each, 682 445 → 657 810 → 640 684
+  cycles a frame (1 px −3.6 %, 2 px −6.1 %), 681 236 → 652 913 → 632 736
+  (−4.2, −7.1 %), 650 810 → 632 120 → 616 114 (−2.9, −5.3 %), 710 362 →
+  687 715 → 664 286 (−3.2, −6.5 %), 825 602 → 806 908 → 786 505 (−2.3,
+  −4.7 %); the last 2100 frames +0.01 % to +0.02 % at both (one streamed
+  model drawn a frame, near: the tables' reads); the minute −1.5 % at 1
+  px, −2.8 % at 2; the crowd itself (the entities' tick) unchanged; the
+  stack 10 112 → 10 104.
+- `BENCH_GAME=1 HASHONLY=1 PROFILE=0`: −7.8 % over the twelve scenarios at
+  1 px (12 160 808 → 11 210 184 cycles; −6.6 % grlauncher to −9.4 %
+  gglauncher), −8.8 % at 2 px (→ 11 089 358; −8.2 % grlauncher to
+  −11.6 % gglauncher): the start of E1M1 looks down its hall at the
+  soldiers and the dog far away.
 - RAM: the release's level arena 1 344 048 → 1 343 008 bytes (−1040: the
   code), the assets above.
+- The pictures at 2 px (the same views as the 1 px check below): the
+  same bodies identical, 31-120 pixels on E1M8's far ones (40 on v0's,
+  120 on v7's two), the ogre of E3M7.v4 the same 1480 pixels of a texel's
+  shift (band 1 cuts the same 19 vertices at both tolerances), E3M7.v7's
+  three bodies 61.
 - The checks (TESTING 11.61): the C engine (`ENGINE_C=1`) gives the asm's
   128 `H` lines; `LOD=0` gives master's `Q` line (the packet set) on each
   of the 28 views whose `H` differs (the slots and triangles reordered
@@ -11593,11 +11614,11 @@ cooked by each side's cook):
 
 ### 88.6 Left
 
-- The tolerance is a call to make on DuckStation (`QCOOK_LOD_PX`, 1 cooked
-  here; at 2 the soldier keeps 112 vertices at 384 units and 27 at 1472:
-  §88.1), and so is the band's edge (the near one here: a vertex moves by
-  at most the tolerance anywhere in its band; the band's middle would cut
-  more).
+- The tolerance: 2 px cooked (`QCOOK_LOD_PX`; the 1 px cook
+  measured first stays in §88.5 for the scale), to be seen on
+  DuckStation; and so is the band's edge (the near one here: a vertex
+  moves by at most the tolerance anywhere in its band; the band's middle
+  would cut more).
 - The band comes from the origin's depth: a big model's near side is
   nearer than its origin (the shambler's by 40 units), its vertices there
   a little over the tolerance at the band's near edge.

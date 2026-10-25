@@ -3256,8 +3256,9 @@ static void stream_reduce_free(mdl_t *r)
 /* ------------------------- the level of detail by the vertices' order (§88) -- */
 
 /* A body's plan (tools/qcook/lod.c) on its hand-made model, over the frames
-   it plays, at QCOOK_LOD_PX pixels of tolerance (1 by default) up to the
-   draw distance; QCOOK_NOLOD=1 cooks today's order (an A / B). 0: none. */
+   it plays, at QCOOK_LOD_PX pixels of tolerance (2 by default, the
+   choice of §88) up to the draw distance; QCOOK_NOLOD=1 cooks today's order
+   (an A / B). 0: none. */
 #define LOD_DRAW_DIST (QST_LOD_BANDS * QST_LOD_BAND)   /* 1536: the game's draw distance */
 
 static int lod_plan_body(const mdl_t *m, const char *file, lod_plan *plan)
@@ -3265,7 +3266,7 @@ static int lod_plan_body(const mdl_t *m, const char *file, lod_plan *plan)
 	if (getenv("QCOOK_NOLOD"))
 		return 0;
 	const char *px = getenv("QCOOK_LOD_PX");
-	double tol = px && *px ? atof(px) : 1.0;
+	double tol = px && *px ? atof(px) : 2.0;
 	if (!(tol > 0))
 		die("QCOOK_LOD_PX=%s: not a tolerance in pixels", px);
 	uint8_t *played = xmalloc((size_t) m->nframes);

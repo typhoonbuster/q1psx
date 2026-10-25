@@ -37,7 +37,7 @@
 # its energy every sound keeps, each cooked at the lowest rate that does,
 # in percent; default 95, 100 or 0 its own rate; docs/porting-notes.md
 # §87; QCOOK_LOD_PX: the monsters' level of detail's tolerance in pixels,
-# 1 by default, QCOOK_NOLOD=1 none, the vertices in today's order, §88;
+# 2 by default, QCOOK_NOLOD=1 none, the vertices in today's order, §88;
 # QCOOK_MUSIC_RING_KB: the
 # SPU RAM the music's ring takes, 48 by default: the bank fills the rest
 # beside a swap room, §86). `cook.sh --stale <file>`, the
