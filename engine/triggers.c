@@ -40,7 +40,7 @@ static void forward_of(int pitch_deg, int yaw_deg, int32_t f[3])
 /* ------------------------------------------------------- multi triggers -- */
 
 /* the wait time has passed, so set back up for another activation */
-static void multi_wait(edict_t *self)
+void multi_wait(edict_t *self)
 {
 	if (self->max_health) {
 		self->health     = self->max_health;
@@ -66,29 +66,29 @@ static void multi_trigger(edict_t *self)
 	ent_activator = self->enemy;
 	sub_use_targets(self);
 	if (self->wait > 0) {
-		self->think     = multi_wait;
+		self->think     = EF_multi_wait;
 		self->nextthink = ent_time + TICKS(self->wait);
 	} else {                                      /* a touch: removed a little later */
-		self->touch     = sub_null;
+		self->touch     = EF_sub_null;
 		self->nextthink = ent_time + TICKS(10);
-		self->think     = sub_remove;
+		self->think     = EF_sub_remove;
 	}
 	ent_wake(self);
 }
 
-static void multi_killed(edict_t *self)
+void multi_killed(edict_t *self)
 {
 	self->enemy = ent_damage_attacker;
 	multi_trigger(self);
 }
 
-static void multi_use(edict_t *self)
+void multi_use(edict_t *self)
 {
 	self->enemy = ent_activator;
 	multi_trigger(self);
 }
 
-static void multi_touch(edict_t *self)
+void multi_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -115,25 +115,25 @@ static void trigger_multiple(edict_t *self)
 	else if (self->sounds == 3) self->noise = (int16_t) snd_find("misc/trigger1.wav");
 	if (!self->wait)
 		self->wait = 20;                          /* 0.2 s */
-	self->use = multi_use;
+	self->use = EF_multi_use;
 	init_trigger(self);
 	if (self->health) {
 		if (self->spawnflags & SPAWNFLAG_NOTOUCH)
 			printf("ents: trigger with health and notouch\n");
 		self->max_health = self->health;
-		self->th_die     = multi_killed;
+		self->th_die     = EF_multi_killed;
 		self->takedamage = DAMAGE_YES;
 		self->solid      = SOLID_BBOX;            /* shot, not touched (a box in the traces) */
 		ent_setmodel(self, self->model);
 	} else if (!(self->spawnflags & SPAWNFLAG_NOTOUCH)) {
-		self->touch  = multi_touch;
+		self->touch  = EF_multi_touch;
 		self->flags |= FL_TOUCH_PLAYER;
 	}
 }
 
 /* -------------------------------------------------------- relay, counter -- */
 
-static void counter_use(edict_t *self)
+void counter_use(edict_t *self)
 {
 	self->count--;
 	if (self->count < 0)
@@ -155,7 +155,7 @@ static void counter_use(edict_t *self)
 
 /* ----------------------------------------------------------- teleports -- */
 
-static void play_teleport(edict_t *self)
+void play_teleport(edict_t *self)
 {
 	int32_t org[3];
 	__builtin_memcpy(org, self->origin, sizeof org);
@@ -171,7 +171,7 @@ static void spawn_tfog(const int32_t org[3])
 	if (s) {
 		__builtin_memcpy(s->origin, org, sizeof s->origin);
 		s->nextthink = ent_time + TICKS(20);
-		s->think     = play_teleport;
+		s->think     = EF_play_teleport;
 		ent_wake(s);
 	}
 	game_teleport_splash(org);
@@ -183,7 +183,7 @@ static void spawn_tfog(const int32_t org[3])
    when the player touches it: the test above), and the classname
    teledeath2 for an invincible one (read by the obituaries and a player's
    gib sound only) */
-static void tdeath_touch(edict_t *self)
+void tdeath_touch(edict_t *self)
 {
 	edict_t *other = ent_other;
 	if (other == self->owner)
@@ -212,9 +212,9 @@ static void spawn_tdeath(const int32_t org[3], edict_t *death_owner)
 	}
 	ent_setsize(death, mins, maxs);
 	ent_setorigin(death, org);
-	death->touch     = tdeath_touch;
+	death->touch     = EF_tdeath_touch;
 	death->nextthink = ent_time + TICKS(20);
-	death->think     = sub_remove;
+	death->think     = EF_sub_remove;
 	death->owner     = death_owner;
 	ent_wake(death);
 	ent_force_retouch = 2;                        /* make sure even still objects get hit */
@@ -222,7 +222,7 @@ static void spawn_tdeath(const int32_t org[3], edict_t *death_owner)
 
 /* teleport_touch: a living creature (the player, a monster) to the
    target, a fog at both ends, a telefrag at the arrival */
-static void teleport_touch(edict_t *self)
+void teleport_touch(edict_t *self)
 {
 	edict_t *other = ent_other;
 	if (self->targetname && self->nextthink < ent_time)
@@ -255,7 +255,7 @@ static void teleport_touch(edict_t *self)
 }
 
 /* trigger_monsterjump_touch: a walking monster thrown over a gap */
-static void trigger_monsterjump_touch(edict_t *self)
+void trigger_monsterjump_touch(edict_t *self)
 {
 	edict_t *o = ent_other;
 	if ((o->flags & (FL_MONSTER | FL_FLY | FL_SWIM)) != FL_MONSTER)
@@ -269,17 +269,17 @@ static void trigger_monsterjump_touch(edict_t *self)
 	o->velocity[2] = self->height;
 }
 
-static void teleport_use(edict_t *self)
+void teleport_use(edict_t *self)
 {
 	self->nextthink = ent_time + TICKS(20);
 	ent_force_retouch = 2;                        /* make sure even still objects get hit */
-	self->think = sub_null;
+	self->think = EF_sub_null;
 	ent_wake(self);
 }
 
 /* ---------------------------------------------------------------- misc -- */
 
-static void trigger_skill_touch(edict_t *self)
+void trigger_skill_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -290,7 +290,7 @@ static void trigger_skill_touch(edict_t *self)
 	game_skill = v;
 }
 
-static void trigger_onlyregistered_touch(edict_t *self)
+void trigger_onlyregistered_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -307,18 +307,18 @@ static void trigger_onlyregistered_touch(edict_t *self)
 	}
 }
 
-static void hurt_on(edict_t *self)
+void hurt_on(edict_t *self)
 {
 	self->solid     = SOLID_TRIGGER;
 	self->nextthink = -1;
 }
 
-static void hurt_touch(edict_t *self)
+void hurt_touch(edict_t *self)
 {
 	if (ent_other->takedamage) {
 		self->solid = SOLID_NOT;
 		ent_damage(ent_other, self, self, self->dmg);
-		self->think     = hurt_on;
+		self->think     = EF_hurt_on;
 		self->nextthink = ent_time + 60;
 		ent_wake(self);
 	}
@@ -326,7 +326,7 @@ static void hurt_touch(edict_t *self)
 
 /* trigger_push_touch: a living creature thrown (the QC's grenades too:
    the player's are the game's projectiles, which touch no trigger) */
-static void trigger_push_touch(edict_t *self)
+void trigger_push_touch(edict_t *self)
 {
 	if (ent_other->health > 0 && ent_other == ent_player) {
 		for (int k = 0; k < 3; k++)
@@ -344,16 +344,16 @@ static void trigger_push_touch(edict_t *self)
 		ent_remove(self);
 }
 
-static void func_wall_use(edict_t *self)
+void func_wall_use(edict_t *self)
 {
 	self->frame = (uint8_t) (1 - self->frame);   /* the alternate textures */
 }
 
-static void make_bubbles(edict_t *self)
+void make_bubbles(edict_t *self)
 {
 	game_spawn_bubble(self->origin);
 	self->nextthink = ent_time + 30 + (int) ((q_rand() & 0x7fff) * 60 / 0x8000);   /* random () + 0.5 */
-	self->think     = make_bubbles;
+	self->think     = EF_make_bubbles;
 	ent_wake(self);
 }
 
@@ -388,22 +388,22 @@ Q_COLD void triggers_spawn(edict_t *e, const qw_ent *q)
 		trigger_multiple(e);
 		break;
 	case QE_TRIGGER_RELAY:
-		e->use = sub_use_targets;
+		e->use = EF_sub_use_targets;
 		break;
 	case QE_TRIGGER_COUNTER:
 		e->wait = -100;
 		if (!e->count)
 			e->count = 2;
-		e->use = counter_use;
+		e->use = EF_counter_use;
 		break;
 	case QE_TRIGGER_TELEPORT:
 		init_trigger(e);
-		e->touch = teleport_touch;
+		e->touch = EF_teleport_touch;
 		if (e->spawnflags & PLAYER_ONLY)
 			e->flags |= FL_TOUCH_PLAYER;
 		if (!e->target)
 			printf("ents: teleporter without a target\n");
-		e->use = teleport_use;
+		e->use = EF_teleport_use;
 		if (!(e->spawnflags & SILENT) && ents_first_spawn) {
 			int32_t o[3];
 			for (int k = 0; k < 3; k++)
@@ -419,24 +419,24 @@ Q_COLD void triggers_spawn(edict_t *e, const qw_ent *q)
 		break;
 	case QE_TRIGGER_SETSKILL:
 		init_trigger(e);
-		e->touch  = trigger_skill_touch;
+		e->touch  = EF_trigger_skill_touch;
 		e->flags |= FL_TOUCH_PLAYER;
 		break;
 	case QE_TRIGGER_ONLYREGISTERED:
 		init_trigger(e);
-		e->touch  = trigger_onlyregistered_touch;
+		e->touch  = EF_trigger_onlyregistered_touch;
 		e->flags |= FL_TOUCH_PLAYER;
 		break;
 	case QE_TRIGGER_HURT:
 		init_trigger(e);
-		e->touch = hurt_touch;
+		e->touch = EF_hurt_touch;
 		if (!e->dmg)
 			e->dmg = 5;
 		break;
 	case QE_TRIGGER_PUSH:
 		init_trigger(e);
 		e->noise = (int16_t) snd_find("ambience/windfly.wav");   /* (its precache: the residency pass's) */
-		e->touch = trigger_push_touch;
+		e->touch = EF_trigger_push_touch;
 		if (!e->speed)
 			e->speed = 1000;
 		break;
@@ -445,11 +445,11 @@ Q_COLD void triggers_spawn(edict_t *e, const qw_ent *q)
 		if (!e->height) e->height = 200;
 		if (!e->angle)  e->angle = 360;
 		init_trigger(e);
-		e->touch = trigger_monsterjump_touch;
+		e->touch = EF_trigger_monsterjump_touch;
 		break;
 	case QE_FUNC_WALL:
 		brush_static(e, 1);
-		e->use = func_wall_use;
+		e->use = EF_func_wall_use;
 		break;
 	case QE_FUNC_ILLUSIONARY:
 		brush_static(e, 0);
@@ -458,17 +458,17 @@ Q_COLD void triggers_spawn(edict_t *e, const qw_ent *q)
 		if (!(game_serverflags & e->spawnflags))
 			break;                                /* can still enter episode */
 		brush_static(e, 1);
-		e->use = func_wall_use;
+		e->use = EF_func_wall_use;
 		break;
 	case QE_FUNC_BOSSGATE:
 		if ((game_serverflags & 15) == 15)
 			break;                                /* all episodes completed */
 		brush_static(e, 1);
-		e->use = func_wall_use;
+		e->use = EF_func_wall_use;
 		break;
 	case QE_AIR_BUBBLES:
 		e->nextthink = ent_time + 60;
-		e->think     = make_bubbles;
+		e->think     = EF_make_bubbles;
 		ent_wake(e);
 		break;
 	default:                                      /* spots, lights, path corners */

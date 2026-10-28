@@ -82,7 +82,7 @@ static edict_t *find_intermission(void)
 }
 
 /* the stats and the camera: SVC_INTERMISSION */
-Q_COLD static void execute_changelevel(edict_t *self)
+Q_COLD void execute_changelevel(edict_t *self)
 {
 	(void) self;
 	level_intermission    = 1;
@@ -108,7 +108,7 @@ Q_COLD static void execute_changelevel(edict_t *self)
 	       level_completed_ticks / GAME_HZ);
 }
 
-static void changelevel_touch(edict_t *self)
+void changelevel_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -118,8 +118,8 @@ static void changelevel_touch(edict_t *self)
 		goto_next_map();
 		return;
 	}
-	self->touch     = sub_null;
-	self->think     = execute_changelevel;
+	self->touch     = EF_sub_null;
+	self->think     = EF_execute_changelevel;
 	self->nextthink = ent_time + TICKS(10);
 	ent_wake(self);
 }
@@ -178,7 +178,7 @@ Q_COLD void level_spawn(edict_t *e, const qw_ent *q)
 			return;
 		}
 		init_trigger(e);
-		e->touch  = changelevel_touch;
+		e->touch  = EF_changelevel_touch;
 		e->flags |= FL_TOUCH_PLAYER;
 		break;
 	default:                                         /* info_intermission: a spot */

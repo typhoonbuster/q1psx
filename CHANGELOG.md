@@ -2007,6 +2007,14 @@ followed by R0-R4.
     308 → 379 KB, E1M3's 348 → 419). An existing build directory keeps the
     old cache defaults: configure it with `-DQ1PSX_STACK_BYTES=8192
     -DQ1PSX_MUSIC_REFILL=2`, or afresh.
+  - §90.5 `edict_t` 384 → 320 bytes (`engine/ents.h`): the seven function
+    pointers a byte each into one table (`engine/ent_fns.[ch]`, 104
+    functions, `ENT_CALL`), `absmin` / `absmax` computed where read
+    (`ent_absbox`, `e_touch.s`), the items' words halfwords, `finaldest`
+    (the move's start plus its delta), `t_length`, `t_width` and `style`
+    gone; every pool +18-19 KB (E4M7's 379 → 397 KB, E1M3's 419 → 438);
+    every frame and scenario identical; the crowd's entity tick +3.3 %,
+    the views +0.1 % (the boxes computed).
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**

@@ -227,7 +227,7 @@ static void boss_custom(edict_t *self, int code)
 }
 
 /* boss_awake (its use): it rises from the lava */
-static void boss_awake(edict_t *self)
+void boss_awake(edict_t *self)
 {
 	self->solid      = SOLID_SLIDEBOX;
 	self->movetype   = MOVETYPE_STEP;
@@ -250,26 +250,28 @@ static int boss_spawn(edict_t *self)
 	self->masset   = -1;
 	ent_link(self);
 	ent_total_monsters++;
-	self->use = boss_awake;
+	self->use = EF_boss_awake;
 	return 1;
 }
 
 /* lightning_fire: the beam between the doors' bottoms, every tenth of a
    second until its second is over, then the doors down */
-static void lightning_fire(edict_t *self)
+void lightning_fire(edict_t *self)
 {
 	if (ent_time >= lightning_end) {     /* done here, put the terminals back up */
 		movers_door_go_down(le1);
 		movers_door_go_down(le2);
 		return;
 	}
-	int32_t p1[3], p2[3], d[3], n[3];
+	int32_t p1[3], p2[3], d[3], n[3], lo1[3], hi1[3], lo2[3], hi2[3];
+	ent_absbox(le1, lo1, hi1);
+	ent_absbox(le2, lo2, hi2);
 	for (int k = 0; k < 3; k++) {
 		p1[k] = (le1->mins[k] + le1->maxs[k]) / 2;
 		p2[k] = (le2->mins[k] + le2->maxs[k]) / 2;
 	}
-	p1[2] = le1->absmin[2] - 16 * SUB;
-	p2[2] = le2->absmin[2] - 16 * SUB;
+	p1[2] = lo1[2] - 16 * SUB;
+	p2[2] = lo2[2] - 16 * SUB;
 	for (int k = 0; k < 3; k++)
 		d[k] = p2[k] - p1[k];
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
@@ -278,7 +280,7 @@ static void lightning_fire(edict_t *self)
 		p2[k] -= n[k];
 	}
 	self->nextthink = ent_time + TICKS(10);
-	self->think     = lightning_fire;
+	self->think     = EF_lightning_fire;
 	ent_wake(self);
 	game_monster_beam(ent_world, p1, p2, monsters_kind_asset(MK_BOSS, 2));   /* TE_LIGHTNING3 (bolt3.mdl) */
 }
@@ -297,7 +299,7 @@ static edict_t *find_lightning_target(edict_t *from)
 /* lightning_use: when both doors rest at the same end, the lightning for a
    second; with the doors up (their bottoms down to the beam), Chthon
    hurt */
-static void lightning_use(edict_t *self)
+void lightning_use(edict_t *self)
 {
 	if (lightning_end >= ent_time + TICKS(100))
 		return;
@@ -335,7 +337,7 @@ static void lightning_use(edict_t *self)
 
 void monsters_event_lightning(edict_t *e)
 {
-	e->use = lightning_use;
+	e->use = EF_lightning_use;
 }
 
 const mdef_t mdef_boss = {

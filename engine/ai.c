@@ -632,11 +632,13 @@ static void new_chase_dir(edict_t *actor, edict_t *enemy, int dist)
 /* SV_CloseEnough */
 static int close_enough(const edict_t *ent, const edict_t *goal, int dist)
 {
-	int32_t d = dist * SUB;
+	int32_t d = dist * SUB, gmin[3], gmax[3], emin[3], emax[3];
+	ent_absbox(goal, gmin, gmax);
+	ent_absbox(ent, emin, emax);
 	for (int i = 0; i < 3; i++) {
-		if (goal->absmin[i] > ent->absmax[i] + d)
+		if (gmin[i] > emax[i] + d)
 			return 0;
-		if (goal->absmax[i] < ent->absmin[i] - d)
+		if (gmax[i] < emin[i] - d)
 			return 0;
 	}
 	return 1;
@@ -796,14 +798,14 @@ void sub_check_refire(edict_t *self, int state)
 		return;
 	self->cnt = 1;
 	self->mstate = (uint16_t) state;
-	self->think  = monster_think;
+	self->think  = EF_monster_think;
 }
 
 void ai_hunt_target(edict_t *self)
 {
 	int32_t d[3];
 	self->goalentity = self->enemy;
-	self->think = monster_think;
+	self->think = EF_monster_think;
 	const mdef_t *m = self->mdef;
 	for (int k = 0; k < 3; k++)
 		d[k] = self->enemy->origin[k] - self->origin[k];
@@ -1130,9 +1132,10 @@ void ai_melee_side(edict_t *self)
 int ai_can_damage_at(edict_t *targ, const int32_t org[3], edict_t *pass)
 {
 	if (targ->movetype == MOVETYPE_PUSH) {
-		int32_t c[3];
+		int32_t c[3], lo[3], hi[3];
+		ent_absbox(targ, lo, hi);
 		for (int k = 0; k < 3; k++)
-			c[k] = (targ->absmin[k] + targ->absmax[k]) / 2;
+			c[k] = (lo[k] + hi[k]) / 2;
 		q_fixed f = ai_traceline(org, c, 1, pass);
 		return f >= Q_FIX_ONE || ai_trace_ent == targ;
 	}
@@ -1203,11 +1206,11 @@ static void impact(edict_t *e1, edict_t *e2)
 	edict_t *other = ent_other;
 	if (e1->touch && e1->solid != SOLID_NOT) {
 		ent_other = e2;
-		e1->touch(e1);
+		ENT_CALL(e1, touch);
 	}
 	if (e2 && e2->touch && e2->solid != SOLID_NOT && e2->inuse) {
 		ent_other = e1;
-		e2->touch(e2);
+		ENT_CALL(e2, touch);
 	}
 	ent_other = other;
 }
@@ -1333,7 +1336,7 @@ static void run_think(edict_t *e)
 	e->nextthink = 0;
 	ent_other = ent_world;
 	if (e->think)
-		e->think(e);
+		ENT_CALL(e, think);
 }
 
 void ai_physics_step(edict_t *ent)

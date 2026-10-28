@@ -7,7 +7,10 @@
 # the player's, or the monsters' list) whose box the box of e reaches,
 # their edicts written to out (64 at most), their count returned. The
 # boxes are in whole units, a unit wider (the floor of the mins, the
-# ceiling of the maxs, int16: box16's). The area nodes are walked as
+# ceiling of the maxs, int16: box16's); e's world box is its origin plus
+# its local box, a unit wider, an item's 15 more across (ents.h
+# ent_absbox: the edict keeps no absmin / absmax since §90.5), kept on
+# the frame for the nodes' split tests. The area nodes are walked as
 # Quake's SV_TouchLinks does (depth first, children[0] first: the
 # children pushed lower then upper half), a node whose subtree holds none
 # of the list's slots left out; each node's slots in their link order.
@@ -26,17 +29,45 @@
 	.global touch_gather
 	.type   touch_gather, @function
 touch_gather:                            # a0 = e, a1 = out, a2 = w
-	addiu   $sp, $sp, -32                # s0-s3, then the nodes' stack (bytes)
-	sw      $s0, 0($sp)
+	addiu   $sp, $sp, -64                # s0-s3, the nodes' stack (bytes, 16..31),
+	sw      $s0, 0($sp)                  #  e's world box (32..55)
 	sw      $s1, 4($sp)
 	sw      $s2, 8($sp)
 	sw      $s3, 12($sp)
-	lw      $s0, E_ABSMIN+0($a0)
-	lw      $s1, E_ABSMIN+4($a0)
-	lw      $s2, E_ABSMIN+8($a0)
-	lw      $s3, E_ABSMAX+0($a0)
-	lw      $t8, E_ABSMAX+4($a0)
-	lw      $t9, E_ABSMAX+8($a0)
+	lw      $t0, E_ORIGIN+0($a0)         # the world box: origin + mins - 1, + maxs + 1
+	lw      $t1, E_ORIGIN+4($a0)
+	lw      $t2, E_ORIGIN+8($a0)
+	lw      $s0, E_MINS+0($a0)
+	lw      $s1, E_MINS+4($a0)
+	lw      $s2, E_MINS+8($a0)
+	lw      $s3, E_MAXS+0($a0)
+	lw      $t8, E_MAXS+4($a0)
+	lw      $t9, E_MAXS+8($a0)
+	lw      $v0, E_FLAGS($a0)
+	addu    $s0, $s0, $t0
+	addu    $s1, $s1, $t1
+	addu    $s2, $s2, $t2
+	addu    $s3, $s3, $t0
+	addu    $t8, $t8, $t1
+	addu    $t9, $t9, $t2
+	andi    $v0, $v0, FL_ITEM
+	addiu   $s0, $s0, -CLIP_SUB
+	addiu   $s1, $s1, -CLIP_SUB
+	addiu   $s2, $s2, -CLIP_SUB
+	addiu   $s3, $s3, CLIP_SUB
+	addiu   $t8, $t8, CLIP_SUB
+	beqz    $v0, 0f
+	addiu   $t9, $t9, CLIP_SUB           # (delay)
+	addiu   $s0, $s0, -15 * CLIP_SUB     # an item: 15 more across
+	addiu   $s1, $s1, -15 * CLIP_SUB
+	addiu   $s3, $s3, 15 * CLIP_SUB
+	addiu   $t8, $t8, 15 * CLIP_SUB
+0:	sw      $s0, 32($sp)                 # absmin, absmax by axis (the split tests)
+	sw      $s1, 36($sp)
+	sw      $s2, 40($sp)
+	sw      $s3, 44($sp)
+	sw      $t8, 48($sp)
+	sw      $t9, 52($sp)
 	sra     $s0, $s0, 3                  # the mins' floor (1/8 units)
 	sra     $s1, $s1, 3
 	sra     $s2, $s2, 3
@@ -84,8 +115,8 @@ touch_gather:                            # a0 = e, a1 = out, a2 = w
 	bnez    $v1, 3f                      # a leaf: no children
 	andi    $at, $at, 1                  # (delay) its axis: y?
 	sll     $at, $at, 2
-	addu    $at, $a0, $at                # e + axis x 4
-	lw      $v0, E_ABSMIN($at)
+	addu    $at, $sp, $at                # the frame's box + axis x 4
+	lw      $v0, 32($at)                 # absmin[axis]
 	sll     $v1, $t7, 16
 	sra     $v1, $v1, 16                 # dist (int16)
 	srl     $t7, $t7, 24                 # child1
@@ -99,7 +130,7 @@ touch_gather:                            # a0 = e, a1 = out, a2 = w
 	addu    $v0, $sp, $t6                # (delay)
 	sb      $t7, 16($v0)                 # pushed: children[1]
 	addiu   $t6, $t6, 1
-2:	lw      $v0, E_ABSMAX($at)
+2:	lw      $v0, 44($at)                 # absmax[axis]
 	nop
 	slt     $v0, $v1, $v0                # absmax[axis] > dist
 	beqz    $v0, 3f
@@ -175,5 +206,5 @@ touch_gather:                            # a0 = e, a1 = out, a2 = w
 	lw      $s2, 8($sp)
 	lw      $s3, 12($sp)
 	jr      $ra
-	addiu   $sp, $sp, 32
+	addiu   $sp, $sp, 64
 	.size   touch_gather, . - touch_gather

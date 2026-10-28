@@ -122,7 +122,7 @@ static void dog_bite(edict_t *self)
 
 /* Dog_JumpTouch: what the leap meets hurt if it flew fast, then run on
    once on the ground (leap again if stuck on an edge) */
-static void dog_jump_touch(edict_t *self)
+void dog_jump_touch(edict_t *self)
 {
 	if (self->health <= 0)
 		return;
@@ -134,12 +134,12 @@ static void dog_jump_touch(edict_t *self)
 	}
 	if (!ai_check_bottom(self)) {
 		if (self->flags & FL_ONGROUND) {  /* jump randomly to not get hung up */
-			self->touch = sub_null;
+			self->touch = EF_sub_null;
 			monster_think_at(self, DOG_LEAP1, TICKS(10));
 		}
 		return;                           /* not on ground yet */
 	}
-	self->touch = sub_null;
+	self->touch = EF_sub_null;
 	monster_think_at(self, DOG_RUN1, TICKS(10));
 }
 
@@ -164,7 +164,7 @@ static void dog_custom(edict_t *self, int code)
 		/* (1.06: makevectors with the angles as they are) */
 		int32_t f[3], r[3], u[3];
 		ai_face(self);
-		self->touch = dog_jump_touch;
+		self->touch = EF_dog_jump_touch;
 		ai_makevectors(self->ang, f, r, u);
 		self->origin[2] += SUB;
 		for (int k = 0; k < 3; k++)
@@ -210,7 +210,7 @@ static int dog_check_attack(edict_t *self)
 	return 0;
 }
 
-static void dog_pain(edict_t *self)
+void dog_pain(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, s_dpain1, 255, ATTN_NORM);
 	if (frand() > 32768)                 /* random () > 0.5 */
@@ -219,7 +219,7 @@ static void dog_pain(edict_t *self)
 		monster_state(self, DOG_PAINB1);
 }
 
-static void dog_die(edict_t *self)
+void dog_die(edict_t *self)
 {
 	if (self->health < -35) {            /* check for gib */
 		ent_sound(self, CHAN_VOICE, s_udeath, 255, ATTN_NORM);
@@ -248,7 +248,7 @@ const mdef_t mdef_dog = {
 	.states = states, .num_states = DOG_COUNT,
 	.th_stand = dog_stand, .th_walk = dog_walk, .th_run = dog_run,
 	.th_missile = dog_leap, .th_melee = dog_atta,
-	.th_pain = dog_pain, .th_die = dog_die,
+	.th_pain = EF_dog_pain, .th_die = EF_dog_die,
 	.custom = dog_custom,
 	.check_attack = dog_check_attack,
 	.map_start = dog_map_start,

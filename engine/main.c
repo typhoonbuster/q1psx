@@ -1562,6 +1562,14 @@ static void ents_place(const int32_t mn[3], const int32_t mx[3], int dz)
 	pl.pm.onground = 0;
 }
 
+/* the player put next to edict e's world box (ent_absbox) */
+static void ents_place_at(const edict_t *e, int dz)
+{
+	int32_t mn[3], mx[3];
+	ent_absbox(e, mn, mx);
+	ents_place(mn, mx, dz);
+}
+
 static void ents_ticks(int n, const game_cmd_t *cmd)
 {
 	for (int i = 0; i < n; i++)
@@ -1624,11 +1632,12 @@ static int door_with_field(const edict_t *e) { return e->owner == e && e->trigge
    centre pushed out along x or y past e's box */
 static int ents_free_spot(const edict_t *e, const int32_t mn[3], const int32_t mx[3])
 {
-	int32_t c[3];
+	int32_t c[3], emin[3], emax[3];
 	ent_centre(e, c);
+	ent_absbox(e, emin, emax);
 	for (int a = 0; a < 4; a++) {
 		int k = a >> 1, s = a & 1 ? -1 : 1;
-		int32_t half = (e->absmax[k] - e->absmin[k]) / 2 + 24 * CLIP_SUB;
+		int32_t half = (emax[k] - emin[k]) / 2 + 24 * CLIP_SUB;
 		int32_t p[3] = { c[0], c[1], c[2] };
 		p[k] += s * half;
 		if (p[k] < mn[k] || p[k] > mx[k])
@@ -1686,7 +1695,7 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 		}
 		if (!e->touch)
 			continue;
-		ents_place(e->absmin, e->absmax, 0);
+		ents_place_at(e, 0);
 		ents_ticks(3, cmd);
 		printf("item taken %d: health %d armor %d/%d items %08x ammo %d %d %d %d weapon %d\n",
 		       !e->inuse || (e->item_model < 0 && e->masset < 0), pl.health, pl.armor, pl.armortype, (unsigned) pl.items,
@@ -1736,12 +1745,13 @@ static void bench_ents(void)
 		edict_t *d = ents_first(QE_FUNC_DOOR, door_with_field);
 		if (d) {
 			edict_t *f = d->trigger_field;
-			int32_t c[3];
-			if (!ents_free_spot(d, f->absmin, f->absmax))
-				ents_place(f->absmin, f->absmax, 0);
+			int32_t c[3], fmin[3], fmax[3];
+			ent_absbox(f, fmin, fmax);
+			if (!ents_free_spot(d, fmin, fmax))
+				ents_place(fmin, fmax, 0);
 			ent_centre(d, c);
 			printf("door *%d at %d %d %d, field %d..%d, player %d %d %d\n", d->model, (int) c[0] / 8,
-			       (int) c[1] / 8, (int) c[2] / 8, (int) f->absmin[0] / 8, (int) f->absmax[0] / 8,
+			       (int) c[1] / 8, (int) c[2] / 8, (int) fmin[0] / 8, (int) fmax[0] / 8,
 			       (int) pl.pm.pos[0] / 8, (int) pl.pm.pos[1] / 8, (int) pl.pm.pos[2] / 8);
 			for (int t = 0; t < 360; t++) {
 				game_tick(&cmd);
@@ -1801,9 +1811,8 @@ static void bench_ents(void)
 		edict_t *p = ents_first(QE_FUNC_PLAT, 0);
 		if (p && p->state == STATE_BOTTOM) {
 			int32_t mn[3], mx[3];
-			memcpy(mn, p->absmin, sizeof mn);
-			memcpy(mx, p->absmax, sizeof mx);
-			mn[2] = mx[2] = p->absmax[2] + 25 * CLIP_SUB;
+			ent_absbox(p, mn, mx);
+			mn[2] = mx[2] = mx[2] + 25 * CLIP_SUB;
 			ents_place(mn, mx, 0);
 			for (int t = 0; t < 240; t++) {
 				game_tick(&cmd);
@@ -1816,7 +1825,7 @@ static void bench_ents(void)
 		/* a teleporter */
 		edict_t *tp = ents_first(QE_TRIGGER_TELEPORT, free_teleport);
 		if (tp) {
-			ents_place(tp->absmin, tp->absmax, 0);
+			ents_place_at(tp, 0);
 			int32_t before[3];
 			memcpy(before, pl.pm.pos, sizeof before);
 			ents_ticks(2, &cmd);
@@ -1830,7 +1839,7 @@ static void bench_ents(void)
 		/* a secret */
 		edict_t *se = ents_first(QE_TRIGGER_SECRET, 0);
 		if (se) {
-			ents_place(se->absmin, se->absmax, 0);
+			ents_place_at(se, 0);
 			ents_ticks(3, &cmd);
 			printf("secrets %d of %d\n", ent_found_secrets, ent_total_secrets);
 			ents_dump(mi ? "estart_secret" : "ee1m1_secret");
@@ -1839,7 +1848,7 @@ static void bench_ents(void)
 		/* the exit: the intermission, then the next map */
 		edict_t *cl = ents_first(QE_TRIGGER_CHANGELEVEL, 0);
 		if (cl) {
-			ents_place(cl->absmin, cl->absmax, 0);
+			ents_place_at(cl, 0);
 			ents_ticks(12, &cmd);
 			printf("changelevel to %s: intermission %d\n", world_string(cl->map), level_intermission);
 			ents_ticks(60, &cmd);
@@ -2026,7 +2035,7 @@ static void bench_movers(void)
 			continue;
 		ent_activator = ent_player;                   /* started (a train without a name runs) */
 		if (e->use)
-			e->use(e);
+			ENT_CALL(e, use);
 		q_snprintf(names[ti], sizeof names[ti], "mv.%s.%d", map, e->model);
 		bench_acc_t acc;
 		bench_reset(&acc, names[ti]);
@@ -2091,7 +2100,7 @@ static void bench_movers(void)
 		   of view is not cut again (bmf_draw's all_culled) until it is in
 		   view (the door started again; a train runs on) */
 		if (e->use)
-			e->use(e);
+			ENT_CALL(e, use);
 		uint32_t cuts2 = 0, off0 = bmf_stats[6];
 		for (int f = 0; f < 256; f++) {
 			game_tick(&cmd);
@@ -2583,7 +2592,7 @@ static void bench_monsters(void)
 		ents_look_at(e->origin);
 		if (e->use && e->solid == SOLID_NOT) {    /* the boss: its trigger's use, it rises */
 			ent_activator = ent_player;
-			e->use(e);
+			ENT_CALL(e, use);
 		}
 		char name[32];
 		q_snprintf(name, sizeof name, "m%s_%d_a", mapname, k);
@@ -2935,7 +2944,7 @@ static void bench_clear(void)
 			printf("clear: %s has no exit\n", world.map_name);
 			return;
 		}
-		ents_place(cl->absmin, cl->absmax, 0);
+		ents_place_at(cl, 0);
 		ents_ticks(12, &cmd);
 		ents_ticks(150, &cmd);                    /* the intermission */
 		cmd.fire = 1;
@@ -3077,7 +3086,7 @@ static void bench_key(void)
 		edict_t *c = &edicts[i];
 		if (c->inuse && c->class == QE_FUNC_DOOR_SECRET && c->use) {
 			ent_activator = ent_player;
-			c->use(c);
+			ENT_CALL(c, use);
 			secrets++;
 		}
 	}

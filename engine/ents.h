@@ -54,12 +54,13 @@ typedef struct edict_s edict_t;
 typedef void (*ent_fn)(edict_t *self);   /* think / use / touch / blocked / th_die:
                                             `other` and `activator` are globals,
                                             as in QC (ent_other, ent_activator) */
+#include "ent_fns.h"               /* (the slots hold their numbers) */
 
 struct edict_s {
-	uint8_t  inuse;          /* a live edict (ED_Alloc'd, not freed)           */
+	uint8_t  inuse;          /* +0   a live edict (ED_Alloc'd, not freed)       */
 	uint8_t  class;          /* QE_*                                           */
 	uint8_t  solid;          /* SOLID_*                                        */
-	uint8_t  movetype;       /* MOVETYPE_*                                     */
+	uint8_t  movetype;       /* +3   MOVETYPE_*                                 */
 	uint8_t  state;          /* STATE_*                                        */
 	uint8_t  draw;           /* the brush model is drawn                       */
 	uint8_t  clip;           /* clip_bmodels index + 1 while SOLID_BSP, 0 = not */
@@ -68,13 +69,13 @@ struct edict_s {
 	uint8_t  vismask;        /* which leaves the PVS stamp vis_stamp sees      */
 	uint8_t  sounds;
 	uint8_t  frame;          /* the texture frame (a button's +a, func_wall)   */
-	uint16_t spawnflags;
+	uint16_t spawnflags;     /* +12                                            */
 	uint16_t vis_stamp;
 	int16_t  model;          /* brush model index (world.bmodels), 0 = none    */
 	int16_t  angle;          /* the map's `angle`, degrees (-1 up, -2 down)    */
 	int16_t  mangle[3];      /* degrees: pitch, yaw, roll                      */
 	int16_t  pad0;
-	union {
+	union {                  /* +28                                            */
 		const qw_leaf *leaves[ENT_MAX_LEAVES];   /* a brush model's: the leaves its box
 		                                            touches (num_leaves of them) */
 		struct {             /* an alias model's (item_model or masset >= 0: num_leaves 1) */
@@ -86,19 +87,21 @@ struct edict_s {
 			int32_t vis_seen;                   /* pvs_sees): the eyes' leaves, the answer */
 		} am;
 	};
-	uint32_t topnode;        /* a drawn brush model's: world_box_topnode of the
+	uint32_t topnode;        /* +60  a drawn brush model's: world_box_topnode of the
 	                            points camera_side_leaf may take (ents.c)     */
-	int32_t  origin[3];      /* 1/CLIP_SUB units                               */
-	int32_t  mins[3], maxs[3];       /* the box, local                          */
-	int32_t  absmin[3], absmax[3];   /* in the world, a unit wider (SV_LinkEdict) */
-	int32_t  velocity[3];    /* units per second (a pusher's: its travel's)    */
-	int32_t  movedir[3];     /* x4096                                          */
-	const struct mdef_s *mdef;   /* a monster's kind (monsters.c), its body's and
+	int32_t  origin[3];      /* +64  1/CLIP_SUB units                          */
+	int32_t  mins[3], maxs[3];       /* +76, +88: the box, local (its world box, a
+	                                    unit wider, an item's 15 more across: ent_absbox,
+	                                    SV_LinkEdict's absmin / absmax, computed where
+	                                    needed since §90.5)                   */
+	int32_t  velocity[3];    /* +100 units per second (a pusher's: its travel's) */
+	int32_t  movedir[3];     /* +112 x4096                                     */
+	const struct mdef_s *mdef;   /* +124 a monster's kind (monsters.c), its body's and
 	                                head's too; 0 for every other edict. Not in
 	                                the union below: a mover's words there read
 	                                as a pointer (an opened secret door's stop,
 	                                E1M3: a bus error, DuckStation frozen) */
-	union {
+	union {                  /* +128, 80 bytes                                  */
 		struct {             /* a mover's (movers.c, subs.qc's SUB_CalcMove)   */
 			union {
 				int32_t pos1[3];             /* the mover's ends                */
@@ -107,13 +110,14 @@ struct edict_s {
 			};
 			int32_t pos2[3];
 			int32_t dest1[3], dest2[3];      /* the secret door's stops         */
-			int32_t finaldest[3];
 			int32_t move_from[3];  /* SUB_CalcMove, exact in ticks: the position at  */
-			int32_t move_delta[3]; /* ltime move_t0 plus delta x (ltime - t0) / ticks */
+			int32_t move_delta[3]; /* ltime move_t0 plus delta x (ltime - t0) / ticks;
+			                          the move's end is move_from + move_delta (its
+			                          finaldest, a word each until §90.5)      */
 		};
 		struct {             /* a monster's (monsters.c, ai.c), a gib's, a head's */
 			edict_t *oldenemy, *goalentity, *movetarget;
-			int32_t  pausetime, search_time, show_hostile, pain_finished;   /* ticks */
+			int32_t  pausetime, search_time, show_hostile, pain_finished;   /* ticks (+152) */
 			uint16_t ang[3];       /* pitch, yaw, roll: 65536 a turn (anglemod's) */
 			int16_t  avel[3];      /* MOVETYPE_BOUNCE's avelocity, degrees a second */
 			int16_t  ideal_yaw;    /* degrees (vectoyaw's whole ones)              */
@@ -121,51 +125,64 @@ struct edict_s {
 			int16_t  view_ofs_z;   /* 1/CLIP_SUB units                            */
 			uint16_t mstate;       /* the next state of its kind's table          */
 			uint8_t  lefty, attack_state, deadflag, waterlevel;
-			int8_t   watertype;
+			int8_t   watertype;    /* +180                                        */
 			uint8_t  ammo_shells, ammo_nails, ammo_rockets, ammo_cells;
 			int32_t  waitmin;      /* the wizard's next idle sound (ticks)        */
-			int32_t  water_at[3];  /* where its water level was last taken (the
+			int32_t  water_at[3];  /* +192 where its water level was last taken (the
 			                          same place: the same contents, no check) */
 			uint8_t  inpain;       /* the zombie's (zombie.qc)                    */
 			uint8_t  trail;        /* a thrown model's trail (game_trail's type + 1) */
 			uint8_t  mpad;
 		};
 	};
-	int32_t  move_t0, move_ticks;
-	int32_t  nextthink;      /* tick (a pusher's: its ltime), <= 0 = none      */
+	int32_t  move_t0, move_ticks;    /* +208, +212                             */
+	int32_t  nextthink;      /* +216 tick (a pusher's: its ltime), <= 0 = none */
 	int32_t  ltime;          /* a pusher's local time, ticks                   */
 	int32_t  attack_finished;
-	ent_fn   think, think1, use, touch, blocked, th_die, th_pain;
-	edict_t *owner, *enemy, *trigger_field;
+	uint8_t  think, think1, use, touch, blocked, th_die, th_pain;   /* +228: EF_* (ent_fns.h),
+	                                                                   0 none: ENT_CALL */
+	uint8_t  pad1;
+	edict_t *owner, *enemy, *trigger_field;   /* +236                            */
 	edict_t *groundentity;   /* what it stands on (a monster, a tossed thing):
 	                            a pusher carries it along                 */
-	int16_t  speed, wait, delay, lip, height, dmg, health, max_health;
-	int16_t  count, style, t_length, t_width, cnt;
+	int16_t  speed, wait, delay, lip, height, dmg, health, max_health;   /* +252 (health +264) */
+	int16_t  count, cnt;
 	int16_t  touch_slot;     /* its place in the touch list (engine/ents.c), -1 */
-	uint16_t target, targetname, killtarget, message, map;   /* strings (world_string) */
+	uint16_t target, targetname, killtarget, message, map;   /* +274: strings (world_string) */
 	uint16_t classname;
-	const char *msgtext;     /* a message the QC sets (the map's: `message`)   */
+	int16_t  noise, noise1, noise2, noise3, noise4;   /* +286: bank sounds (snd_find) */
+	int16_t  masset;         /* +296 a streamed model (engine/stream.h), -1 none */
+	int16_t  aflag;          /* +298 an item's amount (ammo, health, armor value) */
+	int16_t  item_extra;     /* an item's second value (healtype, armortype x100, weapon) */
+	int16_t  item_model;     /* +302 an item's model (formats/qgame.h QGM_*), -1 none */
+	const char *msgtext;     /* +304 a message the QC sets (the map's: `message`) */
 	const char *netname;     /* an item's name ("You got the ...")             */
-	int16_t  noise, noise1, noise2, noise3, noise4;   /* bank sounds (snd_find) */
-	int16_t  masset;         /* a streamed model (engine/stream.h), -1 none    */
-	uint32_t items;          /* a key door's key (IT_KEY1 / IT_KEY2), an item's */
-	uint32_t flags;
-	int32_t  aflag;          /* an item's amount (ammo, health, armor value)   */
-	int32_t  item_extra;     /* an item's second value (healtype, armortype x100, weapon) */
-	int32_t  item_model;     /* an item's model (formats/qgame.h QGM_*), -1 none */
-	int32_t  pad1;           /* (to 384 bytes: the asm's x 384 is two shifts and an add) */
-};
+	uint32_t items;          /* +312 a key door's key (IT_KEY1 / IT_KEY2), an item's */
+	uint32_t flags;          /* +316                                           */
+};                           /* 320 bytes: the asm's x 320 is two shifts and an add
+                                (384 until §90.5: absmin / absmax, the function
+                                pointers, the items' words, finaldest, t_length,
+                                t_width and style gone) */
 
-_Static_assert(__builtin_offsetof(edict_t, absmin) == 100 && __builtin_offsetof(edict_t, absmax) == 112 &&
-               __builtin_offsetof(edict_t, inuse) == 0 && __builtin_offsetof(edict_t, leaves) == 28 &&
-               __builtin_offsetof(edict_t, masset) == 358 && __builtin_offsetof(edict_t, item_model) == 376 &&
-               sizeof(edict_t) == 384, "engine/p_defs.inc E_*, engine/e_seen.s (x 384)");
+/* an edict's box in the world, a unit wider, an item's 15 more across in x
+   and y (SV_LinkEdict's absmin / absmax; 1/CLIP_SUB units) */
+void ent_absbox(const edict_t *e, int32_t lo[3], int32_t hi[3]);   /* (engine/ents.c; a call: inline
+                                                                      at its 25 sites it cost 3 KB of
+                                                                      code) */
+
+/* an edict's function slot called: ent_fns[e->slot](e) */
+#define ENT_CALL(e, slot) (ent_fns[(e)->slot]((e)))
+
+_Static_assert(__builtin_offsetof(edict_t, inuse) == 0 && __builtin_offsetof(edict_t, leaves) == 28 &&
+               __builtin_offsetof(edict_t, mins) == 76 && __builtin_offsetof(edict_t, maxs) == 88 &&
+               __builtin_offsetof(edict_t, masset) == 296 && __builtin_offsetof(edict_t, item_model) == 302 &&
+               sizeof(edict_t) == 320, "engine/p_defs.inc E_*, engine/e_seen.s, e_tick.s (x 320)");
 _Static_assert(__builtin_offsetof(edict_t, movetype) == 3 && __builtin_offsetof(edict_t, origin) == 64 &&
-               __builtin_offsetof(edict_t, mdef) == 148 && __builtin_offsetof(edict_t, pain_finished) == 176 &&
-               __builtin_offsetof(edict_t, watertype) == 204 && __builtin_offsetof(edict_t, water_at) == 216 &&
-               __builtin_offsetof(edict_t, move_ticks) == 240 && __builtin_offsetof(edict_t, nextthink) == 244 &&
-               __builtin_offsetof(edict_t, health) == 312 && __builtin_offsetof(edict_t, flags) == 364,
-               "engine/p_defs.inc E_* (engine/e_tick.s)");
+               __builtin_offsetof(edict_t, mdef) == 124 && __builtin_offsetof(edict_t, pain_finished) == 152 &&
+               __builtin_offsetof(edict_t, watertype) == 180 && __builtin_offsetof(edict_t, water_at) == 192 &&
+               __builtin_offsetof(edict_t, move_ticks) == 212 && __builtin_offsetof(edict_t, nextthink) == 216 &&
+               __builtin_offsetof(edict_t, health) == 264 && __builtin_offsetof(edict_t, flags) == 316,
+               "engine/p_defs.inc E_* (engine/e_tick.s, e_touch.s)");
 _Static_assert(__builtin_offsetof(edict_t, maxs) == __builtin_offsetof(edict_t, mins) + 12,
                "the box's 6 words (rlist.h rl_add_model)");
 
@@ -240,7 +257,7 @@ void     ent_sound(edict_t *e, int chan, int s, int vol, int atten);   /* sound(
 void     ent_centre(const edict_t *e, int32_t out[3]);   /* origin + (mins + maxs) / 2 */
 void     ent_centerprint(edict_t *client, const char *s);
 void     sub_use_targets(edict_t *self);
-void     sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func);
+void     sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, int func);   /* (EF_*) */
 void     set_movedir(edict_t *self);
 void     init_trigger(edict_t *self);
 void     sub_null(edict_t *self);

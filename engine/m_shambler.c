@@ -280,7 +280,7 @@ static void sham_custom(edict_t *self, int code)
 		o->ang[1] = self->ang[1];
 		o->ang[2] = self->ang[2];
 		o->nextthink = ent_time + TICKS(70);
-		o->think     = sub_remove;
+		o->think     = EF_sub_remove;
 		ent_wake(o);
 		break;
 	}
@@ -343,7 +343,7 @@ static int sham_check_attack(edict_t *self)
 	return 1;
 }
 
-static void sham_pain(edict_t *self)
+void sham_pain(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, s_shurt2, 255, ATTN_NORM);
 	if (self->health <= 0)
@@ -356,7 +356,7 @@ static void sham_pain(edict_t *self)
 	monster_state(self, SHAM_PAIN1);
 }
 
-static void sham_die(edict_t *self)
+void sham_die(edict_t *self)
 {
 	if (self->health < -60) {            /* check for gib */
 		ent_sound(self, CHAN_VOICE, s_udeath, 255, ATTN_NORM);
@@ -381,7 +381,7 @@ const mdef_t mdef_shambler = {
 	.states = states, .num_states = SHAM_COUNT,
 	.th_stand = sham_stand, .th_walk = sham_walk, .th_run = sham_run,
 	.th_missile = sham_magic, .th_melee = sham_melee,
-	.th_pain = sham_pain, .th_die = sham_die,
+	.th_pain = EF_sham_pain, .th_die = EF_sham_die,
 	.custom = sham_custom,
 	.check_attack = sham_check_attack,
 	.map_start = sham_map_start,

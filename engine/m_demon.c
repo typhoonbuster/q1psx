@@ -123,7 +123,7 @@ static void demon_melee(edict_t *self, int side)
 /* Demon_JumpTouch: what the leap meets hurt if it flew fast (40 + 10 x
    random), then run on once on the ground (leap again if stuck on an
    edge) */
-static void demon_jump_touch(edict_t *self)
+void demon_jump_touch(edict_t *self)
 {
 	if (self->health <= 0)
 		return;
@@ -135,12 +135,12 @@ static void demon_jump_touch(edict_t *self)
 	}
 	if (!ai_check_bottom(self)) {
 		if (self->flags & FL_ONGROUND) {  /* jump randomly to not get hung up */
-			self->touch = sub_null;
+			self->touch = EF_sub_null;
 			monster_think_at(self, DEMON_JUMP1, TICKS(10));
 		}
 		return;                           /* not on ground yet */
 	}
-	self->touch = sub_null;
+	self->touch = EF_sub_null;
 	monster_think_at(self, DEMON_JUMP1 + 10, TICKS(10));   /* demon1_jump11 */
 }
 
@@ -160,7 +160,7 @@ static void demon_custom(edict_t *self, int code)
 	case C_JUMP4: {
 		int32_t f[3], r[3], u[3];
 		ai_face(self);
-		self->touch = demon_jump_touch;
+		self->touch = EF_demon_jump_touch;
 		ai_makevectors(self->ang, f, r, u);
 		self->origin[2] += SUB;
 		for (int k = 0; k < 3; k++)
@@ -223,9 +223,9 @@ static int demon_check_attack(edict_t *self)
 	return 0;
 }
 
-static void demon_pain(edict_t *self)
+void demon_pain(edict_t *self)
 {
-	if (self->touch == demon_jump_touch)
+	if (self->touch == EF_demon_jump_touch)
 		return;
 	if (self->pain_finished > ent_time)
 		return;
@@ -236,7 +236,7 @@ static void demon_pain(edict_t *self)
 	monster_state(self, DEMON_PAIN1);
 }
 
-static void demon_die(edict_t *self)
+void demon_die(edict_t *self)
 {
 	if (self->health < -80) {            /* check for gib */
 		ent_sound(self, CHAN_VOICE, s_udeath, 255, ATTN_NORM);
@@ -258,7 +258,7 @@ const mdef_t mdef_demon = {
 	.states = states, .num_states = DEMON_COUNT,
 	.th_stand = demon_stand, .th_walk = demon_walk, .th_run = demon_run,
 	.th_missile = demon_jump, .th_melee = demon_melee_attack,
-	.th_pain = demon_pain, .th_die = demon_die,
+	.th_pain = EF_demon_pain, .th_die = EF_demon_die,
 	.custom = demon_custom,
 	.check_attack = demon_check_attack,
 	.map_start = demon_map_start,

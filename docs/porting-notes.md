@@ -11870,3 +11870,69 @@ at 0x801fdff0); every pool +4 KB: E4M7's 359 → 363 KB (379 with §90.3's
 **Batch 1 in all:** the release's arena 1 343 008 → 1 379 888 B (+36 880),
 every pool +71 KB (32 + 18.4 + 16 + 4): the smallest, E4M7's, 308 → 379
 KB; E1M3's 348 → 419; START's 631 → 702.
+
+### 90.5 The edict: 384 → 320 bytes
+
+`edict_t` (`engine/ents.h`) is the QC's entity, 384 bytes a slot (E1M3:
+389 slots, 149 KB). The report's field table showed what could go
+(`structures-octet-par-octet.md`); the layout now, 320 bytes (256 + 64:
+the asm's index × size stays two shifts and an add, `e_tick.s`,
+`e_seen.s`):
+
+- the seven function pointers (think, think1, use, touch, blocked,
+  th_die, th_pain: 28 bytes) are a byte each, an index into one table
+  (`engine/ent_fns.h`: `ENT_FN_LIST`, every function an edict slot ever
+  holds, 104 of them, `EF_<name>`; `ent_fns.c` the table, 420 bytes of
+  rodata; the class files' functions are no longer static; a call is
+  `ENT_CALL(e, slot)`, 20 sites; `sub_calc_move` takes a number; the
+  kinds' tables (`mdef_t`) hold the numbers for th_pain / th_die): −20;
+- `absmin` / `absmax` (24 bytes, SV_LinkEdict's world box, a unit wider,
+  an item's 15 more across) are computed where needed (`ent_absbox`, from
+  the origin and the local box: the link, the clip entries, the touch
+  lists' boxes, the pushers' sweep, the AI's reach tests, a few bench
+  spots; `e_touch.s` computes e's box on its frame for the area nodes'
+  split tests, 24 instructions a call): −24;
+- an item's `aflag`, `item_extra`, `item_model` are halfwords (amounts,
+  a type, a model index), the word of padding gone: −10;
+- the mover's `finaldest` (its move's end: `move_from + move_delta`,
+  kept in every path of `sub_calc_move` now): the union 84 → 80: −4;
+- `t_length`, `t_width` (the secret door's overrides from the map, which
+  no id1 map gives and the cook does not keep; the plat's unread
+  defaults) and `style` (set at the spawn, never read): −6.
+
+What stays as it was: the four edict pointers (owner, enemy,
+trigger_field, groundentity: 118 reads of `enemy` alone; indices would
+be a wide rewrite for 8 bytes), the two strings, the vectors as words
+(the asm reads them so), the monster's half of the union (80 bytes, now
+the larger). 288 (256 + 32) would take the pointers as halfwords, the
+velocity and movedir as halfwords and the strings as numbers; 256 the
+union cut in two. Left open.
+
+**Checked** (against the branch's previous commit built beside, the same
+cooked data): the 128 spawn views' `H` lines identical, the game bench's
+23, the C engine's 128 (`ENGINE_C=1`), E1M3's crowd fight and E1M3 cleared
+line for line (the cycles aside), `MOVERS=1` (165 `H`, `bmfhash` and
+`mvpath` lines identical), `ENTS=1` (83 lines: the doors', buttons',
+plats', teleporters' and secrets' scenarios identical), `MONSTERS=1` on
+E1M1 (every state line identical), the physics diffs (clipdiff,
+wleafdiff, touchdiff 4000 boxes, pmdiff: 0 mismatches), the fight under
+PCSX-Redux's interpreter (no exception: `e_touch.s`'s new loads). The
+first build had the doors standing still: a comment of two lines had
+swallowed the move delta's copy in `sub_calc_move` (the `ENTS=1` and
+`MONSTERS=1` references caught it: a door's origin stayed at 0 while its
+state went up and down).
+
+**Measured.** E1M3's edicts 149 376 → 124 480 B (389 × 320); every pool
++18-19 KB: E4M7's 379 → 397 KB, E1M3's 419 → 438, START's 702 → 710 (its
+158 slots); the code +2 368 B (the table's 420 B of rodata, the box
+computed at 19 sites of ents.c inline, `ENT_CALL`'s loads; with the box
+a call everywhere the code grows 448 B only, for the cycles below +0.6
+point), the release's arena 1 379 888 → 1 377 520 B. The cycles: the box
+computed where it was read (three times at a link: the link's own, the
+touch slot's, the clip entry's; both boxes of every touch pair; 24
+instructions a touch walk in `e_touch.s`) cost E1M3's crowd (47 monsters
+awake) +3.3 % of the entities' tick (194 129 → 200 570 cycles a tick),
+the fight's frames +0.06 %, E1M3 cleared +0.22 %, the 128 views +0.10 %
+(the brush models' box tests each frame). Keeping `absmin` / `absmax`
+would give those cycles back for 24 bytes an edict (344, or 352 for the
+asm's two shifts and an add): a call left open.

@@ -176,7 +176,7 @@ static void knight_custom(edict_t *self, int code)
 	}
 }
 
-static void knight_pain(edict_t *self)
+void knight_pain(edict_t *self)
 {
 	if (self->pain_finished > ent_time)
 		return;
@@ -191,7 +191,7 @@ static void knight_pain(edict_t *self)
 	}
 }
 
-static void knight_die(edict_t *self)
+void knight_die(edict_t *self)
 {
 	if (self->health < -40) {            /* check for gib */
 		ent_sound(self, CHAN_VOICE, s_udeath, 255, ATTN_NORM);
@@ -218,7 +218,7 @@ const mdef_t mdef_knight = {
 	.states = states, .num_states = KNIGHT_COUNT,
 	.th_stand = knight_stand, .th_walk = knight_walk, .th_run = knight_run,
 	.th_missile = 0, .th_melee = knight_attack,
-	.th_pain = knight_pain, .th_die = knight_die,
+	.th_pain = EF_knight_pain, .th_die = EF_knight_die,
 	.custom = knight_custom,
 	.map_start = knight_map_start,
 	.sight = &s_ksight,

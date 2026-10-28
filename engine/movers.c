@@ -56,10 +56,10 @@ static void sound_of(edict_t *self, int16_t *slot, const char *name)
 
 /* ------------------------------------------------------------------ doors -- */
 
-static void door_go_down(edict_t *self);
+void door_go_down(edict_t *self);
 static void door_go_up(edict_t *self);
 
-static void door_blocked(edict_t *self)
+void door_blocked(edict_t *self)
 {
 	ent_damage(ent_other, self, self, self->dmg);
 	/* a door with a negative wait would never come back: it squashes */
@@ -71,24 +71,24 @@ static void door_blocked(edict_t *self)
 	}
 }
 
-static void door_hit_top(edict_t *self)
+void door_hit_top(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise1, 255, ATTN_NORM);
 	self->state = STATE_TOP;
 	if (self->spawnflags & DOOR_TOGGLE)
 		return;                                   /* don't come down automatically */
-	self->think     = door_go_down;
+	self->think     = EF_door_go_down;
 	self->nextthink = self->ltime + TICKS(self->wait);
 	ent_wake(self);
 }
 
-static void door_hit_bottom(edict_t *self)
+void door_hit_bottom(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise1, 255, ATTN_NORM);
 	self->state = STATE_BOTTOM;
 }
 
-static void door_go_down(edict_t *self)
+void door_go_down(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise2, 255, ATTN_NORM);
 	if (self->max_health) {
@@ -96,7 +96,7 @@ static void door_go_down(edict_t *self)
 		self->health     = self->max_health;
 	}
 	self->state = STATE_DOWN;
-	sub_calc_move(self, self->pos1, self->speed, door_hit_bottom);
+	sub_calc_move(self, self->pos1, self->speed, EF_door_hit_bottom);
 }
 
 void movers_door_go_down(edict_t *self)
@@ -115,7 +115,7 @@ static void door_go_up(edict_t *self)
 	}
 	ent_sound(self, CHAN_VOICE, self->noise2, 255, ATTN_NORM);
 	self->state = STATE_UP;
-	sub_calc_move(self, self->pos2, self->speed, door_hit_top);
+	sub_calc_move(self, self->pos2, self->speed, EF_door_hit_top);
 	sub_use_targets(self);
 }
 
@@ -145,7 +145,7 @@ static void door_fire(edict_t *self)
 	} while (e && e != starte && e != ent_world);
 }
 
-static void door_use(edict_t *self)
+void door_use(edict_t *self)
 {
 	self->message = 0;                            /* door messages are for touch only */
 	if (self->owner) self->owner->message = 0;
@@ -154,7 +154,7 @@ static void door_use(edict_t *self)
 		door_fire(self->owner);
 }
 
-static void door_trigger_touch(edict_t *self)
+void door_trigger_touch(edict_t *self)
 {
 	if (ent_other->health <= 0)
 		return;
@@ -166,7 +166,7 @@ static void door_trigger_touch(edict_t *self)
 		door_use(self->owner);
 }
 
-static void door_killed(edict_t *self)
+void door_killed(edict_t *self)
 {
 	edict_t *o = self->owner;
 	o->health     = o->max_health;
@@ -175,7 +175,7 @@ static void door_killed(edict_t *self)
 }
 
 /* the messages, and the key doors */
-static void door_touch(edict_t *self)
+void door_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -200,9 +200,9 @@ static void door_touch(edict_t *self)
 		return;
 	}
 	pl.items &= ~self->items;
-	self->touch = sub_null;
+	self->touch = EF_sub_null;
 	if (self->enemy)
-		self->enemy->touch = sub_null;            /* get paired door */
+		self->enemy->touch = EF_sub_null;            /* get paired door */
 	door_use(self);
 }
 
@@ -215,7 +215,7 @@ static edict_t *spawn_field(edict_t *self, const int32_t fmins[3], const int32_t
 	trigger->movetype = MOVETYPE_NONE;
 	trigger->solid    = SOLID_TRIGGER;
 	trigger->owner    = self;
-	trigger->touch    = door_trigger_touch;
+	trigger->touch    = EF_door_trigger_touch;
 	int32_t mn[3], mx[3];
 	for (int k = 0; k < 3; k++) {
 		int pad = (k == 2 ? 8 : 60) * CLIP_SUB;
@@ -238,7 +238,7 @@ static int entities_touching(const edict_t *e1, const edict_t *e2)
 /* LinkDoors: touching doors move together; the first is the master
    (owner), enemy chains them in a loop; the master gets a field unless it
    is shot, fired or locked */
-Q_COLD static void link_doors(edict_t *self)
+Q_COLD void link_doors(edict_t *self)
 {
 	if (self->enemy)
 		return;                                   /* already linked by another door */
@@ -302,8 +302,8 @@ static void func_door(edict_t *self)
 	self->movetype   = MOVETYPE_PUSH;
 	self->draw       = 1;
 	ent_setmodel(self, self->model);
-	self->blocked = door_blocked;
-	self->use     = door_use;
+	self->blocked = EF_door_blocked;
+	self->use     = EF_door_use;
 	if (self->spawnflags & DOOR_SILVER_KEY) self->items = IT_KEY1;
 	if (self->spawnflags & DOOR_GOLD_KEY)   self->items = IT_KEY2;
 	if (!self->speed) self->speed = 100;
@@ -321,26 +321,26 @@ static void func_door(edict_t *self)
 	self->state = STATE_BOTTOM;
 	if (self->health) {
 		self->takedamage = DAMAGE_YES;
-		self->th_die     = door_killed;
+		self->th_die     = EF_door_killed;
 	}
 	if (self->items)
 		self->wait = -100;
-	self->touch = door_touch;
+	self->touch = EF_door_touch;
 	/* LinkDoors can't be done until all of the doors have been spawned */
-	self->think     = link_doors;
+	self->think     = EF_link_doors;
 	self->nextthink = self->ltime + TICKS(10);
 	ent_wake(self);
 }
 
 /* ------------------------------------------------------------ secret doors -- */
 
-static void fd_secret_move1(edict_t *self);
-static void fd_secret_move2(edict_t *self);
-static void fd_secret_move3(edict_t *self);
-static void fd_secret_move4(edict_t *self);
-static void fd_secret_move5(edict_t *self);
-static void fd_secret_move6(edict_t *self);
-static void fd_secret_done(edict_t *self);
+void fd_secret_move1(edict_t *self);
+void fd_secret_move2(edict_t *self);
+void fd_secret_move3(edict_t *self);
+void fd_secret_move4(edict_t *self);
+void fd_secret_move5(edict_t *self);
+void fd_secret_move6(edict_t *self);
+void fd_secret_done(edict_t *self);
 
 /* makevectors (the secret door's angles: its yaw): forward, right, up */
 static void secret_vectors(const edict_t *self, int32_t f[3], int32_t r[3], int32_t u[3])
@@ -366,11 +366,11 @@ static void secret_dests(const edict_t *self, int32_t dest1[3], int32_t dest2[3]
 	int temp = self->spawnflags & SECRET_1ST_LEFT ? -1 : 1;
 	int32_t f[3], r[3], u[3];
 	secret_vectors(self, f, r, u);
-	int32_t width  = self->t_width * CLIP_SUB, length = self->t_length * CLIP_SUB;
-	if (!width)
-		width = fabs_dot_size(self->spawnflags & SECRET_1ST_DOWN ? u : r, self);
-	if (!length)
-		length = fabs_dot_size(f, self);
+	/* the model's size along the moves (the QC takes the map's t_width and
+	   t_length first: no id1 map gives them, the cook keeps none, and the
+	   edict has no such fields since §90.5) */
+	int32_t width  = fabs_dot_size(self->spawnflags & SECRET_1ST_DOWN ? u : r, self);
+	int32_t length = fabs_dot_size(f, self);
 	for (int k = 0; k < 3; k++) {
 		if (self->spawnflags & SECRET_1ST_DOWN)
 			dest1[k] = self->origin[k] - u[k] * width / 4096;
@@ -380,7 +380,7 @@ static void secret_dests(const edict_t *self, int32_t dest1[3], int32_t dest2[3]
 	}
 }
 
-static void fd_secret_use(edict_t *self)
+void fd_secret_use(edict_t *self)
 {
 	self->health = 10000;
 	if (memcmp(self->origin, self->oldorigin, sizeof self->origin))
@@ -388,73 +388,73 @@ static void fd_secret_use(edict_t *self)
 	self->message = 0;
 	sub_use_targets(self);                        /* fire all targets / killtargets */
 	if (!(self->spawnflags & SECRET_NO_SHOOT)) {
-		self->th_pain    = sub_null;
+		self->th_pain    = EF_sub_null;
 		self->takedamage = DAMAGE_NO;
 	}
 	self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
 	ent_sound(self, CHAN_VOICE, self->noise1, 255, ATTN_NORM);   /* a sound, a little wait */
 	self->nextthink = self->ltime + TICKS(10);
 	secret_dests(self, self->dest1, self->dest2);
-	sub_calc_move(self, self->dest1, self->speed, fd_secret_move1);
+	sub_calc_move(self, self->dest1, self->speed, EF_fd_secret_move1);
 	ent_sound(self, CHAN_VOICE, self->noise2, 255, ATTN_NORM);
 }
 
-static void fd_secret_move1(edict_t *self)     /* wait after the first move */
+void fd_secret_move1(edict_t *self)     /* wait after the first move */
 {
 	self->nextthink = self->ltime + 60;
-	self->think     = fd_secret_move2;
+	self->think     = EF_fd_secret_move2;
 	ent_wake(self);
 	ent_sound(self, CHAN_VOICE, self->noise3, 255, ATTN_NORM);
 }
 
-static void fd_secret_move2(edict_t *self)     /* sideways */
+void fd_secret_move2(edict_t *self)     /* sideways */
 {
 	ent_sound(self, CHAN_VOICE, self->noise2, 255, ATTN_NORM);
-	sub_calc_move(self, self->dest2, self->speed, fd_secret_move3);
+	sub_calc_move(self, self->dest2, self->speed, EF_fd_secret_move3);
 }
 
-static void fd_secret_move3(edict_t *self)     /* wait there until time to go back */
+void fd_secret_move3(edict_t *self)     /* wait there until time to go back */
 {
 	ent_sound(self, CHAN_VOICE, self->noise3, 255, ATTN_NORM);
 	if (!(self->spawnflags & SECRET_OPEN_ONCE)) {
 		self->nextthink = self->ltime + TICKS(self->wait);
-		self->think     = fd_secret_move4;
+		self->think     = EF_fd_secret_move4;
 		ent_wake(self);
 	}
 }
 
-static void fd_secret_move4(edict_t *self)     /* backward */
+void fd_secret_move4(edict_t *self)     /* backward */
 {
 	ent_sound(self, CHAN_VOICE, self->noise2, 255, ATTN_NORM);
-	sub_calc_move(self, self->dest1, self->speed, fd_secret_move5);
+	sub_calc_move(self, self->dest1, self->speed, EF_fd_secret_move5);
 }
 
-static void fd_secret_move5(edict_t *self)     /* wait a second */
+void fd_secret_move5(edict_t *self)     /* wait a second */
 {
 	self->nextthink = self->ltime + 60;
-	self->think     = fd_secret_move6;
+	self->think     = EF_fd_secret_move6;
 	ent_wake(self);
 	ent_sound(self, CHAN_VOICE, self->noise3, 255, ATTN_NORM);
 }
 
-static void fd_secret_move6(edict_t *self)
+void fd_secret_move6(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise2, 255, ATTN_NORM);
-	sub_calc_move(self, self->oldorigin, self->speed, fd_secret_done);
+	sub_calc_move(self, self->oldorigin, self->speed, EF_fd_secret_done);
 }
 
-static void fd_secret_done(edict_t *self)
+void fd_secret_done(edict_t *self)
 {
 	if (!self->targetname || (self->spawnflags & SECRET_YES_SHOOT)) {
 		self->health     = 10000;
 		self->takedamage = DAMAGE_YES;
-		self->th_pain    = fd_secret_use;
-		self->th_die     = fd_secret_use;
+		self->th_pain    = EF_fd_secret_use;
+		self->th_die     = EF_fd_secret_use;
 	}
 	ent_sound(self, CHAN_VOICE, self->noise3, 255, ATTN_NORM);
 }
 
-static void secret_blocked(edict_t *self)
+void secret_blocked(edict_t *self)
 {
 	if (ent_time < self->attack_finished)
 		return;
@@ -462,7 +462,7 @@ static void secret_blocked(edict_t *self)
 	ent_damage(ent_other, self, self, self->dmg);
 }
 
-static void secret_touch(edict_t *self)
+void secret_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -500,15 +500,15 @@ static void func_door_secret(edict_t *self)
 	self->movetype = MOVETYPE_PUSH;
 	self->draw     = 1;
 	ent_setmodel(self, self->model);
-	self->touch   = secret_touch;
-	self->blocked = secret_blocked;
+	self->touch   = EF_secret_touch;
+	self->blocked = EF_secret_blocked;
 	self->speed   = 50;
-	self->use     = fd_secret_use;
+	self->use     = EF_fd_secret_use;
 	if (!self->targetname || (self->spawnflags & SECRET_YES_SHOOT)) {
 		self->health     = 10000;
 		self->takedamage = DAMAGE_YES;
-		self->th_pain    = fd_secret_use;
-		self->th_die     = fd_secret_use;
+		self->th_pain    = EF_fd_secret_use;
+		self->th_die     = EF_fd_secret_use;
 	}
 	__builtin_memcpy(self->oldorigin, self->origin, sizeof self->oldorigin);
 	if (!self->wait)
@@ -517,10 +517,10 @@ static void func_door_secret(edict_t *self)
 
 /* ------------------------------------------------------------------ plats -- */
 
-static void plat_go_down(edict_t *self);
+void plat_go_down(edict_t *self);
 static void plat_go_up(edict_t *self);
 
-static void plat_center_touch(edict_t *self)
+void plat_center_touch(edict_t *self)
 {
 	if (ent_other != ent_player || ent_other->health <= 0)
 		return;
@@ -538,7 +538,7 @@ static void plat_spawn_inside_trigger(edict_t *self)
 	edict_t *trigger = ent_spawn();
 	if (!trigger)
 		return;
-	trigger->touch    = plat_center_touch;
+	trigger->touch    = EF_plat_center_touch;
 	trigger->flags   |= FL_TOUCH_PLAYER;
 	trigger->movetype = MOVETYPE_NONE;
 	trigger->solid    = SOLID_TRIGGER;
@@ -560,43 +560,43 @@ static void plat_spawn_inside_trigger(edict_t *self)
 	ent_setsize(trigger, tmin, tmax);
 }
 
-static void plat_hit_top(edict_t *self)
+void plat_hit_top(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise1, 255, ATTN_NORM);
 	self->state     = STATE_TOP;
-	self->think     = plat_go_down;
+	self->think     = EF_plat_go_down;
 	self->nextthink = self->ltime + 3 * 60;
 	ent_wake(self);
 }
 
-static void plat_hit_bottom(edict_t *self)
+void plat_hit_bottom(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise1, 255, ATTN_NORM);
 	self->state = STATE_BOTTOM;
 }
 
-static void plat_go_down(edict_t *self)
+void plat_go_down(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise, 255, ATTN_NORM);
 	self->state = STATE_DOWN;
-	sub_calc_move(self, self->pos2, self->speed, plat_hit_bottom);
+	sub_calc_move(self, self->pos2, self->speed, EF_plat_hit_bottom);
 }
 
 static void plat_go_up(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, self->noise, 255, ATTN_NORM);
 	self->state = STATE_UP;
-	sub_calc_move(self, self->pos1, self->speed, plat_hit_top);
+	sub_calc_move(self, self->pos1, self->speed, EF_plat_hit_top);
 }
 
-static void plat_trigger_use(edict_t *self)
+void plat_trigger_use(edict_t *self)
 {
 	if (self->think)
 		return;                                   /* already activated */
 	plat_go_down(self);
 }
 
-static void plat_crush(edict_t *self)
+void plat_crush(edict_t *self)
 {
 	ent_damage(ent_other, self, self, 1);
 	if (self->state == STATE_UP)
@@ -607,9 +607,9 @@ static void plat_crush(edict_t *self)
 		printf("ents: plat_crush: bad self.state\n");
 }
 
-static void plat_use(edict_t *self)
+void plat_use(edict_t *self)
 {
-	self->use = sub_null;
+	self->use = EF_sub_null;
 	if (self->state != STATE_UP)
 		printf("ents: plat_use: not in up state\n");
 	plat_go_down(self);
@@ -617,9 +617,8 @@ static void plat_use(edict_t *self)
 
 static void func_plat(edict_t *self)
 {
-	if (!self->t_length) self->t_length = 80;
-	if (!self->t_width)  self->t_width = 10;
-	if (!self->sounds)   self->sounds = 2;
+	if (!self->sounds)   self->sounds = 2;   /* (the QC's t_length 80 and t_width 10
+	                                            defaults go unread: not kept) */
 	if (self->sounds == 1) {
 		sound_of(self, &self->noise, "plats/plat1.wav");
 		sound_of(self, &self->noise1, "plats/plat2.wav");
@@ -634,7 +633,7 @@ static void func_plat(edict_t *self)
 	self->movetype  = MOVETYPE_PUSH;
 	self->draw      = 1;
 	ent_setmodel(self, self->model);
-	self->blocked = plat_crush;
+	self->blocked = EF_plat_crush;
 	if (!self->speed)
 		self->speed = 150;
 	/* pos1 is the top position, pos2 the bottom */
@@ -644,11 +643,11 @@ static void func_plat(edict_t *self)
 		self->pos2[2] = self->origin[2] - self->height * CLIP_SUB;
 	else
 		self->pos2[2] = self->origin[2] - (self->maxs[2] - self->mins[2]) + 8 * CLIP_SUB;
-	self->use = plat_trigger_use;
+	self->use = EF_plat_trigger_use;
 	plat_spawn_inside_trigger(self);              /* the "start moving" trigger */
 	if (self->targetname) {
 		self->state = STATE_UP;
-		self->use   = plat_use;
+		self->use   = EF_plat_use;
 	} else {
 		ent_setorigin(self, self->pos2);
 		self->state = STATE_BOTTOM;
@@ -657,10 +656,10 @@ static void func_plat(edict_t *self)
 
 /* ----------------------------------------------------------------- trains -- */
 
-static void train_next(edict_t *self);
-static void func_train_find(edict_t *self);
+void train_next(edict_t *self);
+void func_train_find(edict_t *self);
 
-static void train_blocked(edict_t *self)
+void train_blocked(edict_t *self)
 {
 	if (ent_time < self->attack_finished)
 		return;
@@ -668,14 +667,14 @@ static void train_blocked(edict_t *self)
 	ent_damage(ent_other, self, self, self->dmg);
 }
 
-static void train_use(edict_t *self)
+void train_use(edict_t *self)
 {
-	if (self->think != func_train_find)
+	if (self->think != EF_func_train_find)
 		return;                                   /* already activated */
 	train_next(self);
 }
 
-static void train_wait(edict_t *self)
+void train_wait(edict_t *self)
 {
 	if (self->wait) {
 		self->nextthink = self->ltime + TICKS(self->wait);
@@ -683,11 +682,11 @@ static void train_wait(edict_t *self)
 	} else {
 		self->nextthink = self->ltime + TICKS(10);
 	}
-	self->think = train_next;
+	self->think = EF_train_next;
 	ent_wake(self);
 }
 
-static void train_next(edict_t *self)
+void train_next(edict_t *self)
 {
 	edict_t *targ = ent_find(0, self->target);
 	if (!targ) {
@@ -702,10 +701,10 @@ static void train_next(edict_t *self)
 	int32_t dest[3];
 	for (int k = 0; k < 3; k++)
 		dest[k] = targ->origin[k] - self->mins[k];
-	sub_calc_move(self, dest, self->speed, train_wait);
+	sub_calc_move(self, dest, self->speed, EF_train_wait);
 }
 
-Q_COLD static void func_train_find(edict_t *self)
+Q_COLD void func_train_find(edict_t *self)
 {
 	edict_t *targ = ent_find(0, self->target);
 	if (!targ) {
@@ -719,7 +718,7 @@ Q_COLD static void func_train_find(edict_t *self)
 	ent_setorigin(self, org);
 	if (!self->targetname) {                      /* not triggered: start at once */
 		self->nextthink = self->ltime + TICKS(10);
-		self->think     = train_next;
+		self->think     = EF_train_next;
 		ent_wake(self);
 	}
 }
@@ -784,8 +783,8 @@ static void func_train(edict_t *self, int teleporttrain)
 	self->cnt      = 1;
 	self->solid    = teleporttrain ? SOLID_NOT : SOLID_BSP;
 	self->movetype = MOVETYPE_PUSH;
-	self->blocked  = train_blocked;
-	self->use      = train_use;
+	self->blocked  = EF_train_blocked;
+	self->use      = EF_train_use;
 	if (!teleporttrain) {
 		self->draw = 1;
 		ent_setmodel(self, self->model);
@@ -799,40 +798,40 @@ static void func_train(edict_t *self, int teleporttrain)
 	}
 	/* trains start on the second frame: their targets must have spawned */
 	self->nextthink = self->ltime + TICKS(10);
-	self->think     = func_train_find;
+	self->think     = EF_func_train_find;
 	ent_wake(self);
 }
 
 /* ----------------------------------------------------------------- buttons -- */
 
-static void button_return(edict_t *self);
+void button_return(edict_t *self);
 
-static void button_wait(edict_t *self)
+void button_wait(edict_t *self)
 {
 	self->state     = STATE_TOP;
 	self->nextthink = self->ltime + TICKS(self->wait);
-	self->think     = button_return;
+	self->think     = EF_button_return;
 	ent_wake(self);
 	ent_activator   = self->enemy;
 	sub_use_targets(self);
 	self->frame     = 1;                          /* use alternate textures */
 }
 
-static void button_done(edict_t *self)
+void button_done(edict_t *self)
 {
 	self->state = STATE_BOTTOM;
 }
 
-static void button_return(edict_t *self)
+void button_return(edict_t *self)
 {
 	self->state = STATE_DOWN;
-	sub_calc_move(self, self->pos1, self->speed, button_done);
+	sub_calc_move(self, self->pos1, self->speed, EF_button_done);
 	self->frame = 0;                              /* use normal textures */
 	if (self->health)
 		self->takedamage = DAMAGE_YES;            /* can be shot again */
 }
 
-static void button_blocked(edict_t *self)
+void button_blocked(edict_t *self)
 {
 	(void) self;                                  /* just don't come all the way back out */
 }
@@ -843,16 +842,16 @@ static void button_fire(edict_t *self)
 		return;
 	ent_sound(self, CHAN_VOICE, self->noise, 255, ATTN_NORM);
 	self->state = STATE_UP;
-	sub_calc_move(self, self->pos2, self->speed, button_wait);
+	sub_calc_move(self, self->pos2, self->speed, EF_button_wait);
 }
 
-static void button_use(edict_t *self)
+void button_use(edict_t *self)
 {
 	self->enemy = ent_activator;
 	button_fire(self);
 }
 
-static void button_touch(edict_t *self)
+void button_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -860,7 +859,7 @@ static void button_touch(edict_t *self)
 	button_fire(self);
 }
 
-static void button_killed(edict_t *self)
+void button_killed(edict_t *self)
 {
 	self->enemy      = ent_damage_attacker;
 	self->health     = self->max_health;
@@ -879,14 +878,14 @@ static void func_button(edict_t *self)
 	self->solid    = SOLID_BSP;
 	self->draw     = 1;
 	ent_setmodel(self, self->model);
-	self->blocked = button_blocked;
-	self->use     = button_use;
+	self->blocked = EF_button_blocked;
+	self->use     = EF_button_use;
 	if (self->health) {
 		self->max_health = self->health;
-		self->th_die     = button_killed;
+		self->th_die     = EF_button_killed;
 		self->takedamage = DAMAGE_YES;
 	} else {
-		self->touch = button_touch;
+		self->touch = EF_button_touch;
 	}
 	if (!self->speed) self->speed = 40;
 	if (!self->wait)  self->wait = 100;

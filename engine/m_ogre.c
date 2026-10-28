@@ -332,7 +332,7 @@ static int ogre_check_attack(edict_t *self)
 	return 1;
 }
 
-static void ogre_pain(edict_t *self)
+void ogre_pain(edict_t *self)
 {
 	if (self->pain_finished > ent_time)
 		return;
@@ -356,7 +356,7 @@ static void ogre_pain(edict_t *self)
 	}
 }
 
-static void ogre_die(edict_t *self)
+void ogre_die(edict_t *self)
 {
 	if (self->health < -80) {            /* check for gib */
 		ent_sound(self, CHAN_VOICE, s_udeath, 255, ATTN_NORM);
@@ -382,7 +382,7 @@ const mdef_t mdef_ogre = {
 	.states = states, .num_states = OGRE_COUNT,
 	.th_stand = ogre_stand, .th_walk = ogre_walk, .th_run = ogre_run,
 	.th_missile = ogre_nail, .th_melee = ogre_melee,
-	.th_pain = ogre_pain, .th_die = ogre_die,
+	.th_pain = EF_ogre_pain, .th_die = EF_ogre_die,
 	.custom = ogre_custom,
 	.check_attack = ogre_check_attack,
 	.map_start = ogre_map_start,
@@ -401,7 +401,7 @@ const mdef_t mdef_ogre_marksman = {
 	.states = states, .num_states = OGRE_COUNT,
 	.th_stand = ogre_stand, .th_walk = ogre_walk, .th_run = ogre_run,
 	.th_missile = ogre_nail, .th_melee = ogre_melee,
-	.th_pain = ogre_pain, .th_die = ogre_die,
+	.th_pain = EF_ogre_pain, .th_die = EF_ogre_die,
 	.custom = ogre_custom,
 	.map_start = 0,
 };

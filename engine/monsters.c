@@ -99,7 +99,7 @@ void monster_state(edict_t *self, int s)
 	const mstate_t *st = &m->states[s];
 	self->frame     = st->frame;          /* the QC's `state`: frame, think in 0.1 s */
 	self->nextthink = ent_time + TICKS(10);
-	self->think     = monster_think;
+	self->think     = EF_monster_think;
 	self->mstate    = st->next;
 	ent_wake(self);
 	switch (st->act) {
@@ -129,7 +129,7 @@ void monster_think(edict_t *self)
 void monster_think_at(edict_t *self, int s, int ticks)
 {
 	self->mstate    = (uint16_t) s;
-	self->think     = monster_think;
+	self->think     = EF_monster_think;
 	self->nextthink = ent_time + ticks;
 	ent_wake(self);
 }
@@ -152,7 +152,7 @@ void monster_use(edict_t *self)
 	/* delay reaction so if the monster is teleported, its sound is still heard */
 	self->enemy     = ent_activator;
 	self->nextthink = ent_time + TICKS(10);
-	self->think     = ai_found_target;
+	self->think     = EF_ai_found_target;
 	ent_wake(self);
 }
 
@@ -171,7 +171,7 @@ void monster_death_use(edict_t *self)
 }
 
 /* walkmonster_start_go: on the floor, its path or standing */
-Q_COLD static void walkmonster_start_go(edict_t *self)
+Q_COLD void walkmonster_start_go(edict_t *self)
 {
 	const mdef_t *m = self->mdef;
 	self->origin[2] += SUB;               /* raise off floor a bit */
@@ -184,7 +184,7 @@ Q_COLD static void walkmonster_start_go(edict_t *self)
 	if (!self->yaw_speed)
 		self->yaw_speed = 20;
 	self->view_ofs_z = 25 * SUB;
-	self->use = monster_use;
+	self->use = EF_monster_use;
 	self->flags |= FL_MONSTER;
 	ent_link(self);                       /* (its clip entry marked a monster's: clip.h) */
 	if (self->target) {
@@ -213,7 +213,7 @@ Q_COLD static void walkmonster_start_go(edict_t *self)
 	self->nextthink += (int32_t) (frand() * TICKS(50) >> 16);
 }
 
-Q_COLD static void flymonster_start_go(edict_t *self)
+Q_COLD void flymonster_start_go(edict_t *self)
 {
 	const mdef_t *m = self->mdef;
 	self->takedamage = DAMAGE_AIM;
@@ -221,7 +221,7 @@ Q_COLD static void flymonster_start_go(edict_t *self)
 	if (!self->yaw_speed)
 		self->yaw_speed = 10;
 	self->view_ofs_z = 25 * SUB;
-	self->use = monster_use;
+	self->use = EF_monster_use;
 	self->flags |= FL_FLY;
 	self->flags |= FL_MONSTER;
 	ent_link(self);                       /* (its clip entry marked a monster's: clip.h) */
@@ -255,7 +255,7 @@ static void monster_start(edict_t *self)
 	                                            monster stood there for good, solid, not
 	                                            hurt; the first tick) */
 		self->nextthink = 1;
-	self->think = self->mdef->fly ? flymonster_start_go : walkmonster_start_go;
+	self->think = self->mdef->fly ? EF_flymonster_start_go : EF_walkmonster_start_go;
 	ent_wake(self);
 	ent_total_monsters++;
 }
@@ -329,7 +329,7 @@ void throw_gib(edict_t *self, int gib, int dm)
 	n->solid    = SOLID_NOT;
 	for (int k = 0; k < 3; k++)
 		n->avel[k] = (int16_t) (600 * frand() >> 16);
-	n->think     = sub_remove;
+	n->think     = EF_sub_remove;
 	n->ltime     = ent_time;
 	n->nextthink = ent_time + TICKS(1000) + (int32_t) (frand() * TICKS(1000) >> 16);
 	n->frame     = 0;
@@ -377,7 +377,7 @@ void spawn_meat_spray(edict_t *self, const int32_t org[3], const int32_t vel[3])
 	n->avel[1] = 1000;
 	n->avel[2] = 2000;
 	n->nextthink = ent_time + TICKS(100);
-	n->think     = sub_remove;
+	n->think     = EF_sub_remove;
 	n->masset    = gib_asset[3];
 	n->trail     = TR_SLIGHT_BLOOD + 1;          /* EF_ZOMGIB */
 	static const int32_t zero[3] = { 0, 0, 0 };
@@ -387,7 +387,7 @@ void spawn_meat_spray(edict_t *self, const int32_t org[3], const int32_t vel[3])
 }
 
 /* BackpackTouch (1.06): the ammo to the player, its weapon kept */
-static void backpack_touch(edict_t *self)
+void backpack_touch(edict_t *self)
 {
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
@@ -434,9 +434,9 @@ void drop_backpack(edict_t *self)
 	item->masset   = backpack_asset;
 	static const int32_t bmins[3] = { -16 * SUB, -16 * SUB, 0 }, bmaxs[3] = { 16 * SUB, 16 * SUB, 56 * SUB };
 	ent_setsize(item, bmins, bmaxs);
-	item->touch     = backpack_touch;
+	item->touch     = EF_backpack_touch;
 	item->nextthink = ent_time + TICKS(12000);   /* remove after 2 minutes */
-	item->think     = sub_remove;
+	item->think     = EF_sub_remove;
 	ent_wake(item);
 }
 
