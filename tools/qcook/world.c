@@ -923,6 +923,89 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 
 /* ------------------------------------------------------------- entities -- */
 
+/* Quake's RLE of a PVS row (a zero byte, then the count of zero bytes):
+   decoded into row[rowbytes] (short rows padded with zeros), encoded
+   (rle_put: into a buffer; rle_len: its bytes), and the cooked rows
+   (qw_vis_decode: formats/qworld.h qw_leaf vis, a plain row or the XOR
+   against an earlier leaf's; docs/porting-notes.md §90.9). */
+static void rle_decode(const uint8_t *in, const uint8_t *end, uint8_t *row, uint32_t rowbytes)
+{
+	uint32_t out = 0;
+	while (out < rowbytes && (!end || in < end)) {
+		if (*in) {
+			row[out++] = *in++;
+			continue;
+		}
+		uint32_t c = in[1];
+		in += 2;
+		while (c-- && out < rowbytes)
+			row[out++] = 0;
+	}
+	while (out < rowbytes)
+		row[out++] = 0;
+}
+
+static void rle_xor(const uint8_t *in, uint8_t *row, uint32_t rowbytes)
+{
+	uint32_t out = 0;
+	while (out < rowbytes) {
+		if (*in) {
+			row[out++] ^= *in++;
+			continue;
+		}
+		out += in[1];
+		in += 2;
+	}
+}
+
+static uint32_t rle_len(const uint8_t *row, uint32_t rowbytes)
+{
+	uint32_t n = 0;
+	for (uint32_t i = 0; i < rowbytes; ) {
+		if (row[i]) {
+			n++;
+			i++;
+			continue;
+		}
+		uint32_t j = i;
+		while (j < rowbytes && !row[j] && j - i < 255)
+			j++;
+		n += 2;
+		i = j;
+	}
+	return n;
+}
+
+static void rle_put(buf_t *b, const uint8_t *row, uint32_t rowbytes)
+{
+	for (uint32_t i = 0; i < rowbytes; ) {
+		if (row[i]) {
+			buf_put(b, &row[i], 1);
+			i++;
+			continue;
+		}
+		uint32_t j = i;
+		while (j < rowbytes && !row[j] && j - i < 255)
+			j++;
+		uint8_t run[2] = { 0, (uint8_t) (j - i) };
+		buf_put(b, run, 2);
+		i = j;
+	}
+}
+
+void qw_vis_decode(const uint8_t *vis, const void *leaves_v, uint32_t leaf, uint8_t *row, uint32_t rowbytes)
+{
+	const qw_leaf *leaves = leaves_v;
+	const uint8_t *in = vis + leaves[leaf].vis;
+	uint32_t back = *in++;
+	if (back) {
+		rle_decode(vis + leaves[leaf - back].vis + 1, NULL, row, rowbytes);
+		rle_xor(in, row, rowbytes);
+	} else {
+		rle_decode(in, NULL, row, rowbytes);
+	}
+}
+
 static int find_player_start(const ent_list *l, double origin[3], double *angle)
 {
 	for (int i = 0; i < l->num; i++) {
@@ -1472,15 +1555,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 			const bsp_leaf *bl = &b->leaves[i];
 			if (bl->visofs < 0 || bl->contents != -1)
 				continue;
-			/* decompress Quake RLE row */
-			const uint8_t *in = b->vis + bl->visofs;
-			int out = 0;
-			while (out < rowbytes && in < b->vis + b->vis_len) {
-				if (*in) { row[out++] = *in++; continue; }
-				int c = in[1];
-				in += 2;
-				while (c-- && out < rowbytes) row[out++] = 0;
-			}
+			rle_decode(b->vis + bl->visofs, b->vis + b->vis_len, row, (uint32_t) rowbytes);
 			long load = 0;
 			for (int j = 0; j < wm->visleafs; j++)
 				if (row[j >> 3] & (1 << (j & 7)))
@@ -1644,14 +1719,79 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	int unknown = 0;
 	ents_cook(&ents, b->num_models, &etab, &estr, &h.worldtype, &h.title, &unknown);
 
+	/* The PVS rows re-encoded (formats/qworld.h qw_leaf vis, docs/porting-
+	   notes.md §90.9): a byte `back`, then Quake's RLE of the row (back
+	   0) or of its XOR against the plain row of the leaf `back` before it,
+	   whichever RLEs shorter; the anchors the last VIS_ANCHORS plain rows,
+	   within 255 leaves. A marking decodes two rows at most. */
+	buf_t vis;
+	memset(&vis, 0, sizeof vis);
+	uint32_t vis_rows = 0, vis_deltas = 0;
+	{
+		enum { VIS_ANCHORS = 4 };
+		uint32_t rowbytes = ((uint32_t) wm->visleafs + 7) >> 3;
+		if (rowbytes > 256)
+			die("PVS rows of %u bytes: the engine expands a row into 256 (r_vis_row)", rowbytes);
+		uint8_t *cur = xmalloc(rowbytes), *best = xmalloc(rowbytes), *x = xmalloc(rowbytes);
+		uint8_t *anchor = xmalloc((size_t) VIS_ANCHORS * rowbytes);
+		int anchor_leaf[VIS_ANCHORS], nanch = 0;
+		for (int i = 1; i <= wm->visleafs && i < num_leaves; i++) {
+			qw_leaf *l = &leaves[i];
+			if (l->vis == QW_NONE)
+				continue;
+			rle_decode(b->vis + l->vis, b->vis + b->vis_len, cur, rowbytes);
+			vis_rows++;
+			uint32_t bestlen = rle_len(cur, rowbytes);
+			int bestk = -1;
+			for (int k = 0; k < nanch; k++) {
+				if (i - anchor_leaf[k] > 255)
+					continue;
+				for (uint32_t j = 0; j < rowbytes; j++)
+					x[j] = cur[j] ^ anchor[k * rowbytes + j];
+				uint32_t n = rle_len(x, rowbytes);
+				if (n < bestlen) {
+					bestlen = n;
+					bestk = k;
+					memcpy(best, x, rowbytes);
+				}
+			}
+			l->vis = (uint32_t) vis.len;
+			uint8_t back = (uint8_t) (bestk < 0 ? 0 : i - anchor_leaf[bestk]);
+			buf_put(&vis, &back, 1);
+			rle_put(&vis, bestk < 0 ? cur : best, rowbytes);
+			if (bestk < 0) {                              /* a new anchor, the newest first */
+				if (nanch < VIS_ANCHORS)
+					nanch++;
+				for (int k = nanch - 1; k > 0; k--) {
+					memcpy(anchor + k * rowbytes, anchor + (k - 1) * rowbytes, rowbytes);
+					anchor_leaf[k] = anchor_leaf[k - 1];
+				}
+				memcpy(anchor, cur, rowbytes);
+				anchor_leaf[0] = i;
+			} else {
+				vis_deltas++;
+			}
+		}
+		/* decoded back: the rows as they came */
+		for (int i = 1; i <= wm->visleafs && i < num_leaves; i++) {
+			if (leaves[i].vis == QW_NONE)
+				continue;
+			rle_decode(b->vis + b->leaves[i].visofs, b->vis + b->vis_len, cur, rowbytes);
+			qw_vis_decode(vis.p, leaves, (uint32_t) i, x, rowbytes);
+			if (memcmp(cur, x, rowbytes))
+				die("leaf %d: its PVS row decodes wrong", i);
+		}
+		free(cur); free(best); free(x); free(anchor);
+	}
+
 	buf_t f;
 	memset(&f, 0, sizeof f);
 	buf_put(&f, &h, sizeof h);
 	h.ofs_nodes = (uint32_t) f.len;  buf_put(&f, nodes, (size_t) (kept_nodes + 1) * sizeof *nodes);
 	h.ofs_leaves = (uint32_t) f.len; buf_put(&f, leaves, (size_t) num_leaves * sizeof *leaves);
 	h.ofs_marks = (uint32_t) f.len;  buf_put(&f, gmarks, (size_t) ngmarks * 2); buf_align4(&f);
-	h.ofs_vis = (uint32_t) f.len;    buf_put(&f, b->vis, b->vis_len); buf_align4(&f);
-	h.len_vis = b->vis_len;
+	h.ofs_vis = (uint32_t) f.len;    buf_put(&f, vis.p, vis.len); buf_align4(&f);
+	h.len_vis = (uint32_t) vis.len;
 	h.ofs_faces = (uint32_t) f.len;  buf_put(&f, o.stream.p, o.stream.len);
 	h.len_faces = (uint32_t) o.stream.len;
 	{ static const uint8_t tail[QW_STREAM_TAIL]; buf_put(&f, tail, sizeof tail); }
@@ -1751,7 +1891,9 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 
 	printf("qcook: %s — %u B: nodes %zu, leaves %zu, marks %u, vis %u, faces %u\n",
 	       out_path, (uint32_t) f.len, kept_nodes * sizeof *nodes,
-	       num_leaves * sizeof *leaves, ngmarks * 2, b->vis_len, h.len_faces);
+	       num_leaves * sizeof *leaves, ngmarks * 2, h.len_vis, h.len_faces);
+	printf("qcook:   PVS rows: %u B -> %u B, %u of %u rows the XOR against an earlier plain row\n",
+	       b->vis_len, h.len_vis, vis_deltas, vis_rows);
 	printf("qcook:   %u records, %u pieces -> %u quads + %u tris, %u vertex refs "
 	       "(%.1f/record) into a pool of %d; %u faces split; depth %u; %d bench views\n",
 	       o.records, o.pieces, o.quads, o.tris, o.verts,

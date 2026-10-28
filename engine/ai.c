@@ -681,17 +681,15 @@ int ai_range(edict_t *self, edict_t *targ)
    only asks whether it is clear: clip.h's line of sight (the trace's
    other results are not Quake's then; no caller reads them after it,
    each one traces its own line) */
-/* whether visleaf l (a leaf's index less one) is in the RLE row `in`
+/* byte `byte` of a row in Quake's RLE, the row walked to it and no further
    (Mod_DecompressVis walked to its byte, nothing written) */
-static int row_has(const uint8_t *in, uint32_t rowbytes, int l)
+static uint32_t row_byte(const uint8_t *in, uint32_t byte)
 {
-	uint32_t byte = (uint32_t) l >> 3, o = 0;
-	if (l < 0 || byte >= rowbytes)
-		return 1;
+	uint32_t o = 0;
 	for (;;) {
 		if (*in) {
 			if (o == byte)
-				return (*in >> (l & 7)) & 1;
+				return *in;
 			o++;
 			in++;
 			continue;
@@ -701,6 +699,20 @@ static int row_has(const uint8_t *in, uint32_t rowbytes, int l)
 		if (o > byte)
 			return 0;
 	}
+}
+
+/* leaf l + 1 in the PVS row of leaf k (KSEG0, with a row): its byte, and
+   its base row's when it is a delta (formats/qworld.h qw_leaf vis, §90.9) */
+static int row_has(const qw_leaf *k, uint32_t rowbytes, int l)
+{
+	uint32_t byte = (uint32_t) l >> 3;
+	if (l < 0 || byte >= rowbytes)
+		return 1;
+	const uint8_t *in = (const uint8_t *) ((k->vis & 0x00ffffffu) | 0x80000000u);
+	uint32_t back = *in++, v = row_byte(in, byte);
+	if (back)
+		v ^= row_byte((const uint8_t *) (((k - back)->vis & 0x00ffffffu) | 0x80000000u) + 1, byte);
+	return (v >> (l & 7)) & 1;
 }
 
 /* the leaf lb in the PVS row of la, the eyes' leaves of self and of its
@@ -720,7 +732,7 @@ static int pvs_sees(edict_t *self, const qw_leaf *la, const qw_leaf *lb)
 	}
 	const qw_leaf *k = (const qw_leaf *) ((uintptr_t) la | 0x80000000u);
 	uint32_t row = k->vis & 0x00ffffffu;      /* (the top byte: the render list's id) */
-	int seen = !row || row_has((const uint8_t *) (row | 0x80000000u), world.vis_rowbytes, l);
+	int seen = !row || row_has(k, world.vis_rowbytes, l);
 	if (self != ent_player && (self->item_model >= 0 || self->masset >= 0)) {
 		self->am.vis_from = la;
 		self->am.vis_to   = lb;

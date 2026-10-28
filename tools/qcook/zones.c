@@ -1,6 +1,6 @@
 /*
- * q1psx — `qcook zones`: a cooked world (QWVG) split into its skeleton
- * (QWZH) and its zone chunks (QZN1), from the level-chunks analysis'
+ * q1psx — `qcook zones`: a cooked world (QWVH) split into its skeleton
+ * (QWZI) and its zone chunks (QZN1), from the level-chunks analysis'
  * tables (formats/qworld.h "zones", docs/porting-notes.md §56, §57).
  *
  *   qcook zones --world <map>_g0.wld --tables <dir>/<map>.zones

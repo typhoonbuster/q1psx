@@ -11777,24 +11777,24 @@ edict pool trimmed) is what is left of it. The release's blocks are these
 at 0x800ad1d0 (0x800b51d0 before §90.1), the bench build's base differs.
 Bytes; the pool takes the rest less 8 256 (`STREAM_KEEP` + 64).
 
-| block (caller) | base (795bfb2) | §90.1 | §90.2 | §90.3 | §90.4 | §90.5 | §90.6 | §90.7 |
-|---|---|---|---|---|---|---|---|---|
-| the texture tables (cd_load, the file 124 928 read whole) | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 |
-| the skeleton `E1M3_G0.WLD` (cd_load) | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 |
-| `face_visframe` (world_load) | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 |
-| the map's models `E1M3_M0.MDL` (cd_load) | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 |
-| their tables (world_load: 256, 32, 8 × 48) | 672 | 672 | 672 | 672 | 672 | 672 | 672 | 672 |
-| the zone slots, 4 × 65 536 (zone_map_start) | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 |
-| the touch lists, `model_draw` (ents_load: 7 120, 1 792, 224; from §90.2's 341 slots 6 352, 1 600, 224) | 9 136 | 9 136 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 |
-| the edicts (ents_load; 445 asked, 389 kept by ents_trim, 341 from §90.2; 320 B each from §90.5) | 149 376 | 149 376 | 130 944 | 130 944 | 130 944 | 109 120 | 109 120 | 109 120 |
-| the brush models (bmf_reserve: 432, the caches 49 888, their vertices 21 264; §90.6: 432, the headers and nodes 12 448, the page tables 720, the arena 25 792, the vertices 14 400) | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 53 792 | 53 792 |
-| the RAM sounds (stream_map_start) | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 |
-| the frame cache (stream_map_start) | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 |
-| the staging buffer (stream_map_start) | 32 768 | 32 768 | 32 768 | 16 384 | 16 384 | 16 384 | 16 384 | 16 384 |
-| **the stream's pool** (stream_map_start) | 357 280 | 390 048 | 409 440 | 425 824 | 429 920 | 449 392 | 464 112 | 478 784 |
-| the arena | 1 343 008 | 1 375 776 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 | 1 389 120 |
+| block (caller) | base (795bfb2) | §90.1 | §90.2 | §90.3 | §90.4 | §90.5 | §90.6 | §90.7 | §90.9 |
+|---|---|---|---|---|---|---|---|---|---|
+| the texture tables (cd_load, the file 124 928 read whole) | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 |
+| the skeleton `E1M3_G0.WLD` (cd_load; §90.9: its PVS rows 25 516 → 19 897 B, the file two sectors shorter) | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 270 336 |
+| `face_visframe` (world_load) | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 |
+| the map's models `E1M3_M0.MDL` (cd_load) | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 |
+| their tables (world_load: 256, 32, 8 × 48) | 672 | 672 | 672 | 672 | 672 | 672 | 672 | 672 | 672 |
+| the zone slots, 4 × 65 536 (zone_map_start) | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 |
+| the touch lists, `model_draw` (ents_load: 7 120, 1 792, 224; from §90.2's 341 slots 6 352, 1 600, 224) | 9 136 | 9 136 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 |
+| the edicts (ents_load; 445 asked, 389 kept by ents_trim, 341 from §90.2; 320 B each from §90.5) | 149 376 | 149 376 | 130 944 | 130 944 | 130 944 | 109 120 | 109 120 | 109 120 | 109 120 |
+| the brush models (bmf_reserve: 432, the caches 49 888, their vertices 21 264; §90.6: 432, the headers and nodes 12 448, the page tables 720, the arena 25 792, the vertices 14 400) | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 53 792 | 53 792 | 53 792 |
+| the RAM sounds (stream_map_start) | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 |
+| the frame cache (stream_map_start) | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 |
+| the staging buffer (stream_map_start) | 32 768 | 32 768 | 32 768 | 16 384 | 16 384 | 16 384 | 16 384 | 16 384 | 16 384 |
+| **the stream's pool** (stream_map_start) | 357 280 | 390 048 | 409 440 | 425 824 | 429 920 | 449 392 | 464 112 | 478 784 | 482 064 |
+| the arena | 1 343 008 | 1 375 776 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 | 1 389 120 | 1 388 304 |
 
-(The base's, §90.1's, §90.5's, §90.6's and §90.7's columns are their runs' logs;
+(The base's, §90.1's, §90.5's, §90.6's, §90.7's and §90.9's columns are their runs' logs;
 §90.2 to §90.4 are those logs' blocks with what each lever changes, the
 edicts and the touch lists at 341 slots, the staging buffer, the arena:
 their pools agree with their runs' `bench zone` lines, 399 and 419 KB.)
@@ -12134,44 +12134,178 @@ seek of its own; the boot's from the root). The frames and their cycles
 are the same, the code moved, not changed: the walk's 27 maps 10 071 664
 → 10 070 607 cycles a frame summed, E1M3 cleared 6 480 597 → 6 480 590.
 
+### 90.8 Nodes and leaves on 16-bit indices: measured, not built
+
+The lever as planned: a node 36 → ~20 bytes, a leaf 28 → ~16, pointers
+rebuilt on the fly from 16-bit indices in the walk, the marking and the
+other descents, −55 to −70 KB a map. The structures (`formats/qworld.h`)
+and what reads each field, by the link's call graph and the asm:
+
+| node field | bytes | read by |
+|---|---|---|
+| `c[3]`, `h[3]` (the box, vertex units) | 12 | the walk's frustum test (`lwc2` at +0 and +8, `lh` the z of each: r_world.s), the dynamic lights' reach (dlight.c), the box walks (world.c) |
+| `visframe` | 2 | the walk's gate, the marking's stamp |
+| `plane3` | 2 | every descent (the walk, w_leaf.s, clip.s, bmfrag.s, rl_order.s, the C) |
+| `parent` | 2 | the marking (the ancestors stamped from each visible leaf) |
+| `dlstamp` | 2 | the walk's dynamic-light gate |
+| `child[2]` | 8 | every descent: pointers with the leaf flag in bit 0 |
+| `faces[2]` | 8 | the walk's record loop (the block on the camera's side, its end at the next node's `faces[0]`), the zone switch (`zone_patch` writes them for the nodes whose records a chunk holds) |
+
+| leaf field | bytes | read by |
+|---|---|---|
+| `c[3]`, `h[3]` | 12 | the walk's leaf test (its render list, pieces and models), `mark_pvs_far` (the draw distance's reach), the box walks |
+| `visframe` | 2 | the walk, the marking, the entities' leaves (e_seen.s) |
+| `num_marks`, `marks` | 6 | the walk (the records stamped from a visible leaf) |
+| `vis` | 4 | the marking (its row; the top byte the leaf's render list) |
+| `parent` | 2 | the marking |
+| `contents`, `light` | 2 | the traces, the models' light |
+
+**What 16-bit indices give.** The children: 4 bytes a node (an index
+with the leaf flag, the pointer rebuilt by a shift and an add: two
+instructions more a descent, in the walk's hottest chain and in
+clip.s's point and box walks, bmfrag.s's cut and rl_order.s, ~0.3 % of
+a frame by the walk's 250-400 nodes). The leaf's `marks`: an index into
+the marks table (under 65 536 marks a map: 7 397 the most, E4M7), 2
+bytes; its `vis`: an offset into the rows (under 64 KB a map since
+§90.9: 39 465 B the most, E3M5), 2 bytes; `num_marks` could go too (the
+next leaf's start ends this one's) but the 22 bytes left pad to 24 (the
+`lwc2` loads want the box word-aligned). The node's `faces[2]` cannot
+be indices: the records of a patched node live in whichever zone slot
+holds its chunk (§57, §82), so the walk needs an address there, and the
+patch rewrites it; the back block's start can be the front's plus a
+16-bit length (6 bytes for the two), nothing less without a table the
+record loop would read at every node. The stamps and the parent stay.
+So a node comes to 32 bytes (30 padded) and a leaf to 24: −4 bytes
+each, 7 to 20 KB a map (E1M3 15.4 KB, E4M7 20.1 KB, E3M6 19.7 KB, E1M7
+4.5 KB; the per-map counts below), a quarter of the lever's promise.
+
+**What 20 and 16 would take.** The boxes: 12 of the 36 and 28 bytes.
+Stored as eighths of the parent's box (a byte a coordinate: 6 bytes a
+node and a leaf), the walk would rebuild each box from its parent's
+kept on the walk stack: six multiplies and the GTE loads from registers
+instead of `lwc2`, 20-25 cycles a node and a leaf visited, 2-3 % of a
+frame; the far marking and the dynamic lights would rebuild them too.
+With the stamps moved to tables of their own (no gain: the same bytes
+elsewhere) a node would be 20-22 bytes and a leaf 12-14. That is the
+lever's promise, at a cost the constant 60 fps rule does not allow
+without an explicit decision.
+
+| map | nodes | leaves | −4 B each (KB) | boxes to a byte too (KB) |
+|---|---|---|---|---|
+| START | 2786 | 1130 | 15.3 | 38.2 |
+| E1M1 | 2730 | 1150 | 15.2 | 37.9 |
+| E1M3 | 2877 | 969 | 15.0 | 37.6 |
+| E1M6 | 2416 | 650 | 12.0 | 30.0 |
+| E1M7 | 832 | 283 | 4.4 | 10.9 |
+| E3M4 | 3598 | 1168 | 18.6 | 46.5 |
+| E3M5 | 3466 | 1425 | 19.1 | 47.8 |
+| E3M6 | 3511 | 1405 | 19.2 | 48.0 |
+| E4M7 | 3588 | 1438 | 19.6 | 49.1 |
+| the 32 maps | 86 763 | 32 171 | 464.6 (14.5 a map) | 1 162 (36.3 a map) |
+
+Not built: the 16-bit layout is a rewrite of every descent in the asm
+(r_world.s, w_leaf.s, clip.s, bmfrag.s, rl_order.s, zone.s, e_seen.s)
+and the cook's writer and zone cutter for −4 bytes a node and a leaf;
+the box compression is a call on cycles. Either is a lever of
+its own after this batch.
+
+### 90.9 The PVS rows as deltas, decoded at the marking
+
+Quake's PVS rows (a bit a leaf, a zero byte followed by its run's length)
+take 6 to 50 KB a map in the skeleton (E1M3 25.5 KB, E3M5 50.0, E4M7
+42.4, START 34.2; 929 KB over the 32 maps). Rows of nearby leaves differ
+in a few bits; measured over the cooked worlds (the scratchpad's scripts
+before the cook was changed): every row stored as the XOR against the
+previous leaf's row, RLE'd, would take 618 KB (−33 %), against the best
+of the previous eight rows 545 KB (−41 %), but a marking would then
+decode a chain of rows. Chain-free: a row either plain or the XOR
+against a plain row of a leaf before it, the plain rows the anchors,
+chosen greedily among the last four plain rows within 255 leaves: 742 KB
+(−20 %), a marking decoding two rows at most; eight or thirty-two
+anchors give no more. So:
+
+- **The cook** (`tools/qcook/world.c`): each row of the world's leaves,
+  in leaf order, decoded, XORed against each of the last four anchors
+  within 255 leaves, and written as a byte `back` (0: plain; else the
+  anchor is the leaf `back` before) followed by Quake's RLE of the row or
+  of the smallest XOR; a plain row becomes the newest anchor. Every row
+  is then decoded back and compared with Quake's (the cook dies on a
+  difference). Rows over 256 bytes (2 048 leaves) are refused: the
+  engine's buffer. `qw_vis_decode` (qcook.h) decodes a cooked row for the
+  cook's other readers (the cut arena's sums, bmf.c). Magic QWVG → QWVH,
+  QWZI for the skeleton; a `PVS rows` line per map (E1M3's: `PVS rows:
+  25516 B -> 19897 B, 859 of 967 rows the XOR against an earlier plain
+  row`).
+- **The engine**: the marking (`r_world.s` `mark_pvs`, `mark_pvs_far`)
+  expands the camera leaf's row into `r_vis_row` (render.c, 256 bytes)
+  first (`vis_expand`: a plain row from its RLE; a delta's base row, the
+  leaf `back` before it, then the delta XORed in, its runs skipped; no
+  row: every bit), then stamps the visible leaves and their ancestors
+  from the buffer, a byte at a time (the run-skipping of the old loop
+  gone: the zeros are in the buffer). `world_vis_row` (the AI's client
+  check, the cut arena's load) decodes the same way in C; the AI's
+  `row_has` (a monster's sight through the PVS) reads one byte of the
+  row and of its base, walked to and no further, as before.
+
+**Checked**: the 128 spawn views' `H` lines identical, the C engine's
+128, the game bench's 23, `MOVERS=1`'s 165, `ENTS=1`'s 83, `MONSTERS=1`'s
+state and `H` lines (the AI's sight through the rows: `pvs_sees`), E1M3's
+crowd fight and E1M3 cleared line for line (the cycles aside), the walk's
+27 maps (the late frames the same); the cook's own decode of every row.
+
+**Measured.** The rows: 928 627 → 741 893 B over the 32 maps (−20.1 %;
+E3M5 49 973 → 39 465, E4M7 42 378 → 32 751, START 34 235 → 26 553, E1M3
+25 516 → 19 897, E1M7 6 042 → 4 969); the deltas 859 of E1M3's 967 rows,
+1 297 of E4M7's 1 436. E1M3's skeleton 274 432 → 270 336 B (the file
+in whole sectors: two fewer), its pool 478 784 → 482 064 B (§90.10);
+every pool +4.7 KB a map on average at the release's arena (E4M7's 432 →
+441 KB, E3M5's 586 → 595, E1M3's 467 → 470, START's 720 → 725, END's
+−1: its rows were 5.7 KB; §90.11); the release's arena 1 389 120 →
+1 388 304 B (the expansion's code and the buffer). The marking: the
+row expanded first, about 1 300 instructions more on E1M3's 121-byte
+rows at a leaf change (2 000 on E4M7's 180), where the old loop skipped
+the runs; the walk's 27 maps show +0.09 % on the frames' cycles, within
+the builds' noise, their late frames the same (2263), the views' first
+frames the same.
+
 ### 90.11 Every map's stream pool at each lever
 
 `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1 LEVEL_CAP=<the lever's release arena>`:
-the `bench zone` lines' pool, KB (§90.3's run is with §90.4's; the
-smallest pool is E4M7's throughout).
+the `bench zone` lines' pool, KB (§90.3's run is with §90.4's; §90.8 was
+measured, not built; the smallest pool is E4M7's throughout).
 
-| map | base (795bfb2) | §90.1 | §90.2 | §90.3-4 | §90.5 | §90.6 | §90.7 |
-|---|---|---|---|---|---|---|---|
-| the release's arena (B) | 1 343 008 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 | 1 389 120 |
-| START | 631 | 663 | 682 | 702 | 710 | 706 | 720 |
-| E1M1 | 578 | 610 | 629 | 649 | 659 | 672 | 686 |
-| E1M2 | 466 | 498 | 517 | 537 | 551 | 555 | 569 |
-| E1M3 | 348 | 380 | 399 | 419 | 438 | 453 | 467 |
-| E1M4 | 438 | 470 | 489 | 509 | 526 | 539 | 553 |
-| E1M5 | 463 | 495 | 514 | 534 | 552 | 567 | 581 |
-| E1M6 | 549 | 581 | 600 | 620 | 636 | 648 | 662 |
-| E1M7 | 988 | 1020 | 1039 | 1059 | 1065 | 1061 | 1075 |
-| E1M8 | 773 | 805 | 823 | 843 | 854 | 850 | 865 |
-| E2M1 | 525 | 557 | 576 | 596 | 610 | 622 | 636 |
-| E2M2 | 491 | 523 | 542 | 562 | 574 | 584 | 598 |
-| E2M3 | 504 | 536 | 555 | 575 | 589 | 596 | 610 |
-| E2M4 | 350 | 382 | 400 | 420 | 439 | 454 | 468 |
-| E2M5 | 542 | 574 | 593 | 613 | 628 | 639 | 653 |
-| E2M6 | 372 | 404 | 423 | 443 | 466 | 476 | 491 |
-| E2M7 | 358 | 390 | 409 | 429 | 451 | 464 | 478 |
-| E3M1 | 560 | 592 | 611 | 631 | 644 | 658 | 672 |
-| E3M2 | 609 | 641 | 660 | 680 | 694 | 718 | 733 |
-| E3M3 | 633 | 665 | 684 | 704 | 717 | 733 | 747 |
-| E3M4 | 363 | 395 | 414 | 434 | 451 | 471 | 485 |
-| E3M5 | 479 | 511 | 530 | 550 | 565 | 572 | 586 |
-| E3M6 | 454 | 486 | 505 | 525 | 543 | 542 | 556 |
-| E3M7 | 583 | 615 | 634 | 654 | 667 | 674 | 688 |
-| E4M1 | 528 | 560 | 579 | 599 | 615 | 621 | 635 |
-| E4M2 | 537 | 569 | 588 | 608 | 623 | 633 | 647 |
-| E4M3 | 355 | 387 | 406 | 426 | 446 | 462 | 476 |
-| E4M4 | 494 | 526 | 545 | 565 | 586 | 587 | 601 |
-| E4M5 | 405 | 437 | 456 | 476 | 497 | 519 | 534 |
-| E4M6 | 551 | 583 | 602 | 622 | 639 | 653 | 667 |
-| E4M7 | 308 | 340 | 359 | 379 | 397 | 418 | 432 |
-| END | 904 | 936 | 955 | 975 | 985 | 982 | 996 |
-| mean | 521 | 553 | 572 | 592 | 607 | 617 | 631 |
+| map | base (795bfb2) | §90.1 | §90.2 | §90.3-4 | §90.5 | §90.6 | §90.7 | §90.9 |
+|---|---|---|---|---|---|---|---|---|
+| the release's arena (B) | 1 343 008 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 | 1 389 120 | 1 388 304 |
+| START | 631 | 663 | 682 | 702 | 710 | 706 | 720 | 725 |
+| E1M1 | 578 | 610 | 629 | 649 | 659 | 672 | 686 | 690 |
+| E1M2 | 466 | 498 | 517 | 537 | 551 | 555 | 569 | 576 |
+| E1M3 | 348 | 380 | 399 | 419 | 438 | 453 | 467 | 470 |
+| E1M4 | 438 | 470 | 489 | 509 | 526 | 539 | 553 | 560 |
+| E1M5 | 463 | 495 | 514 | 534 | 552 | 567 | 581 | 584 |
+| E1M6 | 549 | 581 | 600 | 620 | 636 | 648 | 662 | 664 |
+| E1M7 | 988 | 1020 | 1039 | 1059 | 1065 | 1061 | 1075 | 1076 |
+| E1M8 | 773 | 805 | 823 | 843 | 854 | 850 | 865 | 866 |
+| E2M1 | 525 | 557 | 576 | 596 | 610 | 622 | 636 | 641 |
+| E2M2 | 491 | 523 | 542 | 562 | 574 | 584 | 598 | 608 |
+| E2M3 | 504 | 536 | 555 | 575 | 589 | 596 | 610 | 615 |
+| E2M4 | 350 | 382 | 400 | 420 | 439 | 454 | 468 | 477 |
+| E2M5 | 542 | 574 | 593 | 613 | 628 | 639 | 653 | 656 |
+| E2M6 | 372 | 404 | 423 | 443 | 466 | 476 | 491 | 494 |
+| E2M7 | 358 | 390 | 409 | 429 | 451 | 464 | 478 | 485 |
+| E3M1 | 560 | 592 | 611 | 631 | 644 | 658 | 672 | 679 |
+| E3M2 | 609 | 641 | 660 | 680 | 694 | 718 | 733 | 734 |
+| E3M3 | 633 | 665 | 684 | 704 | 717 | 733 | 747 | 748 |
+| E3M4 | 363 | 395 | 414 | 434 | 451 | 471 | 485 | 488 |
+| E3M5 | 479 | 511 | 530 | 550 | 565 | 572 | 586 | 595 |
+| E3M6 | 454 | 486 | 505 | 525 | 543 | 542 | 556 | 561 |
+| E3M7 | 583 | 615 | 634 | 654 | 667 | 674 | 688 | 691 |
+| E4M1 | 528 | 560 | 579 | 599 | 615 | 621 | 635 | 642 |
+| E4M2 | 537 | 569 | 588 | 608 | 623 | 633 | 647 | 653 |
+| E4M3 | 355 | 387 | 406 | 426 | 446 | 462 | 476 | 481 |
+| E4M4 | 494 | 526 | 545 | 565 | 586 | 587 | 601 | 610 |
+| E4M5 | 405 | 437 | 456 | 476 | 497 | 519 | 534 | 537 |
+| E4M6 | 551 | 583 | 602 | 622 | 639 | 653 | 667 | 670 |
+| E4M7 | 308 | 340 | 359 | 379 | 397 | 418 | 432 | 441 |
+| END | 904 | 936 | 955 | 975 | 985 | 982 | 996 | 995 |
+| mean | 521 | 553 | 572 | 592 | 607 | 617 | 631 | 636 |

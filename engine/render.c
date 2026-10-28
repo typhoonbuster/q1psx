@@ -255,6 +255,9 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
    vertex's light factor x 128, from 128 at half the draw distance down to
    0 at it */
 uint8_t r_fogtab[1024];
+uint8_t r_vis_row[256];     /* the camera leaf's PVS row expanded (r_world.s vis_expand: the
+                               marking reads it byte by byte; formats/qworld.h qw_leaf vis,
+                               docs/porting-notes.md §90.9); the cook keeps rows under 256 */
 int32_t r_part_z;
 
 static int opt_dist, opt_flat;

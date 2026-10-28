@@ -3411,13 +3411,15 @@ ep_back:                                 # (ei_next's own work here)
 	RECLOOP deo1, dm_exit, 1, 1          # the models': the draw distance
 
 # -----------------------------------------------------------------------------
-# mark_pvs: a0 = new camera leaf. visframe++, then walk the leaf's
-# RLE-compressed PVS row (a zero byte is followed by a count of zero bytes;
-# no row = everything visible: one 0xff byte, read again for every byte) and
-# stamp each visible leaf and its not-yet-stamped ancestors. A byte's leaves
-# go highest first. Only the row's last byte can name a leaf past the array:
-# it is masked (r_state vis_lastmask), no other byte is tested.
-# Clobbers t0-t7, t9, a1-a3, s5.
+# mark_pvs: a0 = new camera leaf. visframe++, then the leaf's PVS row
+# expanded into r_vis_row (vis_expand: a plain row, or the XOR against an
+# earlier leaf's plain row, formats/qworld.h qw_leaf vis, docs/porting-notes.md
+# §90.9; no row = everything visible), then each visible leaf and its
+# not-yet-stamped ancestors stamped, a byte of the row at a time. A byte's
+# leaves go highest first. Only the row's last byte can name a leaf past the
+# array: it is masked (r_state vis_lastmask), no other byte is tested.
+# Clobbers t0-t7, t9, a1-a3, s5 (ra kept in the scratchpad's walk stack:
+# empty before the walk).
 # mark_pvs_far (the draw distance's, called instead: render.c patches the
 # call): a leaf whose box is farther from the camera than r_state.mark_r
 # on an axis (vertex units: past the draw distance's depth anywhere in the
@@ -3437,14 +3439,18 @@ ep_back:                                 # (ei_next's own work here)
 	sw      $t9, SP_T0($t8)
 .endif
 	lw      $s5, RS_VISFRAME($s0)
-	lw      $a1, L_VIS($a0)              # compressed row, or 0 (KUSEG: the top
-	addiu   $s5, $s5, 1                  # byte is the leaf's render list)
+	sw      $ra, SP_STACK + 4($t8)       # (the walk's stack: empty until the walk)
+	addiu   $s5, $s5, 1
+	jal     vis_expand                   # the row into r_vis_row
 	sw      $s5, RS_VISFRAME($s0)
-	sll     $a1, $a1, 8
-	srl     $a1, $a1, 8
+	lw      $ra, SP_STACK + 4($t8)
+	lw      $t7, RS_NODES($s0)           # (vis_expand's clobbers back)
+	li      $t6, 0xffff
 	lw      $a2, RS_ROWBYTES($s0)
 	lw      $a3, RS_LEAVES($s0)
 	lw      $t5, RS_VIS_LASTMASK($s0)
+	lui     $a1, %hi(r_vis_row)
+	addiu   $a1, $a1, %lo(r_vis_row)
 .if \far
 	lw      $v0, SP_CAM+0($t8)           # the camera, and the reach
 	lw      $v1, SP_CAM+4($t8)
@@ -3452,33 +3458,23 @@ ep_back:                                 # (ei_next's own work here)
 	lw      $at, RS_MARK_R($s0)
 .endif
 	addiu   $a2, $a2, -1                 # a2 = row bytes left - 1
-	li      $t4, 1                       # the row: one byte after the other
-	bnez    $a1, \n\()_byte
 	addiu   $a3, $a3, 8 * L_SIZE         # byte 0's highest leaf: leaf 8
-	lui     $a1, %hi(mp_all)             # no row
-	addiu   $a1, $a1, %lo(mp_all)
-	move    $t4, $zero
-\n\()_byte:
+\n\()_byte:                               # a1 = the byte, a3 = its leaf 8
 	blez    $a2, \n\()_last
 	lbu     $t0, 0($a1)                  # (none left: a harmless read)
-	addu    $a1, $a1, $t4
+	addiu   $a1, $a1, 1
+	addiu   $a2, $a2, -1
 	bnez    $t0, \n\()_bits
 	move    $t9, $a3                     # (the bits' leaf cursor)
-	lbu     $t1, 0($a1)                  # a zero byte: a run of t1 of them
-	addiu   $a1, $a1, 1
-	subu    $a2, $a2, $t1
-	sll     $t2, $t1, 8
-	sll     $t1, $t1, 5
-	subu    $t1, $t2, $t1                # bytes * 8 leaves * 28 B
 	b       \n\()_byte
-	addu    $a3, $a3, $t1
-\n\()_last:                               # the last byte (t0), unless a run
-	bltz    $a2, \n\()_done                 # covered it
+	addiu   $a3, $a3, 8 * L_SIZE         # a zero byte: the next
+\n\()_last:                               # the last byte (t0)
+	bltz    $a2, \n\()_done                 # (none: done)
 	and     $t0, $t0, $t5                # (its bits past the last leaf off)
-	beqz    $t0, \n\()_done                 # (a zero byte: a run's, nothing)
+	addiu   $a2, $a2, -1
+	beqz    $t0, \n\()_done
 	move    $t9, $a3
 \n\()_bits:                               # t0: a byte's bits, t9: its leaf 8
-	addiu   $a2, $a2, -1
 	sll     $t0, $t0, 24                 # this leaf's bit at bit 31
 \n\()_bit:
 	bgez    $t0, \n\()_skip
@@ -3549,10 +3545,97 @@ ep_back:                                 # (ei_next's own work here)
 	.globl  mark_pvs_far
 	MARKPVS mark_pvs_far, 1
 
-
-	.section .rodata.mp_all, "a", @progbits
-mp_all:                                  # mark_pvs: the row of a leaf without one
-	.byte   0xff
+# vis_expand: a0 = the camera leaf (KUSEG), s0 = r_state. The leaf's PVS row
+# into r_vis_row, r_state.rowbytes bytes: no row, every bit; a plain row (its
+# first byte 0) expanded from Quake's RLE (a zero byte, then the count of
+# zero bytes); a delta row (its first byte `back`), the plain row of the leaf
+# `back` before it expanded, then the delta's bytes XORed in, its runs
+# skipped. The cook's rows are whole: no count is clamped. Clobbers t0-t7,
+# t9, a1-a3; keeps a0.
+	.section .text.vis_expand, "ax", @progbits
+	.type   vis_expand, @function
+vis_expand:
+	lw      $a1, L_VIS($a0)              # the row (its top byte: the render list), or 0
+	lw      $a2, RS_ROWBYTES($s0)
+	lui     $t3, %hi(r_vis_row)
+	addiu   $t3, $t3, %lo(r_vis_row)     # the out cursor
+	sll     $a1, $a1, 8
+	beqz    $a1, ve_all
+	srl     $a1, $a1, 8
+	lbu     $t0, 0($a1)                  # back
+	addiu   $a3, $a1, 1                  # the payload
+	beqz    $t0, ve_plain
+	move    $t6, $zero                   # (delay) no delta after the plain row
+	sll     $t1, $t0, 5                  # the base leaf: back x 28 before
+	sll     $t2, $t0, 2
+	subu    $t1, $t1, $t2
+	subu    $t1, $a0, $t1
+	lw      $t1, L_VIS($t1)              # its row (plain: the cook's)
+	move    $t6, $a3                     # the delta, after the base
+	sll     $t1, $t1, 8
+	srl     $t1, $t1, 8
+	b       ve_pl
+	addiu   $a3, $t1, 1                  # (delay) past its back byte
+ve_plain:
+ve_pl:                                   # a3: the RLE in, t3: out, a2: bytes left
+	lbu     $t4, 0($a3)
+	addiu   $a3, $a3, 1
+	beqz    $t4, ve_prun
+	addiu   $a2, $a2, -1                 # (delay) one byte out
+	sb      $t4, 0($t3)
+	bgtz    $a2, ve_pl
+	addiu   $t3, $t3, 1                  # (delay)
+	b       ve_pdone
+	nop
+ve_prun:                                 # a run of t5 zero bytes
+	lbu     $t5, 0($a3)
+	addiu   $a3, $a3, 1
+	addiu   $a2, $a2, 1                  # (the byte's count undone: the run's)
+	subu    $a2, $a2, $t5
+ve_pz:
+	sb      $zero, 0($t3)
+	addiu   $t5, $t5, -1
+	bgtz    $t5, ve_pz
+	addiu   $t3, $t3, 1                  # (delay)
+	bgtz    $a2, ve_pl
+	nop
+ve_pdone:
+	beqz    $t6, ve_ret                  # a plain row: done
+	lw      $a2, RS_ROWBYTES($s0)        # (delay) the delta over the whole row
+	lui     $t3, %hi(r_vis_row)
+	addiu   $t3, $t3, %lo(r_vis_row)
+ve_x:                                    # t6: the delta's RLE, t3: the row
+	lbu     $t4, 0($t6)
+	addiu   $t6, $t6, 1
+	beqz    $t4, ve_xrun
+	addiu   $a2, $a2, -1                 # (delay)
+	lbu     $t5, 0($t3)
+	addiu   $t3, $t3, 1
+	xor     $t5, $t5, $t4
+	bgtz    $a2, ve_x
+	sb      $t5, -1($t3)                 # (delay)
+	jr      $ra
+	nop
+ve_xrun:                                 # a run: nothing changes over it
+	lbu     $t5, 0($t6)
+	addiu   $t6, $t6, 1
+	addiu   $a2, $a2, 1
+	subu    $a2, $a2, $t5
+	bgtz    $a2, ve_x
+	addu    $t3, $t3, $t5                # (delay)
+ve_ret:
+	jr      $ra
+	nop
+ve_all:                                  # no row: every bit
+	li      $t4, 0xff
+ve_al:
+	sb      $t4, 0($t3)
+	addiu   $a2, $a2, -1
+	bgtz    $a2, ve_al
+	addiu   $t3, $t3, 1                  # (delay)
+	jr      $ra
+	nop
+	.size   vis_expand, . - vis_expand
 
 	.pushsection .rodata.r_far_sites, "a", @progbits
 	.global r_far_sites_end

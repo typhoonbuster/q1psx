@@ -2047,6 +2047,26 @@ followed by R0-R4.
     before the drive is up stay. The release's arena +14 672 B (1 374 448
     → 1 389 120), every pool +14 KB (E4M7's 418 → 432 KB, E1M3's 453 →
     467); every frame identical; a load reads 8 sectors more.
+  - §90.8 nodes and leaves on 16-bit indices: measured, not built. The
+    node's two face-block pointers must stay pointers (the zone switch
+    patches them to the slot holding a chunk's records) and the boxes
+    their 12 bytes unless the walk rebuilds them from the parent's at
+    20-25 cycles a node (2-3 % of a frame): 16-bit children, marks and
+    vis offsets give 32-byte nodes and 24-byte leaves, 7-20 KB a map
+    (E1M3 15 KB), a quarter of the promise; the byte-boxes variant and
+    its cycles are a call left open.
+  - §90.9 the PVS rows as deltas (`tools/qcook/world.c`, `formats/qworld.h`
+    `qw_leaf` vis: a byte `back`, then Quake's RLE of the row or of its
+    XOR against the plain row of the leaf `back` before; QWVG → QWVH,
+    QWZH → QWZI): the cook tries the last four plain rows within 255
+    leaves and keeps the shorter; the marking (`r_world.s` `vis_expand`)
+    expands the camera leaf's row into `r_vis_row` (256 B) first, then
+    stamps from the buffer; `world_vis_row` and the AI's `row_has`
+    decode the same way. The rows 929 → 742 KB over the 32 maps (−20 %;
+    E3M5 50.0 → 39.5 KB, E4M7 42.4 → 32.8, E1M3 25.5 → 19.9); every pool
+    +4.7 KB on average (E4M7's 432 → 441 KB, E3M5's 586 → 595, E1M3's
+    467 → 470); every frame identical, the walk's frames +0.09 %, its
+    late frames the same.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**

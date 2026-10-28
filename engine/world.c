@@ -551,6 +551,37 @@ int world_box_leaves(const int32_t mins[3], const int32_t maxs[3], uint16_t *out
 	return box_leaves((uint32_t) world.root & 0x00ffffffu, c, h, out, 0, max);
 }
 
+/* Quake's RLE of a row (a zero byte, then the count of zero bytes) expanded
+   into row[rowbytes], or XORed into it (a cooked delta row: formats/qworld.h
+   qw_leaf vis, docs/porting-notes.md §90.9); the rows are the cook's, whole */
+static void rle_expand(const uint8_t *in, uint8_t *row, uint32_t rowbytes)
+{
+	uint32_t o = 0;
+	while (o < rowbytes) {
+		if (*in) {
+			row[o++] = *in++;
+			continue;
+		}
+		uint32_t c = in[1];
+		in += 2;
+		while (c-- > 0 && o < rowbytes)
+			row[o++] = 0;
+	}
+}
+
+static void rle_xor(const uint8_t *in, uint8_t *row, uint32_t rowbytes)
+{
+	uint32_t o = 0;
+	while (o < rowbytes) {
+		if (*in) {
+			row[o++] ^= *in++;
+			continue;
+		}
+		o += in[1];
+		in += 2;
+	}
+}
+
 Q_COLD void world_vis_row(const qw_leaf *leaf, uint8_t *row, uint32_t rowbytes)
 {
 	const uint8_t *in = 0;
@@ -563,16 +594,14 @@ Q_COLD void world_vis_row(const qw_leaf *leaf, uint8_t *row, uint32_t rowbytes)
 		memset(row, 0xff, rowbytes);
 		return;
 	}
-	uint32_t o = 0;                               /* Mod_DecompressVis */
-	while (o < rowbytes) {
-		if (*in) {
-			row[o++] = *in++;
-			continue;
-		}
-		int c = in[1];
-		in += 2;
-		while (c-- > 0 && o < rowbytes)
-			row[o++] = 0;
+	uint32_t back = *in++;                        /* 0: the row itself; else the XOR against the
+	                                                 plain row of the leaf `back` before */
+	if (back) {
+		const qw_leaf *base = leaf - back;
+		rle_expand((const uint8_t *) ((base->vis & 0x00ffffffu) | 0x80000000u) + 1, row, rowbytes);
+		rle_xor(in, row, rowbytes);
+	} else {
+		rle_expand(in, row, rowbytes);
 	}
 }
 

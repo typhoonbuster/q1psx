@@ -871,15 +871,7 @@ static void arena_of(const bmf_need *room, uint32_t *recs_out, uint32_t *verts_o
 		const qw_leaf *lf = &W.leaves[l];
 		if (lf->vis == QW_NONE || lf->contents == QW_CONTENTS_SOLID)
 			continue;
-		const uint8_t *in = vis + lf->vis, *end = (const uint8_t *) W.h + W.h->ofs_vis + W.h->len_vis;
-		uint32_t out = 0;
-		while (out < rowbytes && in < end) {               /* (Mod_DecompressVis) */
-			if (*in) { row[out++] = *in++; continue; }
-			int c = in[1];
-			in += 2;
-			while (c-- && out < rowbytes) row[out++] = 0;
-		}
-		while (out < rowbytes) row[out++] = 0;
+		qw_vis_decode(vis, W.leaves, l, row, rowbytes);
 		rows++;
 		memset(rowset, 0, leafbytes);                        /* the row's bit l - 1 as leaf l's */
 		for (uint32_t lf2 = 1; lf2 <= nv; lf2++)

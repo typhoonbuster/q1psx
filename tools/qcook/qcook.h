@@ -39,6 +39,10 @@ void buf_align4(buf_t *b);
 /* ------------------------------------------------------------------- pak -- */
 
 uint8_t       *read_file(const char *path, long *len);
+/* a cooked world's PVS row of leaf `leaf` (formats/qworld.h qw_leaf vis: a
+   plain row or the XOR against an earlier leaf's), decoded into row[rowbytes]
+   (world.c; leaf 1..num_visleafs with a row) */
+void qw_vis_decode(const uint8_t *vis, const void *leaves, uint32_t leaf, uint8_t *row, uint32_t rowbytes);
 const uint8_t *pak_find(const uint8_t *pak, long pak_len, const char *name, uint32_t *len);
 
 /* ----------------------------------------------------------------- game -- */
