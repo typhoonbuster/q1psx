@@ -1318,6 +1318,14 @@ static void bench_view_ticks(const char *view)
 /* the level arena's room the world takes, a zoned one's measure (§57):
    the skeleton and the slots, the stream's pool after them (the world's
    load in all: its "world: ... arena" line) */
+/* the brush models' cut arena's traffic since the map's load (§90.6) */
+static void bench_bmf_arena(const char *what)
+{
+	printf("bmf arena %s: rooms taken %u, given up %u, draws without room %u; %u cuts, %u cycles, the dearest %u\n",
+	       what, (unsigned) bmf_stats[7], (unsigned) bmf_stats[8], (unsigned) bmf_stats[9], (unsigned) bmf_stats[2],
+	       (unsigned) bmf_stats[4], (unsigned) bmf_stats[5]);
+}
+
 static void bench_zone_ram(const char *map)
 {
 	if (zone_on())
@@ -1383,6 +1391,7 @@ static void bench_zones(void)
 		uint32_t skipped0 = r_model_skipped, full = 0;
 		const int32_t speed = 320 * CLIP_SUB / 60;
 		uint32_t reads0 = stream_stats.reads;
+		prof_sample_start();                          /* (SAMPLE=1: the walk's profile) */
 		for (int w = 1; w < nwp && frames < ZW_FRAMES; w++) {
 			int32_t d[3], e0[3], e1[3];
 			for (int c = 0; c < 3; c++) {
@@ -1448,6 +1457,9 @@ static void bench_zones(void)
 		       z->evictions, z->read_errors, frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax,
 		       stream_stats.reads - reads0, stream_stats.snd_missing, stream_stats.ram_swaps, pkt_max,
 		       room_min == 0x7fffffff ? -1 : (int) room_min, (unsigned) (r_model_skipped - skipped0), full);
+		bench_bmf_arena(world_map_name(m));
+		prof_sample_stop();
+		prof_sample_print(world_map_name(m));
 		game_active = 0;
 		zone_sync = 1;
 	}
@@ -1613,9 +1625,10 @@ static void ents_dump(const char *name)
 	ents_debug = 0;
 	rl_order_print(name);
 	printf("bmf %s: %u models with pieces, %u pieces made in %u cuts (%u given up), %u cycles, %u the dearest;"
-	       " items %d, lists %d\n", name, (unsigned) bmf_stats[0], (unsigned) bmf_stats[1],
-	       (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4], (unsigned) bmf_stats[5],
-	       rl_num_items(), rl_num_lists());
+	       " items %d, lists %d; rooms taken %u, given up %u, drawn whole for want of one %u\n", name,
+	       (unsigned) bmf_stats[0], (unsigned) bmf_stats[1], (unsigned) bmf_stats[2], (unsigned) bmf_stats[3],
+	       (unsigned) bmf_stats[4], (unsigned) bmf_stats[5], rl_num_items(), rl_num_lists(),
+	       (unsigned) bmf_stats[7], (unsigned) bmf_stats[8], (unsigned) bmf_stats[9]);
 }
 
 static edict_t *ents_first(int cls, int (*ok)(const edict_t *))
@@ -2795,6 +2808,7 @@ static void bench_monsters(void)
 		cmd.fire = 0;
 		prof_sample_stop();
 		prof_sample_print("fight");
+		bench_bmf_arena("fight");
 #if !Q1PSX_ENGINE_C
 		printf("seendiff %u walks: mismatches %u\n", (unsigned) ents_seen_checked, (unsigned) ents_seen_bad);
 #endif
@@ -2916,6 +2930,7 @@ static void clear_map(void)
 	       "packets %u bytes at most, a model's room %d at least, %u models left out, %u full frames\n",
 	       world.map_name, (unsigned) cframes, (unsigned) ctot, (unsigned) cdrawn, (unsigned) ccut, cpkt,
 	       croom == 0x7fffffff ? -1 : (int) croom, (unsigned) (r_model_skipped - cskipped0), cfull);
+	bench_bmf_arena("clear");
 }
 
 /* MONSTERS=4: MAP (E1M3) loaded and cleared. MONSTERS=5: from MAP (E1M1),

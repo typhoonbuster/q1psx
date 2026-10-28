@@ -413,6 +413,8 @@ Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn p
 	world.worldtype    = h->worldtype;
 	world.title        = world.strings + h->title;
 	world.max_bm_depth = h->max_bm_depth;
+	world.bmf_arena_recs  = h->bmf_arena_recs;
+	world.bmf_arena_verts = h->bmf_arena_verts;
 
 	world.face_visframe = mem_level_alloc(h->num_faces * 2);
 	if (!world.face_visframe)
@@ -547,6 +549,31 @@ int world_box_leaves(const int32_t mins[3], const int32_t maxs[3], uint16_t *out
 		h[k] = ((hi - lo) >> 1) + 1;
 	}
 	return box_leaves((uint32_t) world.root & 0x00ffffffu, c, h, out, 0, max);
+}
+
+Q_COLD void world_vis_row(const qw_leaf *leaf, uint8_t *row, uint32_t rowbytes)
+{
+	const uint8_t *in = 0;
+	if (leaf) {
+		leaf = (const qw_leaf *) ((uintptr_t) leaf | 0x80000000u);
+		if (leaf->vis)
+			in = (const uint8_t *) ((leaf->vis & 0x00ffffffu) | 0x80000000u);
+	}
+	if (!in) {
+		memset(row, 0xff, rowbytes);
+		return;
+	}
+	uint32_t o = 0;                               /* Mod_DecompressVis */
+	while (o < rowbytes) {
+		if (*in) {
+			row[o++] = *in++;
+			continue;
+		}
+		int c = in[1];
+		in += 2;
+		while (c-- > 0 && o < rowbytes)
+			row[o++] = 0;
+	}
 }
 
 const qw_leaf *world_point_leaf(const int32_t pos[3])

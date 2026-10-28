@@ -40,12 +40,31 @@ void bmf_load(void);
 typedef struct bmf_cache bmf_cache;
 extern bmf_cache **bmf_models;
 
+/* Does the model hold its room in the cut arena (§90.6)? (bmf_cache is
+   bmfrag.c's: its `resident` byte's offset, asserted there) */
+#define BMF_RESIDENT_OFS 72
+static inline int bmf_resident(const bmf_cache *c)
+{
+	return ((const uint8_t *) c)[BMF_RESIDENT_OFS];
+}
+
 /* At a new PVS stamp `vis`: is a leaf of edict e's pieces in the PVS?
    (exact, where the box's kept leaves are a superset, cut short past 8;
    a model too cut up answers `whole`, its box's leaves' answer; one whose
    pieces were cut elsewhere, having moved while not drawn, its box's
    leaves' answer too, or its top node's when they were cut short) */
 int bmf_seen(const bmf_cache *c, const edict_t *e, uint16_t vis, int whole);
+
+/* Each frame, before any model is drawn: every drawn model with pieces the
+   PVS sees and the eye faces marked as this frame's (bmf_keep: its room
+   kept), then each without room given it (bmf_prepare: the room of the
+   models not drawn this frame given up, the longest undrawn first, the
+   arenas packed; nothing of the frame's lists points into them yet,
+   §90.6); only in a frame with such a model (bmf_resident). At the frame
+   count's wrap (r_frame): bmf_wrap, the marks with it. */
+void bmf_keep(const edict_t *e);
+void bmf_prepare(const edict_t *e);
+void bmf_wrap(void);
 
 /* Each frame, a drawn brush model with pieces (bmf_models) in the PVS `vis`:
    its pieces facing the eye in their leaves' render lists, cut again if it
@@ -68,8 +87,10 @@ int bmf_may_hide(int model, const int32_t p[3]);
 /* a model's box where it was last cut (1/8 units: ORDER_C=2's made-up asks) */
 void bmf_model_box(int model, int32_t lo[3], int32_t hi[3]);
 /* this level: models with pieces, pieces made, cuts, cuts given up, the
-   cuts' cycles, the dearest cut's, cuts put off (moved out of view) */
-extern uint32_t bmf_stats[7];
+   cuts' cycles, the dearest cut's, cuts put off (moved out of view), rooms
+   taken in the cut arena, rooms given up for another model, draws without
+   room (drawn whole) (§90.6) */
+extern uint32_t bmf_stats[10];
 /* a brush model's records' bytes (the movers' scenario: the biggest) */
 uint32_t bmf_model_bytes(int model);
 #if Q1PSX_BMF_C == 2

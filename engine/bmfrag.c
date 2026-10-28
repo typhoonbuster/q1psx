@@ -63,12 +63,222 @@ struct bmf_cache {
 	uint32_t   num_groups, groups_cap;
 	uint32_t   pool_first, pool_cap, pool_len;   /* its vertices in bmf_pool      */
 	int32_t    cam[3];       /* the eye in its space when last drawn (bmf_draw)  */
+	uint8_t    resident;     /* holds its room in the cut arena (§90.6); 0: no
+	                            pieces, drawn whole until it gets some         */
+	uint8_t    pad[3];
+	uint32_t   last_drawn;   /* the frame it was last drawn (r_state.framecount):
+	                            the oldest gives its room up first            */
+	uint32_t   page_a, page_p;   /* its room's first pages in the arena and the pool */
 };
 
 qw_vert *bmf_pool;               /* (the asm cut's too) */
 #ifdef Q1PSX_BENCH
-uint32_t bmf_stats[7];
+uint32_t bmf_stats[10];          /* ... [7] rooms taken, [8] given up for another, [9]
+                                    draws without room (drawn whole) */
 #endif
+
+/* ---- the cut arena (docs/porting-notes.md §90.6) ----------------------------
+   The pieces' room is shared: an arena of records and groups and a pool of
+   vertices, sized by the cook (qw_header bmf_arena_recs / bmf_arena_verts:
+   the most the models visible from one leaf take at once, plus the largest
+   model's room, each model's room whole pages), in pages of BMF_PAGE
+   bytes, a bitmap each. A model's room is the cook's measure of its cuts'
+   most. Each frame, before any model is drawn, every model the frame draws
+   is marked (bmf_keep), then those without room take it (bmf_prepare):
+   the lowest free run, else the blocks packed down (bmf_compact) and the
+   models not drawn this frame given up, the longest undrawn first, until
+   the room is there; a model given up is cut again when it is drawn next.
+   A model that cannot have it (the frame's models hold it all: more than
+   the cook's sets gave its leaf) is drawn whole that frame. Until §90.6
+   every drawn model had its room for the whole level (E1M3: 69.9 KB; the
+   arena 23.7). */
+#define BMF_PAGE 64
+#define BMF_COLD __attribute__((optimize("Os")))   /* the load's code, the rare ways' (a room taken
+                                                     or given up, an alias model among pieces):
+                                                     small before fast */
+typedef struct {
+	uint32_t *bits;              /* a bit a page, 1 taken                     */
+	uint8_t  *owner;             /* a byte a page: the model holding it, 0 none */
+	uint32_t  pages, free;
+	uint8_t  *base;
+} bmf_alloc_t;
+static bmf_alloc_t bmf_arena;    /* bytes: records and groups                  */
+static bmf_alloc_t bmf_vpool;    /* vertices (8 B each: BMF_PAGE / 8 a page)    */
+
+BMF_COLD static int alloc_find(const bmf_alloc_t *a, uint32_t n, uint32_t *first)
+{
+	uint32_t run = 0;
+	if (!n) {                                   /* (a model whose cuts take nothing: a block
+		                                           of none, at the start) */
+		*first = 0;
+		return 1;
+	}
+	for (uint32_t i = 0; i < a->pages; i++) {
+		if (a->bits[i >> 5] & (1u << (i & 31))) {
+			run = 0;
+			continue;
+		}
+		if (++run == n) {
+			*first = i + 1 - n;
+			return 1;
+		}
+	}
+	return 0;
+}
+
+BMF_COLD static void alloc_mark(bmf_alloc_t *a, uint32_t first, uint32_t n, int model)
+{
+	for (uint32_t i = first; i < first + n; i++) {
+		uint32_t bit = 1u << (i & 31);
+		if (model) {
+			a->free -= !(a->bits[i >> 5] & bit);
+			a->bits[i >> 5] |= bit;
+		} else {
+			a->free += (a->bits[i >> 5] & bit) != 0;
+			a->bits[i >> 5] &= ~bit;
+		}
+		a->owner[i] = (uint8_t) model;
+	}
+}
+
+static void bmf_release(bmf_cache *c);
+static uint32_t pages_of(uint32_t bytes);
+
+/* n pages moved down (dst under src: four words a turn in rising order,
+   the source never overrun; the SDK's memmove goes byte by byte) */
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+BMF_COLD static void pages_down(uint32_t *dst, const uint32_t *src, uint32_t n)
+{
+	for (n *= BMF_PAGE / 16; n; n--, dst += 4, src += 4) {
+		uint32_t a = src[0], b = src[1], c = src[2], d = src[3];
+		dst[0] = a;
+		dst[1] = b;
+		dst[2] = c;
+		dst[3] = d;
+	}
+}
+
+/* The resident blocks slid down to the arena's and the pool's lowest
+   pages, in their order (the pages never overlap the wrong way), a
+   model's pointers and pages following; a vertex block that moves has
+   its records' vertex lists re-numbered (plain pool indices:
+   put_record). The blocks are found by the pages' owner bytes, up the
+   arena once (a model holds one block an arena: the first page of its
+   owner met is its block's first). Between the frame's lists only
+   (bmf_prepare: nothing points into the blocks then). */
+BMF_COLD static void bmf_compact(void)
+{
+	for (int pass = 0; pass < 2; pass++) {
+		bmf_alloc_t *a = pass ? &bmf_vpool : &bmf_arena;
+		uint32_t next = 0;                               /* the lowest free page */
+		for (uint32_t p = 0; p < a->pages; ) {
+			uint32_t cm = a->owner[p];
+			if (!cm) {                                   /* a free page */
+				p++;
+				continue;
+			}
+			bmf_cache *c = bmf_models[cm];
+			uint32_t n = pass ? pages_of(c->pool_cap * (uint32_t) sizeof(qw_vert))
+			                  : pages_of(c->groups_cap * (uint32_t) sizeof(bmf_group) + c->recs_cap);
+			if (p != next) {
+				alloc_mark(a, p, n, 0);
+				pages_down((uint32_t *) (a->base + next * BMF_PAGE), (const uint32_t *) (a->base + p * BMF_PAGE), n);
+				alloc_mark(a, next, n, (int) cm);
+				if (pass) {
+					int32_t delta = (int32_t) (next - p) * (BMF_PAGE / (int32_t) sizeof(qw_vert));
+					c->page_p      = next;
+					c->pool_first += (uint32_t) delta;
+					uint8_t *r = c->recs, *end = c->recs + c->recs_len;
+					while (r < end) {                    /* its records' vertex lists */
+						qw_record *rec = (qw_record *) r;
+						if (!rec->size)
+							break;
+						uint16_t *idx = (uint16_t *) (r + sizeof *rec);
+						uint32_t nidx = ((uint32_t) rec->num_verts + 2) / 3 * 3;
+						for (uint32_t j = 0; j < nidx; j++)
+							idx[j] = (uint16_t) (idx[j] + delta);
+						r += rec->size;
+					}
+				} else {
+					c->page_a = next;
+					c->groups = (bmf_group *) (a->base + next * BMF_PAGE);
+					c->recs   = (uint8_t *) (c->groups + c->groups_cap);
+				}
+			}
+			next += n;
+			p += n;
+		}
+	}
+}
+
+static uint32_t pages_of(uint32_t bytes)
+{
+	return (bytes + BMF_PAGE - 1) / BMF_PAGE;
+}
+
+BMF_COLD static void bmf_release(bmf_cache *c)
+{
+	if (!c->resident)
+		return;
+	alloc_mark(&bmf_arena, c->page_a, pages_of(c->groups_cap * (uint32_t) sizeof(bmf_group) + c->recs_cap), 0);
+	alloc_mark(&bmf_vpool, c->page_p, pages_of(c->pool_cap * (uint32_t) sizeof(qw_vert)), 0);
+	c->resident = 0;
+	c->valid    = 0;
+	c->recs     = 0;
+	c->groups   = 0;
+	c->recs_len = c->num_groups = c->pool_len = 0;
+#ifdef Q1PSX_BENCH
+	bmf_stats[8]++;
+#endif
+}
+
+/* room for c's pieces: the arena's and the pool's lowest free runs. With
+   `evict`, when there is none: while the free pages are too few, the model
+   not drawn this frame that was drawn the longest ago gives its room up;
+   then the blocks packed down (bmf_compact: the free pages one run at the
+   top). 0 when it cannot be had (this frame's models hold it all) */
+BMF_COLD static int bmf_take(bmf_cache *c, int model, int evict)
+{
+	if (c->resident)
+		return 1;
+	uint32_t na = pages_of(c->groups_cap * (uint32_t) sizeof(bmf_group) + c->recs_cap);
+	uint32_t np = pages_of(c->pool_cap * (uint32_t) sizeof(qw_vert));
+	uint32_t fa, fp;
+	if (!alloc_find(&bmf_arena, na, &fa) || !alloc_find(&bmf_vpool, np, &fp)) {
+		if (!evict)
+			return 0;
+		while (bmf_arena.free < na || bmf_vpool.free < np) {
+			bmf_cache *old = 0;
+			for (uint32_t m = 1; m < world.num_bmodels; m++) {
+				bmf_cache *o = bmf_models[m];
+				if (o && o->resident && o->last_drawn != r_state.framecount &&
+				    (!old || o->last_drawn < old->last_drawn))
+					old = o;
+			}
+			if (!old)
+				return 0;
+			bmf_release(old);
+		}
+		bmf_compact();
+		if (!alloc_find(&bmf_arena, na, &fa) || !alloc_find(&bmf_vpool, np, &fp))
+			return 0;                            /* (never: the free pages one run) */
+	}
+	alloc_mark(&bmf_arena, fa, na, model);
+	alloc_mark(&bmf_vpool, fp, np, model);
+	c->page_a     = fa;
+	c->page_p     = fp;
+	c->groups     = (bmf_group *) (bmf_arena.base + fa * BMF_PAGE);
+	c->recs       = (uint8_t *) (c->groups + c->groups_cap);
+	c->pool_first = fp * (BMF_PAGE / (uint32_t) sizeof(qw_vert));
+	c->resident   = 1;
+	c->valid      = 0;
+	c->org[0]     = 0x7fffffff;              /* (cut where it stands at its next draw) */
+#ifdef Q1PSX_BENCH
+	bmf_stats[7]++;
+#endif
+	return 1;
+}
+
 
 static inline const qw_node *node_at(uint32_t at)   /* (KUSEG, as the walk keeps them) */
 {
@@ -128,6 +338,7 @@ _Static_assert(sizeof(bmf_group) == 12 && __builtin_offsetof(bmf_group, ofs) == 
                __builtin_offsetof(bmf_group, len) == 8, "bmfrag.s BG_*");
 _Static_assert(sizeof(bmf_node) == 16 && __builtin_offsetof(bmf_node, first) == 6 &&
                __builtin_offsetof(bmf_node, count) == 10, "bmfrag.s BN_*");
+_Static_assert(__builtin_offsetof(bmf_cache, resident) == BMF_RESIDENT_OFS, "bmfrag.h bmf_resident");
 _Static_assert(__builtin_offsetof(bmf_cache, nodes) == 20 && __builtin_offsetof(bmf_cache, recs) == 24 &&
                __builtin_offsetof(bmf_cache, recs_len) == 28 && __builtin_offsetof(bmf_cache, recs_cap) == 32 &&
                __builtin_offsetof(bmf_cache, groups) == 36 && __builtin_offsetof(bmf_cache, num_groups) == 40 &&
@@ -549,9 +760,6 @@ static int cut_model_c(bmf_cache *c, int model, const int32_t org[3], uint32_t t
 }
 #endif /* Q1PSX_BMF_C */
 
-#define BMF_COLD __attribute__((optimize("Os")))   /* the load's code, the rare ways' (an alias
-                                                     model among pieces): small before fast */
-
 /* the model's compact BSP (nodes in DFS order), once */
 BMF_COLD static int build_nodes(bmf_cache *c, uint32_t at, int *count, int cap)
 {
@@ -670,12 +878,12 @@ BMF_COLD static int model_nodes(uint32_t at)
 	return 1 + model_nodes(nd->child[0]) + model_nodes(nd->child[1]);
 }
 
-/* a model's cache and its room in one block: the cache, its groups, its
-   records (words: the renderer's loads), its nodes */
+/* a model's cache for the level: the header and its compact BSP (its
+   pieces' room is the arena's, §90.6) */
 static uint32_t cache_bytes(const qw_bmodel *bm, int nodes)
 {
-	return (uint32_t) sizeof(bmf_cache) + bm->room_groups * (uint32_t) sizeof(bmf_group) + bm->room_recs * 4u +
-	       (((uint32_t) nodes * (uint32_t) sizeof(bmf_node) + 3) & ~3u);
+	(void) bm;
+	return (uint32_t) sizeof(bmf_cache) + (((uint32_t) nodes * (uint32_t) sizeof(bmf_node) + 3) & ~3u);
 }
 
 #ifdef Q1PSX_BENCH
@@ -798,30 +1006,60 @@ BMF_COLD void bmf_reserve(void)
 		return;
 	memset(bmf_models, 0, nb * sizeof *bmf_models);
 
-	/* the drawn models marked (one cache a model, whatever its edicts),
-	   the block and the pool they take */
-	uint32_t bytes = 0, verts = 0;
+	/* the drawn models marked (one cache a model, whatever its edicts): a
+	   header and its compact BSP each, for the level; their pieces' room
+	   is the arena's, taken when they are cut (bmf_take) */
+	uint32_t bytes = 0, rooms = 0, vrooms = 0, biggest = 0, vbiggest = 0;
 	for (int i = 2; i < num_edicts; i++) {
 		const edict_t *e = &edicts[i];
 		if (!drawn_model(e) || bmf_models[e->model])
 			continue;
 		const qw_bmodel *bm = &world.bmodels[e->model];
-		if (bm->root & 1 || verts + bm->room_verts > 65535 ||   /* (no node; the records' 16-bit */
-		    e->model > 255)                                    /*  indices; rlist.c's byte) */
+		if (bm->root & 1 || e->model > 255)              /* (no node; rlist.c's byte) */
 			continue;
 		bmf_models[e->model] = (bmf_cache *) 1;          /* (marked: its cache below) */
 		bytes += cache_bytes(bm, model_nodes(bm->root));
-		verts += bm->room_verts;
+		/* its room in whole pages, as it takes it (the cook sums them so) */
+		uint32_t r = pages_of(bm->room_groups * (uint32_t) sizeof(bmf_group) + bm->room_recs * 4u) * BMF_PAGE;
+		uint32_t v = pages_of(bm->room_verts * (uint32_t) sizeof(qw_vert)) * (BMF_PAGE / (uint32_t) sizeof(qw_vert));
+		rooms  += r;
+		vrooms += v;
+		if (r > biggest) biggest = r;
+		if (v > vbiggest) vbiggest = v;
 	}
+	/* the arena and the pool: the cook's sizes (an old file without them:
+	   every room, as before), the largest model's room at the least, in
+	   whole pages; the pool's indices 16-bit */
+	uint32_t arena = world.bmf_arena_recs ? world.bmf_arena_recs : rooms;
+	uint32_t vpool = world.bmf_arena_verts ? world.bmf_arena_verts : vrooms;
+	if (arena < biggest) arena = biggest;
+	if (vpool < vbiggest) vpool = vbiggest;
+	if (arena > rooms) arena = rooms;
+	if (vpool > vrooms) vpool = vrooms;
+	if (vpool > 65535) vpool = 65535;
+	uint32_t apages = pages_of(arena), vpages = pages_of(vpool * (uint32_t) sizeof(qw_vert));
+	uint32_t amaps = (apages + 31) / 32 * 4, vmaps = (vpages + 31) / 32 * 4;
+	uint32_t aown = (apages + 3) & ~3u, vown = (vpages + 3) & ~3u;   /* the owners: a byte a page */
 	uint8_t *block = bytes ? mem_level_alloc(bytes) : 0;
-	bmf_pool = verts ? mem_level_alloc(verts * sizeof *bmf_pool) : 0;
-	if (!block || (verts && !bmf_pool)) {
+	bmf_arena.bits  = apages ? mem_level_alloc(amaps + vmaps + aown + vown) : 0;
+	bmf_arena.base  = apages ? mem_level_alloc(apages * BMF_PAGE) : 0;
+	bmf_vpool.bits  = bmf_arena.bits ? bmf_arena.bits + amaps / 4 : 0;
+	bmf_arena.owner = bmf_arena.bits ? (uint8_t *) bmf_arena.bits + amaps + vmaps : 0;
+	bmf_vpool.owner = bmf_arena.owner ? bmf_arena.owner + aown : 0;
+	bmf_vpool.base  = vpages ? mem_level_alloc(vpages * BMF_PAGE) : 0;
+	bmf_arena.pages = apages;
+	bmf_vpool.pages = vpages;
+	bmf_pool = (qw_vert *) bmf_vpool.base;
+	if (!block || !bmf_arena.bits || !bmf_arena.base || (vpages && !bmf_pool)) {
 		memset(bmf_models, 0, nb * sizeof *bmf_models);   /* (the arena full: all drawn whole) */
 		bmf_pool = 0;
+		bmf_arena.pages = bmf_vpool.pages = 0;
 		return;
 	}
+	memset(bmf_arena.bits, 0, amaps + vmaps + aown + vown);
+	bmf_arena.free = apages;
+	bmf_vpool.free = vpages;
 	r_state.fragpool = (uint32_t) bmf_pool;
-	uint32_t first = 0;
 	for (uint32_t m = 1; m < nb; m++) {
 		if (!bmf_models[m])
 			continue;
@@ -830,36 +1068,28 @@ BMF_COLD void bmf_reserve(void)
 		bmf_cache *c = (bmf_cache *) block;
 		memset(c, 0, sizeof *c);
 		c->groups_cap = bm->room_groups;
-		c->groups     = (bmf_group *) (c + 1);
 		c->recs_cap   = bm->room_recs * 4u;
-		c->recs       = (uint8_t *) (c->groups + c->groups_cap);
-		c->nodes      = (bmf_node *) (c->recs + c->recs_cap);
+		c->pool_cap   = bm->room_verts;
+		c->nodes      = (bmf_node *) (c + 1);
 		block        += cache_bytes(bm, nodes);
 		build_nodes(c, bm->root, &count, nodes);
 		c->num_nodes  = (uint16_t) count;
 		uint32_t rmax = q_isqrt32(model_d2(bm->root)) + 3;
 		c->rmax       = (uint16_t) (rmax > 0xffff ? 0xffff : rmax);
-		c->pool_first = first;
-		c->pool_cap   = bm->room_verts;
-		first        += bm->room_verts;
+		c->org[0]     = 0x7fffffff;
 		bmf_models[m] = c;
 #ifdef Q1PSX_BENCH
 		bmf_stats[0]++;
 #endif
 	}
 #ifdef Q1PSX_BENCH
-	uint32_t sr = 0, sv = 0, sg = 0, sn = 0;
-	for (uint32_t m = 1; m < nb; m++) {
-		const bmf_cache *c = bmf_models[m];
-		if (!c)
-			continue;
-		sr += c->recs_cap;
-		sv += c->pool_cap * (uint32_t) sizeof *bmf_pool;
-		sg += c->groups_cap * (uint32_t) sizeof *c->groups;
-		sn += c->num_nodes * (uint32_t) sizeof *c->nodes;
-	}
-	printf("bmf: %u models, %u KB: records %u, vertices %u, groups %u, nodes %u B\n", (unsigned) bmf_stats[0],
-	       (unsigned) ((mem_level_used() - used) / 1024), (unsigned) sr, (unsigned) sv, (unsigned) sg, (unsigned) sn);
+	uint32_t sn = 0;
+	for (uint32_t m = 1; m < nb; m++)
+		if (bmf_models[m])
+			sn += bmf_models[m]->num_nodes * (uint32_t) sizeof(bmf_node);
+	printf("bmf: %u models, %u KB: the cut arena %u B + %u vertices (the rooms in all %u B + %u), nodes %u B\n",
+	       (unsigned) bmf_stats[0], (unsigned) ((mem_level_used() - used) / 1024), (unsigned) (apages * BMF_PAGE),
+	       (unsigned) (vpages * (BMF_PAGE / sizeof(qw_vert))), (unsigned) rooms, (unsigned) vrooms, (unsigned) sn);
 #endif
 }
 
@@ -920,6 +1150,8 @@ static void bmf_check(void)
 		if (!drawn_model(e) || !bmf_models[e->model] || !is_mover(e))
 			continue;
 		bmf_cache *c = bmf_models[e->model];
+		if (!bmf_take(c, e->model, 1))
+			continue;
 		int np = model_path(e, path, seen);
 		for (int w = 0; w + 1 < np; w++)
 			for (int step = 0; step <= 32; step++) {
@@ -959,13 +1191,41 @@ BMF_COLD void bmf_load(void)
 	bmf_check();
 #endif
 #ifdef Q1PSX_BENCH
-	uint32_t exact = 0, within = 0, off = 0;
+	uint32_t exact = 0, within = 0, off = 0, none = 0;
 #endif
+	/* the models the spawn's leaf's PVS sees first (their room is the
+	   arena's, §90.6: the rest while there is room, the others at their
+	   first draw) */
+	uint8_t row[256];
+	uint32_t rowbytes = world.vis_rowbytes < sizeof row ? world.vis_rowbytes : (uint32_t) sizeof row;
+	int32_t eye[3];
+	for (int k = 0; k < 3; k++)
+		eye[k] = (world.has_spawn ? world.spawn[k] : 0) * CLIP_SUB;
+	eye[2] += 22 * CLIP_SUB;
+	world_vis_row(world_point_leaf(eye), row, rowbytes);
+	for (int pass = 0; pass < 2; pass++)
 	for (int i = 2; i < num_edicts; i++) {
 		const edict_t *e = &edicts[i];
 		if (!drawn_model(e) || !bmf_models[e->model])
 			continue;
 		bmf_cache *c = bmf_models[e->model];
+		if (c->resident)
+			continue;
+		if (pass == 0) {                                /* its box's leaves in the PVS? */
+			int seen = 0;
+			for (int j = 0; j < e->num_leaves && !seen; j++) {
+				uint32_t l = (uint32_t) (e->leaves[j] - world.leaves);
+				seen = l >= 1 && (l - 1) / 8 < rowbytes && (row[(l - 1) >> 3] >> ((l - 1) & 7) & 1);
+			}
+			if (!seen)
+				continue;
+		}
+		if (!bmf_take(c, e->model, 0)) {
+#ifdef Q1PSX_BENCH
+			none++;
+#endif
+			continue;
+		}
 		cut_at(c, e);
 #ifdef Q1PSX_BENCH
 		/* the cooked room against this cut: a still model's is this very
@@ -984,8 +1244,9 @@ BMF_COLD void bmf_load(void)
 	}
 #ifdef Q1PSX_BENCH
 	printf("bmf: %u pieces in %u cuts (%u given up), %u cycles; the cooked rooms: %u still models' "
-	       "their cut exactly, %u movers' holding it, %u not\n", (unsigned) bmf_stats[1], (unsigned) bmf_stats[2],
-	       (unsigned) bmf_stats[3], (unsigned) bmf_stats[4], (unsigned) exact, (unsigned) within, (unsigned) off);
+	       "their cut exactly, %u movers' holding it, %u not; %u models without room at the load\n",
+	       (unsigned) bmf_stats[1], (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4],
+	       (unsigned) exact, (unsigned) within, (unsigned) off, (unsigned) none);
 #if Q1PSX_BMF_C == 2
 	printf("bmfasm %s: %u cuts checked, %u mismatches\n", world.map_name, (unsigned) bmf_asm_checks,
 	       (unsigned) bmf_asm_mismatches);
@@ -1217,6 +1478,8 @@ __attribute__((noinline)) BMF_COLD static int all_culled(const edict_t *e, int32
 
 int bmf_seen(const bmf_cache *c, const edict_t *e, uint16_t vis, int whole)
 {
+	if (!c->resident)                             /* no pieces (no room yet, §90.6): its box's answer */
+		return whole;
 	if (c->org[0] != e->origin[0] || c->org[1] != e->origin[1] || c->org[2] != e->origin[2]) {
 		/* cut elsewhere (it moved while not drawn): its pieces' leaves say
 		   nothing of where it is now; its box's leaves do, or its top node
@@ -1234,19 +1497,49 @@ int bmf_seen(const bmf_cache *c, const edict_t *e, uint16_t vis, int whole)
 	return 0;
 }
 
+void bmf_keep(const edict_t *e)
+{
+	bmf_models[e->model]->last_drawn = r_state.framecount;   /* (its room kept this frame) */
+}
+
+BMF_COLD void bmf_prepare(const edict_t *e)
+{
+	bmf_cache *c = bmf_models[e->model];
+	if (!c->resident && Q1PSX_BENCH_BMF && !(Q1PSX_BENCH_BMFCULL && all_culled(e, c->rmax)))
+		bmf_take(c, e->model, 1);                 /* (not when nothing of it is in view) */
+}
+
+BMF_COLD void bmf_wrap(void)
+{
+	if (!bmf_models)
+		return;
+	for (uint32_t m = 1; m < world.num_bmodels; m++)
+		if (bmf_models[m])
+			bmf_models[m]->last_drawn = 0;
+}
+
 int bmf_draw(edict_t *e, uint16_t vis)
 {
 	bmf_cache *c = bmf_models[e->model];
 	if (!Q1PSX_BENCH_BMF)
 		return 0;
-	if (c->org[0] != e->origin[0] || c->org[1] != e->origin[1] || c->org[2] != e->origin[2]) {
+	c->last_drawn = r_state.framecount;           /* (its room kept this frame) */
+	if (!c->resident || c->org[0] != e->origin[0] || c->org[1] != e->origin[1] || c->org[2] != e->origin[2]) {
 		if (Q1PSX_BENCH_BMFCULL && all_culled(e, c->rmax)) {
 #ifdef Q1PSX_BENCH
 			bmf_stats[6]++;
 #endif
 			return 1;                             /* moved, none of it in view: not cut yet */
 		}
-		cut_at(c, e);                             /* moved: cut again */
+		if (!c->resident) {                       /* no room (this frame's models hold it
+			                                         all, bmf_prepare): drawn whole, its
+			                                         box's way */
+#ifdef Q1PSX_BENCH
+			bmf_stats[9]++;
+#endif
+			return 0;
+		}
+		cut_at(c, e);                             /* moved, or just given room: cut */
 	}
 	if (!c->valid)
 		return 0;

@@ -60,7 +60,9 @@
 #         frame it could not expand, not drawn; docs/porting-notes.md
 #         §69); then the crowd: every monster of the map awake, the
 #         entities' cost a second); MONSTERS=2 the crowd alone (SAMPLE=1:
-#         its PC samples, "samples crowd"); MONSTERS=3 the crowd, then a
+#         its PC samples, "samples crowd"; ZONES=1's walk and MOVERS=1's
+#         movers take SAMPLE=1 too, a "samples <map>" / "samples mv.<map>.<model>"
+#         histogram each); MONSTERS=3 the crowd, then a
 #         minute of fight drawn (the player fires rockets turning round):
 #         "mon fight" lines (the stack's high-water mark, the edicts, the
 #         frames' cycles, the streamed models drawn and the frame cache's

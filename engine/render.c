@@ -5,6 +5,7 @@
 #include <psxgte.h>
 #include <inline_c.h>
 
+#include "bmfrag.h"
 #include "gdata.h"
 #include "mem.h"
 #include "prof.h"
@@ -616,6 +617,7 @@ void r_frame(void)
 		                                                    passed the walk's gate again, its
 		                                                    test ran on no light) */
 			world.nodes[i].dlstamp = 0;
+		bmf_wrap();                                /* (the brush models' rooms' frames) */
 		r_state.framecount = 1;
 	}
 	if (r_state.visframe >= 0xfff0) {

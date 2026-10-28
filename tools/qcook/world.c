@@ -1,5 +1,5 @@
 /*
- * qcook — world: QWVF file (formats/qworld.h), one per geometry level.
+ * qcook — world: QWVG file (formats/qworld.h), one per geometry level.
  *
  * Faces are attached to their BSP node (front block / back block), cut on
  * texture-repeat boundaries so every piece's UVs stay inside one VRAM tile

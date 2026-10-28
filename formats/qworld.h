@@ -57,7 +57,8 @@
 
 #include "qtex.h"          /* qw_tex, qw_anim: the texture set's tables */
 
-#define QWORLD_MAGIC "QWVF"   /* (QWVE until §59: an entity was a whole qw_ent;
+#define QWORLD_MAGIC "QWVG"   /* (QWVF until §90.6: no brush-model cut arena in the
+                                 header; QWVE until §59: an entity was a whole qw_ent;
                                  QWVD until §46: the clip roots were 32-bit) */
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
@@ -125,6 +126,15 @@ typedef struct {
 	uint32_t worldtype;            /* worldspawn's: 0 medieval, 1 metal, 2 base */
 	uint32_t title;                /* string: worldspawn's message, the map's name */
 	uint32_t max_bm_depth;         /* deepest brush model subtree (<= QW_MAX_BM_DEPTH) */
+	uint32_t bmf_arena_recs;       /* the brush models' cut arena (engine/bmfrag.c,
+	                                  docs/porting-notes.md §90.6): the most the
+	                                  pieces of the models visible from one leaf
+	                                  take at once, bytes of records and groups
+	                                  (tools/qcook/bmf.c: over every leaf with a
+	                                  PVS row, the models whose pieces touch a
+	                                  leaf the row sees, at any place of their
+	                                  travel), plus the largest model's room */
+	uint32_t bmf_arena_verts;      /* and their vertices in the pieces' pool      */
 } qw_header;
 
 /* (The map's own models, the items', are in their own file, one per model
@@ -485,8 +495,9 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
  * is in pieces, would take 10-80 KB less a map, but moving the drawn
  * chunk costs a frame: docs/porting-notes.md §57.)
  */
-#define QWORLD_ZONED_MAGIC "QWZG"   /* (QWVZ until §59: the entities of QWVE; QWZF
-                                       until the zones' finer cut: a byte a leaf's set) */
+#define QWORLD_ZONED_MAGIC "QWZH"   /* (QWZG until §90.6: QWVF's header; QWVZ until
+                                       §59: the entities of QWVE; QWZF until the zones'
+                                       finer cut: a byte a leaf's set) */
 #define QZONES_MAGIC       "QZN1"
 #define QZ_NONE            0xffu    /* a qw_zone_set's empty entry                   */
 #define QZ_LEAF_NONE       0xffffu  /* a leaf in no set (the camera in solid)        */

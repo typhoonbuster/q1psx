@@ -129,6 +129,8 @@ static uint32_t box_topnode(const int32_t mins[3], const int32_t maxs[3])
 #define BMF_CORNERS 12
 #define BMF_PIECES  64
 #define BMF_STACK   24
+#define BMF_PAGE    64           /* the engine's cut arena's page (engine/bmfrag.c): a
+                                    model's room there is whole pages */
 
 typedef struct { int16_t p[3]; } bmf_v;
 
@@ -257,8 +259,14 @@ static void put_record(bmf_use *c, const bmf_piece *const *pc, int count)
 	c->verts += (uint32_t) nv;
 }
 
+/* the leaves the model being measured puts pieces in, over every place of
+   its travel (a bit a leaf: the cut arena's sums, bmf_arena) */
+static uint8_t *leafset;
+
 static void put_group(bmf_use *c, uint32_t leaf, uint32_t ofs, uint32_t len)
 {
+	if (leafset)
+		leafset[leaf >> 3] |= (uint8_t) (1u << (leaf & 7));
 	if (c->groups > c->side_first && c->last_leaf == leaf && c->last_end == ofs) {
 		c->last_end += len;
 		return;
@@ -523,10 +531,93 @@ static struct {
 
 /* the cut at one place, into the most so far (a cut given up: the model
    drawn whole there, no room needed) */
+/* engine/world.c box_leaves: the leaves a box touches, in the BSP's order,
+   at most `max` (the engine keeps ENT_MAX_LEAVES, 8); vertex units */
+#define ENT_MAX_LEAVES 8
+static int box_leaves(uint32_t at, const int32_t c[3], const int32_t h[3], uint32_t *out, int n, int max)
+{
+	for (;;) {
+		if (IS_LEAF(at)) {
+			uint32_t l = at & 0x7fffffffu;
+			if (W.leaves[l].contents != QW_CONTENTS_SOLID && n < max)
+				out[n++] = l;
+			return n;
+		}
+		const qw_node  *nd = &W.nodes[at];
+		const qw_plane *pl = plane_of(nd->plane3);
+		int32_t dist = pl->dist >> 1;
+		int32_t d, ext;
+		if (pl->type < 3) {
+			d   = c[pl->type] * 4096 - dist;
+			ext = h[pl->type] * 4096;
+		} else {
+			d   = pl->n[0] * c[0] + pl->n[1] * c[1] + pl->n[2] * c[2] - dist;
+			ext = (pl->n[0] < 0 ? -pl->n[0] : pl->n[0]) * h[0] + (pl->n[1] < 0 ? -pl->n[1] : pl->n[1]) * h[1] +
+			      (pl->n[2] < 0 ? -pl->n[2] : pl->n[2]) * h[2];
+		}
+		if (d - ext > 0)
+			at = nd->child[0];
+		else if (d + ext < 0)
+			at = nd->child[1];
+		else {
+			n  = box_leaves(nd->child[0], c, h, out, n, max);
+			at = nd->child[1];
+		}
+	}
+}
+
+/* every leaf under a node (the engine's top-node test: the PVS marking
+   stamps a visible leaf's ancestors) */
+static void subtree_leaves(uint32_t at, uint8_t *set)
+{
+	while (!IS_LEAF(at)) {
+		subtree_leaves(W.nodes[at].child[1], set);
+		at = W.nodes[at].child[0];
+	}
+	uint32_t l = at & 0x7fffffffu;
+	set[l >> 3] |= (uint8_t) (1u << (l & 7));
+}
+
+/* The leaves the engine draws the model from when it has no pieces
+   (ents.c ents_visible, bmf_seen's `whole`): its box's leaves (ent_link:
+   the box a unit wider, world_box_leaves's rounding), or, when they are
+   ENT_MAX_LEAVES or more, every leaf under its top node. Into the
+   model's set, at this place. */
+static void box_leaves_into(const qw_bmodel *bm, const int32_t org[3])
+{
+	if (!leafset)
+		return;
+	int32_t amin[3], amax[3], c[3], h[3], lo[3], hi[3];
+	for (int k = 0; k < 3; k++) {
+		amin[k] = org[k] + bm->mins[k] - CLIP_SUB;
+		amax[k] = org[k] + bm->maxs[k] + CLIP_SUB;
+		int32_t l = amin[k] >> 1, u = (amax[k] + 1) >> 1;
+		c[k] = (l + u) >> 1;
+		h[k] = ((u - l) >> 1) + 1;
+		lo[k] = (amin[k] >> 3) - 2;
+		hi[k] = (amax[k] >> 3) + 3;
+	}
+	uint32_t out[ENT_MAX_LEAVES];
+	int n = box_leaves(W.h->root, c, h, out, 0, ENT_MAX_LEAVES);
+	if (n >= ENT_MAX_LEAVES) {
+		uint32_t top = box_topnode(lo, hi);
+		if (IS_LEAF(top)) {
+			uint32_t l = top & 0x7fffffffu;
+			leafset[l >> 3] |= (uint8_t) (1u << (l & 7));
+		} else {
+			subtree_leaves(top, leafset);
+		}
+		return;
+	}
+	for (int i = 0; i < n; i++)
+		leafset[out[i] >> 3] |= (uint8_t) (1u << (out[i] & 7));
+}
+
 static void cut_into(const qw_bmodel *bm, const int32_t org[3], bmf_need *m)
 {
 	bmf_use c;
 	R.cuts++;
+	box_leaves_into(bm, org);
 	if (!cut_where(&c, bm, org)) {
 		R.given_up++;
 		return;
@@ -721,22 +812,109 @@ static qw_bmodel *world_view(uint8_t *f, size_t len)
 
 /* each drawn brush model's room: the most of its entities' cuts (one
    entity a model in the id maps) */
+static uint8_t *leafsets;         /* [num_bmodels][leafbytes]: each model's (rooms_of) */
+static size_t   leafbytes;
+
 static bmf_need *rooms_of(const qw_bmodel *bms)
 {
 	bmf_need *room = xcalloc(W.h->num_bmodels, sizeof *room);
+	leafbytes = ((size_t) W.h->num_leaves + 7) / 8;
+	free(leafsets);
+	leafsets = xcalloc(W.h->num_bmodels, leafbytes);
 	for (uint32_t i = 0; i < W.h->num_ents; i++) {
 		const qw_ent *q = &W.ents[i];
 		if (!drawn_class(q->class) || q->model <= 0 || (uint32_t) q->model >= W.h->num_bmodels ||
 		    !has_records(bms[q->model].root))
 			continue;
 		bmf_need need, engine;
+		leafset = leafsets + (size_t) q->model * leafbytes;
 		model_needs(q, &bms[q->model], &need, &engine);
+		leafset = 0;
 		bmf_need *r = &room[q->model];
 		if (need.recs > r->recs)     r->recs   = need.recs;
 		if (need.verts > r->verts)   r->verts  = need.verts;
 		if (need.groups > r->groups) r->groups = need.groups;
 	}
 	return room;
+}
+
+/* The cut arena (engine/bmfrag.c, docs/porting-notes.md §90.6): the most
+   the pieces of the models visible at once take. For every leaf with a
+   PVS row (the world's, not solid: the camera in a wall sees everything
+   and draws the models whole there), the models whose pieces lie, at any
+   place of their travel, in a leaf the row sees; their rooms summed
+   (records and groups in bytes, vertices, each model's in whole pages, as
+   the engine gives it); the largest sum, plus the largest single room
+   (one more model always fits). Written in the header; a map without a
+   row (no vis) takes every model's room. */
+static void arena_of(const bmf_need *room, uint32_t *recs_out, uint32_t *verts_out, uint32_t *strict_recs,
+                     uint32_t *strict_verts, uint32_t *total_recs, uint32_t *total_verts)
+{
+	uint32_t nb = W.h->num_bmodels, nl = W.h->num_leaves, nv = W.h->num_visleafs;
+	uint32_t rowbytes = (nv + 7) / 8;
+	uint8_t *row = xmalloc(rowbytes + 1), *rowset = xmalloc(leafbytes);
+	const uint8_t *vis = (const uint8_t *) W.h + W.h->ofs_vis;
+	uint32_t best_r = 0, best_v = 0, big_r = 0, big_v = 0, tot_r = 0, tot_v = 0, rows = 0;
+	uint32_t *mrecs = xcalloc(nb, sizeof *mrecs), *mverts = xcalloc(nb, sizeof *mverts);
+	for (uint32_t m = 1; m < nb; m++) {
+		if (!room[m].verts)
+			continue;
+		/* (bmf_group: 12 bytes; qw_vert: 8) */
+		mrecs[m]  = (room[m].recs + room[m].groups * 12u + BMF_PAGE - 1) / BMF_PAGE * BMF_PAGE;
+		mverts[m] = (room[m].verts * 8u + BMF_PAGE - 1) / BMF_PAGE * (BMF_PAGE / 8);
+		tot_r += mrecs[m];
+		tot_v += mverts[m];
+		if (mrecs[m] > big_r) big_r = mrecs[m];
+		if (mverts[m] > big_v) big_v = mverts[m];
+	}
+	for (uint32_t l = 1; l <= nv && l < nl; l++) {
+		const qw_leaf *lf = &W.leaves[l];
+		if (lf->vis == QW_NONE || lf->contents == QW_CONTENTS_SOLID)
+			continue;
+		const uint8_t *in = vis + lf->vis, *end = (const uint8_t *) W.h + W.h->ofs_vis + W.h->len_vis;
+		uint32_t out = 0;
+		while (out < rowbytes && in < end) {               /* (Mod_DecompressVis) */
+			if (*in) { row[out++] = *in++; continue; }
+			int c = in[1];
+			in += 2;
+			while (c-- && out < rowbytes) row[out++] = 0;
+		}
+		while (out < rowbytes) row[out++] = 0;
+		rows++;
+		memset(rowset, 0, leafbytes);                        /* the row's bit l - 1 as leaf l's */
+		for (uint32_t lf2 = 1; lf2 <= nv; lf2++)
+			if (row[(lf2 - 1) >> 3] >> ((lf2 - 1) & 7) & 1)
+				rowset[lf2 >> 3] |= (uint8_t) (1u << (lf2 & 7));
+		uint32_t sr = 0, sv = 0;
+		for (uint32_t m = 1; m < nb; m++) {
+			if (!mrecs[m])
+				continue;
+			const uint8_t *set = leafsets + (size_t) m * leafbytes;
+			int seen = 0;
+			for (size_t b = 0; b < leafbytes && !seen; b++)
+				seen = (set[b] & rowset[b]) != 0;
+			if (seen) {
+				sr += mrecs[m];
+				sv += mverts[m];
+			}
+		}
+		if (sr > best_r) best_r = sr;
+		if (sv > best_v) best_v = sv;
+	}
+	if (!rows) {                                             /* (no vis: every model) */
+		best_r = tot_r;
+		best_v = tot_v;
+	}
+	*strict_recs  = best_r;
+	*strict_verts = best_v;
+	*total_recs   = tot_r;
+	*total_verts  = tot_v;
+	*recs_out  = best_r + big_r > tot_r ? tot_r : best_r + big_r;
+	*verts_out = best_v + big_v > tot_v ? tot_v : best_v + big_v;
+	free(row);
+	free(rowset);
+	free(mrecs);
+	free(mverts);
 }
 
 void bmf_rooms(uint8_t *f, size_t len)
@@ -756,9 +934,16 @@ void bmf_rooms(uint8_t *f, size_t len)
 		verts += r->verts;
 		groups += r->groups;
 	}
+	uint32_t ar, av, sr, sv, tr, tv;
+	arena_of(room, &ar, &av, &sr, &sv, &tr, &tv);
+	qw_header *h = (qw_header *) f;
+	h->bmf_arena_recs  = ar;
+	h->bmf_arena_verts = av;
 	free(room);
 	printf("qcook:   brush models' rooms: %u models, %u B of records, %u vertices, %u groups; "
-	       "%u cuts (%u given up), %.2f s\n", n, recs, verts, groups, R.cuts, R.given_up, R.secs);
+	       "%u cuts (%u given up), %.2f s; the cut arena %u B + %u vertices (visible at once %u B + %u, "
+	       "the rooms in all %u B + %u)\n", n, recs, verts, groups, R.cuts, R.given_up, R.secs, ar, av, sr, sv,
+	       tr, tv);
 }
 
 /* `qcook bmf <file.wld> [-v]`: a cooked world's rooms measured again (each

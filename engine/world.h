@@ -63,6 +63,8 @@ typedef struct {
 	const qw_anim *anims;           /* [num_anims]: the animated textures (anim.c) */
 	uint32_t       num_anims;
 	uint32_t       max_bm_depth;
+	uint32_t       bmf_arena_recs, bmf_arena_verts;   /* the brush models' cut arena, the
+	                                                     cook's (formats/qworld.h; bmfrag.c) */
 	int8_t         level[QL_AXES];  /* the levels loaded: textures, geometry, the
 	                                   map's models (QL_*; effects: -1)       */
 	/* the VRAM the map's textures take (the streamed skins get the rest,
@@ -107,6 +109,9 @@ int world_load(int map, int tex, int geo, int models, world_progress_fn progress
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);
+/* the PVS row of a leaf (the walk's KUSEG pointer or the table's; NULL, or
+   one without a row: every bit), decoded into row[rowbytes] */
+void world_vis_row(const qw_leaf *leaf, uint8_t *row, uint32_t rowbytes);
 /* The same descent from a node (or a tagged leaf) world_box_topnode gave,
    for a point inside its box (engine/w_leaf.s; the bench's C:
    world_point_leaf_from_c). */

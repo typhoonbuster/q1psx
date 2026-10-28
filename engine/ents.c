@@ -1845,6 +1845,32 @@ void ents_render_bmodels(void)
 	if (vis_list_stamp != vis || ents_relink)
 		ents_visible(vis);
 	bmf_cache *const *bm = bmf_models;
+	if (bm) {
+		/* a model the frame draws without room for its pieces (the cut
+		   arena, §90.6): every model the frame draws marked first, so that
+		   none gives its room up to another of the frame, then each
+		   without room given it, before any is drawn; a frame whose
+		   models all have theirs skips this (bmf_draw marks them as it
+		   draws) */
+		int need = 0;
+		for (int i = 0; i < num_vis && !need; i++) {
+			const edict_t *e = &edicts[vis_list[i]];
+			const bmf_cache *c = bm[e->model];
+			need = c && !bmf_resident(c) && box_in_front(e);
+		}
+		if (need) {
+			for (int i = 0; i < num_vis; i++) {
+				const edict_t *e = &edicts[vis_list[i]];
+				if (bm[e->model] && box_in_front(e))
+					bmf_keep(e);
+			}
+			for (int i = 0; i < num_vis; i++) {
+				const edict_t *e = &edicts[vis_list[i]];
+				if (bm[e->model] && box_in_front(e))
+					bmf_prepare(e);
+			}
+		}
+	}
 	for (int i = 0; i < num_vis; i++) {
 		edict_t *e = &edicts[vis_list[i]];
 		STAT(1);

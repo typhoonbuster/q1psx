@@ -11664,7 +11664,8 @@ commit a lever, to validate before any merge:
 **The measure, at each lever.** The bench build with the release's arena
 (`LEVEL_CAP=`, the release's `ramcheck` line, which moves with the BSS and
 the stack): `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1` for every map's pool (`bench
-zone` lines), the smallest pool and E4M7's; E1M3's arena block by block
+zone` lines; every map at every lever in §90.11), the smallest pool and
+E4M7's; E1M3's arena block by block
 (`MEMLOG=1 MAP=E1M3 BENCH_MAPS=1 VIEWS=0`: a `memlog` line per block, its
 caller by addr2line; the RAM report's own instrumentation stays on its
 throwaway branch). The frames: the 128 spawn views, the game bench, the
@@ -11776,22 +11777,27 @@ edict pool trimmed) is what is left of it. The release's blocks are these
 at 0x800ad1d0 (0x800b51d0 before §90.1), the bench build's base differs.
 Bytes; the pool takes the rest less 8 256 (`STREAM_KEEP` + 64).
 
-| block (caller) | base (795bfb2) | §90.1 |
-|---|---|---|
-| the texture tables (cd_load, the file 124 928 read whole) | 1 936 | 1 936 |
-| the skeleton `E1M3_G0.WLD` (cd_load) | 274 432 | 274 432 |
-| `face_visframe` (world_load) | 7 488 | 7 488 |
-| the map's models `E1M3_M0.MDL` (cd_load) | 4 096 | 4 096 |
-| their tables (world_load: 256, 32, 8 × 48) | 672 | 672 |
-| the zone slots, 4 × 65 536 (zone_map_start) | 262 144 | 262 144 |
-| the touch lists, `model_draw` (ents_load: 7 120, 1 792, 224) | 9 136 | 9 136 |
-| the edicts (ents_load; 445 asked, 389 kept by ents_trim) | 149 376 | 149 376 |
-| the brush models (bmf_reserve: 432, the caches 49 888, their vertices 21 264) | 71 584 | 71 584 |
-| the RAM sounds (stream_map_start) | 139 264 | 139 264 |
-| the frame cache (stream_map_start) | 24 576 | 24 576 |
-| the staging buffer (stream_map_start) | 32 768 | 32 768 |
-| **the stream's pool** (stream_map_start) | 357 280 | 390 048 |
-| the arena | 1 343 008 | 1 375 776 |
+| block (caller) | base (795bfb2) | §90.1 | §90.2 | §90.3 | §90.4 | §90.5 | §90.6 |
+|---|---|---|---|---|---|---|---|
+| the texture tables (cd_load, the file 124 928 read whole) | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 |
+| the skeleton `E1M3_G0.WLD` (cd_load) | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 |
+| `face_visframe` (world_load) | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 |
+| the map's models `E1M3_M0.MDL` (cd_load) | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 |
+| their tables (world_load: 256, 32, 8 × 48) | 672 | 672 | 672 | 672 | 672 | 672 | 672 |
+| the zone slots, 4 × 65 536 (zone_map_start) | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 |
+| the touch lists, `model_draw` (ents_load: 7 120, 1 792, 224; from §90.2's 341 slots 6 352, 1 600, 224) | 9 136 | 9 136 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 |
+| the edicts (ents_load; 445 asked, 389 kept by ents_trim, 341 from §90.2; 320 B each from §90.5) | 149 376 | 149 376 | 130 944 | 130 944 | 130 944 | 109 120 | 109 120 |
+| the brush models (bmf_reserve: 432, the caches 49 888, their vertices 21 264; §90.6: 432, the headers and nodes 12 448, the page tables 720, the arena 25 792, the vertices 14 400) | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 53 792 |
+| the RAM sounds (stream_map_start) | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 |
+| the frame cache (stream_map_start) | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 |
+| the staging buffer (stream_map_start) | 32 768 | 32 768 | 32 768 | 16 384 | 16 384 | 16 384 | 16 384 |
+| **the stream's pool** (stream_map_start) | 357 280 | 390 048 | 409 440 | 425 824 | 429 920 | 449 392 | 464 112 |
+| the arena | 1 343 008 | 1 375 776 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 |
+
+(The base's, §90.1's, §90.5's and §90.6's columns are their runs' logs;
+§90.2 to §90.4 are those logs' blocks with what each lever changes, the
+edicts and the touch lists at 341 slots, the staging buffer, the arena:
+their pools agree with their runs' `bench zone` lines, 399 and 419 KB.)
 
 ### 90.3 The staging buffer: the music refilled by two chunks, 16 KB
 
@@ -11922,7 +11928,8 @@ swallowed the move delta's copy in `sub_calc_move` (the `ENTS=1` and
 `MONSTERS=1` references caught it: a door's origin stayed at 0 while its
 state went up and down).
 
-**Measured.** E1M3's edicts 149 376 → 124 480 B (389 × 320); every pool
+**Measured.** E1M3's edicts 130 944 → 109 120 B (341 × 320, the slots
+§90.2 leaves); every pool
 +18-19 KB: E4M7's 379 → 397 KB, E1M3's 419 → 438, START's 702 → 710 (its
 158 slots); the code +2 368 B (the table's 420 B of rodata, the box
 computed at 19 sites of ents.c inline, `ENT_CALL`'s loads; with the box
@@ -11936,3 +11943,157 @@ the fight's frames +0.06 %, E1M3 cleared +0.22 %, the 128 views +0.10 %
 (the brush models' box tests each frame). Keeping `absmin` / `absmax`
 would give those cycles back for 24 bytes an edict (344, or 352 for the
 asm's two shifts and an add): a call left open.
+
+### 90.6 The brush models' rooms: one cut arena, sized by the PVS
+
+Until now every drawn brush model had its own room for its pieces for the
+whole level (§46: the cook's measure of the most its cuts take anywhere on
+its travel; E1M3: 57 models, 49.9 KB of caches + 20.8 KB of vertices),
+though a camera sees a few of them at once. Now the rooms are shared:
+
+- **The cook** (`tools/qcook/bmf.c` `arena_of`, `box_leaves_into`) notes,
+  while it measures each model's room at every place of its travel, the
+  leaves its pieces fall in and the leaves the engine would draw it from
+  without pieces (its box's, `ent_link`'s way: eight at most, every leaf
+  under its top node when they are cut short), a bitset a model; then for
+  every leaf with a PVS row (the world's, not solid: in a wall the camera
+  sees everything and the models are drawn whole there) it sums the rooms
+  of the models whose set touches a leaf the row sees, each room in whole
+  pages of 64 bytes as the engine gives it; the largest sum, plus the
+  largest single room (one more model always fits), goes into the header
+  (`qw_header` `bmf_arena_recs`: records and groups, bytes;
+  `bmf_arena_verts`: vertices), magic QWVF → QWVG, QWZG → QWZH. Over the
+  32 maps the arenas come to 65 % of the rooms (625 152 B + 44 000
+  vertices against 957 248 B + 67 288); the maps whose rooms are few are
+  given them all (START, E1M7, END: the sum plus the largest room
+  reaches the total).
+- **The engine** (`engine/bmfrag.c`): `bmf_reserve` keeps a header and the
+  compact BSP (`bmf_node`s) per drawn model for the level, and takes one
+  arena of records and groups and one pool of vertices, the cook's sizes
+  (never past the rooms' total, never under the largest room), in pages
+  of 64 bytes, a bit and an owner byte a page. Each frame, before any
+  model is drawn (`ents_render_bmodels`), every model the frame draws
+  (the PVS sees it, the eye faces its box) is marked as the frame's
+  (`bmf_keep`), and when one of them has no room each such model takes
+  it (`bmf_prepare`, `bmf_take`): the lowest free run; else, while the
+  free pages are too few, the resident model not drawn this frame that
+  was drawn the longest ago gives its room up (`bmf_release`), then the
+  blocks are packed down (`bmf_compact`: four words a turn; a vertex
+  block that moves has its records' indices renumbered; nothing of the
+  frame's lists points into the blocks yet) and the free pages are one
+  run. A model given room is cut where it stands at its draw
+  (`bmf_draw`); one given up is cut again when it is drawn next; one
+  that can get no room (the frame's models hold it all: more than the
+  cook's sets gave its leaf) is drawn whole that frame, its box's way, as
+  a model too cut up is. At the load the models the spawn's leaf's PVS
+  sees are cut first, then the others while there is room (`bmf_load`);
+  `bmf_seen` answers by the box for a model without pieces; the frame
+  count's wrap clears the marks (`bmf_wrap`, r_frame). The cut itself,
+  the records' and the vertices' layout and the render lists are
+  untouched. The PVS row's decoding, the AI's and the load's, is one
+  (`world_vis_row`). The bench counts the rooms taken and given up and
+  the draws without room (`bmf_stats[7..9]`: the `bmf arena` lines of the
+  fights, the clear and the walk; a load's `models without room`).
+
+Two designs were tried first. Each model's room given at its first draw
+and taken from the oldest drawn when none is free, without packing: a
+mover's room came back fragmented and a window of whole pages was rare
+(E1M3's doors drawn whole). A window of pages held by the fewest models
+not drawn this frame, the blocks packed down first: a model marked as the
+frame's while the list was walked could still lose its room to the next
+in the list, and a window had to skip every block of the frame's, so a
+view whose models filled the arena found none (E1M7's spawn: one model
+whole). Marking every model of the frame before any takes room, and
+giving up the longest undrawn until the pages suffice before packing, is
+what holds: the cook's bound is a sum, and after packing the free pages
+are that sum's rest in one run. Marking every frame (a pass over the
+visible models with the in-front test, the mark a call) cost the
+movers' entities +0.5..+1.4 % and E3M4's walk +3.0 %; the pass runs only
+in a frame with a model in front without room now (`bmf_resident`, the
+cache's byte read in ents.c), the draws marking as before.
+
+**Checked** (the previous commit built beside for the `MOVERS=1`,
+`ENTS=1` and `MONSTERS=1 MAP=E1M1` references; the cooked data anew,
+QWVG): the 128 spawn views' `H` lines identical, the C engine's 128 the
+same, the game bench's 23, `MOVERS=1`'s 165 (the three movers cut as
+often, 599, 595 and 419 times, the cuts' cycles the same), `ENTS=1`'s
+83, `MONSTERS=1`'s state lines, E1M3's crowd fight and E1M3 cleared line
+for line (the cycles aside); no draw without room in any run (the views,
+the fights, the clear, the walk's 27 maps).
+
+**Measured.** E1M3's brush models 71 584 → 53 792 B (the model table 432,
+the headers and nodes 12 448, the page tables 720, the arena 25 792, the
+vertices 14 400); the release's arena 1 377 520 → 1 374 448 B (the code
++3 072 B: the allocator, the packing, the load's two passes). The pools,
+each lever at its release's arena (the table of §90.11): E1M3's 438 →
+453 KB, E4M7's 397 → 418, START's 710 → 706; +10.1 KB a map on average
+(E3M2's +24 the most), the maps given every room losing the page tables,
+the rounding and the code's 3 KB (START, E1M7, E1M8 −4, END −3, E3M6
+−1). At the loads 448 models of 33 had no room (up to 34 a map): the
+rest of the arena past the spawn's view; they take it at their first
+draw. The cost: the walk's frames +0.50 % over the 27 maps (E3M4's
++2.0 %: 137 rooms taken, 106 given up), E1M3 cleared +0.9 % (60 taken,
+29 given up, 145 cuts), E1M3's crowd fight the same to 0.01 % (33 taken
+at its first frames, none given up), the movers' frames +0.2..+0.8 %
+(the in-front test of a model without room each frame, `bmf_draw`'s
+mark);
+the walk takes 1276 rooms over its 27 maps (683 given up, 1276 cuts,
+59.7 M cycles in all, the dearest 481 344), its late frames 2314 → 2263
+(the pools). The walk's PC samples (`ZONES=1 SAMPLE=1`, new: the walk and
+the movers sample like the crowd) put the packing at 0.7 % of E3M4's
+walk when it looked the blocks up model by model (every model scanned
+for the lowest block, 63 × 63 a pass): walking the owner bytes once took
+E3M4's +3.3 % to +2.0 %; the cuts themselves are 0.05 %.
+
+Three of the branch's bugs were a replacement's slip: a comment of two
+lines closing on the next line swallowed the statement between (the move
+delta's copy in `sub_calc_move`, §90.5; the no-room return of `bmf_draw`
+here, which then cut into a null pointer and wrote the kernel's vectors),
+and a line left over before a rewritten condition nested the re-cut of
+`bmf_draw` under "no room", so a moved door kept its old pieces
+(`MOVERS=1`: 0 cuts). The `ENTS=1`, `MONSTERS=1` and `MOVERS=1`
+references and the kernel-write breakpoint under PCSX-Redux's interpreter
+(`PCSX.addBreakpoint(0x80000000, 'Write', 0x10000, ...)`, the Lua in the
+session's scratchpad) found them.
+
+### 90.11 Every map's stream pool at each lever
+
+`BENCH_MAPS=1 VIEWS=0 RESIDENCY=1 LEVEL_CAP=<the lever's release arena>`:
+the `bench zone` lines' pool, KB (§90.3's run is with §90.4's; the
+smallest pool is E4M7's throughout).
+
+| map | base (795bfb2) | §90.1 | §90.2 | §90.3-4 | §90.5 | §90.6 |
+|---|---|---|---|---|---|---|
+| the release's arena (B) | 1 343 008 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 |
+| START | 631 | 663 | 682 | 702 | 710 | 706 |
+| E1M1 | 578 | 610 | 629 | 649 | 659 | 672 |
+| E1M2 | 466 | 498 | 517 | 537 | 551 | 555 |
+| E1M3 | 348 | 380 | 399 | 419 | 438 | 453 |
+| E1M4 | 438 | 470 | 489 | 509 | 526 | 539 |
+| E1M5 | 463 | 495 | 514 | 534 | 552 | 567 |
+| E1M6 | 549 | 581 | 600 | 620 | 636 | 648 |
+| E1M7 | 988 | 1020 | 1039 | 1059 | 1065 | 1061 |
+| E1M8 | 773 | 805 | 823 | 843 | 854 | 850 |
+| E2M1 | 525 | 557 | 576 | 596 | 610 | 622 |
+| E2M2 | 491 | 523 | 542 | 562 | 574 | 584 |
+| E2M3 | 504 | 536 | 555 | 575 | 589 | 596 |
+| E2M4 | 350 | 382 | 400 | 420 | 439 | 454 |
+| E2M5 | 542 | 574 | 593 | 613 | 628 | 639 |
+| E2M6 | 372 | 404 | 423 | 443 | 466 | 476 |
+| E2M7 | 358 | 390 | 409 | 429 | 451 | 464 |
+| E3M1 | 560 | 592 | 611 | 631 | 644 | 658 |
+| E3M2 | 609 | 641 | 660 | 680 | 694 | 718 |
+| E3M3 | 633 | 665 | 684 | 704 | 717 | 733 |
+| E3M4 | 363 | 395 | 414 | 434 | 451 | 471 |
+| E3M5 | 479 | 511 | 530 | 550 | 565 | 572 |
+| E3M6 | 454 | 486 | 505 | 525 | 543 | 542 |
+| E3M7 | 583 | 615 | 634 | 654 | 667 | 674 |
+| E4M1 | 528 | 560 | 579 | 599 | 615 | 621 |
+| E4M2 | 537 | 569 | 588 | 608 | 623 | 633 |
+| E4M3 | 355 | 387 | 406 | 426 | 446 | 462 |
+| E4M4 | 494 | 526 | 545 | 565 | 586 | 587 |
+| E4M5 | 405 | 437 | 456 | 476 | 497 | 519 |
+| E4M6 | 551 | 583 | 602 | 622 | 639 | 653 |
+| E4M7 | 308 | 340 | 359 | 379 | 397 | 418 |
+| END | 904 | 936 | 955 | 975 | 985 | 982 |
+| mean | 521 | 553 | 572 | 592 | 607 | 617 |

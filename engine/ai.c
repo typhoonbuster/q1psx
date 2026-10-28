@@ -303,27 +303,10 @@ static void new_check(void)
 	ai_view_org(ent_player, eye);
 	const qw_leaf *leaf = eye_leaf(ent_player, eye);
 	check_leaf = leaf;
-	if (leaf)
-		leaf = (const qw_leaf *) ((uintptr_t) leaf | 0x80000000u);
 	uint32_t row = world.vis_rowbytes;
 	if (row > sizeof check_pvs)
 		row = sizeof check_pvs;
-	const uint8_t *in = leaf && leaf->vis ? (const uint8_t *) ((leaf->vis & 0x00ffffffu) | 0x80000000u) : 0;
-	if (!in) {
-		memset(check_pvs, 0xff, row);
-	} else {
-		uint32_t o = 0;                       /* Mod_DecompressVis */
-		while (o < row) {
-			if (*in) {
-				check_pvs[o++] = *in++;
-				continue;
-			}
-			int c = in[1];
-			in += 2;
-			while (c-- > 0 && o < row)
-				check_pvs[o++] = 0;
-		}
-	}
+	world_vis_row(leaf, check_pvs, row);
 	check_ok = 1;
 }
 

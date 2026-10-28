@@ -2015,6 +2015,24 @@ followed by R0-R4.
     gone; every pool +18-19 KB (E4M7's 379 → 397 KB, E1M3's 419 → 438);
     every frame and scenario identical; the crowd's entity tick +3.3 %,
     the views +0.1 % (the boxes computed).
+  - §90.6 the brush models' rooms as one cut arena sized by the PVS
+    (`engine/bmfrag.c`, `tools/qcook/bmf.c` `arena_of`, `qw_header`
+    `bmf_arena_recs` / `bmf_arena_verts`, QWVF → QWVG, QWZG → QWZH): the
+    cook sums, over every leaf with a PVS row, the rooms of the models
+    whose pieces or box leaves the row sees (whole pages), plus the
+    largest room; the engine's models take their pages when drawn and
+    give them up, the longest undrawn first, when a model of the frame
+    needs them (the blocks packed down), every model of the frame marked
+    before any takes; the arenas 65 % of the rooms over the 32 maps;
+    E1M3's brush models 71 584 → 53 792 B, every frame identical (the 128
+    views, the C engine's, the game bench, the movers, the entities, the
+    monsters, the fights), the pools +10 KB a map on average at the
+    release's arena (E4M7's 397 → 418 KB, E1M3's 438 → 453; the maps
+    given every room −1..−4: START, E1M7, E1M8, END, E3M6), the walk's
+    late frames 2314 → 2263; the cost +0.5 % on the walk's frames (E3M4's
+    +2.0 %), +0.9 % on E1M3 cleared, the release's code +3 072 B.
+    `world_vis_row` decodes a PVS row for the AI and the load alike;
+    `SAMPLE=1` samples the walk and the movers too.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**
