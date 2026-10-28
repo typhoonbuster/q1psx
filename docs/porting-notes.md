@@ -11777,24 +11777,24 @@ edict pool trimmed) is what is left of it. The release's blocks are these
 at 0x800ad1d0 (0x800b51d0 before §90.1), the bench build's base differs.
 Bytes; the pool takes the rest less 8 256 (`STREAM_KEEP` + 64).
 
-| block (caller) | base (795bfb2) | §90.1 | §90.2 | §90.3 | §90.4 | §90.5 | §90.6 |
-|---|---|---|---|---|---|---|---|
-| the texture tables (cd_load, the file 124 928 read whole) | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 |
-| the skeleton `E1M3_G0.WLD` (cd_load) | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 |
-| `face_visframe` (world_load) | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 |
-| the map's models `E1M3_M0.MDL` (cd_load) | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 |
-| their tables (world_load: 256, 32, 8 × 48) | 672 | 672 | 672 | 672 | 672 | 672 | 672 |
-| the zone slots, 4 × 65 536 (zone_map_start) | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 |
-| the touch lists, `model_draw` (ents_load: 7 120, 1 792, 224; from §90.2's 341 slots 6 352, 1 600, 224) | 9 136 | 9 136 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 |
-| the edicts (ents_load; 445 asked, 389 kept by ents_trim, 341 from §90.2; 320 B each from §90.5) | 149 376 | 149 376 | 130 944 | 130 944 | 130 944 | 109 120 | 109 120 |
-| the brush models (bmf_reserve: 432, the caches 49 888, their vertices 21 264; §90.6: 432, the headers and nodes 12 448, the page tables 720, the arena 25 792, the vertices 14 400) | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 53 792 |
-| the RAM sounds (stream_map_start) | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 |
-| the frame cache (stream_map_start) | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 |
-| the staging buffer (stream_map_start) | 32 768 | 32 768 | 32 768 | 16 384 | 16 384 | 16 384 | 16 384 |
-| **the stream's pool** (stream_map_start) | 357 280 | 390 048 | 409 440 | 425 824 | 429 920 | 449 392 | 464 112 |
-| the arena | 1 343 008 | 1 375 776 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 |
+| block (caller) | base (795bfb2) | §90.1 | §90.2 | §90.3 | §90.4 | §90.5 | §90.6 | §90.7 |
+|---|---|---|---|---|---|---|---|---|
+| the texture tables (cd_load, the file 124 928 read whole) | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 | 1 936 |
+| the skeleton `E1M3_G0.WLD` (cd_load) | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 | 274 432 |
+| `face_visframe` (world_load) | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 | 7 488 |
+| the map's models `E1M3_M0.MDL` (cd_load) | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 | 4 096 |
+| their tables (world_load: 256, 32, 8 × 48) | 672 | 672 | 672 | 672 | 672 | 672 | 672 | 672 |
+| the zone slots, 4 × 65 536 (zone_map_start) | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 | 262 144 |
+| the touch lists, `model_draw` (ents_load: 7 120, 1 792, 224; from §90.2's 341 slots 6 352, 1 600, 224) | 9 136 | 9 136 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 | 8 176 |
+| the edicts (ents_load; 445 asked, 389 kept by ents_trim, 341 from §90.2; 320 B each from §90.5) | 149 376 | 149 376 | 130 944 | 130 944 | 130 944 | 109 120 | 109 120 | 109 120 |
+| the brush models (bmf_reserve: 432, the caches 49 888, their vertices 21 264; §90.6: 432, the headers and nodes 12 448, the page tables 720, the arena 25 792, the vertices 14 400) | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 71 584 | 53 792 | 53 792 |
+| the RAM sounds (stream_map_start) | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 | 139 264 |
+| the frame cache (stream_map_start) | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 | 24 576 |
+| the staging buffer (stream_map_start) | 32 768 | 32 768 | 32 768 | 16 384 | 16 384 | 16 384 | 16 384 | 16 384 |
+| **the stream's pool** (stream_map_start) | 357 280 | 390 048 | 409 440 | 425 824 | 429 920 | 449 392 | 464 112 | 478 784 |
+| the arena | 1 343 008 | 1 375 776 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 | 1 389 120 |
 
-(The base's, §90.1's, §90.5's and §90.6's columns are their runs' logs;
+(The base's, §90.1's, §90.5's, §90.6's and §90.7's columns are their runs' logs;
 §90.2 to §90.4 are those logs' blocks with what each lever changes, the
 edicts and the touch lists at 341 slots, the staging buffer, the arena:
 their pools agree with their runs' `bench zone` lines, 399 and 419 KB.)
@@ -12056,44 +12056,122 @@ references and the kernel-write breakpoint under PCSX-Redux's interpreter
 (`PCSX.addBreakpoint(0x80000000, 'Write', 0x10000, ...)`, the Lua in the
 session's scratchpad) found them.
 
+### 90.7 The loads' code as an overlay at the arena's top
+
+The code that runs only at the boot's inits and at a level's load sat in
+the executable for the whole game. Now it is a **load overlay**: linked
+at the level arena's top, under the stack, read there from the disc
+before it runs, and left to the stream's pool for the rest of the level.
+
+- **What goes in** (`engine/load.ld`, one input section a function):
+  the functions only `main`'s boot and `load_level` reach, found with a
+  call graph over the objects (every `R_MIPS_26` call, every address
+  taken by `HI16` / `LO16` in code or `R_MIPS_32` in data; the scratchpad's
+  script, kept as `scripts/ovlcheck.py` at the link): `world_load` and
+  its texture upload, `bmf_reserve` with the models' BSP builders,
+  `ents_load`, `ents_trim`, `monsters_map_start`, `ai_map_start`,
+  `stream_init`, `stream_level`, `stream_map_start`, `snd_init`,
+  `snd_map_start`, `snd_stop_all`, `zone_map_start`, `zone_preload`,
+  `gdata_load`, `r_init`, `r_bind_world`, `dl_init`, `game_init`,
+  `music_init`, `music_level`, `mdl_reset`, `menu_init`, the disc's
+  listings `cd_list_dir` / `cd_list_dirs` with `world_scan_maps`,
+  `world_level_mask`, `mem_game_alloc`, the loading screen and its poll,
+  the load's body `load_level_main`, and the SDK's `SpuInit` and
+  `InitGeom`: 36 functions, 15 016 bytes in the release. What stays:
+  the respawn's spawners (`ents_spawn`, `movers_spawn`, `items_spawn`,
+  `triggers_spawn`, `monsters_spawn`, `game_spawn_level`, 8.9 KB:
+  `game_restart_level` runs them in play), what runs before the drive is
+  up (`vid_init`, `pad_init`, `prof_init`, `cd_init` and their SDK
+  callees) or before the overlay is read (`stream_abort`, `zone_abort`,
+  `cd_cache_dir`, `load_level`'s own prologue), `settings_defaults`
+  (the menu's reset), `stream_preload` (the bench's residency scenario
+  calls it at every view), `menu_init` (the game bench's), the menu
+  itself (3.4 KB: it runs over the paused game, the pool full).
+- **Where** (`engine/q1psx.ld`): an output section `.text.load` at
+  `OVL_BASE`, the stack's bottom less `OVL_ROOM` (32 KB; CMakeLists.txt's
+  `--defsym`s from the stack's size), written first in the script so that
+  `.text`'s wildcard leaves its input sections to it, `.text` pinned to
+  the region's origin after it; `(INFO)`: not allocated, in no segment,
+  so the SDK's elf2x leaves it out of the EXE (the EXE 315 392 → 299 008
+  B) and `_end` moves down; the link asserts the overlay fits its room.
+  The file is the section's bytes dumped (`objcopy --dump-section`),
+  `LOAD.BIN`, put in the root for the boot and first in every level's
+  directory (`scripts/cd_image.cmake`: the load's first read, no seek).
+- **When** (`engine/main.c` `ovl_load`): at boot right after `cd_init`,
+  before any init that lives in it; at a level's load right after the
+  directory's cache, before `load_level_main`: `cd_find`, one read of its
+  sectors to `__load_start`, `FlushCache`; a size other than the link's
+  or a failed read is fatal. The arena's bump allocations stay under it
+  (the world's cap, then the level's blocks: 400 KB and more of pool
+  under it on every map); `stream_map_start` takes the pool over the
+  whole rest but clips its end to `__load_start` until `stream_load_done`
+  (after `stream_preload`, the last of the load; the 2D gun's lent block
+  at the pool's real end is written after it), so the preload cannot
+  reach the code it runs from.
+- **The check** (`scripts/ovlcheck.py`, at every link): each overlay
+  function is called by `main`, by `load_level` or by another overlay
+  function only, through direct calls, and none has its address taken but
+  the loading screen and its poll (the load passes them on). It found
+  `settings_defaults` (the menu's reset), `stream_preload` and
+  `menu_init` (the benches) on the way; a function that gains a caller in
+  play fails the build.
+
+**Checked**: the 128 spawn views' `H` lines identical, the C engine's
+128, the game bench's 23, `MOVERS=1`'s 165, `ENTS=1`'s 83, `MONSTERS=1`'s
+state and `H` lines, E1M3's crowd fight and E1M3 cleared line for line
+(the cycles aside), the walk's 27 maps (the same late frames, 2263); the
+boot and every load through the overlay in all of them (a wrong read is
+fatal, on the screen and the console); the release's disc image with
+LOAD.BIN in the root and in the 32 level directories.
+
+**Measured.** The release's arena 1 374 448 → 1 389 120 B (+14 672: the
+overlay's 15 016 less `ovl_load`, `stream_load_done` and the split's
+344); every pool +14 KB at the release's arena (E1M3's 453 → 467 KB,
+E4M7's 418 → 432, START's 706 → 720; the table of §90.11), E1M3's blocks
+unchanged but the pool, 464 112 → 478 784 B (§90.10). A load reads 8
+sectors more (LOAD.BIN, 15 016 B, first in the level's directory: no
+seek of its own; the boot's from the root). The frames and their cycles
+are the same, the code moved, not changed: the walk's 27 maps 10 071 664
+→ 10 070 607 cycles a frame summed, E1M3 cleared 6 480 597 → 6 480 590.
+
 ### 90.11 Every map's stream pool at each lever
 
 `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1 LEVEL_CAP=<the lever's release arena>`:
 the `bench zone` lines' pool, KB (§90.3's run is with §90.4's; the
 smallest pool is E4M7's throughout).
 
-| map | base (795bfb2) | §90.1 | §90.2 | §90.3-4 | §90.5 | §90.6 |
-|---|---|---|---|---|---|---|
-| the release's arena (B) | 1 343 008 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 |
-| START | 631 | 663 | 682 | 702 | 710 | 706 |
-| E1M1 | 578 | 610 | 629 | 649 | 659 | 672 |
-| E1M2 | 466 | 498 | 517 | 537 | 551 | 555 |
-| E1M3 | 348 | 380 | 399 | 419 | 438 | 453 |
-| E1M4 | 438 | 470 | 489 | 509 | 526 | 539 |
-| E1M5 | 463 | 495 | 514 | 534 | 552 | 567 |
-| E1M6 | 549 | 581 | 600 | 620 | 636 | 648 |
-| E1M7 | 988 | 1020 | 1039 | 1059 | 1065 | 1061 |
-| E1M8 | 773 | 805 | 823 | 843 | 854 | 850 |
-| E2M1 | 525 | 557 | 576 | 596 | 610 | 622 |
-| E2M2 | 491 | 523 | 542 | 562 | 574 | 584 |
-| E2M3 | 504 | 536 | 555 | 575 | 589 | 596 |
-| E2M4 | 350 | 382 | 400 | 420 | 439 | 454 |
-| E2M5 | 542 | 574 | 593 | 613 | 628 | 639 |
-| E2M6 | 372 | 404 | 423 | 443 | 466 | 476 |
-| E2M7 | 358 | 390 | 409 | 429 | 451 | 464 |
-| E3M1 | 560 | 592 | 611 | 631 | 644 | 658 |
-| E3M2 | 609 | 641 | 660 | 680 | 694 | 718 |
-| E3M3 | 633 | 665 | 684 | 704 | 717 | 733 |
-| E3M4 | 363 | 395 | 414 | 434 | 451 | 471 |
-| E3M5 | 479 | 511 | 530 | 550 | 565 | 572 |
-| E3M6 | 454 | 486 | 505 | 525 | 543 | 542 |
-| E3M7 | 583 | 615 | 634 | 654 | 667 | 674 |
-| E4M1 | 528 | 560 | 579 | 599 | 615 | 621 |
-| E4M2 | 537 | 569 | 588 | 608 | 623 | 633 |
-| E4M3 | 355 | 387 | 406 | 426 | 446 | 462 |
-| E4M4 | 494 | 526 | 545 | 565 | 586 | 587 |
-| E4M5 | 405 | 437 | 456 | 476 | 497 | 519 |
-| E4M6 | 551 | 583 | 602 | 622 | 639 | 653 |
-| E4M7 | 308 | 340 | 359 | 379 | 397 | 418 |
-| END | 904 | 936 | 955 | 975 | 985 | 982 |
-| mean | 521 | 553 | 572 | 592 | 607 | 617 |
+| map | base (795bfb2) | §90.1 | §90.2 | §90.3-4 | §90.5 | §90.6 | §90.7 |
+|---|---|---|---|---|---|---|---|
+| the release's arena (B) | 1 343 008 | 1 375 776 | 1 375 776 | 1 379 872 | 1 377 520 | 1 374 448 | 1 389 120 |
+| START | 631 | 663 | 682 | 702 | 710 | 706 | 720 |
+| E1M1 | 578 | 610 | 629 | 649 | 659 | 672 | 686 |
+| E1M2 | 466 | 498 | 517 | 537 | 551 | 555 | 569 |
+| E1M3 | 348 | 380 | 399 | 419 | 438 | 453 | 467 |
+| E1M4 | 438 | 470 | 489 | 509 | 526 | 539 | 553 |
+| E1M5 | 463 | 495 | 514 | 534 | 552 | 567 | 581 |
+| E1M6 | 549 | 581 | 600 | 620 | 636 | 648 | 662 |
+| E1M7 | 988 | 1020 | 1039 | 1059 | 1065 | 1061 | 1075 |
+| E1M8 | 773 | 805 | 823 | 843 | 854 | 850 | 865 |
+| E2M1 | 525 | 557 | 576 | 596 | 610 | 622 | 636 |
+| E2M2 | 491 | 523 | 542 | 562 | 574 | 584 | 598 |
+| E2M3 | 504 | 536 | 555 | 575 | 589 | 596 | 610 |
+| E2M4 | 350 | 382 | 400 | 420 | 439 | 454 | 468 |
+| E2M5 | 542 | 574 | 593 | 613 | 628 | 639 | 653 |
+| E2M6 | 372 | 404 | 423 | 443 | 466 | 476 | 491 |
+| E2M7 | 358 | 390 | 409 | 429 | 451 | 464 | 478 |
+| E3M1 | 560 | 592 | 611 | 631 | 644 | 658 | 672 |
+| E3M2 | 609 | 641 | 660 | 680 | 694 | 718 | 733 |
+| E3M3 | 633 | 665 | 684 | 704 | 717 | 733 | 747 |
+| E3M4 | 363 | 395 | 414 | 434 | 451 | 471 | 485 |
+| E3M5 | 479 | 511 | 530 | 550 | 565 | 572 | 586 |
+| E3M6 | 454 | 486 | 505 | 525 | 543 | 542 | 556 |
+| E3M7 | 583 | 615 | 634 | 654 | 667 | 674 | 688 |
+| E4M1 | 528 | 560 | 579 | 599 | 615 | 621 | 635 |
+| E4M2 | 537 | 569 | 588 | 608 | 623 | 633 | 647 |
+| E4M3 | 355 | 387 | 406 | 426 | 446 | 462 | 476 |
+| E4M4 | 494 | 526 | 545 | 565 | 586 | 587 | 601 |
+| E4M5 | 405 | 437 | 456 | 476 | 497 | 519 | 534 |
+| E4M6 | 551 | 583 | 602 | 622 | 639 | 653 | 667 |
+| E4M7 | 308 | 340 | 359 | 379 | 397 | 418 | 432 |
+| END | 904 | 936 | 955 | 975 | 985 | 982 | 996 |
+| mean | 521 | 553 | 572 | 592 | 607 | 617 | 631 |

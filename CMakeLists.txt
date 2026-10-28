@@ -58,6 +58,7 @@ set_target_properties(q1psx PROPERTIES LINK_OPTIONS "${_q1psx_link_options}"
 	LINK_DEPENDS "${PROJECT_SOURCE_DIR}/engine/q1psx.ld;${PROJECT_SOURCE_DIR}/engine/icache.ld")
 target_link_options(q1psx PRIVATE -T${PROJECT_SOURCE_DIR}/engine/q1psx.ld -L${PROJECT_SOURCE_DIR}/engine
 	-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/q1psx.ldmap)   # (the input sections' places: tools/icache)
+set_property(TARGET q1psx APPEND PROPERTY LINK_DEPENDS "${PROJECT_SOURCE_DIR}/engine/load.ld")
 
 # CMake does not scan `.include` in assembly sources: make every asm file
 # depend on the .inc definition files, or editing an offset there leaves
@@ -89,6 +90,26 @@ add_custom_command(TARGET q1psx POST_BUILD
 add_custom_command(TARGET q1psx POST_BUILD
 	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/iccheck.sh ${Q1PSX_OBJDUMP} $<TARGET_OBJECTS:q1psx>
 	COMMENT "Checking the instruction cache's chains (scripts/iccheck.sh)"
+	COMMAND_EXPAND_LISTS
+	VERBATIM)
+
+# The load overlay (docs/porting-notes.md §90.7): the boot's inits and a
+# level's load code (engine/load.ld) linked at the level arena's top under
+# the stack (engine/q1psx.ld's .text.load: OVL_BASE, OVL_ROOM bytes), read
+# from LOAD.BIN at boot and at each load, the room the stream's pool's for
+# the rest of the level. The section is not allocated in the link (INFO: no
+# segment, so the SDK's elf2x leaves it out of the EXE); the file is its
+# bytes dumped; scripts/ovlcheck.py checks that nothing in play calls into
+# it.
+set(Q1PSX_OVL_ROOM 32768)
+math(EXPR Q1PSX_OVL_BASE "0x801ffff0 - ${Q1PSX_STACK_BYTES} - ${Q1PSX_OVL_ROOM}" OUTPUT_FORMAT HEXADECIMAL)
+target_link_options(q1psx PRIVATE -Wl,--defsym=OVL_BASE=${Q1PSX_OVL_BASE} -Wl,--defsym=OVL_ROOM=${Q1PSX_OVL_ROOM})
+find_program(Q1PSX_OBJCOPY NAMES mipsel-none-elf-objcopy REQUIRED)
+add_custom_command(TARGET q1psx POST_BUILD
+	COMMAND ${Q1PSX_OBJCOPY} --dump-section .text.load=${CMAKE_CURRENT_BINARY_DIR}/load.bin $<TARGET_FILE:q1psx> ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
+	COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/ovlcheck.py ${Q1PSX_OBJDUMP} ${PROJECT_SOURCE_DIR}/engine/load.ld $<TARGET_OBJECTS:q1psx>
+	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/load.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
+	COMMENT "The load overlay (LOAD.BIN) out of the link; checking its callers (scripts/ovlcheck.py)"
 	COMMAND_EXPAND_LISTS
 	VERBATIM)
 

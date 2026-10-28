@@ -2033,6 +2033,20 @@ followed by R0-R4.
     +2.0 %), +0.9 % on E1M3 cleared, the release's code +3 072 B.
     `world_vis_row` decodes a PVS row for the AI and the load alike;
     `SAMPLE=1` samples the walk and the movers too.
+  - §90.7 the loads' code as an overlay at the level arena's top
+    (`engine/load.ld`, `engine/q1psx.ld`'s `.text.load` at `OVL_BASE`
+    under the stack, 32 KB of room; `scripts/ovlcheck.py` at every link):
+    36 functions only the boot's inits and a level's load run (the world's,
+    the entities', the sounds', the zones' and the stream's loaders, the
+    boot's inits, 15 016 B) are left out of the EXE (315 392 → 299 008 B)
+    and read from `LOAD.BIN` (the root's copy at boot, a copy first in
+    every level's directory at its load: `scripts/cd_image.cmake`) into
+    the arena's top before they run; the stream's pool takes the whole
+    rest but keeps its end under them until the load's end
+    (`stream_load_done`). The respawn's spawners, the menu and what runs
+    before the drive is up stay. The release's arena +14 672 B (1 374 448
+    → 1 389 120), every pool +14 KB (E4M7's 418 → 432 KB, E1M3's 453 →
+    467); every frame identical; a load reads 8 sectors more.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**

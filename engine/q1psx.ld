@@ -28,9 +28,22 @@ MEMORY {
 }
 
 SECTIONS {
+	/* q1psx: the load overlay (docs/porting-notes.md §90.7): the boot's
+	   inits and a level's load (engine/load.ld), at the level arena's top
+	   under the stack, read from LOAD.BIN there before they run; the EXE is
+	   made without this section (INFO: not allocated, in no segment), the
+	   file from its bytes (CMakeLists.txt). First, so that .text's wildcard
+	   below leaves these input sections to it. */
+	.text.load OVL_BASE (INFO) : {
+		__load_start = .;
+		INCLUDE load.ld
+		__load_end = .;
+	} > APP_RAM
+	ASSERT(__load_end - __load_start <= OVL_ROOM, "engine/load.ld: the load overlay past its room (OVL_ROOM)")
+
 	/* Text section, i.e. code and constants */
 
-	.text : {
+	.text ORIGIN(APP_RAM) : {
 		__text_start = .;
 
 		/* the hot code first, from the 4 KB boundary .text starts on: the

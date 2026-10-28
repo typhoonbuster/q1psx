@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <psxapi.h>
 #include <psxgpu.h>
 #include <hwregs_c.h>
 
@@ -274,6 +275,34 @@ Q_COLD static void loading_screen(uint32_t done, uint32_t total)
    load's room: vram_upload's padded copies) */
 #define STREAM_KEEP (8 * 1024)
 
+/* The load overlay (docs/porting-notes.md §90.7): the boot's inits and a
+   level's load (engine/load.ld), linked at the level arena's top under the
+   stack (engine/q1psx.ld: __load_start to __load_end, OVL_ROOM of room),
+   read from LOAD.BIN before any of it runs: the root's copy at boot, the
+   level's directory's at its load (first in the directory: no seek). The
+   stream's pool takes the room after the load (stream_load_done). */
+extern uint8_t __load_start[], __load_end[];
+
+Q_COLD static void ovl_load(const char *dir)
+{
+	char name[32];
+	uint32_t lba, size;
+	q_snprintf(name, sizeof name, "%s\\LOAD.BIN;1", dir);
+	if (!cd_find(name, &lba, &size) && !cd_find("\\LOAD.BIN;1", &lba, &size)) {
+		printf("load: no LOAD.BIN\n");
+		vid_fatal();
+	}
+	if (size != (uint32_t) (__load_end - __load_start) ||
+	    !cd_read_now((int32_t) lba, (size + 2047) / 2048, __load_start, CDW_FILE, 0)) {
+		printf("load: LOAD.BIN %u B, the link's %u, or unread\n", (unsigned) size,
+		       (unsigned) (__load_end - __load_start));
+		vid_fatal();
+	}
+	FlushCache();                               /* (the cache's lines of the last load) */
+}
+
+static void load_level_main(int map);
+
 /* Load `map` at the settings' levels (textures, geometry, models), or at
    the highest lower geometry that fits the level arena; the game data's
    models at the models' level. Sets world_ok and binds the renderer. */
@@ -293,6 +322,16 @@ Q_COLD static int load_level(int map)
 	                                               (docs/porting-notes.md §84) */
 	q_snprintf(dir, sizeof dir, "\\LVL\\%s", world_map_name(map));
 	cd_cache_dir(dir);
+	ovl_load(dir);                              /* the load's code (§90.7): the rest runs from it */
+	load_level_main(map);
+	printf("stack: %u bytes never reached\n", (unsigned) stack_untouched());
+	return world_ok;
+}
+
+/* the load from its overlay on: the bank, the world, the entities, the
+   streamed assets' pool and its preload */
+Q_COLD static void load_level_main(int map)
+{
 	music_level(world_map_name(map));           /* (its copy of the track) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
@@ -327,13 +366,13 @@ Q_COLD static int load_level(int map)
 			zone_preload(eye);
 		}
 		stream_preload();                       /* what the spawn's surroundings want */
+		stream_load_done();                     /* (the overlay's room: the pool's from here;
+		                                           nothing of the overlay runs past this) */
 		game_ws_sync();                         /* (the 2D gun's packets, read: linked) */
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		music_play(snd_cd_track());
 	}
-	printf("stack: %u bytes never reached\n", (unsigned) stack_untouched());
-	return world_ok;
 }
 
 /* --------------------------------------------------------------- frame -- */
@@ -3355,6 +3394,7 @@ int main(void)
 	pad_init();
 	prof_init();
 	cd_init();
+	ovl_load("");                          /* the boot's inits below and the loads' code (§90.7) */
 	snd_init();
 	music_init();
 	r_init();

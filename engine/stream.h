@@ -78,6 +78,9 @@ uint32_t stream_hash(int a);
 /* a map is about to load (the level arena reset, the drive taken): a read
    in flight stopped, every asset out */
 void stream_abort(void);
+/* the load's end (main.c load_level): the load overlay's room at the pool's
+   top is the pool's from here (docs/porting-notes.md §90.7) */
+void stream_load_done(void);
 
 /* the map is loaded, its edicts allocated: the RAM pool takes what the
    level arena has left (less `keep` bytes), the VRAM pool what the map's
