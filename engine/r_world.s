@@ -2545,8 +2545,20 @@ dm_body:                                 # (ei_model: its ra and SP_DMRA set)
 	lw      $t2, RE_FLAGS($a0)
 	subu    $t3, $s7, $s6                # the packet room left (bytes; < 0 past)
 	andi    $t2, $t2, 3                  # a brush model, the view model: drawn
+.if ASM_BENCH
+	bnez    $t2, dm_draw                 # whatever the room (the world's look)
+	lui     $t5, %hi(r_model_room_min)   # (delay; the bench: the least room an
+	lw      $t4, %lo(r_model_room_min)($t5)   # alias model found this frame,
+	nop                                  # render.c, the arenas' sizing)
+	slt     $t4, $t3, $t4
+	beqz    $t4, 1f
+	nop
+	sw      $t3, %lo(r_model_room_min)($t5)
+1:	slti    $t3, $t3, R_MODEL_ROOM
+.else
 	bnez    $t2, dm_draw                 # whatever the room (the world's look)
 	slti    $t3, $t3, R_MODEL_ROOM
+.endif
 	bnez    $t3, dm_skip                 # an alias model with less room left
 	nop                                  # than R_MODEL_ROOM: left out, the room
 dm_draw:                                 # kept for the farther world's records
@@ -2671,10 +2683,19 @@ dm_exit_1:
 	nop
 	ICSEC   dm_skip
 dm_skip:                                 # (nothing of the view's state touched)
+.if ASM_BENCH
+	lui     $t5, %hi(r_model_skipped)    # (the bench: the alias models left out)
+	lw      $t4, %lo(r_model_skipped)($t5)
+	lw      $ra, SP_DMRA($t8)
+	addiu   $t4, $t4, 1
+	jr      $ra
+	sw      $t4, %lo(r_model_skipped)($t5)
+.else
 	lw      $ra, SP_DMRA($t8)
 	nop
 	jr      $ra
 	nop
+.endif
 
 # -----------------------------------------------------------------------------
 # dm_sort: a monster (RE_SORT, formats/qstream.h QSTM_SORT), its matrix,

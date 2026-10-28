@@ -1378,7 +1378,9 @@ static void bench_zones(void)
 		int32_t at[3];
 		memcpy(at, wp[0], sizeof at);
 		uint32_t frames = 0, units = 0, walls = 0, late = 0, late_wall = 0, run = 0, worst = 0, bad = 0;
-		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_wall = 1u << 30;
+		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_wall = 1u << 30, pkt_max = 0;
+		int32_t room_min = 0x7fffffff;
+		uint32_t skipped0 = r_model_skipped, full = 0;
 		const int32_t speed = 320 * CLIP_SUB / 60;
 		uint32_t reads0 = stream_stats.reads;
 		for (int w = 1; w < nwp && frames < ZW_FRAMES; w++) {
@@ -1413,6 +1415,9 @@ static void bench_zones(void)
 				uint32_t fc = prof_stage[PROF_FRAME];
 				fsum += fc;
 				if (fc > fmax) fmax = fc;
+				if (vid_stats.pkt_bytes > pkt_max) pkt_max = vid_stats.pkt_bytes;
+				if (r_model_room_min < room_min) room_min = r_model_room_min;
+				full += r_arena_full != 0;
 				if (zone_stats.switches != sw0) {
 					swf++;
 					swsum += fc;
@@ -1435,12 +1440,14 @@ static void bench_zones(void)
 		       "%u max; %u patches checked bad), %u reads (%u KB, %u frames each), %u waits for the drive; late: %u "
 		       "events, %u frames (%u through walls), the longest run %u; %u evictions, %u read errors; frames %u "
 		       "cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u, %u sounds asked, not in, "
-		       "%u swapped from RAM\n",
+		       "%u swapped from RAM; packets %u bytes at most, a model's room %d at least, %u models left out, "
+		       "%u full frames\n",
 		       world_map_name(m), frames, units, walls, nwp - 1, z->switches,
 		       z->switches ? z->switch_cycles / z->switches : 0, z->switch_max, bad, z->loads, z->load_bytes / 1024,
 		       z->loads ? z->load_frames / z->loads : 0, z->waits, z->late_events, late, late_wall, worst,
 		       z->evictions, z->read_errors, frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax,
-		       stream_stats.reads - reads0, stream_stats.snd_missing, stream_stats.ram_swaps);
+		       stream_stats.reads - reads0, stream_stats.snd_missing, stream_stats.ram_swaps, pkt_max,
+		       room_min == 0x7fffffff ? -1 : (int) room_min, (unsigned) (r_model_skipped - skipped0), full);
 		game_active = 0;
 		zone_sync = 1;
 	}
@@ -2712,7 +2719,11 @@ static void bench_monsters(void)
 		game_give_weapon(W_RLAUNCHER);
 		cmd.fire = 1;
 		int peak = 0;
-		uint32_t fsum = 0, fdrawn = 0;               /* (the frames' cycles, the monsters drawn) */
+		uint32_t fsum = 0, fdrawn = 0, pkt_max = 0;  /* (the frames' cycles, the monsters drawn,
+		                                                the packet bytes a frame at most, the
+		                                                least room a model found) */
+		int32_t room_min = 0x7fffffff;
+		uint32_t skipped0 = r_model_skipped, full = 0;
 		mdl_refused_since();
 		prof_sample_start();                         /* (SAMPLE=1: the fight's profile) */
 		for (int t = 0; t < 3600; t++) {
@@ -2741,6 +2752,11 @@ static void bench_monsters(void)
 			run_frame(0, 0);
 			fsum += prof_stage[PROF_FRAME];
 			fdrawn += (uint32_t) monsters_drawn;
+			if (vid_stats.pkt_bytes > pkt_max)
+				pkt_max = vid_stats.pkt_bytes;
+			if (r_model_room_min < room_min)
+				room_min = r_model_room_min;
+			full += r_arena_full != 0;
 #if !Q1PSX_ENGINE_C
 			if (!(t & 15))
 				ents_seen_check();                /* (e_seen.s against its C, untimed; a
@@ -2755,12 +2771,16 @@ static void bench_monsters(void)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
 				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn, "
-				       "the frame cache refused %u\n",
+				       "the frame cache refused %u, packets %u bytes at most, a model's room %d at least, "
+				       "%u models left out, %u full frames\n",
 				       t + 1, alive, used, peak, max, (unsigned) stack_untouched(),
 				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) vid_stats.vbl,
 				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10),
-				       (unsigned) mdl_refused_since());
-				fsum = fdrawn = 0;
+				       (unsigned) mdl_refused_since(), pkt_max, room_min == 0x7fffffff ? -1 : (int) room_min,
+				       (unsigned) (r_model_skipped - skipped0), full);
+				fsum = fdrawn = pkt_max = full = 0;
+				room_min = 0x7fffffff;
+				skipped0 = r_model_skipped;
 			}
 		}
 		cmd.fire = 0;
@@ -2786,7 +2806,9 @@ static void clear_map(void)
 	pl.items |= IT_ROCKET_LAUNCHER;
 	game_give_weapon(W_RLAUNCHER);
 	int killed = 0, peak = 0, skipped = 0;
-	uint32_t ctot = 0, cframes = 0, cdrawn = 0, ccut = 0;   /* the fights' frames */
+	uint32_t ctot = 0, cframes = 0, cdrawn = 0, ccut = 0, cpkt = 0;   /* the fights' frames */
+	int32_t croom = 0x7fffffff;
+	uint32_t cskipped0 = r_model_skipped, cfull = 0;
 	static uint8_t tried[1024];
 	memset(tried, 0, sizeof tried);
 	for (;;) {
@@ -2844,6 +2866,11 @@ static void clear_map(void)
 			cframes++;
 			cdrawn += (uint32_t) monsters_drawn;
 			ccut += (uint32_t) rl_lod_cut;
+			if (vid_stats.pkt_bytes > cpkt)
+				cpkt = vid_stats.pkt_bytes;
+			if (r_model_room_min < croom)
+				croom = r_model_room_min;
+			cfull += r_arena_full != 0;
 		}
 		cmd.fire = 0;
 		for (int u = 0; u < 60; u++) {            /* its death, its gibs */
@@ -2876,8 +2903,10 @@ static void clear_map(void)
 	printf("clear done %s: %d killed, %d alive (%d with no spot), edicts %d (peak %d) of %d, stack %u never "
 	       "reached, level arena %u KB\n", world.map_name, killed, alive, skipped, used, peak, max,
 	       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024));
-	printf("clear frames %s: %u fight frames, %u x 256 cycles, %u streamed models drawn, %u cut to a band\n",
-	       world.map_name, (unsigned) cframes, (unsigned) ctot, (unsigned) cdrawn, (unsigned) ccut);
+	printf("clear frames %s: %u fight frames, %u x 256 cycles, %u streamed models drawn, %u cut to a band, "
+	       "packets %u bytes at most, a model's room %d at least, %u models left out, %u full frames\n",
+	       world.map_name, (unsigned) cframes, (unsigned) ctot, (unsigned) cdrawn, (unsigned) ccut, cpkt,
+	       croom == 0x7fffffff ? -1 : (int) croom, (unsigned) (r_model_skipped - cskipped0), cfull);
 }
 
 /* MONSTERS=4: MAP (E1M3) loaded and cleared. MONSTERS=5: from MAP (E1M1),

@@ -118,7 +118,10 @@
 #         MUSIC_SEEK=<ms> the seek its refills plan around a read (100, the
 #         game's: a hop within a level's section; docs/porting-notes.md
 #         §84); tools/cdsim/cdsim.py replays a journal on another disc
-#         layout.
+#         layout. MEMLOG=1 logs the level arena: a "memlog" line per
+#         block taken or given back, with its caller's return address
+#         (addr2line -e build-bench/q1psx.elf): a map's RAM block by block
+#         (docs/porting-notes.md §90).
 #         LOD=0 draws every streamed model whole at every distance (CMake
 #         Q1PSX_LOD; the level of detail by the vertices' order,
 #         docs/porting-notes.md §88): an A / B of the engine's cut alone,
@@ -158,6 +161,11 @@
 #
 # Numbers are PCSX-Redux CPU timings: good for comparing variants, not a
 # cycle-exact hardware measurement (see docs/architecture.md §9).
+#
+# The emulator runs in fast forward (EMU= a wrapper with SPU.Speed 10): the
+# 128 views take 40 s, a fight 20 s, the zones' walk 4 min. Give
+# [max-seconds] two or three times that, no more; a run whose console
+# stops growing is stopped after STALL seconds (30, scripts/headless.sh).
 
 set -euo pipefail
 
@@ -209,6 +217,7 @@ LOD=${LOD:-1}
 WHOLE=${WHOLE:-0}
 CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
+MEMLOG=${MEMLOG:-0}
 MUSIC_RING=${MUSIC_RING:-6}
 MUSIC_REFILL=${MUSIC_REFILL:-4}
 MUSIC_SEEK=${MUSIC_SEEK:-100}
@@ -223,7 +232,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
-      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
+      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
 	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }

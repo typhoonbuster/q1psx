@@ -11637,3 +11637,158 @@ chosen:
   walking through the bands expands its frames again at each (an
   expansion is ~4 cycles a vertex plus 12 a parent copy); no refusal seen
   in the benches.
+
+## §90 — The stream's pool grown: nine RAM levers in three batches (2026-10-28)
+
+(Provisional number: §89, the draw distance of 1024, is on a branch of its
+own, not merged; the numbers get settled at the merge.)
+
+The stream's pool is the first thing to run short: on E1M3 (release) it is
+348 KB and full at the spawn, 13 KB free (the RAM report of 2026-10-25,
+outside the repository, on master 795bfb2 with the pvs_1536_64 tables and
+three slots: 368 KB then). Every byte the rest of the RAM gives up goes to
+it, since it takes the level arena's rest. Nine levers were chosen out
+of eleven, in three batches, each built and measured on this branch, one
+commit a lever, to validate before any merge:
+
+1. the two packet arenas sized on what a frame writes (§90.1);
+2. ENT_SPARE 96 → 48 (§90.2);
+3. the staging buffer: the music refilled by 2 chunks, 16 KB (§90.3);
+4. the stack 12 → 8 KB (§90.4);
+5. a compact `edict_t` (§90.5);
+6. the brush models' rooms as a cut cache sized by the PVS (§90.6);
+7. the loads' and menus' code as an overlay in the arena's top (§90.7);
+8. nodes 36 → 20 bytes, leaves 28 → 16 (§90.8);
+9. the PVS as deltas decoded at the marking (§90.9).
+
+**The measure, at each lever.** The bench build with the release's arena
+(`LEVEL_CAP=`, the release's `ramcheck` line, which moves with the BSS and
+the stack): `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1` for every map's pool (`bench
+zone` lines), the smallest pool and E4M7's; E1M3's arena block by block
+(`MEMLOG=1 MAP=E1M3 BENCH_MAPS=1 VIEWS=0`: a `memlog` line per block, its
+caller by addr2line; the RAM report's own instrumentation stays on its
+throwaway branch). The frames: the 128 spawn views, the game bench, the
+monsters' fights and the map cleared, hash for hash against the branch's
+base (795bfb2) with the same cooked data (`seen_1536_64`, four slots: the
+tables master's 1536-unit draw distance was cut for; the main checkout's
+`local.env` names the 1024 tables of §89 today). PCSX-Redux in fast
+forward.
+
+**The base (795bfb2, release arena 1 343 008 B):** the smallest pool
+E4M7's 308 KB, E1M3's 348, START's 631; E1M3's arena: textures 1.9 KB,
+skeleton 267, face stamps 7.3, models 4.8, four slots 256, touch lists
+8.7, edicts 149.4 (389 × 384), brush models 69.9 (57 drawn: their caches
+49.9, their pieces' vertices 20.8), the RAM sounds 136 (24 of them), the
+frame cache 24, the staging buffer 32, the pool 348 (+ 8 KB kept under the
+stack); the table block by block at each lever in §90.10.
+
+### 90.1 The packet arenas: 2 × 96 KB → 2 × 80 KB
+
+The two display lists live in the BSS (`engine/vid.c` `buf`: a DISPENV, a
+DRAWENV, eight ordering-table words and the arena, 98 420 B each). What a
+frame writes was measured in every bench: the lines' `pkt=` (the arena
+bytes used, the HUD's 1.5 KB block past them left out) and, new, `room=`
+(the least room an alias model found at `draw_model`'s test: under
+`R_MODEL_ROOM`, 24 576 B, a monster, an item or a gib is left out so the
+farther world records keep their room, r_defs.inc) and `mskip=` (the
+models so left out), the walk's and the fights' lines carrying the same
+three (`bmfrag`-free counters in bench builds: `.if ASM_BENCH` in
+r_world.s, `r_model_room_min`, `r_model_skipped`).
+
+| scenario | packets at most (B) | a model's room at least (B) |
+|---|---|---|
+| the 128 spawn views | 53 588 (E3M4.v0) | 52 104 (E3M4.v0) |
+| the game bench (12 scenarios) | 54 856 (lightning) | 50 132 |
+| E1M3's crowd fight (MONSTERS=3) | 40 880 | 58 116 |
+| E1M8's fight (Chthon) | 57 872 | 51 632 |
+| E1M1 cleared (MONSTERS=4) | 63 924 | 46 004 |
+| E3M4's crowd fight | 77 660 | 34 468 |
+| the zones' walk (27 maps, legs through walls) | 76 932 (E4M1) | 30 356 (E2M6) |
+
+With 96 KB an arena, a model's test sees 94 672 − (the bytes before it);
+an arena of A bytes shrinks every room by 98 304 − A, so no frame of a
+scenario changes while its least room stays over 24 576 after that: the
+views allow 70 776 B, the game bench 72 748, E1M8's fight 71 248, E1M1
+cleared 76 876; E3M4's crowd and the walk through walls (the camera in a
+wall, every leaf around drawn) would need 88 412 and 92 524 to keep every
+frame, and their 77.7 KB of records need an end past them (the walk stops
+at the arena's end less 2 096 B: `r_arena_full`, the farthest records
+lost). The choice: **80 KB** (81 920 B, the walk's end at 78 288 B): the
+views, the game bench, the fights of E1M3 and E1M8 and E1M1 cleared keep
+every frame (checked below); E3M4's crowd fight and the walk's legs through
+walls lose a far model in the frames where the room runs under 24 KB (the
+`mskip=` counts below), no frame fills. 16 KB a buffer: −32 768 B of BSS,
+the release's arena 1 343 008 → 1 375 776 B.
+
+**Checked at 80 KB** (the base run first with the same counters, then
+this): the 128 spawn views' `H` lines identical (no `mskip`, no `FULL`),
+the game bench's 23 identical, E1M3's crowd fight line for line (the
+cycles aside: the counters' own instructions), E1M8's fight and E1M1
+cleared the same (one cycle count aside), E3M4's crowd fight the same
+lines with 47 models left out over its 3600 frames (46 of them in the
+first 300, the crowd all in view at 77.4 KB of packets, the room down to
+18.1 KB; one in the next 300; none after), the walk 543 models left out
+over 27 maps × 3600 frames (15 maps, E4M2's 114 the most: its legs through
+walls at 60.7 KB), no frame full anywhere. Every map's pool +32 KB: the
+smallest E4M7's 308 → 340 KB, E1M3's 348 → 380, START's 631 → 663. A run
+of E1M8's fight stalled in PCSX-Redux itself (1 % of a CPU, no console
+line for eleven minutes, the same build fine before and after):
+`headless.sh` now stops a run whose console stays silent for `STALL`
+seconds (30), exit status 3, instead of sitting through its cap; the
+caps given to `bench.sh` are two or three times a fast-forward run's
+need.
+
+### 90.2 ENT_SPARE 96 → 48
+
+The edict pool is sized at the map's spawn (`ents_trim`, §77.2): the slots
+in use plus ENT_SPARE free ones for what the game spawns in play (a
+DelayedUse relay, a teleport's fog and death trigger, a gib, a backpack,
+a wizard's missiles, a shambler's lightning), 384 bytes each. What the
+play needs, measured on the base build (`MONSTERS=3`: the crowd awake, a
+minute of rockets; `MONSTERS=4`: the map cleared monster by monster, then
+30 s of bodies and gibs):
+
+| scenario | at the spawn | the peak | the pool | over the spawn |
+|---|---|---|---|---|
+| E1M3's crowd fight | 293 | 306 | 389 | +13 |
+| E3M5's crowd fight | 233 | 235 | 329 | +2 |
+| E1M8's fight (Chthon) | 157 | 162 | 253 | +5 |
+| E1M1 cleared | 145 | 177 | 241 | +32 |
+
+A cleared map is the deepest: each monster killed with rockets leaves two
+to four gibs for 10-20 s and a backpack for two minutes (`DropBackpack`:
+every monster with ammo). A spare of 48 covers these runs with 16 slots
+to spare on E1M1 cleared. What a full pool costs: `ent_spawn` returns 0
+and the caller gives up: a gib or a backpack not thrown (`throw_gib`,
+`drop_backpack`), a missile not fired (the wizard), and in
+`sub_use_targets` a delayed use never done (its DelayedUse edict): a map's
+logic, not only its look. The spawn's own edicts (the doors' fields, the
+plats' triggers) are counted before the trim and take none of the spare.
+
+### 90.10 E1M3's arena, block by block, at each lever
+
+`MEMLOG=1 MAP=E1M3 BENCH_MAPS=1 VIEWS=0 LEVEL_CAP=<the release's arena>`:
+a `memlog` line per block the level arena hands out or takes back, its
+caller resolved on the host (the symbol table of the run's own ELF: the
+one `chain`'s runs keep beside each log; addr2line's line); a block a
+release cuts into (a file read whole, its tables kept at its base; the
+edict pool trimmed) is what is left of it. The release's blocks are these
+at 0x800ad1d0 (0x800b51d0 before §90.1), the bench build's base differs.
+Bytes; the pool takes the rest less 8 256 (`STREAM_KEEP` + 64).
+
+| block (caller) | base (795bfb2) | §90.1 |
+|---|---|---|
+| the texture tables (cd_load, the file 124 928 read whole) | 1 936 | 1 936 |
+| the skeleton `E1M3_G0.WLD` (cd_load) | 274 432 | 274 432 |
+| `face_visframe` (world_load) | 7 488 | 7 488 |
+| the map's models `E1M3_M0.MDL` (cd_load) | 4 096 | 4 096 |
+| their tables (world_load: 256, 32, 8 × 48) | 672 | 672 |
+| the zone slots, 4 × 65 536 (zone_map_start) | 262 144 | 262 144 |
+| the touch lists, `model_draw` (ents_load: 7 120, 1 792, 224) | 9 136 | 9 136 |
+| the edicts (ents_load; 445 asked, 389 kept by ents_trim) | 149 376 | 149 376 |
+| the brush models (bmf_reserve: 432, the caches 49 888, their vertices 21 264) | 71 584 | 71 584 |
+| the RAM sounds (stream_map_start) | 139 264 | 139 264 |
+| the frame cache (stream_map_start) | 24 576 | 24 576 |
+| the staging buffer (stream_map_start) | 32 768 | 32 768 |
+| **the stream's pool** (stream_map_start) | 357 280 | 390 048 |
+| the arena | 1 343 008 | 1 375 776 |

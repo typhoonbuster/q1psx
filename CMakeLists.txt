@@ -237,9 +237,11 @@ set(Q1PSX_BENCH_WORLD_HZ 30 CACHE STRING "The world's tick rate the bench runs a
 set(Q1PSX_BENCH_ZONES 0 CACHE STRING "1: the zones' walk: every zoned map walked through its items, the chunk reads, switches and late frames (bench zones lines)")
 set(Q1PSX_BENCH_CDLOG 0 CACHE STRING "1: the drive's journal: a cd line per read (who, where, when; engine/cd.h)")
 set(Q1PSX_BENCH_CDMODEL 0 CACHE STRING "1: every read ends no sooner than a real drive would end it (DuckStation's seek model; engine/cd.c)")
+set(Q1PSX_BENCH_MEMLOG 0 CACHE STRING "1: the level arena's log: a memlog line per block taken or given back, with its caller (engine/mem.c)")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
 		Q1PSX_BENCH_CDLOG=${Q1PSX_BENCH_CDLOG} Q1PSX_BENCH_CDMODEL=${Q1PSX_BENCH_CDMODEL}
+		Q1PSX_BENCH_MEMLOG=${Q1PSX_BENCH_MEMLOG}
 		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_IRQTIME=${Q1PSX_BENCH_IRQTIME}

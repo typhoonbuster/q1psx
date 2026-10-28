@@ -162,6 +162,12 @@ void r_set_warp(int mode, int t_px);
 /* the last frame's walk ran out of packet arena (its farthest records,
    emitted last by the front-to-back walk, were not drawn) */
 extern int r_arena_full;
+#ifdef Q1PSX_BENCH
+extern int32_t r_model_room_min;   /* this frame: the least packet room an alias model found (bytes;
+                                      a model is left out under R_MODEL_ROOM, engine/r_defs.inc);
+                                      0x7fffffff when none was drawn */
+extern uint32_t r_model_skipped;   /* the alias models left out for the room, since the boot */
+#endif
 
 /* packet bytes the walk leaves at the arena's end for what is drawn after
    the world (Quake's menu over the paused game: R_MENU_ROOM while it is

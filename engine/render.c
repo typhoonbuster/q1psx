@@ -597,6 +597,11 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 /* ----------------------------------------------------------------- frame -- */
 
 int r_arena_full;
+#ifdef Q1PSX_BENCH
+int32_t r_model_room_min;   /* the least packet room an alias model found this frame (r_world.s
+                               draw_model's test against R_MODEL_ROOM): the arenas' sizing */
+uint32_t r_model_skipped;   /* the alias models left out for the room (never reset: a run's count) */
+#endif
 int r_ui_room;
 
 void r_frame(void)
@@ -639,9 +644,15 @@ void r_frame(void)
 	r_state.ticks_block  = r_state.ticks_mark = 0;
 
 	uint32_t t0 = prof_now();
+#ifdef Q1PSX_BENCH
+	r_model_room_min = 0x7fffffff;
+#endif
 	r_render(&r_state);
 	uint32_t t1 = prof_now();
 #else
+#ifdef Q1PSX_BENCH
+	r_model_room_min = 0x7fffffff;
+#endif
 	r_render(&r_state);   /* release: no counters, no stage timers */
 #endif
 	if (opt_dist && r_state.visframe != mark_visframe) {   /* marked this frame */

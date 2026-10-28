@@ -66,21 +66,40 @@ void mem_level_cap(uint32_t bytes)
 	level_cap = bytes < level_bytes ? bytes : level_bytes;
 }
 
+#if Q1PSX_BENCH_MEMLOG
+/* the arena's log (MEMLOG=1 scripts/bench.sh): every block taken or given
+   back, with its caller's return address (addr2line on the host): a map's
+   RAM block by block, docs/porting-notes.md §90 */
+#define MEMLOG(...) printf(__VA_ARGS__)
+#else
+#define MEMLOG(...) ((void) 0)
+#endif
+
 void *mem_level_alloc(uint32_t bytes)
 {
 	uint32_t size = (bytes + 15u) & ~15u;
 	if (level_top > level_cap || size > level_cap - level_top) {
 		printf("mem: level arena full (%u + %u > %u)\n",
 		       level_top, size, (unsigned) level_cap);
+		MEMLOG("memlog alloc %u REFUSED top %u cap %u from %08x\n", bytes, level_top, (unsigned) level_cap,
+		       (unsigned) __builtin_return_address(0));
 		return NULL;
 	}
 	void *p = level_mem + level_top;
 	level_top += size;
+	MEMLOG("memlog alloc %u at %08x top %u from %08x\n", bytes, (unsigned) p, level_top,
+	       (unsigned) __builtin_return_address(0));
 	return p;
 }
 
 uint32_t mem_level_mark(void)          { return level_top; }
-void     mem_level_release(uint32_t m) { if (m <= level_top) level_top = m; }
+void     mem_level_release(uint32_t m)
+{
+	if (m <= level_top) {
+		MEMLOG("memlog release %u -> %u from %08x\n", level_top, m, (unsigned) __builtin_return_address(0));
+		level_top = m;
+	}
+}
 uint32_t mem_level_used(void)          { return level_top; }
 
 static uint8_t  game_mem[MEM_GAME_BYTES] __attribute__((aligned(16)));

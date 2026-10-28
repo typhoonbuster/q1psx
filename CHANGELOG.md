@@ -1976,6 +1976,24 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The stream's pool grown: nine RAM levers in three batches**
+  (2026-10-28, `docs/porting-notes.md` §90,
+  not merged: each batch's measures to validate):
+  - §90.1 the packet arenas 2 × 96 → 2 × 80 KB (`engine/vid.h`), sized on
+    what the frames write (the bench lines' new `room=` and `mskip=`: the
+    least room an alias model found at its `R_MODEL_ROOM` test, the models
+    left out): the 128 views, the game bench, the fights of E1M3 and E1M8
+    and E1M1 cleared keep every frame; E3M4's crowd fight loses 47 far
+    models over its 3600 frames (46 in its first 300, all in view) and the
+    walk's legs through walls 543 over 27 maps, no frame full; the
+    release's arena +32 KB (1 343 008 → 1 375 776 B), every pool +32 KB
+    (the smallest, E4M7's, 308 → 340 KB; E1M3's 348 → 380).
+  - `scripts/headless.sh` stops a run whose console stays silent for
+    `STALL` seconds (30: a stalled emulator, or the engine looping) instead
+    of waiting its cap out; `bench.sh`'s caps are to be a few times a
+    fast-forward run's need.
+  - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
+    (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**
   (2026-10-25, `docs/porting-notes.md` §88): the cook orders each hand-made body's
   vertices by what the eye would lose without them (half-edge collapses,
