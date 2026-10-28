@@ -11792,3 +11792,46 @@ Bytes; the pool takes the rest less 8 256 (`STREAM_KEEP` + 64).
 | the staging buffer (stream_map_start) | 32 768 | 32 768 |
 | **the stream's pool** (stream_map_start) | 357 280 | 390 048 |
 | the arena | 1 343 008 | 1 375 776 |
+
+### 90.3 The staging buffer: the music refilled by two chunks, 16 KB
+
+The stream's staging buffer (`engine/stream.c` `STAGE_SECTORS`) is the
+music's refill buffer too: a refill of `MUSIC_REFILL_CHUNKS` chunks a
+channel, 2 × 4 KB each, so 16 sectors (32 KB) with refills of 4 (§84's
+choice: 16 sectors every 1.3 s, fewer seeks on a console). With refills
+of 2 the buffer is 8 sectors, 16 KB (its floor: a sound's pieces), the
+drive asked every 0.65 s for 8 sectors. §84.4 had measured
+`MUSIC_RING=4` (a shorter ring, whose rule gives 2-chunk refills) viable
+under the drive model: 3728 late frames against 3485, the ring never
+dry. Here the ring keeps its 6 chunks (2 s) and only the refill halves:
+`Q1PSX_MUSIC_REFILL` 2 by default (CMakeLists.txt, `MUSIC_REFILL=` in
+bench.sh, `engine/music.h`).
+
+### 90.4 The stack: 12 → 8 KB
+
+The stack's room (`engine/mem.h` `MEM_STACK_BYTES`, CMake
+`Q1PSX_STACK_BYTES`, the bench's `STACK_BYTES=`) was the chosen 12 KB
+since §81.7: every bench reaches 2.0-2.6 KB (`stack: N bytes never
+reached` after each load, the fights' and the clears' lines), §61's
+deepest 4.3 KB (E1M3's gold key scenario), the guard the lowest KB
+(`mem_stack_ok` in `vid_flip`: a red screen when it is reached). At 8 KB
+the margin past the guard is 4.4 KB over this branch's deepest load
+(2 568 B) and 2.7 KB over §61's deepest. The 4 KB go to the arena
+(`scripts/ramcheck.sh` reads the stack's room from the build).
+
+**At 48** (`engine/ents.c` ENT_SPARE): the fights' and the clears'
+gameplay lines are the base's line for line; the pools after the trim
+leave E1M3's crowd fight 35 slots at its peak (306 of 341), E3M5's 46
+(235 of 281), E1M8's 43 (162 of 205), E1M1 cleared 16 (177 of 193) and
+E1M3 cleared 21 (320 of 341: 20 monsters killed with rockets in the
+scenario's time, 22 alive, the bodies' 30 s); no `no free edict` in any
+run. Every pool +18-19 KB (48 × 384 = 18 432 B): the smallest, E4M7's,
+340 → 359 KB; E1M3's 380 → 399.
+
+Left open: a rampage gibbing a dozen monsters within two minutes
+(their backpacks live that long) would pass 48 and lose a gib, a backpack
+or a delayed use, where 96 lost nothing; a reserve kept from the looks
+(a gib or a meat spray refused when under a few free slots, the logic's
+spawns never) would make 48 as safe as 96 for the maps' logic, for a
+line in `throw_gib` and `spawn_meat_spray`, not done (id's code has no
+such rule: its pool is 600).

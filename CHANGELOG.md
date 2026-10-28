@@ -1992,6 +1992,11 @@ followed by R0-R4.
     `STALL` seconds (30: a stalled emulator, or the engine looping) instead
     of waiting its cap out; `bench.sh`'s caps are to be a few times a
     fast-forward run's need.
+  - §90.2 ENT_SPARE 96 → 48 (`engine/ents.c`): the fights peak 2-13 edicts
+    over the spawn's count, a map cleared with rockets 27-32 (its gibs
+    10-20 s, its backpacks two minutes), 16-46 slots left at the peaks, no
+    spawn refused; every pool +18-19 KB (E4M7's 340 → 359 KB, E1M3's 380 →
+    399). A reserve for the looks' spawns is left open.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**

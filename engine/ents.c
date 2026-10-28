@@ -40,8 +40,13 @@ int      ent_killed_monsters, ent_total_monsters;
 int      ent_force_retouch;
 int      ents_first_spawn;
 
-#define ENT_SPARE 96         /* edicts beyond the map's: what the QC spawns
-                                (door fields, plat triggers, delays, fogs) */
+#define ENT_SPARE 48         /* edicts beyond the map's: what the QC spawns in
+                                play (delays, fogs, gibs, backpacks, missiles; the
+                                door fields and plat triggers are the spawn's own:
+                                counted before ents_trim). 96 until §90.2: the
+                                fights measured peak 2-13 over the spawn's count,
+                                a map cleared with rockets 32 (its backpacks live
+                                two minutes), docs/porting-notes.md §90.2 */
 #define ENT_WORDS 32         /* the active bitmap: up to 1024 edicts */
 
 static uint32_t active[ENT_WORDS];   /* edicts with a think or a move pending */
