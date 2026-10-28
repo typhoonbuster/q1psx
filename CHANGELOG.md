@@ -2120,3 +2120,19 @@ followed by R0-R4.
     bookkeeping; the frustum tests and the marks stay in both). Off by
     default (`QCOOK_SEQ=none`: every cooked file and every frame
     master's), kept for the record (§91.7).
+- **The near polygons on a regular grid before the slow path** (§92, on START and E1M1 by default:
+  CMake `Q1PSX_TESS_MAPS`). The polygon the record loop hands to the slow
+  path is cut on a grid in the frame: the level each of its five edges needs
+  from the slow path's own rule, a level along the rows and one down the
+  columns, the points interpolated in the world and projected by the GTE,
+  the strips off the screen skipped, the cells POLY_GT4s; the unsplit
+  polygons go out as one packet from the cache; the near-clipped, the
+  finer than 8 cells an axis and those past 16 cells stay the slow path's
+  (`Q1PSX_TESS_KMAX`, `Q1PSX_TESS_CAP`). `engine/r_tess.s` by hand,
+  `engine/r_tess.c` its C version (the same lists on E1M1). The 12 views:
+  START −4.3 %, E1M1 −5.5 % (E1M1 v4 −9.3 %, v10 −12.1 %); the game bench on
+  E1M1 −6.1 % a frame, 7 fewer frames at two vblanks of 300; the 30 other
+  maps' 120 views identical. The pictures move by up to a texel on the cut
+  polygons (boards to look at); the planned cooked per-band form not
+  built (RAM, the same cracks); the eleven forms measured on the way in
+  §92.5-92.6.

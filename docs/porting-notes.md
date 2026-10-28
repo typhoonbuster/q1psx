@@ -11830,3 +11830,301 @@ whose costs change (per-leaf stamps in the records in place of the
 marks, the frustum tests of the leaves made cheaper): then the sequence
 would be worth measuring again. The second step, the near
 polygons' tessellation (§92), is the one with the room.
+
+## §92 — The near polygons on a regular grid before the slow path (2026-10-28)
+
+The second step of the plan behind §91: the near polygons' tessellation
+settled ahead of the slow path, so that their triangles go out at the fast
+path's price. The plan's shape was a tessellation cooked per record and per
+distance band, the reverse of the monsters' bands (§88), picked per record by
+its distance; what is built is its runtime form, for the reasons of 92.6:
+the polygon the record loop hands to the slow path is cut on a regular grid
+whose fineness its own corners decide, in the frame. The slow path stays for
+what the grid does not take. Provisional section number, as §91's: §89 lives
+on the draw distance's branch, §90 on the RAM branch.
+
+### 92.1 What the slow path does with a polygon, and what costs
+
+The record loop's CAREFUL test (§19.4, §79) sends a polygon to the slow path
+when a corner is nearer than SZ 96, when its box is wider than the GPU's span
+(W + H > 500) or when its affine error can show: (W + H) x depth range > 2
+T2 zmin. `slow_poly` (engine/r_slow.s) then takes its corners from the
+record's vertex cache (its near clip when a corner is too near or saturated),
+and subdivides it triangle by triangle on a stack: each triangle's three
+edges are tested, an edge splitting when |ds| x |za − zb| > T2 (za + zb) (|ds|
+the octagon length) or when |dx| + |dy| > 500, the split edges' midpoints
+projected from the ends' screen positions and depths (a division each), the
+two, three or four children pushed; a triangle wholly off the screen is
+dropped before its tests. About 950 PCSX cycles a triangle emitted on the
+heavy views (§79.2), 54 % of START v0's frame.
+
+Two things in that make a polygon cheap or dear. The splits follow the near
+corner: an edge from a near corner to a far one is split at its near half
+again and again while its far half stays whole, so the triangles crowd where
+the depth gradient is, and the slow path emits few of them (START v0: 103
+polygons, 355 triangles, `SLOWSTAT=1`). And the off-screen children are
+dropped at once: a floor polygon running under the camera and out of the
+screen on three sides costs only its visible part.
+
+### 92.2 The grid
+
+The level an edge needs follows from the slow path's own rule. Halving an
+edge halves |ds| and |dz| together; after m halvings the half at the nearer
+end, zm deep, has za + zb = 2 zm + |dz| / 2^m (the others more), so an edge
+passes at every level from the first m with
+
+    |ds| x |dz| <= 4^m x 2 T2 zm + 2^m x T2 |dz|,   |dx| + |dy| <= 500 x 2^m
+
+(m = 0 is the slow path's test itself). The polygon's four edges and the
+diagonal the GPU draws (corners 1-2, the two triangles' shared edge) are
+measured once each: the top and bottom edges' greatest level is the rows'
+(nu = 2^ku cells along a row), the left and right ones' the columns' (nv =
+2^kv rows), and the diagonal's raises the larger of the two to its own. A
+wall seen along its length is cut along it alone (8 x 1); a floor running
+away from the eye gets its rows.
+
+The grid's points are made in the world, not on the screen: the midpoint of
+two points is the mean of their vertex, uv (x 256) and light, rounded down,
+the same from either side, so a shared edge gets the same points from both
+polygons at one level; they are projected by the GTE three at a time (RTPT,
+as the record's vertices, in the walk's own setup: no division). Every cell
+is a POLY_GT4 prepended to the world bucket, the last row of a triangle
+(cut as a quad whose fourth corner is its third again) POLY_GT3s; a cell
+whose four points are off the screen on one side is left out; nothing more
+once the arena's bound is reached (a cell goes out only while it ends at
+most 40 bytes past it, the slow path's own overshoot).
+
+The work follows the screen as the slow path's does: the two columns are
+made and projected first, then strip by strip (row j to j + 1); a strip
+whose four column points are off the screen on one side is skipped whole,
+the others get their rows' inner points made and projected as they come
+(a row's right column point's pad word marks it done).
+
+A polygon whose five edges pass at level 0 is what the slow path emits
+unsplit, as its two triangles: it goes out as one packet straight from the
+cache, the same pixels (the GPU draws a quad as those two triangles).
+
+The slow path keeps: a corner nearer than SP_SZCLIP or projected off the
+GTE's range (its near clip), a level past KMAX (3: 8 cells along an axis; a
+polygon right under the eye), and the polygons whose two levels sum past
+CAP (more than 2^CAP cells): there the slow path's splits, which follow the
+near corner alone, are the fewer, and the uniform grid pays for cells the
+slow path never makes. KMAX and CAP are build settings (92.3), their values
+measured in 92.5.
+
+What the grid changes on the screen: the slow path's midpoints are
+projected from the screen positions and depths, s = (sa za + sb zb) / (za +
+zb), the grid's from the world through the GTE; both are the perspective
+midpoint, within the GTE's rounding. The split pattern is the difference: the
+slow path splits a failing edge and nothing else, the grid cuts the whole
+polygon at the level its worst edge needs, so a cut polygon is warped less
+than the slow path's and its texture moves by up to the threshold where the
+slow path's did not split. A shared edge between a cut polygon and an uncut
+neighbour (or two cut at different levels) has points on one side only: a
+T-junction, a crack of up to a pixel where the GPU's rounding of the two
+sides differs (the slow path has none, §19.4). 92.4 measures the pictures.
+
+### 92.3 The engine
+
+- `engine/r_tess.s`, hand-written: `tess_poly(a0 = record, a1 = polygon, a2 =
+  4 / 3)`, slow_poly's contract (s6 and fp advanced, s0-s7 kept), its code
+  cut small for the instruction cache (§81.5): the edge test (`tess_edge`),
+  a corner's load (`tess_corner`), a line's midpoints (`tess_line`) and a
+  line's projection (`tess_proj`) are subroutines; `tess_near`, `tess_fine`,
+  `tess_capped` restore and jump to `slow_poly`. The grid lives in
+  r_slow.s's pool from its entry 256 (32 B a point: vertex, uv x 256, light,
+  the colour and uv words, SXY, SZ), where the slow path's midpoint indices
+  never reach, so its hash cannot believe a slot pointing into it.
+- `engine/r_tess.c`: the C version, decision for decision and packet for
+  packet (`r_slow` calls `r_tess` first; the C engine's frames are the
+  asm's, 92.5).
+- `engine/r_world.s` RECLOOP: the slow call site `\q_ts` (dr's and its
+  options' copies') is a `jal` the engine points at `tess_poly` or
+  `slow_poly` when a world is bound: `r_tess_select` (engine/render.c), by
+  the map's name against CMake `Q1PSX_TESS_MAPS` ("START,E1M1" by default;
+  names separated by commas, `all`, or nothing): the other maps' frames
+  stay the slow path's, byte for byte (92.5). `Q1PSX_TESS_KMAX` (3) and
+  `Q1PSX_TESS_CAP` (4) reach the asm as `--defsym` and the C as defines.
+- The bench: `TESS=<maps>`, `TESSK=`, `TESSC=`; the per-view line's
+  `tess=a/b/c/d/e/f` (polygons cut, their cells, to the slow path near, too
+  fine, unsplit as one packet, over the cap).
+- No RAM: no cooked data, the grid in the pool that is free during the walk
+  (§77); the code 2.5 KB in the hot chains (tess_poly 1 744 B, the four
+  subroutines 796 B) and 96 B of exits.
+
+### 92.4 The pictures (pktview from the dumps, against master 795bfb2's)
+
+The 12 views of each map, rendered from the bench's dumps by pktview on the
+host and compared pixel by pixel with master's (the boards, reference |
+after | the differing pixels, one a view, in the side-session notes'
+`boards-92/`, outside the repo as everything drawn from Quake's data). The
+difference is where it was expected: the cut polygons' textures move by up
+to a texel (a mean difference of 8 to 27 on 255, the pixels that differ at
+all), over the whole of a big near polygon, so the counts are large where a
+floor or a wall fills the screen; a few pixels go dark where the reference
+was lit (and about as many the other way, dark texels moving), the most on
+START v10: that is where a crack would show, and only an eye on
+DuckStation can tell them from the texels' moves.
+
+| START view | px differ | % | mean diff | diff > 64 | dark where lit |
+|---|---|---|---|---|---|
+| v0 | 14 257 | 18.6 | 23.6 | 58 | 71 |
+| v1 | 11 690 | 15.2 | 13.1 | 12 | 5 |
+| v2 | 8 038 | 10.5 | 15.3 | 0 | 0 |
+| v3 | 17 847 | 23.2 | 13.8 | 12 | 7 |
+| v4 | 19 027 | 24.8 | 19.3 | 190 | 75 |
+| v5 | 18 408 | 24.0 | 18.7 | 149 | 59 |
+| v6 | 22 841 | 29.7 | 16.7 | 117 | 38 |
+| v7 | 26 433 | 34.4 | 15.8 | 88 | 43 |
+| v8 | 21 914 | 28.5 | 14.4 | 16 | 2 |
+| v9 | 18 366 | 23.9 | 17.0 | 65 | 33 |
+| v10 | 31 516 | 41.0 | 27.2 | 1 511 | 231 |
+| v11 | 2 816 | 3.7 | 11.2 | 0 | 1 |
+
+| E1M1 view | px differ | % | mean diff | diff > 64 | dark where lit |
+|---|---|---|---|---|---|
+| v0 | 4 185 | 5.4 | 9.9 | 0 | 0 |
+| v1 | 4 648 | 6.1 | 10.1 | 0 | 0 |
+| v2 | 29 801 | 38.8 | 8.5 | 0 | 0 |
+| v3 | 3 394 | 4.4 | 11.1 | 0 | 0 |
+| v4 | 4 253 | 5.5 | 16.7 | 36 | 7 |
+| v5 | 1 404 | 1.8 | 22.3 | 1 | 0 |
+| v6 | 9 889 | 12.9 | 17.2 | 52 | 24 |
+| v7 | 0 | identical | | | |
+| v8 | 12 871 | 16.8 | 13.9 | 1 | 11 |
+| v9 | 10 759 | 14.0 | 18.7 | 125 | 25 |
+| v10 | 23 455 | 30.5 | 12.7 | 51 | 2 |
+| v11 | 6 153 | 8.0 | 8.2 | 0 | 0 |
+
+### 92.5 Measured (the bench build, PCSX-Redux, T 4, geometry low)
+
+The 12 views of each map, a frame's cycles and the slow stage's (`r_slow`:
+the slow path and the grid together), master 795bfb2 against the branch's
+default (KMAX 3, CAP 4):
+
+| START | frame master | frame grid | d | slow master | slow grid |
+|---|---|---|---|---|---|
+| v0 | 804 227 | 790 453 | −1.7 % | 272 148 | 258 367 |
+| v1 | 543 541 | 532 432 | −2.0 % | 360 512 | 349 419 |
+| v2 | 164 721 | 153 669 | −6.7 % | 102 452 | 91 328 |
+| v3 | 551 799 | 501 727 | −9.1 % | 362 359 | 312 334 |
+| v4 | 569 897 | 550 845 | −3.3 % | 214 658 | 198 090 |
+| v5 | 504 972 | 488 048 | −3.4 % | 246 570 | 229 557 |
+| v6 | 572 800 | 537 166 | −6.2 % | 288 174 | 255 545 |
+| v7 | 450 615 | 433 854 | −3.7 % | 231 872 | 214 985 |
+| v8 | 511 573 | 486 985 | −4.8 % | 244 557 | 220 010 |
+| v9 | 607 273 | 578 362 | −4.8 % | 322 210 | 291 741 |
+| v10 | 278 808 | 257 566 | −7.6 % | 144 362 | 123 248 |
+| v11 | 254 952 | 255 972 | +0.4 % | 201 021 | 202 058 |
+| total | 5 815 178 | 5 567 079 | −4.3 % | | |
+
+| E1M1 | frame master | frame grid | d | slow master | slow grid |
+|---|---|---|---|---|---|
+| v0 | 417 511 | 410 148 | −1.8 % | 176 484 | 169 121 |
+| v1 | 125 961 | 120 460 | −4.4 % | 80 679 | 75 136 |
+| v2 | 43 884 | 44 688 | +1.8 % | 15 774 | 16 544 |
+| v3 | 128 564 | 124 268 | −3.3 % | 86 510 | 82 184 |
+| v4 | 1 068 847 | 969 598 | −9.3 % | 475 170 | 378 992 |
+| v5 | 69 157 | 70 405 | +1.8 % | 12 303 | 13 545 |
+| v6 | 962 575 | 917 693 | −4.7 % | 413 925 | 368 765 |
+| v7 | 74 177 | 74 868 | +0.9 % | 27 803 | 28 494 |
+| v8 | 596 954 | 566 130 | −5.2 % | 311 476 | 280 337 |
+| v9 | 721 021 | 697 388 | −3.3 % | 431 912 | 408 257 |
+| v10 | 292 015 | 256 580 | −12.1 % | 193 765 | 158 295 |
+| v11 | 84 269 | 80 659 | −4.3 % | 48 723 | 45 063 |
+| total | 4 584 935 | 4 332 885 | −5.5 % | | |
+
+The walk and the block stages do not move (the sequence is off). START v0
+stays at two vblanks (790 k cycles: the plan's one-vblank goal is out of
+this step's reach, 92.6). The polygons' fate on the heavy views (the
+`tess=` counters: cut / cells / near / too fine / unsplit / over the cap):
+START v0 30 / 166 / 12 / 2 / 16 / 18 of its 83, E1M1 v4 85 / 344 / 7 / 2 /
+19 / 3 of 121, E1M1 v6 88 / 304 / 9 / 1 / 20 / 1 of 121.
+
+The forms tried on the way, the 12 views' totals (START, E1M1):
+
+| form | START | E1M1 |
+|---|---|---|
+| one level for both axes (the worst edge's), the whole grid made | +19.9 % | +10.4 % |
+| a level an axis, the whole grid made | −0.4 % | −4.4 % |
+| a level an axis, the strips off the screen skipped | −0.0 % | −3.1 % |
+| + the unsplit polygons as one packet, KMAX 0 (the grid never) | +4.5 % | +3.4 % |
+| KMAX 1 | +0.7 % | +1.0 % |
+| KMAX 2 | −3.3 % | −2.1 % |
+| KMAX 3 | −0.9 % | −3.9 % |
+| a gate instead: in only with CAREFUL's measure 0 / 2 / 4 doublings over its threshold, KMAX 3 | +0.7 / +1.4 / +5.7 % | −2.5 / −2.0 / +0.1 % |
+| the cap, KMAX 3, CAP 3 | −4.6 % | −3.5 % |
+| CAP 4 (kept) | −4.3 % | −5.5 % |
+| CAP 5 | −4.3 % | −5.3 % |
+| KMAX 2, CAP 4 | −3.3 % | −2.0 % |
+
+The game bench on E1M1 (`BENCH_GAME=1`, 300 frames, the walk at 60 and 30
+Hz ticks): sim + frame 572 915 to 537 812 cycles a frame on average (−6.1
+%), the frames at two vblanks 111 to 104 of 300, at three or more 2 both;
+at 30 Hz 528 692 to 488 173 (−7.7 %), 110 to 103; the ticks the same.
+
+The other maps: the 128 views (`BENCH_MAPS=1 HASHONLY=1`) with the grid on
+START and E1M1 against the same build with `TESS=none`: 120 `H` lines
+identical (the 30 maps), the 8 of START and E1M1 differ; `TESS=none`'s
+START lists are master's. The C engine (`ENGINE_C=1`): E1M1's 12 lists the
+asm's. START's are not, with the grid and without it alike (the same
+hashes both ways, half the words of the asm's dumps): the C engine's START
+dumps had gone from the asm's before this branch, left as it is (92.7).
+hazcheck and iccheck at every link; the residency and the zones are
+untouched (no data, no RAM).
+
+### 92.6 Why the grid wins little, and why the cooked form was not built
+
+The slow path's 950 cycles a triangle are an average over triangles it
+chooses well: its splits follow the near corner (an edge from a near
+corner to a far one is split at its near half again and again, the far
+half kept whole), and its children off the screen are dropped before any
+test, so START v0's 103 polygons come out as 355 triangles (`SLOWSTAT=1`:
+847 popped, 303 midpoints). The uniform grid cuts the whole polygon at the
+level its worst edge needs: 4^k cells for a polygon the slow path finishes
+in four triangles. Per triangle the grid costs about a fifth of the slow
+path's (a midpoint ~100 cycles, a cell ~110, the GTE's projection), but on
+the polygons with a level of 3 on both axes it makes ten times the
+triangles and loses; the strips take the off-screen rows out of the count
+but not the levels; hence the cap, past which the slow path's shape is the
+cheaper. The other way round was tried too: a gate letting in only the
+polygons whose warp measure (CAREFUL's product) is 4 or 16 times over the
+threshold, the rest to the slow path at once; it lost (the table above):
+the slow path is dearer than the grid even on a polygon it splits once or
+twice, through its stack of triangle copies and its division a midpoint.
+What is left on the table is the fixed cost a polygon pays to find its
+levels (the prologue and five edge tests, about 800 cycles) when it goes to
+the slow path after all (START v0: 32 of 83).
+
+The planned cooked form, a tessellation per record and distance band in the
+chunk, was not built: a level-2 grid of a quad is 25 vertices and 16
+polygons (about 400 bytes), every record a player can walk up to would
+carry its bands, megabytes a map against the chunks' 44 KB; the levels
+depend on the view (the edge's screen length and its two depths), which a
+band by distance only approximates; and the cracks at a band's border would
+be the same T-junctions as the grid's, to stitch in the cook. The runtime
+grid has the plan's intent (the triangles at a fast price, chosen by the
+polygon's distance) without the RAM.
+
+### 92.7 Left
+
+- The T-junctions: a cut polygon's edge points are not the neighbour's.
+  Stitching (the neighbour's grid points along a shared edge: the edge's
+  level is the same from either side when both polygons are cut, but a
+  polygon the fast path draws whole has none) is not built; the pixel
+  counts of 92.4 and a DuckStation look decide whether the grid
+  stays on, and on which maps (`Q1PSX_TESS_MAPS`).
+- The fixed cost: the five edge tests read the cache the CAREFUL macro just
+  read; a cheaper first pass (the level-0 test alone, the loop only on the
+  edges that fail) and CAREFUL's own zmin and ranges passed down would take
+  a third off it.
+- The slow path itself is the better shape (adaptive) at the worse price:
+  its midpoints projected by the GTE (RTPS from the world, as the grid's)
+  instead of a division each, and its stack holding indices instead of
+  three 32-byte copies a push, would bring its 950 cycles down for every
+  polygon, the grid's included (the near-clipped ones most).
+- The C engine's START dumps differ from the asm's, grid or not (92.5):
+  not this branch's, to be traced on master.
+- The ceiling the plan named (START v0 under a vblank) needs the walk and
+  the block stages too (113 k and 391 k of its 790 k): the grid alone
+  cannot reach it.

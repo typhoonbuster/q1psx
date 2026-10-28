@@ -41,6 +41,8 @@ void bench_add(bench_acc_t *b, uint32_t vbl)
 	}
 	for (int i = 0; i < PROF_COUNTERS; i++)
 		b->count_sum[i] += prof_count[i];
+	for (int i = 0; i < 6; i++)
+		b->tess_sum[i] += r_tess_stat[i];
 #if Q1PSX_BENCH_IRQTIME
 	extern volatile uint32_t q_irq_ticks, q_irq_count;   /* (engine/irq.s) */
 	static uint32_t last_ticks, last_count;
@@ -68,6 +70,11 @@ void bench_print(const bench_acc_t *b)
 			printf(" %s=%u", prof_count_name[i], b->count_sum[i] / n);
 	if (b->gpu_max)
 		printf(" gpu=%u/%u", b->gpu_sum / n, b->gpu_max);
+	/* polygons cut regularly, their cells; to the slow path: near, too fine; unsplit (one
+	   packet); to the slow path over the cap */
+	if (b->tess_sum[0] || b->tess_sum[2] || b->tess_sum[3] || b->tess_sum[4] || b->tess_sum[5])
+		printf(" tess=%u/%u/%u/%u/%u/%u", b->tess_sum[0] / n, b->tess_sum[1] / n,
+		       b->tess_sum[2] / n, b->tess_sum[3] / n, b->tess_sum[4] / n, b->tess_sum[5] / n);
 	if (b->irq_count && n > 1)             /* (IRQTIME: the handler's cycles a frame, interrupts x 100) */
 		printf(" irq=%u/%u", b->irq_sum / (n - 1), b->irq_count * 100 / (n - 1));
 	printf(" pkt=%u%s\n", b->pkt_max, b->full_frames ? " FULL" : "");

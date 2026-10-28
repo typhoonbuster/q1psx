@@ -308,6 +308,51 @@ void r_seq_set(uint32_t seq)
 	FlushCache();
 }
 
+/* ------------------------------------------------- the near polygons' grid -- */
+
+/* the maps that take the regular subdivision (engine/r_tess.s, §92): a
+   build setting, CMake Q1PSX_TESS_MAPS: names separated by commas, "all",
+   or nothing. The record loops' calls to the slow path (r_world.s
+   RECLOOP: dr's and its options' copies', `jal`) go to tess_poly on
+   those, to slow_poly on the others, whose frames stay the tree walk's. */
+#ifndef Q1PSX_TESS_MAPS
+#define Q1PSX_TESS_MAPS ""
+#endif
+int r_tess_on;
+#if !Q1PSX_ENGINE_C
+extern uint32_t dr_ts[], dro1_ts[], dro2_ts[], dro3_ts[];
+extern void tess_poly(void), slow_poly(void);
+#endif
+
+static int tess_wanted(const char *map)
+{
+	const char *l = Q1PSX_TESS_MAPS;
+	if (!map || !*map)
+		return 0;
+	while (*l) {
+		const char *e = l;
+		while (*e && *e != ',')
+			e++;
+		size_t n = (size_t) (e - l);
+		if ((n == 3 && !strncmp(l, "all", 3)) || (n == strlen(map) && !strncmp(l, map, n)))
+			return 1;
+		l = *e ? e + 1 : e;
+	}
+	return 0;
+}
+
+void r_tess_select(const char *map)
+{
+	r_tess_on = tess_wanted(map);
+#if !Q1PSX_ENGINE_C
+	uint32_t *const site[] = { dr_ts, dro1_ts, dro2_ts, dro3_ts };
+	uint32_t to = (uint32_t) (uintptr_t) (r_tess_on ? tess_poly : slow_poly);
+	for (int i = 0; i < 4; i++)
+		*site[i] = (3u << 26) | ((to >> 2) & 0x03ffffffu);   /* jal to */
+	FlushCache();
+#endif
+}
+
 /* --------------------------------------------------------------- options -- */
 
 /* the fogged transform's table (r_world.s XFORM fog): by SZ / 64, a
@@ -604,6 +649,7 @@ void r_bind_world(void)
 	r_state.force_mark    = 1;
 	bound = 1;
 	r_seq_set(0);                                /* (the tree walk until a zone's chunk says otherwise) */
+	r_tess_select(world.map_name);               /* (the near polygons' grid on the maps that take it) */
 	mark_patch();                                /* (through the zones' hook or not) */
 }
 
@@ -702,7 +748,9 @@ void r_frame(void)
 	r_state.ticks_block  = r_state.ticks_mark = 0;
 	{
 		extern volatile uint32_t r_seq_stat[4];  /* (the cooked walk's tests, r_world.s) */
+		extern volatile uint32_t r_tess_stat[6]; /* (the regular subdivision's, r_tess.s) */
 		r_seq_stat[0] = r_seq_stat[1] = r_seq_stat[2] = r_seq_stat[3] = 0;
+		r_tess_stat[0] = r_tess_stat[1] = r_tess_stat[2] = r_tess_stat[3] = r_tess_stat[4] = r_tess_stat[5] = 0;
 	}
 
 	uint32_t t0 = prof_now();

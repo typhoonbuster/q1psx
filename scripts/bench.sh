@@ -150,6 +150,14 @@
 #         SEQCHK=1: a view drawn by a zone's cooked walk (docs/porting-notes.md
 #         §91) is drawn again by the tree walk and the two compared: the
 #         leaves' and the faces' stamps, the records drawn ("seqchk" lines).
+#         TESS=<maps>: the maps whose near polygons take the regular subdivision
+#         before the slow path (engine/r_tess.s, §92): names separated by commas,
+#         all, or none (default START,E1M1)
+#         TESSK=<0..3>: the grid's finest level, 2^k cells along an axis (0: the
+#         unsplit polygons alone go out as one packet, every split one to the
+#         slow path; default 3)
+#         TESSC=<n>: the grid's cap: a polygon whose two levels sum past n (more
+#         than 2^n cells) goes to the slow path (default 4)
 #         SLOWSTAT=1: the slow path counts its paths (engine/r_slow.s STAT):
 #         a "slowstat" line after each view's, a frame's polygons, clipped
 #         ones, triangles popped, wholly on the screen, leaves, split,
@@ -209,6 +217,9 @@ IRQTIME=${IRQTIME:-0}
 SLOWSTAT=${SLOWSTAT:-0}
 WARPDYN=${WARPDYN:-0}
 SEQCHK=${SEQCHK:-0}
+TESS=${TESS:-START,E1M1}
+TESSK=${TESSK:-3}
+TESSC=${TESSC:-4}
 LOD=${LOD:-1}
 WHOLE=${WHOLE:-0}
 CDLOG=${CDLOG:-0}
@@ -226,7 +237,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \

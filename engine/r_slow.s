@@ -69,6 +69,7 @@
 
 	.section .bss.r_slow_pool, "aw", @nobits
 	.align  4
+	.global r_slow_pool                  # (engine/r_tess.s: its grid from +8192, outside slow_poly's calls)
 r_slow_pool:
 	.space  POOL_N * 32
 # What else works in this block (the pool, the view entries, the midpoint

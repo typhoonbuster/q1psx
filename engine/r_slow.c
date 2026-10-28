@@ -315,8 +315,12 @@ static int subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 /* Called from asm (draw_records): rec = face record, poly = its quad / tri,
    nv = 4 or 3. Uses r_state.pkt / ot_head, which the asm syncs around the
    call. */
+int r_tess(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv);   /* (engine/r_tess.c) */
+
 void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 {
+	if (r_tess(s, rec, poly, nv))                      /* the regular subdivision first (§92) */
+		return;
 	const uint16_t *uvs   = (const uint16_t *) (poly + 4);
 	const uint32_t *c_sxy = (const uint32_t *) (SPAD + SP_SXY);
 	const uint32_t *c_sz  = (const uint32_t *) (SPAD + SP_SZ);

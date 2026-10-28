@@ -29,6 +29,7 @@ typedef struct {
 	uint32_t    full_frames;    /* frames whose walk ran out of arena         */
 	uint32_t    gpu_sum, gpu_max;   /* GPUTIME: the GPU's cycles (vid_stats)  */
 	uint32_t    irq_sum, irq_count; /* IRQTIME: the handler's cycles, its entries */
+	uint32_t    tess_sum[6];        /* the regular subdivision's counters (engine/r_tess.s) */
 } bench_acc_t;
 
 void bench_reset(bench_acc_t *b, const char *name);

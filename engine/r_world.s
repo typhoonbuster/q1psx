@@ -893,8 +893,10 @@ r_ysites:
 	lw      $fp, RS_OT_HEAD($t9)
 .else
 	move    $a1, $a3                     # polygon
-	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3
-	move    $a2, $t0
+	.globl  \q\()_ts
+\q\()_ts:                                 # (render.c r_tess_select: tess_poly or slow_poly)
+	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3: the slow path,
+	move    $a2, $t0                     #  or the regular subdivision (engine/r_tess.s) first
 .endif
 .if R_PROFILE
 	lhu     $t0, TIMER2($t8)

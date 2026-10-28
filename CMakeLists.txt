@@ -42,7 +42,8 @@ if(Q1PSX_ENGINE_C)
 		${PROJECT_SOURCE_DIR}/engine/rl_order.s ${PROJECT_SOURCE_DIR}/engine/ent_mat.s
 		${PROJECT_SOURCE_DIR}/engine/mdl_expand.s ${PROJECT_SOURCE_DIR}/engine/w_leaf.s
 		${PROJECT_SOURCE_DIR}/engine/e_touch.s ${PROJECT_SOURCE_DIR}/engine/e_seen.s
-		${PROJECT_SOURCE_DIR}/engine/e_tick.s ${PROJECT_SOURCE_DIR}/engine/mdl_frame.s)
+		${PROJECT_SOURCE_DIR}/engine/e_tick.s ${PROJECT_SOURCE_DIR}/engine/mdl_frame.s
+		${PROJECT_SOURCE_DIR}/engine/r_tess.s)
 	list(APPEND ENGINE_SOURCES ${PHYS_C_REFERENCE})
 	message(STATUS "q1psx: the C engine (the world renderer asm)")
 endif()
@@ -110,6 +111,9 @@ add_custom_command(TARGET q1psx POST_BUILD
 # Renderer counters and stage timers (debug overlay, bench breakdown). Off in
 # the "release" preset: the asm renderer then skips their per-node, per-record
 # and per-polygon upkeep (R_PROFILE in engine/r_defs.inc).
+set(Q1PSX_TESS_MAPS "START,E1M1" CACHE STRING "The maps whose near polygons are cut on a regular grid before the slow path (engine/r_tess.s, docs/porting-notes.md §92): names separated by commas, all, or nothing")
+set(Q1PSX_TESS_KMAX 3 CACHE STRING "The regular grid's finest level, 2^KMAX cells along an axis (0: the unsplit polygons alone, every split one to the slow path)")
+set(Q1PSX_TESS_CAP 4 CACHE STRING "The regular grid's cap: a polygon whose two levels sum past it (more than 2^CAP cells) goes to the slow path, whose splits follow the near corner alone")
 option(Q1PSX_PROFILE "Renderer counters and stage timers" ON)
 if(Q1PSX_PROFILE)
 	set(_q1psx_profile 1)
@@ -189,6 +193,8 @@ else()
 	set(_slow_c 0)
 	set(_zone_c 0)
 endif()
+target_compile_definitions(q1psx PRIVATE Q1PSX_TESS_MAPS="${Q1PSX_TESS_MAPS}" Q1PSX_TESS_KMAX=${Q1PSX_TESS_KMAX} Q1PSX_TESS_CAP=${Q1PSX_TESS_CAP})
+target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,TESS_KMAX=${Q1PSX_TESS_KMAX},--defsym,TESS_CAP=${Q1PSX_TESS_CAP}>)
 target_compile_definitions(q1psx PRIVATE Q1PSX_ENGINE_C=$<BOOL:${Q1PSX_ENGINE_C}>
 	Q1PSX_BMF_C=${_bmf_c} Q1PSX_ORDER_C=${_order_c} Q1PSX_DLIGHT_C=${_dlight_c})
 # The monsters' level of detail by their vertices' order (formats/qstream.h

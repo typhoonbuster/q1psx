@@ -205,8 +205,16 @@ void r_render(r_state_t *s);
    are pointed at the cooked walk's loop while one runs, and back (the
    words patched, the cache flushed, on a change only). */
 void r_seq_set(uint32_t seq);
+
+/* the near polygons' regular subdivision (engine/r_tess.s, §92) on the
+   maps CMake Q1PSX_TESS_MAPS names: chosen when a world is bound (the
+   record loops' slow calls patched; the C engine reads r_tess_on) */
+extern int r_tess_on;
+void r_tess_select(const char *map);
 #ifdef Q1PSX_BENCH
 extern volatile uint32_t r_seq_stat[4];   /* the frame's: leaf tests, node tests, side tests (PROFILE) */
+extern volatile uint32_t r_tess_stat[6];  /* the frame's: polygons cut by the regular subdivision, cells
+                                             emitted, polygons to the slow path near, to it too fine */
 #endif
 
 /* slow path (engine/r_slow.c), called from the asm */

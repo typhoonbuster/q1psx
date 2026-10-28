@@ -1594,6 +1594,10 @@ static void bench_maps(void)
 			       rl_num_lists());
 			printf("lod view %s: %d streamed models drawn, %d cut to a band (the farthest %d)\n", names[v & 3],
 			       monsters_drawn, rl_lod_cut, rl_lod_band_hi);
+			if (r_tess_stat[0] || r_tess_stat[2] || r_tess_stat[3] || r_tess_stat[4] || r_tess_stat[5])
+				printf("tess view %s: %u polygons cut regularly into %u cells, %u unsplit; to the slow path: %u near, %u too fine, %u over the cap\n",
+				       names[v & 3], (unsigned) r_tess_stat[0], (unsigned) r_tess_stat[1], (unsigned) r_tess_stat[4],
+				       (unsigned) r_tess_stat[2], (unsigned) r_tess_stat[3], (unsigned) r_tess_stat[5]);
 			if (r_state.seq)
 				printf("seq view %s: the cooked walk, a frame's tests: %u leaves, %u nodes, %u sides; %u entries\n",
 				       names[v & 3], (unsigned) r_seq_stat[0], (unsigned) r_seq_stat[1], (unsigned) r_seq_stat[2],
