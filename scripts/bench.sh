@@ -32,7 +32,7 @@
 #         dumped): "bench mv.*" and "bmfcut" lines, the frame's, the ents'
 #         and the re-cut's cycles; "bmfhash": every 16th frame's hash folded
 #         (the identical-display-list check).
-#         STACK_BYTES=<bytes>: the stack's room (default 12288, the
+#         STACK_BYTES=<bytes>: the stack's room (default 8192, the
 #         game's: engine/mem.h; the level arena takes what the code leaves
 #         under it); LEVEL_MIN=<bytes>: the least level arena the link
 #         accepts (default 1272832, 1243 KB); LEVEL_CAP=<bytes> caps the
@@ -184,7 +184,7 @@ WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
 BMFCHK=${BMFCHK:-0}
-STACK_BYTES=${STACK_BYTES:-12288}
+STACK_BYTES=${STACK_BYTES:-8192}
 LEVEL_MIN=${LEVEL_MIN:-1272832}
 LEVEL_CAP=${LEVEL_CAP:-0}
 VIEWS=${VIEWS:-1}

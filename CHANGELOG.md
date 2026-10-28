@@ -2001,6 +2001,12 @@ followed by R0-R4.
     2, `MUSIC_REFILL=`): the staging buffer 32 → 16 KB; under the drive
     model with the music the ring never runs dry, the walk's late frames
     3150 → 3293 (+4.5 %); every pool +16 KB.
+  - §90.4 the stack 12 → 8 KB (`Q1PSX_STACK_BYTES`, `engine/mem.h`): every
+    run's deepest point 2.6 KB, the guard a KB; the release's arena
+    1 379 888 B, every pool +4 KB. Batch 1 in all: every pool +71 KB (E4M7's
+    308 → 379 KB, E1M3's 348 → 419). An existing build directory keeps the
+    old cache defaults: configure it with `-DQ1PSX_STACK_BYTES=8192
+    -DQ1PSX_MUSIC_REFILL=2`, or afresh.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**

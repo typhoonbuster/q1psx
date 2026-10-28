@@ -11852,3 +11852,21 @@ The music never runs dry; the drive is asked twice as often for the
 music (8 sectors every 0.65 s), the chunks wait a little more for it:
 +143 late frames over 27 minutes of walking (+4.5 %), none of them a
 dry ring. 16 KB to every pool.
+
+(§90.3 and §90.4 change CMake cache defaults, `Q1PSX_MUSIC_REFILL` and
+`Q1PSX_STACK_BYTES`: a build directory configured before them keeps 4 and
+12288 in its cache; configure it again with `-DQ1PSX_MUSIC_REFILL=2
+-DQ1PSX_STACK_BYTES=8192`, or start it afresh; `scripts/bench.sh` passes
+both every time. The release's `ramcheck` line says which stack it has.)
+
+**Measured at 8 KB:** the deepest point of every run on this branch stays
+the loads' 2 568 B (`stack: 5624 bytes never reached` after each of the 32
+maps), E1M3's crowd fight, E1M3 cleared and its gold key scenario
+(`MONSTERS=6`: 2 128 B) under it, the guard never reached; the 128 views'
+`H` lines identical; the release's arena 1 375 776 → 1 379 888 B (the stack
+at 0x801fdff0); every pool +4 KB: E4M7's 359 → 363 KB (379 with §90.3's
+16), E1M3's 399 → 403 (419).
+
+**Batch 1 in all:** the release's arena 1 343 008 → 1 379 888 B (+36 880),
+every pool +71 KB (32 + 18.4 + 16 + 4): the smallest, E4M7's, 308 → 379
+KB; E1M3's 348 → 419; START's 631 → 702.

@@ -32,11 +32,12 @@
    program frees goes to the arena by itself. */
 #define MEM_STACK_TOP   0x801ffff0u    /* the EXE header's stack: the kernel sets sp there */
 #ifndef Q1PSX_STACK_BYTES
-#define Q1PSX_STACK_BYTES 12288        /* (CMakeLists.txt Q1PSX_STACK_BYTES) */
+#define Q1PSX_STACK_BYTES 8192         /* (CMakeLists.txt Q1PSX_STACK_BYTES) */
 #endif
-#define MEM_STACK_BYTES Q1PSX_STACK_BYTES   /* the stack's room: 12 KB (chosen
-                                          2026-10-24: every bench reaches 2.0-2.5 KB, §61's
-                                          worst was 4.3 KB) */
+#define MEM_STACK_BYTES Q1PSX_STACK_BYTES   /* the stack's room: 8 KB (§90.4; 12 KB from
+                                          §81.7, the choice then: every bench
+                                          reaches 2.0-2.6 KB, §61's worst was 4.3 KB; the
+                                          guard below is a KB of it) */
 #define MEM_STACK_GUARD 1024           /* its lowest bytes: painted at boot, a sixteenth
                                           checked a frame (mem_stack_ok, all of it in 16
                                           frames): reached, the game stops on a red
