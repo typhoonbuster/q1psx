@@ -353,4 +353,30 @@ int  cmd_bmf(int argc, char **argv);
 int  cmd_zones(int argc, char **argv);
 int  cmd_section(int argc, char **argv);   /* a map's own file of the streamed assets (section.c) */
 
+/* ------------------------------------------------------ the cooked walk -- */
+
+/* a zone's cooked walk (seq.c; formats/qworld.h "the cooked walk"): the
+   whole world as zones.c holds it, the skeleton's node order */
+typedef struct {
+	const uint8_t   *file;         /* the whole world (QWVF)                      */
+	const qw_header *h;
+	const qw_node   *nodes;        /* [num_nodes + 1], the file's               */
+	const uint8_t   *faces;
+	const uint8_t   *world;        /* [num_nodes]: 1 a node of the world's tree   */
+	const uint32_t  *new_of;       /* [num_nodes]: the node's index in the skeleton */
+	uint32_t         skel_nodes;   /* the skeleton's nodes with the end node: the
+	                                  leaves' array follows them                 */
+	const int16_t   *leaf_zone;    /* [num_leaves]: a leaf's zone                 */
+} seq_world;
+
+typedef struct {
+	uint32_t words, leaves, blocks, nodes, tested, vars, depth, cells, var_nodes, anc_vars, anc_front_vars;
+} seq_stats;
+
+/* the walk of `zone` (its chunk's records: member[face_id]), the header
+   then the words appended to out; 0 when the zone gets none */
+int seq_build(const seq_world *w, int zone, const uint8_t *member, buf_t *out, seq_stats *st);
+/* QCOOK_SEQ names the map (its .wld path) */
+int seq_wanted(const char *wld_path);
+
 #endif

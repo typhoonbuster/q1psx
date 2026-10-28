@@ -85,6 +85,10 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #define Q1PSX_BENCH_RES  0                     /* the 3D view's resolution, r_res_table's
                                                   index (RES= scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_SEQCHK
+#define Q1PSX_BENCH_SEQCHK 0                   /* 1: a view by the cooked walk drawn again by the
+                                                  tree walk, the stamps compared (SEQCHK= bench.sh) */
+#endif
 #ifndef Q1PSX_BENCH_WARPDYN
 #define Q1PSX_BENCH_WARPDYN 0                  /* 1: the game's dynamic warp control, T
                                                   its floor (WARPDYN= scripts/bench.sh) */
@@ -1446,6 +1450,66 @@ static void bench_zones(void)
 	}
 }
 
+#if Q1PSX_BENCH_SEQCHK
+/* The view just drawn by the zone's cooked walk drawn again by the tree
+   walk (the same camera, the next frame count): the leaves' stamps (the
+   PVS marking's, redone by neither: equal by construction), the faces'
+   stamps (the leaves visited) and the records drawn compared; the faces
+   each walk alone stamped listed with a leaf that marks them, its stamp,
+   its box and the camera. The frame's packets are drawn twice (no dump). */
+static void seq_check(const char *name)
+{
+	uint32_t seq = r_state.seq;
+	if (!seq || !world_ok)
+		return;
+	uint32_t n = world.num_faces, mark = mem_level_mark();
+	uint8_t *a = mem_level_alloc((n + 7) / 8), *b = mem_level_alloc((n + 7) / 8);
+	if (!a || !b) {
+		mem_level_release(mark);
+		return;
+	}
+	uint32_t recs[2];
+	for (int pass = 0; pass < 2; pass++) {
+		r_seq_set(pass ? 0 : seq);
+		run_frame(0, 0);
+		uint8_t *bits = pass ? b : a;
+		memset(bits, 0, (n + 7) / 8);
+		for (uint32_t f = 0; f < n; f++)
+			if (world.face_visframe[f] == r_state.framecount)
+				bits[f >> 3] |= (uint8_t) (1 << (f & 7));
+		recs[pass] = r_state.stat_records;
+	}
+	r_seq_set(seq);
+	uint32_t only_seq = 0, only_tree = 0, shown = 0;
+	for (uint32_t f = 0; f < n; f++) {
+		int ia = a[f >> 3] >> (f & 7) & 1, ib = b[f >> 3] >> (f & 7) & 1;
+		if (ia == ib)
+			continue;
+		only_seq += ia;
+		only_tree += ib;
+		if (shown++ >= 6)
+			continue;
+		/* a leaf marking it (the marks are byte offsets, world.c) */
+		uint32_t l = 0;
+		for (uint32_t i = 1; i < world.num_leaves && !l; i++) {
+			const uint16_t *m = (const uint16_t *) world.leaves[i].marks;
+			for (uint32_t k = 0; k < world.leaves[i].num_marks; k++)
+				if (m[k] == f * 2) {
+					l = i;
+					break;
+				}
+		}
+		const qw_leaf *lf = &world.leaves[l];
+		printf("seqchk %s: face %u by the %s only; leaf %u stamp %u (vis %u) c %d %d %d h %d %d %d; cam %d %d %d\n",
+		       name, f, ia ? "cooked walk" : "tree", l, lf->visframe, r_state.visframe, lf->c[0], lf->c[1], lf->c[2],
+		       lf->h[0], lf->h[1], lf->h[2], r_state.cam[0], r_state.cam[1], r_state.cam[2]);
+	}
+	printf("seqchk %s: faces stamped by the cooked walk only %u, by the tree only %u; records drawn %u / %u\n", name,
+	       only_seq, only_tree, recs[0], recs[1]);
+	mem_level_release(mark);
+}
+#endif
+
 static void bench_maps(void)
 {
 	static char names[4][16];
@@ -1530,6 +1594,13 @@ static void bench_maps(void)
 			       rl_num_lists());
 			printf("lod view %s: %d streamed models drawn, %d cut to a band (the farthest %d)\n", names[v & 3],
 			       monsters_drawn, rl_lod_cut, rl_lod_band_hi);
+			if (r_state.seq)
+				printf("seq view %s: the cooked walk, a frame's tests: %u leaves, %u nodes, %u sides; %u entries\n",
+				       names[v & 3], (unsigned) r_seq_stat[0], (unsigned) r_seq_stat[1], (unsigned) r_seq_stat[2],
+				       (unsigned) r_seq_stat[3]);
+#if Q1PSX_BENCH_SEQCHK
+			seq_check(names[v & 3]);
+#endif
 			rl_order_print(names[v & 3]);
 			if (Q1PSX_BENCH_TICKS && v >= nviews)
 				bench_view_ticks(names[v & 3]);

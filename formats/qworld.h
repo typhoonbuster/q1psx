@@ -539,7 +539,8 @@ typedef struct {
 	uint32_t ofs_verts;      /* qw_vert[num_verts]: the chunk's vertex pool      */
 	uint32_t num_verts;
 	uint32_t num_records;
-	uint32_t pad;
+	uint32_t ofs_seq;        /* the zone's cooked walk (below), 0: none (the
+	                            tree walk draws the chunk)                     */
 } qw_chunk;                  /* 32 bytes, then the patch words */
 
 /* A patch word: a patched node and the patched nodes before it that hold
@@ -555,5 +556,80 @@ typedef struct {
 
 _Static_assert(sizeof(qw_zone_header) == 48 && sizeof(qw_chunk) == 32 && sizeof(qz_file) == 16,
                "qworld.h: the zones' tables");
+
+/* ------------------------------------------------- the cooked walk --------
+ * A zone's chunk may end with its cooked walk (docs/porting-notes.md §91):
+ * the tree walk's steps for a camera in any of the zone's leaves, flat,
+ * which the renderer runs in place of the walk (engine/r_world.s
+ * seq_start) while the camera's leaf is one of the current zone's. The
+ * cook (tools/qcook/seq.c) takes the world's tree from the root, keeps
+ * the nodes that hold a block of the chunk's records or a leaf some
+ * camera leaf of the zone may see (the PVS union), and for each node
+ * whose plane leaves every camera leaf's cell on one side writes that
+ * side's order once (the near subtree, the block, the far subtree); a
+ * node whose plane crosses the cells keeps both orders (VAR). What the
+ * tree walk tests at the frame is tested here too, from the same words:
+ * the PVS stamps (every leaf and node), the frustum (the leaves' boxes
+ * when QWSQ_EXACT, the nodes' the cook chose), the camera's side of the
+ * VAR nodes' planes, each record's sphere; so the display lists are the
+ * tree walk's.
+ *
+ * A qw_seq_header, then num_words words, each entry's type in bits 30-31:
+ *   LEAF  0 | test << 29 | offset   the leaf (its byte offset from the
+ *         leaves' array): out of the PVS, nothing; else its box against
+ *         the frustum when `test` (culled: nothing), its marks stamped,
+ *         its render list drawn
+ *   BLOCK 1 | side << 29 | offset   the node's face block on `side`,
+ *         through the record loop
+ *   NODE  2 | test << 29 | offset, then its subtree's words: out of the
+ *         PVS, the subtree skipped (the words); when `test`, the box
+ *         against the frustum (culled: skipped), the planes it is inside
+ *         of off for the subtree, which ends with an END
+ *   VAR   3 | 0 << 28 | offset, then a word with its front subtree's
+ *         words (F's, ending with an ENDF) and its back one's << 16 (B's,
+ *         ending with an ENDB), then F's words, then B's: the camera's
+ *         side of the node's plane as the walk takes it (d < 0: behind),
+ *         kept in the word's bits 26 (behind) and 27 (no faces: |d| <=
+ *         the backface epsilon) for the ENDs; in front: F, the front
+ *         block, B; behind: B, the back block, F
+ *   ENDF  3 | 1 << 28 | back         F's end, `back` words after its VAR word
+ *   ENDB  3 | 2 << 28 | back         B's end
+ *   ENDN  3 | 3 << 28                 a tested node's end (its flags back)
+ *   STOP  3 | 3 << 28 | 1             the walk's end
+ * A node's offset is its byte offset from the leaves' array (negative:
+ * the nodes come first in the skeleton), in 24 bits, signed. The
+ * renderer keeps a frame on its stack per tested node in progress: the
+ * cook bounds their nesting (depth) to QW_SEQ_MAX_DEPTH.
+ */
+#define QW_SEQ_MAX_DEPTH 60      /* frames at once: the walk's scratchpad stack */
+#define QWSQ_TYPE(w)     ((w) >> 30)
+#define QWSQ_LEAF        0u
+#define QWSQ_BLOCK       1u
+#define QWSQ_NODE        2u
+#define QWSQ_OTHER       3u
+#define QWSQ_FLAG        (1u << 29)          /* LEAF: test; BLOCK: side; NODE: test */
+#define QWSQ_VAR         (3u << 30)
+#define QWSQ_VAR_BEHIND  (1u << 26)          /* runtime: the camera behind the plane */
+#define QWSQ_VAR_NOFACE  (1u << 27)          /* runtime: within the epsilon, no block */
+#define QWSQ_ENDF        (3u << 30 | 1u << 28)
+#define QWSQ_ENDB        (3u << 30 | 2u << 28)
+#define QWSQ_ENDN        (3u << 30 | 3u << 28)
+#define QWSQ_STOP        (QWSQ_ENDN | 1u)
+#define QWSQ_OFS(w)      ((int32_t) ((w) << 8) >> 8)
+#define QWSQ_WORD(t, f, ofs) ((t) << 30 | ((f) ? QWSQ_FLAG : 0) | ((uint32_t) (ofs) & 0x00ffffffu))
+
+#define QWSQ_EXACT       1u      /* flags: the leaves' boxes tested: the lists
+                                    the tree walk's; without it, only the
+                                    records' spheres cull (the pictures the
+                                    same, off-screen records drawn)          */
+typedef struct {
+	uint32_t num_words;      /* the entries' words, the STOP included         */
+	uint16_t depth;          /* frames nested at most (<= QW_SEQ_MAX_DEPTH)   */
+	uint16_t flags;          /* QWSQ_*                                        */
+	uint16_t nodes, vars;    /* statistics: the entries of each kind         */
+	uint16_t leaves, blocks;
+} qw_seq_header;             /* 16 bytes, at qw_chunk.ofs_seq */
+
+_Static_assert(sizeof(qw_seq_header) == 16, "qworld.h: the cooked walk's header");
 
 #endif

@@ -2099,3 +2099,24 @@ followed by R0-R4.
     cooker: `local.env`'s or the command line's zone tables and slots, the
     maps, the paks, the music, qcook's switches (`cooked/settings.txt`,
     `scripts/cook.sh --stale`).
+- **The world's walk cooked** (2026-10-28, not merged). §91:
+  - `qcook zones` can end a zone's chunk with the tree walk's steps for a
+    camera in any of the zone's leaves, flat (`QCOOK_SEQ="start e1m1"`;
+    `tools/qcook/seq.c`; formats/qworld.h "the cooked walk"): each camera
+    leaf's cell cut from its ancestors' planes, a node's side fixed when
+    its plane leaves every cell on one side, both orders kept (VAR) when
+    it crosses the zone; the PVS stamps, the frustum (the leaves' boxes,
+    the nodes' the cook chose) and the records' spheres tested at the
+    frame as the tree tests them, so the lists are the tree's (every
+    view of START and E1M1 identical; `QCOOK_SEQ_CHECK=1`: a C
+    interpreter against the tree walk at 29 000 cameras a map, 0 differ);
+  - the renderer runs it in place of the tree walk while the camera's
+    leaf is one of the drawn zone's (`engine/r_world.s seq_start`,
+    `engine/zone.c seq_select`; the record loops' exits and draw_ents'
+    return pointed at it, `engine/render.c r_seq_set`);
+  - measured slower than the tree walk: START's 12 views +9..11 %, E1M1's
+    +4.7 % (the VAR planes, a third of the words, and the entries of a
+    PVS that covers most of a zone cost more than the tree's own
+    bookkeeping; the frustum tests and the marks stay in both). Off by
+    default (`QCOOK_SEQ=none`: every cooked file and every frame
+    master's), kept for the record (§91.7).

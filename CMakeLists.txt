@@ -227,6 +227,7 @@ set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the gam
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 set(Q1PSX_BENCH_WARPDYN 0 CACHE STRING "1: the views with the game's dynamic warp control (T its floor), the T each ends at printed")
+set(Q1PSX_BENCH_SEQCHK 0 CACHE STRING "1: each view drawn by the cooked walk is drawn again by the tree walk, the leaves' and faces' stamps and the records drawn compared (seqchk lines)")
 set(Q1PSX_BENCH_IRQTIME 0 CACHE STRING "1: the interrupts' handler times itself: the bench lines' irq= (cycles a frame, entries x 100)")
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,IRQTIME=$<AND:$<BOOL:${Q1PSX_BENCH}>,$<BOOL:${Q1PSX_BENCH_IRQTIME}>>>)
 set(Q1PSX_BENCH_SLOWSTAT 0 CACHE STRING "1: the slow path counts its paths: the bench's slowstat lines (engine/r_slow.s STAT)")
@@ -256,7 +257,8 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
 		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS} Q1PSX_BENCH_ZONES=${Q1PSX_BENCH_ZONES}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ} Q1PSX_BENCH_RES=${Q1PSX_BENCH_RES}
-		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN})
+		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN}
+		Q1PSX_BENCH_SEQCHK=${Q1PSX_BENCH_SEQCHK})
 	if(Q1PSX_BENCH_VIEW)
 		# groups of five numbers, one definition with no spaces (a quoted string
 		# with spaces does not survive the generator's command line)

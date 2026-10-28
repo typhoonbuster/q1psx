@@ -11637,3 +11637,196 @@ chosen:
   walking through the bands expands its frames again at each (an
   expansion is ~4 cycles a vertex plus 12 a parent copy); no refusal seen
   in the benches.
+
+## §91 — The world's walk cooked: a zone's sequence in its chunk (2026-10-28)
+
+The ask, on START and E1M1 only (the two maps whose stream pool has
+room), on a branch of its own, never merged: cook what the renderer
+recomputes every frame of the world's walk, the visibility and the
+painter's order per camera leaf, so that the engine runs a list instead
+of the tree; then (§92) the near polygons' tessellation. The CPU is the
+bottleneck and the walk about 15 % of a heavy view.
+
+### 91.1 What the walk does, and what a camera leaf fixes
+
+The tree walk (`engine/r_world.s`, `walk` to `pop`) takes, at each node
+the PVS stamps, the camera's side of the node's plane (`d = n . cam -
+dist`, behind when `d < 0`, no faces when `|d|` is under the backface
+epsilon), the near subtree first, then the block on that side, then the
+far subtree; a leaf stamps its marks (the faces the record loop then
+draws) and draws its render list. The frustum culls the nodes' and the
+leaves' boxes along the way, and each record's sphere in the loop.
+
+For a camera in one leaf, the side of most planes is fixed: the leaf's
+cell (the ancestor half-spaces) lies on one side of them. So the order
+can be cooked once per zone: the cell of every camera leaf of the zone is
+cut out (`tools/qcook/seq.c`, a box cut by the ancestors' planes, the
+cooked ones), each node plane's distance range over the cells' corners
+taken, and a node whose plane leaves every cell on one side by more than
+the epsilon and a quarter unit gets that side's order once. The others
+keep both orders (VAR): the planes that cross the zone, and the cells'
+own boundary planes, since a camera right on one has `d = 0`, is behind
+by the leaf lookup (`d <= 0`) and in front by the walk (`d < 0` is
+behind), the order flipped for that frame. An axial boundary at a whole
+vertex unit with the cells before it stays fixed all the same: `d` is a
+multiple of 4096 there, never 0 nor within the epsilon. The rest is
+left to the frame, from the same words the tree reads: the PVS stamps
+(mark_pvs, unchanged, its ancestors' stamps the gates), the frustum
+(the leaves' boxes, the nodes' the cook chose), the side of the VAR
+planes, the records' spheres.
+
+Not cooked, by choice: the per-leaf visible records (a mask on
+the chunk's records). The draw distance's marking (`mark_pvs_far`) stamps
+a leaf by the camera's own position and keeps its marks until the camera
+has moved 64 units: the set drawn depends on where the camera was at the
+last marking, not on its leaf alone, so a per-leaf set could not give the
+same lists; and the visframe check costs what a mask bit would.
+
+### 91.2 The words (formats/qworld.h "the cooked walk")
+...
+
+A chunk's `ofs_seq` (the old pad word of `qw_chunk`, 0 for the maps not
+asked) points at a `qw_seq_header` and its words. An entry's type is in
+bits 30-31; an offset is the node's or the leaf's byte offset from the
+leaves' array, 24 bits signed (the nodes come first in the skeleton, so
+theirs are negative), the one base register the interpreter keeps:
+
+| word | what the renderer does |
+|---|---|
+| LEAF `0 | test << 29 | offset` | out of the PVS (its stamp), nothing; else its box against the frustum when `test` (culled: nothing), its marks stamped, its render list drawn |
+| BLOCK `1 | side << 29 | offset` | the node's face block on `side` through the record loop, as the tree's `pop` sends it (`gp` the node when a dynamic light reaches it) |
+| NODE `2 | test << 29 | offset`, then its subtree's words | out of the PVS: the subtree skipped; when `test`: the box against the frustum (culled: skipped), the planes it is inside of off for the subtree, which ends with an END that puts the flags back |
+| VAR `3 | 0 << 28 | offset`, then F's words and B's << 16 | the camera's side of the node's plane as the walk takes it; in front: F (the front subtree's words, ending with an END), the front block, B (likewise); behind: B, the back block, F; no block within the epsilon |
+| END `3 | 1 << 28`, STOP `3 | 2 << 28` | a frame's end; the walk's end |
+
+The cook emits a NODE word where the subtree has `QCOOK_SEQ_PRUNE`
+entries or more (a PVS gate), tested when its score (leaves x 100,
+blocks x 10, records x 8) reaches `QCOOK_SEQ_TEST`; a VAR where the plane
+crosses the zone; nothing else for a fixed node: its near subtree, its
+block (when the chunk has records in it), its far subtree. The frames
+the renderer keeps (a tested node's flags, a VAR's phase) go on the
+walk's scratchpad stack; the cook bounds their nesting to
+`QW_SEQ_MAX_DEPTH` (60), keeping room under a tested node for the VARs
+below it, and gives a zone no walk when the VARs alone nest deeper.
+
+### 91.3 The engine (engine/r_world.s seq_start, engine/zone.c, engine/render.c)
+
+`r_state.seq` is the sequence to run this frame, or 0: zone.c sets it
+(`seq_select`) whenever the drawn chunk or the camera's set changes: the
+drawn zone's walk while the camera's leaf is one of that zone's leaves and
+the chunk carries one, the tree walk otherwise (a late frame, the camera
+in solid, the 30 maps cooked without). r_render reads it after the
+marking and the dynamic lights' stamps, where the tree walk starts, and
+jumps to `seq_start`: an interpreter of the words with the walk's own
+registers (s1 the sequence, s2 the clip flags, s3 the frame stack, s0 the
+leaves' array), each entry a load and a dispatch on its type.
+
+The record loops exit by branches to `walk`, and draw_ents comes back by
+a branch to `pop_1`: thirteen branch words (the three ways out of `dr`
+and of its three options' copies, `ei_item`'s) are pointed at the
+interpreter while a cooked walk runs and back at the tree when it does
+not (`r_seq_set`: the 16-bit offsets rewritten, the cache flushed, on a
+change only; the loops' first words that `r_set_options` turns into jumps
+are left to it, their copies having sites of their own). A leaf's render
+list is drawn through draw_ents as the tree draws it; the sorted models
+and the brush models use s1, s2 and s0 as the walk's dead registers at a
+leaf, so the interpreter keeps its three in RAM across it and takes them
+back at `seq_ents_back`.
+
+### 91.4 Why the lists are the tree's
+
+The tree culls a subtree by its node's box; a leaf's box lies in its
+ancestors', so a leaf whose box passes has every ancestor's passing: the
+node tests prune, they never decide. A face is drawn when a leaf marking
+it (one of its node's descendants, the leaf in front of it) passed and
+stamped it, and its sphere passes: both tests are the interpreter's, from
+the same words; the planes a node's test turns off are planes its
+subtree is inside of, which cull nothing when tested again, and the
+record loop's shortcut for a block fully inside (`_inside`) skips a
+sphere test that cannot cull. So the records drawn and their order are
+the tree's whatever nodes the cook chose to test, as long as the leaves
+are tested (`QWSQ_EXACT`). The fast walk (`QCOOK_SEQ_FAST=1`) tests no
+leaf: records whose sphere passes while every leaf of theirs is out of
+the frustum go to the GPU too, off screen, the same pixels.
+
+`QCOOK_SEQ_CHECK=1` runs the words through a C interpreter of the asm
+for cameras in each cell (its corners pulled in, its centre), the PVS of
+the camera leaf, no frustum, and compares the events (the leaves visited,
+the blocks drawn) with the tree walk's from the same camera, step for
+step.
+
+### 91.5 What the cook says (START, E1M1; seen_1536_64, 4 slots, `QCOOK_SEQ_TEST=600`)
+
+| map | zones | words (KB) | a zone at most | leaves | blocks | nodes gated (tested) | VAR | of them a cell's own boundary (behind, before) | camera leaves | frames deep | the biggest chunk | the pool |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| START | 11 | 24226 (94) | 3642 | 2526 | 620 | 2385 (1703) | 3649 | 62, 2554 | 1128 | 45 | 64632 -> 79216 B | 666 -> 591 KB |
+| E1M1 | 19 | 44457 (173) | 4158 | 5394 | 1077 | 4941 (3257) | 6207 | 108, 2749 | 1148 | 57 | 66968 -> 78812 B | 614 -> 563 KB |
+
+- The VAR planes are a third of the words and most of the frame's work
+  (below): a zone of a hundred camera leaves is partitioned by a hundred
+  planes at least, and the planes of its own boundaries that its cells
+  lie before but not behind a whole vertex unit add the rest.
+- `QCOOK_SEQ_CHECK=1`: 29344 cameras on START, 29045 on E1M1, 0 differ
+  from the tree walk (the C interpreter, no frustum).
+- The 30 other maps and a default cook (`QCOOK_SEQ=none`): the 81
+  skeletons and chunk files byte-identical to master's cook (md5).
+
+### 91.6 Measured (the bench build, PCSX-Redux, T 4, the 12 views of each map)
+
+Every list identical to master's in the exact walk, whatever the
+knobs (the `H` lines, and the dumps' files as a whole). The cycles:
+
+| START, 12 views | frame | the walk (v0) | the walk (v10, a light view) |
+|---|---|---|---|
+| master 795bfb2 (the tree) | 5 815 178 | 113 635 | 65 537 |
+| the cooked walk, exact, nodes tested from a score of 600, gates from 3 entries (VAR frames on the stack) | +9.1 % | 176 770 | 120 943 |
+| the same, gates from 2 entries | +10.7 % | 189 781 | 130 437 |
+| the same, nodes tested from a score of 200 | +10.2 % | 194 240 | 119 954 |
+| the fast walk (no leaf box tests; 8 of 12 lists differ: off-screen records drawn, the pictures the same) | +15.0 % | 194 287 | 148 138 |
+| the exact walk, the VAR's side kept in its word, no frame (the branch's) | +10.6 % | 170 473 | 112 866 |
+| the branch with the walk off (`QCOOK_SEQ=none`, the default: the tree walk, the hook's three instructions a frame) | +0.0 % (5 815 329) | 113 635 | 65 568 |
+
+| E1M1, 12 views (exact, 600, VAR frames) | frame | the walk (v0) | the walk (v4, the heaviest) |
+|---|---|---|---|
+| master | 4 584 935 | 50 942 | 175 347 |
+| the cooked walk | +4.7 % | 79 260 | 198 146 |
+| the branch with the walk off | +0.0 % (4 585 163) | 50 954 | 175 291 |
+
+- A frame of START's v0 (the branch's walk): 1520 entries dispatched,
+  347 VAR sides taken, 58 node boxes and 72 leaf boxes tested; the PC
+  sampler puts the interpreter's labels at about 12 % of the frame's
+  samples (seq_node, seq_hi, seq_next, sv_side, seq_block_n, sl_mark...)
+  where the tree walk's share was about 14 % of a smaller frame.
+- The record loop and the slow path read +2..4 % in the runs whose
+  chains the cache order listed first: the interpreter's chains took
+  places of the traced order (engine/icache.ld). They are not listed
+  any more (the walk is off by default), the order master's.
+
+### 91.7 Where the cycles of the walk go, and why the sequence loses
+
+The tree walk is lean where a sequence per zone pays: a node it visits
+costs its stamp's check, its plane's side, a push and a pop, about 35
+instructions, and a leaf its stamp, its box when the flags still ask
+for one, its marks; nothing of a node out of the PVS but its stamp's
+check. The sequence has to carry the zone's union of PVS, so a camera
+whose PVS covers most of the zone (START's hall) dispatches 1500
+entries a frame at 8 instructions each, and its VAR planes (a third of
+the words, 350 a frame taken in that hall) cost a side, a word written
+and two ENDs each, 60-70 instructions: twice a tree node. What a camera
+leaf fixes (the side of the planes that leave the zone on one side) is
+the cheap part of the tree's work; what it cannot fix (the frustum's
+tests, the marks, the sides of the planes partitioning the zone) is
+the walk's cost, and the sequence pays it with an interpreter's
+overhead on top. A sequence per camera leaf would drop the VARs (a
+leaf's cell is on one side of all but its own boundaries) at a hundred
+times the words; per-leaf record masks would drop the marks but cannot
+follow mark_pvs_far's marks (§91.1).
+
+So the cooked walk is built, exact and off: `QCOOK_SEQ=none` is the
+cook's default; `QCOOK_SEQ="start e1m1"` cooks and runs it (the bench's
+`seq view` lines count its tests, `SEQCHK=1` draws each view by both
+walks and compares their stamps). Kept for the record and for a walk
+whose costs change (per-leaf stamps in the records in place of the
+marks, the frustum tests of the leaves made cheaper): then the sequence
+would be worth measuring again. The second step, the near
+polygons' tessellation (§92), is the one with the room.

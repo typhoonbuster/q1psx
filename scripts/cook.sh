@@ -38,6 +38,10 @@
 # in percent; default 95, 100 or 0 its own rate; docs/porting-notes.md
 # §87; QCOOK_LOD_PX: the monsters' level of detail's tolerance in pixels,
 # 2 by default, QCOOK_NOLOD=1 none, the vertices in today's order, §88;
+# QCOOK_SEQ: the maps whose zone chunks carry the cooked walk ("start
+# e1m1", "all"; "none" by default: measured slower than the tree walk),
+# and its knobs QCOOK_SEQ_FAST, QCOOK_SEQ_TEST, QCOOK_SEQ_PRUNE,
+# QCOOK_SEQ_ZERO, tools/qcook/seq.c, §91;
 # QCOOK_MUSIC_RING_KB: the
 # SPU RAM the music's ring takes, 48 by default: the bank fills the rest
 # beside a swap room, §86). `cook.sh --stale <file>`, the
@@ -122,6 +126,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 		echo "music: none"
 	fi
 	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-}"
+	echo "qcook walk: QCOOK_SEQ=${QCOOK_SEQ-none} QCOOK_SEQ_FAST=${QCOOK_SEQ_FAST:-} QCOOK_SEQ_TEST=${QCOOK_SEQ_TEST:-} QCOOK_SEQ_PRUNE=${QCOOK_SEQ_PRUNE:-} QCOOK_SEQ_ZERO=${QCOOK_SEQ_ZERO:-}"
 }
 if [ "${1:-}" = --stale ]; then
 	stamp=${2:?--stale needs the file the cook depends on}

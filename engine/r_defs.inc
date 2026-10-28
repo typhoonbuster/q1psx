@@ -47,6 +47,7 @@
 .set RS_LIGHTS,       212   #   (engine/dlight.c rlight_t, 32 bytes each)
 .set RS_MARK_R,       216   # mark_pvs_far's reach, vertex units (render.c)
 .set RS_FRAGPOOL,     220   # the brush models' pieces' vertex pool (bmfrag.c)
+.set RS_SEQ,          236   # the zone's cooked walk for this frame, 0: the tree walk (zone.c)
 .set DL_O,            0     # int32 origin[3], vertex units
 .set DL_RADIUS,       12    # vertex units
 .set DL_MINLIGHT,     16
