@@ -1997,6 +1997,10 @@ followed by R0-R4.
     10-20 s, its backpacks two minutes), 16-46 slots left at the peaks, no
     spawn refused; every pool +18-19 KB (E4M7's 340 → 359 KB, E1M3's 380 →
     399). A reserve for the looks' spawns is left open.
+  - §90.3 the music refilled by 2 chunks a channel (`Q1PSX_MUSIC_REFILL`
+    2, `MUSIC_REFILL=`): the staging buffer 32 → 16 KB; under the drive
+    model with the music the ring never runs dry, the walk's late frames
+    3150 → 3293 (+4.5 %); every pool +16 KB.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**

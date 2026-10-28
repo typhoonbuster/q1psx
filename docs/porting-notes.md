@@ -11835,3 +11835,20 @@ or a delayed use, where 96 lost nothing; a reserve kept from the looks
 spawns never) would make 48 as safe as 96 for the maps' logic, for a
 line in `throw_gib` and `spawn_meat_spray`, not done (id's code has no
 such rule: its pool is 600).
+
+**Measured** (`CDMODEL=1 MUSIC=1 ZONES=1`: the zones' walk of the 27
+zoned maps with the music, every read held to a console drive's seeks,
+§83): refills of 4 (`MUSIC_REFILL=4`) against 2, the same build
+otherwise:
+
+| | refills of 4 (32 KB) | refills of 2 (16 KB) |
+|---|---|---|
+| the ring run dry | 0 | 0 |
+| chunk reads | 1193 (11.1 frames each) | 1195 (11.3) |
+| frames waiting for the drive | 2129 | 2656 |
+| late frames (the camera in a zone not in yet) | 3150 | 3293 |
+
+The music never runs dry; the drive is asked twice as often for the
+music (8 sectors every 0.65 s), the chunks wait a little more for it:
++143 late frames over 27 minutes of walking (+4.5 %), none of them a
+dry ring. 16 KB to every pool.

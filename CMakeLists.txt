@@ -323,7 +323,7 @@ set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
 # the music's ring in SPU RAM (engine/music.h: chunks a channel, 0.325 s
 # each; 6 = 2 s) and the seek its refills plan with (engine/music.c)
 set(Q1PSX_MUSIC_RING 6 CACHE STRING "The SPU music's ring: chunks a channel (0.325 s each; 6 = 2 s, 4 = 1.3 s)")
-set(Q1PSX_MUSIC_REFILL 4 CACHE STRING "A refill of the music's ring: chunks a channel at a time (4 = 16 sectors every 1.3 s; 2 = 8 every 0.65 s)")
+set(Q1PSX_MUSIC_REFILL 2 CACHE STRING "A refill of the music's ring: chunks a channel at a time (2 = 8 sectors every 0.65 s, the game's: a 16 KB staging buffer, docs/porting-notes.md §90.3; 4 = 16 every 1.3 s, §84's)")
 set(Q1PSX_MUSIC_SEEK_MS 100 CACHE STRING "The seek the music's refills plan a read around, in ms (100: a hop within a level's section)")
 target_compile_definitions(q1psx PRIVATE MUSIC_RING_CHUNKS=${Q1PSX_MUSIC_RING} MUSIC_REFILL_CHUNKS=${Q1PSX_MUSIC_REFILL}
                            MUSIC_SEEK_MS=${Q1PSX_MUSIC_SEEK_MS})

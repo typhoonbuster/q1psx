@@ -139,7 +139,8 @@ static uint32_t spu_lo, spu_hi;   /* the SPU pool: SPU RAM past the map's bank  
    is read */
 #define STAGE_SECTORS (MUSIC_REFILL_CHUNKS * 2 * QSPU_CHUNK / QST_SECTOR > 8 ? \
                        MUSIC_REFILL_CHUNKS * 2 * QSPU_CHUNK / QST_SECTOR : 8)   /* (a music
-                                     refill's sectors, 8 at least: 16 with refills of 4) */
+                                     refill's sectors, 8 at least: 8 with refills of 2, the
+                                     game's since §90.3; 16 with refills of 4) */
 static uint8_t *stage;            /* STAGE_SECTORS x QST_SECTOR, the level arena's */
 static struct {
 	int      a;                   /* the sound, -1 none                          */

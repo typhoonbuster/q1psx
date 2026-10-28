@@ -114,7 +114,8 @@
 #         console, in fast forward (docs/porting-notes.md §83). Both go
 #         with MUSIC=1. MUSIC_RING=<chunks> sizes the music's ring in SPU
 #         RAM (6 = 2 s, the game's; 4 = 1.3 s), MUSIC_REFILL=<chunks> a
-#         refill (4, the game's: 16 sectors every 1.3 s; 2: 8 every 0.65 s),
+#         refill (2, the game's: 8 sectors every 0.65 s, a 16 KB staging
+#         buffer; 4: 16 every 1.3 s, 32 KB, §84's),
 #         MUSIC_SEEK=<ms> the seek its refills plan around a read (100, the
 #         game's: a hop within a level's section; docs/porting-notes.md
 #         §84); tools/cdsim/cdsim.py replays a journal on another disc
@@ -219,7 +220,7 @@ CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
 MEMLOG=${MEMLOG:-0}
 MUSIC_RING=${MUSIC_RING:-6}
-MUSIC_REFILL=${MUSIC_REFILL:-4}
+MUSIC_REFILL=${MUSIC_REFILL:-2}
 MUSIC_SEEK=${MUSIC_SEEK:-100}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
