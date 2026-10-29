@@ -574,6 +574,9 @@ typedef struct {
 	                        monsters', 3 the entities' (docs/porting-notes.md §86) */
 	int      weight;     /* within a class: the entities bringing it (more first) */
 	int      ram;        /* put in main RAM, not the bank                        */
+	int      disc;       /* put out of the SPU, read from the level's file when
+	                        wanted, not kept in RAM (a fog, a powerup's sound:
+	                        docs/porting-notes.md §98)                          */
 } bank_sound;
 
 static bank_sound sounds[QS_MAX_SOUNDS];
@@ -839,6 +842,20 @@ static void bank_write(const qs_static *statics, int nstatics, int cd_track, int
 	free(f.p);
 }
 
+/* the powerups' sounds while they run: the player's, anywhere (engine/
+   game.c game_stream_wants pins them from the pickup; engine/items.c has
+   the artifacts want them by their distance before) */
+static const char *const powerup_sounds[] = { "items/inv2.wav", "items/inv3.wav", "items/protect2.wav",
+                                              "items/protect3.wav", "items/damage2.wav", "items/suit2.wav" };
+
+static int powerup_sound(const char *name)
+{
+	for (size_t k = 0; k < sizeof powerup_sounds / sizeof powerup_sounds[0]; k++)
+		if (!strcmp(name, powerup_sounds[k]))
+			return 1;
+	return 0;
+}
+
 void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
                  long pak0_len, const char *out_path, const char *map, const char *sndset_path)
 {
@@ -1009,55 +1026,73 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 				break;
 			int t = order[j]; order[j] = order[j - 1]; order[j - 1] = t;
 		}
-	size_t swap = 32 * 1024, spu_budget = 0, in_spu = 0, in_ram = 0;
-	int nram = 0;
+	/* The fogs and the powerups' sounds put out of the SPU are read from
+	   the level's file when wanted, not kept in RAM (§98): a fog is played
+	   among the ones in (engine/snd.c snd_tele_fog), a powerup's sounds are
+	   wanted from the artifact's approach on (engine/items.c);
+	   QCOOK_NO_DISC_SOUNDS=1: in RAM as before. */
+	int disc_ok = !getenv("QCOOK_NO_DISC_SOUNDS");
+	size_t swap = 32 * 1024, spu_budget = 0, in_spu = 0, in_ram = 0, in_disc = 0;
+	int nram = 0, ndisc = 0;
 	for (int pass = 0; pass < 6; pass++) {
 		spu_budget = QS_SPU_BYTES - ring - swap;
-		in_spu = in_ram = 0;
-		nram = 0;
-		size_t biggest_ram = 0, tele1 = 0, tele2 = 0;   /* (the two biggest teleporter fogs in RAM: pinned) */
+		in_spu = in_ram = in_disc = 0;
+		nram = ndisc = 0;
+		size_t biggest_ram = 0, tele1 = 0, tele2 = 0;   /* (the two biggest teleporter fogs out: pinned) */
 		for (int k = 0; k < nsounds; k++) {
 			bank_sound *sn = &sounds[order[k]];
 			size_t bytes = sound_bytes(sn);
-			sn->ram = sn->cls > 0 && in_spu + bytes > spu_budget;   /* (the always set never leaves the SPU) */
-			if (sn->ram) {
+			int out = sn->cls > 0 && in_spu + bytes > spu_budget;   /* (the always set never leaves the SPU) */
+			sn->disc = out && disc_ok && (sn->cls == 4 || powerup_sound(sn->name));
+			sn->ram = out && !sn->disc;
+			if (!out) {
+				in_spu += bytes;
+				continue;
+			}
+			if (sn->disc) {
+				in_disc += bytes;
+				ndisc++;
+			} else {
 				in_ram += bytes;
 				nram++;
-				if (sn->cls == 4) {
-					if (bytes > tele1) { tele2 = tele1; tele1 = bytes; }
-					else if (bytes > tele2) tele2 = bytes;
-				} else if (bytes > biggest_ram) {
-					biggest_ram = bytes;
-				}
-			} else {
-				in_spu += bytes;
+			}
+			if (sn->cls == 4) {
+				if (bytes > tele1) { tele2 = tele1; tele1 = bytes; }
+				else if (bytes > tele2) tele2 = bytes;
+			} else if (bytes > biggest_ram) {
+				biggest_ram = bytes;
 			}
 		}
-		/* the swap room: the two pinned fogs, the biggest other RAM sound, 16 KB of play */
+		/* the swap room: the two pinned fogs, the biggest other sound out
+		   (RAM's or the disc's), 16 KB of play */
 		size_t need = tele1 + tele2 + biggest_ram + 16 * 1024;
-		if (!nram || need <= swap)
+		if ((!nram && !ndisc) || need <= swap)
 			break;
 		swap = need;
 	}
+	if (ndisc)
+		printf("qcook: sounds — %d put out of the SPU read from the level's file when wanted, not kept in RAM "
+		       "(%zu KB: the fogs, the powerups')\n", ndisc, in_disc / 1024);
 	if (sndset_path) {
 		FILE *sf = fopen(sndset_path, "w");
 		if (!sf)
 			die("cannot write %s", sndset_path);
-		fprintf(sf, "swap %zu\n", nram ? swap : 0);
+		fprintf(sf, "swap %zu\n", nram || ndisc ? swap : 0);
 		for (int k = 0; k < nsounds; k++)
-			fprintf(sf, "%s %s\n", sounds[order[k]].ram ? "ram" : "spu", sounds[order[k]].name);
+			fprintf(sf, "%s %s\n", sounds[order[k]].ram ? "ram" : sounds[order[k]].disc ? "disc" : "spu",
+			        sounds[order[k]].name);
 		fclose(sf);
 	}
 	printf("qcook: sounds — the level's %d sounds, %zu KB: %d in the bank (%zu KB), %d in RAM (%zu KB), the swap "
-	       "room %zu KB; the weapons held:", nsounds, (in_spu + in_ram) / 1024, nsounds - nram, in_spu / 1024, nram,
-	       in_ram / 1024, nram ? swap / 1024 : 0);
+	       "room %zu KB; the weapons held:", nsounds, (in_spu + in_ram + in_disc) / 1024, nsounds - nram - ndisc,
+	       in_spu / 1024, nram, in_ram / 1024, nram || ndisc ? swap / 1024 : 0);
 	for (int w = 0; w < 6; w++)
 		if (weapons & (1u << w))
 			printf(" %s,", WEAPON_NAMES[w]);
 	printf(" shotgun, axe\n");
 	int kept = 0;
 	for (int i = 0; i < nsounds; i++) {          /* the bank: the SPU's sounds alone */
-		if (sounds[i].ram) {
+		if (sounds[i].ram || sounds[i].disc) {
 			free(sounds[i].wav.s);
 			continue;
 		}

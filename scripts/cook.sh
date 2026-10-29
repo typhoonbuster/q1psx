@@ -55,7 +55,7 @@
 #   cooked/id1/<map>_g0.wld     QWVH world, low geometry          -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_m0.mdl     QMM1 its own models, low          -> disc <MAP>_M0.MDL
 #   cooked/id1/<map>.snd        QSB2 its sound bank               -> disc <MAP>.SND
-#   cooked/id1/<map>.sndset     the level's sound set: `spu`/`ram` a sound (qcook section reads it)
+#   cooked/id1/<map>.sndset     the level's sound set: `spu`/`ram`/`disc` a sound (qcook section reads it)
 # and with Q1PSX_ZONE_TABLES, a map split into zones (formats/qworld.h):
 #   cooked/id1/<map>_g0.skl     QWZI its skeleton                 -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_z<N>.zon   QZN1 its chunks, textures N (1, 2) -> disc <MAP>_Z<N>.ZON

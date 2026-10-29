@@ -155,6 +155,17 @@ static int sfx_get(int s, sfx_t *o)
 		const stream_sound_t *ss = stream_sound(s - SND_STREAM);
 		if (!ss) {
 			stream_stats.snd_missing++;       /* (asked to play, not in: the bench's figure) */
+#ifdef Q1PSX_BENCH
+			{                                 /* (the first three asks of each: its asset,
+			                                     its name's hash, its last want) */
+				static uint8_t told[256];
+				int a = s - SND_STREAM;
+				if (a < 256 && told[a] < 3) {
+					told[a]++;
+					printf("sndmiss %d %08x score %u\n", a, (unsigned) stream_hash(a), (unsigned) stream_score(a));
+				}
+			}
+#endif
 			return 0;
 		}
 		o->addr = ss->spu;

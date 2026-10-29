@@ -1402,7 +1402,8 @@ static void bench_zone_ram(const char *map)
 }
 
 #ifndef Q1PSX_BENCH_ZONES
-#define Q1PSX_BENCH_ZONES 0   /* 1: the zones' walk (ZONES=1 scripts/bench.sh) */
+#define Q1PSX_BENCH_ZONES 0   /* 1: the zones' walk (ZONES=1 scripts/bench.sh); 2: every map's,
+                                 the whole ones too (their sounds) */
 #endif
 
 /* The zones' walk (ZONES=1 scripts/bench.sh, docs/porting-notes.md §57):
@@ -1430,7 +1431,7 @@ static void bench_zones(void)
 			continue;
 		}
 		bench_zone_ram(world_map_name(m));
-		if (!zone_on())
+		if (!zone_on() && Q1PSX_BENCH_ZONES < 2)
 			continue;
 		game_spawn();
 		game_active = 1;

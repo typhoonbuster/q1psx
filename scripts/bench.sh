@@ -107,7 +107,8 @@
 #         ZONES=1 walks every zoned map (MAP=: one) through its items at
 #         running speed, the chunks read as in play ("bench zones" lines:
 #         the switches and the patch's cycles, the reads, the late frames;
-#         docs/porting-notes.md §57). WHOLE=1 puts the whole worlds on the
+#         docs/porting-notes.md §57); ZONES=2 walks the whole maps too
+#         (their sounds: "sounds asked, not in"). WHOLE=1 puts the whole worlds on the
 #         disc, the zones' A / B (CMake Q1PSX_ZONES OFF). Every bench prints
 #         a "bench zone <map>" line per map loaded: the skeleton, the
 #         chunk arena, the stream's pool.
@@ -278,7 +279,7 @@ grep -A2 'MISMATCH' "$OUT/bench.log" | head -n 30 || true
 [ "$BMFCHK" = 1 ] && { grep '^bmfchk\|^bmf room' "$OUT/bench.log" || true; }
 [ "$MOVERS" = 1 ] && { grep '^\(bmfcut\|bmfhash\)' "$OUT/bench.log" || true; }
 { [ "$CDLOG" = 1 ] || [ "$CDMODEL" = 1 ]; } && { grep '^cd sum\|^music: the ring' "$OUT/bench.log" || true; }
-[ "$ZONES" = 1 ] && { grep '^zone: ' "$OUT/bench.log" || true; exit 0; }
+[ "$ZONES" != 0 ] && { grep '^zone: ' "$OUT/bench.log" || true; exit 0; }
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
 [ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$OUT/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
 [ "$MONSTERS" = 2 ] && exit 0

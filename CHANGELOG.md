@@ -2288,3 +2288,23 @@ followed by R0-R4.
   entity of a class used at tick 8 of a ticked view) and
   `BMFARENA=<percent>` (the cut arena shrunk: 7-8 rooms given up and
   packed down, the 48 lists identical).
+- **Sounds from the disc: the teleporters' fogs and the powerups' sounds
+  out of the RAM block; the zones' sounds tried and removed** (§98,
+  2026-10-29). The fogs (played among
+  the variants in, two pinned) and the powerups' sounds while they run
+  (now wanted by the artifact's distance before the pickup: the ring's
+  breath plays at once) were 812 KB of the 1280 KB the 18 maps with a
+  RAM block kept there; the split now leaves them in the level's file
+  (`disc`), read when wanted (`QCOOK_NO_DISC_SOUNDS=1`: in RAM as
+  before). The RAM blocks E4M7 99 → 31 KB, E4M3 127 → 63, E1M3 115 →
+  60, E2M4 112 → 59, eight maps to none; the stream's pool +806 KB over
+  the 32 maps; the walk of the 32 maps under the drive's model
+  (`ZONES=2`, new: the whole maps too) misses no sound, the frames'
+  cycles the same. The other way asked for, each zone's sounds copied
+  after its chunk and read with it, worked but gave at most 11 KB more
+  on five maps once a sound is tied to every zone within earshot, for
+  3.8 MB of copies a texture set, re-reads at every zone switch and
+  +15-21 % of frame cycles on E2M4, E2M7 and E4M7 (the zones' pinned
+  sounds filled the stream's 48 slots: the monsters' models evicted and
+  read again): removed before the merge (the branch keeps it). The
+  bench's `sndmiss` lines name a sound asked and not in.

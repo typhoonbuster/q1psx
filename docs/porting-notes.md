@@ -13297,3 +13297,174 @@ branch to de_records, one load.
   armour after the button.
 - The main checkout's tables are `auto_1536_s3` now (§93), the CMake
   check accepts them (`auto_<D>_s<slots>`).
+
+## §98 — Sounds from the disc: the fogs' and powerups' sounds out of the RAM block, the zones' chunks tried (2026-10-29)
+
+The question: the main RAM a level's sounds take (§86's RAM block: the
+sounds the SPU cannot hold, read at the map's start, 0 to 127 KB a map)
+given back by reading them from the disc, without the late sounds the
+streaming of before §86 had (a sound read when its entity neared, and
+played or not). The disc may carry as many copies as it takes: each
+zone's sounds copied right after its chunk (§57), read by the drive in
+the same pass as the chunk, no seek. That way was built and measured
+(98.1-98.3, 98.5), then removed before the merge (its branch keeps it,
+c511f6c); what went in is 98.4. (§96 and
+§97 are on branches not merged yet.)
+
+### 98.1 The zones' sounds, first form: every tied entity sound out of the bank (measured, dropped)
+
+- The cook (tools/qcook/sound.c `zone_sounds`) ties an entity's sound
+  (§86's class 3: doors, plats, buttons, triggers, items, keys) to the
+  zones of the zone tables' camera leaves (`Q1PSX_ZONE_TABLES/<map>.zones`)
+  when every entity bringing it stands in a zone; never tied: a
+  `func_train`'s (it goes from zone to zone), an entity's outside every
+  zone, the powerups' sounds while they run (the player's, anywhere).
+- Those sounds left the bank for a room in the SPU: the worst camera
+  leaf's resident zones' (its zone and its two nearest), 16 KB of play.
+- The 17 zoned maps tie 6 to 27 sounds (24 to 98 KB), and the worst
+  camera leaf's three zones want 80 to 100 % of them (E4M7 79 of 93 KB,
+  E2M4 89 of 98, E3M4 75 of 75): the room the SPU keeps is the room the
+  bank gave. The RAM block grew on the ten maps that had one and on
+  E3M6 (E1M2 68 → 77 KB, E3M4 47 → 64, E3M5 11 → 31, E3M6 0 → 11, E4M5
+  68 → 84, E4M7 99 → 101); the six others kept none.
+
+### 98.2 The zones' sounds as built: the split's overflow (removed)
+
+- The split stays §86's. A tied sound it puts out of the SPU goes to
+  the zones' chunks instead of RAM (`zone <name> <zones>` in
+  `<map>.sndset`); the swap room grows by the worst camera leaf's
+  zones' sounds (pinned while their zones are in): the two pinned fogs,
+  the biggest other sound out, those zones' sounds, 16 KB of play; the
+  split is made again while it grows (the bank shrinks: more sounds out,
+  the cascade).
+- `qcook section`: a zone's sound is not in the level's file
+  (`QST_ABSENT`). `qcook zones --sndset --stream`: each zone's sounds
+  copied after its chunk, a sector each, the pool file's bytes (the
+  asset's `qst_sound` header and samples); the skeleton (on the branch
+  QWZI → QWZJ, `qw_zone_header` 48 → 56 bytes) carries `qz_zone_sounds[num_zones]`
+  and `qz_sound[]` (the hash, the copy's sector); both texture sets'
+  .ZON files keep one layout. A map the zone cook leaves whole with
+  zones' sounds is refused. The 61 copies of E4M7 checked byte for byte
+  against the pool file at the skeleton's sectors.
+- The engine (engine/zone.c `zone_sound_wants`, `zone_sound_lba`;
+  engine/stream.c `sound_lba`): each residency pass pins the sounds of
+  the zones in the slots; a zone's sound is read from its copy after a
+  ready slot's zone (the drive just there), else it waits (-2: none of
+  its zones in; -1 is the cook's miss, the bench's backoff as before).
+- Two bugs the walk found: the load's synchronous reads
+  (`sound_read_sync`) went to the level's file at `QST_ABSENT` (the
+  sector before the file: "not a sound this engine reads", 13 of E4M7's
+  sounds broken for the map), and a zone's sound wanted before its
+  chunk was in was backed off for the map (4 more); the walk's sounds
+  asked and not in 96 → 0 on E4M7.
+- The walk (`ZONES=1 MUSIC=1 CDMODEL=1`, the 17 zoned maps, the drive's
+  seek model) against the same branch cooked without them (master's
+  data): no sound asked and not in on either; the stream's pool +28 KB
+  on E4M7, +12 E2M7, +6 E1M4, +4 E1M2, −2 E2M4 and E3M4, −4 E4M5, the
+  same elsewhere; the zones' sounds read again at every switch that
+  brings their zones back (the stream's reads E2M4 0 → 140, E2M7 2 →
+  114, E4M7 0 → 8); the late frames 3182 → 3189 in all.
+
+### 98.3 A sound is heard from zones not in
+
+- A sound tied to the zone its entity stands in is heard to 1000 units
+  (a full one, ATTN_NORM), from leaves whose resident zones may not hold
+  it. The walk with both levers (98.4) missed E4M7's teleporter hum
+  (`ambience/hum1.wav`, a trigger_teleport's static sound) 55 times:
+  wanted at 376 units, none of its zones (0, 6, 8, 9) in.
+- The tie then took the zones of every camera leaf whose box comes
+  within 1000 units of the entity (the branch's
+  `QCOOK_ZONE_SOUND_REACH=<units>`, 0: the entity's leaf alone): a
+  camera within earshot has the sound's zone among its own. No sound missed on the 32 maps' walk after it.
+  The sets grow, the swap room with them (E4M7 126 → 146 KB), and the
+  zones' sounds give little over 98.4 alone: the RAM block (the cook's
+  figures, without the sectors' padding) E1M4 5 → 0 KB, E3M4 7 → 0,
+  E4M5 11 → 0, E4M7 31 → 21, E1M2 28 → 28, E2M4 59 → 57, E2M7 45 → 46.
+
+### 98.4 The fogs' and the powerups' sounds read from the level's file (merged)
+
+- In the RAM blocks of the 18 maps that have one (1280 KB with the
+  sectors' padding), the teleporters' fogs take 548 KB (the five
+  `misc/r_tele*`, 36 KB a map, the split's last class) and the
+  powerups' sounds while they run 264 KB (`items/inv2`, `inv3`,
+  `protect2`, `protect3`, `damage2`, `suit2`); the rest (468 KB) are the
+  monsters' and the entities' sounds.
+- Neither needs RAM to be in time. A fog is played among the variants
+  in (engine/snd.c `snd_tele_fog`: two pinned in the swap room, the
+  played one replaced by the next at the following pass, now read from
+  the disc). A powerup's sounds were wanted from the pickup on
+  (game.c `game_stream_wants`), but the ring's breath (`inv3`) plays at
+  once and the pentagram's (`protect3`) at the first hit: the artifacts
+  now want them by their distance as they want their pickup's sound
+  (engine/items.c `powerup_item`: `noise1`, `noise2`, never played
+  from there), so they are in before the pickup.
+- The split marks them `disc` when it puts them out of the SPU
+  (`QCOOK_NO_DISC_SOUNDS=1`: in RAM as before); `qcook section` keeps a
+  `disc` sound in the level's file without `QSTF_RAM`: the stream reads
+  it when wanted, as any streamed asset. The swap room's sizing counts
+  them as it counted them in RAM.
+
+### 98.5 What the zones' sounds cost (measured with both levers)
+
+- The walk of the 32 maps (`ZONES=2`: the whole maps walked too, a
+  bench option added for their sounds) with both levers and the
+  earshot tie: no sound asked and not in; the pools +818 KB in all.
+- The frames' cycles on the walk: +15.2 % E2M4, +17.3 % E2M7, +20.9 %
+  E4M7 (the maps with the most zones' sounds), +2.2 % E1M2, within
+  ±1.1 % on the others. The PC samples of E4M7's walk against master's data: the
+  busy samples +13.6 %, of it the stream's model reads (`vram_place`,
+  `model_in`, `memmove`, the drive's calls: none in master's walk, 119
+  in this one) and `zone_sound_lba`'s scan (3.2 % of the busy time),
+  `next_wanted`, `stream_find_hash` and the entities' wants (more
+  entities with a streamed sound). The model reads: the stream's 48
+  resident slots (`MAX_RES`, models and sounds alike) hold the zones'
+  pinned sounds (24 on E4M7), and the monsters' models are evicted and
+  read again.
+- The disc: the .ZON files +3.8 MB a texture set (E2M4 +1196 KB, E4M7
+  +946, E2M7 +676, E1M2 +628, E1M4 +146, E4M5 +100, E3M4 +86).
+- The zones' sounds were therefore removed: at most
+  11 KB over 98.4 on five maps, for the drive's reads at the switches,
+  the slots and the cycles, and about 650 bytes of code even off.
+  Fixable if ever wanted again: the copy's sector in a table refreshed
+  at each slot change (O(1)), the zones' sounds in slots of their own.
+
+### 98.6 98.4 measured
+
+- `ZONES=2 MUSIC=1 CDMODEL=1` (the 32 maps walked) with 98.4 (the
+  branch's zones' sounds off) against master's data (the zoned maps'
+  walk, the whole maps' pools from their loads): no sound asked and not
+  in on the 32 maps.
+- The RAM blocks (the cook's figures): E1M2 68 → 28 KB, E1M3 115 → 60,
+  E1M4 41 → 5, E1M5 80 → 40, E1M6 25 → 0, E2M2 25 → 0, E2M4 112 → 59,
+  E2M6 75 → 27, E2M7 90 → 45, E3M2 55 → 0, E3M4 47 → 7, E3M5 11 → 0,
+  E3M7 11 → 0, E4M3 127 → 63, E4M4 11 → 0, E4M5 68 → 11, E4M6 28 → 0,
+  E4M7 99 → 31. The stream's pool +806 KB in all (the same engine on
+  both sides): E4M7 +77, E4M3 +72, E4M5 +64, E1M3, E2M4 and E3M2 +62,
+  E2M6 +56, E2M7 +51, E1M5 and E3M4 +46, E1M2 +45, E1M4 +42, E4M6 +32,
+  E1M6 and E2M2 +28, E3M5 and E4M4 +12, E3M7 +11; the 14 others as they
+  were. The release's level arena 1 383 376 → 1 383 216 bytes (the
+  artifacts' two sounds: `powerup_item` and its callers, 148 bytes of
+  code).
+- The merged code (the zones' sounds out) cooked and walked again
+  (`ZONES=2`): its sound sets and banks byte for byte the measured ones
+  (E1M1, E1M3, E2M4, E4M3, E4M7), no sound asked and not in on the 32
+  maps, the zoned maps' cycles within −1.0..+0.9 %.
+- The frames' cycles on the 17 zoned maps' walks within −1.0..+1.0 %
+  (+0.03 % on average); the stream's disc reads in a walk 0 to 22 (E2M4
+  22, E2M7 17, E4M7 10). The late frames 3182 → 3248: E4M4 +62 with the
+  drive's work the same (75 chunk reads, no sound read) and the walk 31
+  vblanks shorter: its frames 1 % cheaper (the 12 KB more), and the walk
+  advances one step a frame, so cheaper frames outrun the drive; E3M4,
+  1 % dearer, 25 late frames fewer, the same way.
+
+### 98.7 Left
+
+- DuckStation: the teleporters' fogs where monsters teleport
+  in on a map that reads them from the disc (E1M2, E1M3, E1M4, E1M5,
+  E1M6, E2M2, E2M4, E2M6, E2M7, E3M2, E3M4, E3M5, E3M7, E4M3, E4M4,
+  E4M5, E4M6, E4M7), a ring of shadows picked up (the breath at once:
+  E1M3, E3M2, E4M3, E4M7), a pentagram hit (E2M4, E3M4, E4M7), a quad's
+  and a biosuit's ends.
+- The rest of the RAM blocks (the monsters' and the entities' sounds,
+  468 KB over 18 maps before 98.4) has no such lead: a monster's sound
+  is wanted when it is near, as before §86.
