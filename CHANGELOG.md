@@ -2237,3 +2237,16 @@ followed by R0-R4.
   polygons (boards to look at); the planned cooked per-band form not
   built (RAM, the same cracks); the eleven forms measured on the way in
   §92.5-92.6.
+- **The item boxes drawn inside out up close** (§93, 2026-10-29). A model's triangle that fails
+  CAREFUL went to the slow path with no back-face test (§54 relied on
+  the guns' cooked order); a box has no order, so a medkit a few steps
+  away showed its far walls' inner faces over its front ones. The model
+  loop's `_tri_far` now tests the NCLIP before the slow path (the near
+  exit's corners have no trustworthy projection: left as is), and
+  `cook_box` winds a box's fans as the cook winds the MDLs (BSP faces
+  and MDL triangles wind the same way; §54's note said otherwise), so
+  the emit's NCLIP keeps a box's front faces from afar. Six item views
+  on E1M1 (pktview, cropped): right; 5 of 17 lists change by 0-55
+  pixels, the near views -2..-4 % cycles; the game bench's gun views
+  +0.3 % (the NCLIP on the gun's near triangles), its pixels the same
+  but 37 on the lightning bolt (its back faces, culled as Quake does).

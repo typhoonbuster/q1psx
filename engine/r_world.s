@@ -813,9 +813,19 @@ r_ysites:
 	lw      $v1, SP_TPAGE16($t8)
 	ICSEC   \q\()_tri_far
 \q\()_tri_far:
+.if \var
+	lwc2    C2_SXY0, SP_SXY($t3)         # a model's triangle turned away is left
+	lwc2    C2_SXY1, SP_SXY($t4)         # out here too: the slow path draws a
+	lwc2    C2_SXY2, SP_SXY($t5)         # back face, and a box's (no cooked order)
+	lw      $t0, SP_SXY($t3)             # came out over its front ones; the NCLIP
+	lw      $t1, SP_SXY($t4)             # as the emit's, the bounds' tests in its
+	NCLIP                                # cycles (the near exit keeps them: its
+	lw      $t2, SP_SXY($t5)             # corners' SXY are not their projection)
+.else
 	lw      $t0, SP_SXY($t3)
 	lw      $t1, SP_SXY($t4)
 	lw      $t2, SP_SXY($t5)
+.endif
 \q\()_ft_r:
 	lui     $v0, 240
 	and     $t9, $t0, $t1
@@ -832,6 +842,9 @@ r_ysites:
 \q\()_ft_c:
 	lui     $v0, 320
 	FARSITE \q\()_ft_r, \q\()_ft_c
+.if \var
+	mfc2    $t9, C2_MAC0
+.endif
 	sll     $t0, $t0, 16
 	sll     $t1, $t1, 16
 	sll     $t2, $t2, 16
@@ -839,6 +852,9 @@ r_ysites:
 	subu    $t1, $t1, $v0
 	or      $t0, $t0, $t1
 	subu    $t2, $t2, $v0
+.if \var
+	bgez    $t9, \q\()_tri_off          # turned away (NCLIP >= 0): left out
+.endif
 	or      $t0, $t0, $t2
 	bltz    $t0, \q\()_tri_skip         # not all x >= 320: the slow path
 	nop

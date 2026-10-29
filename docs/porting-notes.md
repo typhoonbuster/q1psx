@@ -6396,9 +6396,11 @@ lines):
   0, the emit's loads and sums in the NCLIP's eight cycles, as Quake's
   alias drawer (d_polyse.c `D_DrawNonSubdiv`). The cook winds every MDL
   triangle as the world's faces (corners 0, 2, 1: Quake's 76 MDLs all
-  wind the other way, `mdl_wind`); the item boxes and the brush models
-  walked there are the world's already. The slow path (near or split
-  polygons) still draws a back face: the order above keeps them under.
+  wind the other way, `mdl_wind`); the brush models walked there are the
+  world's already (the item boxes were not: §93 winds them). The slow
+  path (near or split polygons) still draws a back face: the order above
+  keeps them under (the guns'; a box has none: §93 tests the NCLIP before
+  the slow path too).
   E1M1's 12 views: 9 identical, 3 better (a back face showing through a
   monster gone), 476 primitives fewer on the busiest (1970 -> 1494),
   its frame -1.2 % (-15 k cycles; 0 to -1.2 % on the others).
@@ -12800,3 +12802,88 @@ polygon's distance) without the RAM.
 - The ceiling the plan named (START v0 under a vblank) needs the walk and
   the block stages too (113 k and 391 k of its 790 k): the grid alone
   cannot reach it.
+
+## §93 — The item boxes drawn inside out up close (2026-10-29)
+
+A DuckStation screenshot: a medkit a few steps away hollow, its
+lid's texture at its bottom front, the inner sides of its far walls on
+top; the ammo boxes behind it as flat. Provisional section number, as
+§91's and §92's.
+
+### 93.1 What happened
+
+An item box (`maps/b_bh25.bsp`, `b_nail0.bsp`...) is one of a map's own
+models (tools/qcook/items.c `cook_box`: each face a fan of triangles,
+one record a texture; `QGF_MAP | QGF_FLAT`), drawn by the model loop
+(r_world.s `RECLOOP de`, the `POLYS` instance with `var = 1`) as a
+monster or a gun is. That loop leaves a triangle turned away out by the
+GTE's NCLIP of its corners (§54), but only on its emit: a triangle that
+fails CAREFUL (a corner nearer than the model's bound, a box wider than
+the GPU's span, or the affine bound) goes to the slow path, which clips,
+splits and draws it whatever its facing. §54 noted it and relied on the
+guns' cooked order (a triangle written once every one in front of it
+is) to keep their back faces under. A box has no such order: its faces
+come in the file's order, per texture, so up close (the whole box fails
+the affine bound) its back faces are drawn, and, prepended after the
+front ones, over them: the picture above. From afar the emit's NCLIP
+took the box's... back faces: `cook_box` wound its fans as the BSP's
+faces come, and §54's note that those were "the world's already" was
+wrong: a BSP face's corners and a MDL's triangle wind the same way
+(the right-hand normal of corners 0, 1, 2 points into the model on all
+82 triangles of `armor.mdl` and all 6 faces of `b_bh25.bsp`), and the
+cook swaps the MDLs' (`mdl_word`: 0, 2, 1) but left the boxes'. From
+afar that showed the box's far faces through its near ones: at a
+distance a box looks the same inside out, so nobody saw it.
+
+Not the merge's (§90) nor the grid's (§92): the same pictures with
+`TESS=none`, and from detached worktrees of master 795bfb2 and 90b52bd.
+
+### 93.2 The fix
+
+- `engine/r_world.s`, `POLYS`'s `_tri_far` for `var = 1`: the three
+  corners' SXY into the GTE (`lwc2`), the NCLIP issued at once, its MAC0
+  read after the off-screen tests (its eight cycles spent there), the
+  triangle left out when MAC0 >= 0 (`_tri_off`), else the slow path as
+  before. About 12 instructions on a triangle that was going to cost the
+  slow path's 950 cycles. The near exit (`_tri_near`: a corner within
+  SZCLIP) keeps its back faces: those corners' SXY are not their
+  projection, so the NCLIP's sign is not to be trusted there; the player
+  standing on a box can still see one of its inner faces for a frame.
+- `tools/qcook/items.c` `cook_box`: the fan wound `{0, e + 1, e}`, the
+  MDLs' way after the cook's swap, so the emit's NCLIP and the new test
+  keep a box's front faces.
+
+### 93.3 Checked
+
+- `BENCH_MAPS=1 MAP=E1M1 VIEW=...` with six views on E1M1's items
+  (`VIEW=x,y,z,yaw,pitch` in whole degrees, pitch positive down; the
+  bench's own 12 views first): a medkit at 34 units seen level (v15),
+  a nail box at 46 (v16), the medkit from above and in front, the
+  screenshot's angle (v17), the shells box by the spawn (v14), medkits from
+  64 and 124 units (v12, v13); pktview's pictures, cropped at 3-4 x. v17
+  shows the lid on top with its big cross, the small crosses on the
+  sides; the nail box's "NIN" is Quake's own glyphs (not a mirror).
+- Against the run before the fixes (the same build, the same cooked
+  data but the boxes' winding): the lists of 5 of the 17 views change
+  (v8, v12, v13, v15, v16), their pixels by 0, 7, 2, 55 and 0: the
+  removed back faces were under the front ones in those views; v15
+  -1.9 % cycles, v16 -3.8 %, v8 -0.6 % (two soldiers near the spawn),
+  the others the same to the cycle (the bench is deterministic: three
+  runs of v0 and v4 at the same count).
+- `BENCH_GAME=1 MAP=E1M1`: the 10 gun and HUD views' lists all change,
+  their pixels on 8 of them none, `gsshotgun` 0.5, `glightning` 37
+  (the lightning bolt's triangles turned away, which Quake's alias
+  drawer culls too, under its others);
+  the walk's frames 0.7-1.6 px. The gun views' cycles +0.3 % (`gaxe`
+  517 827 -> 519 219: the NCLIP on every near triangle of the gun, none
+  of them culled, `slowtri` the same); walk60 537 812 -> 515 561 a frame
+  on average (the frames at 2 vblanks 104 -> 99).
+- hazcheck, iccheck, ovlcheck, ramcheck at the link; the release built
+  for a DuckStation look.
+
+### 93.4 Left
+
+- The guns' near triangles pay the NCLIP for nothing (their cooked cull
+  already dropped the back ones): a flag of the model (the view model's
+  `SZCLIP` path) could skip it, +0.3 % on the gun views.
+- The near exit's back faces (the eye within SZCLIP of a box).

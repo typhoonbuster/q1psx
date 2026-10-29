@@ -319,7 +319,8 @@ static void brec_flush(brec *r, int tex, int *nrec)
 	r->nv = r->nt = 0;
 }
 
-/* a box: per texture, its faces as triangle fans; the texture coordinates
+/* a box: per texture, its faces as triangle fans wound for the model loop's
+   back-face test; the texture coordinates
    of a face shifted by whole repetitions so they start in the first (the
    texture window folds the rest), at the layout's scale */
 static void cook_box(int q, const tex_set *ts, int first_extra, qw_model *out)
@@ -367,8 +368,14 @@ static void cook_box(int q, const tex_set *ts, int first_extra, qw_model *out)
 				if (v > 255) v = 255;
 				uv[e] = (uint16_t) (u | v << 8);
 			}
-			for (int e = 1; e + 1 < bf->numedges; e++) {   /* the fan */
-				int c[3] = { 0, e, e + 1 };
+			for (int e = 1; e + 1 < bf->numedges; e++) {   /* the fan, wound as the
+			                                                   cook winds a MDL's triangles
+			                                                   (game.c mdl_word: corners 0,
+			                                                   2, 1): a box's faces turn the
+			                                                   MDLs' way, and the model loop
+			                                                   leaves out a triangle whose
+			                                                   NCLIP is >= 0 (§54) */
+				int c[3] = { 0, e + 1, e };
 				int newv = 0;
 				for (int j = 0; j < 3; j++) {
 					int seen = 0;
