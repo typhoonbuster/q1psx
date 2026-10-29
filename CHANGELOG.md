@@ -2047,6 +2047,14 @@ followed by R0-R4.
     before the drive is up stay. The release's arena +14 672 B (1 374 448
     → 1 389 120), every pool +14 KB (E4M7's 418 → 432 KB, E1M3's 453 →
     467); every frame identical; a load reads 8 sectors more.
+    2026-10-29: `OVL_BASE` was
+    computed before `Q1PSX_STACK_BYTES` was set, so a fresh build
+    directory (an empty value: `0x801ffff0 - - 32768`) linked the overlay
+    32 KB past the RAM's end, where DuckStation's mirror put it over the
+    kernel's area: no boot (a build directory configured before kept the
+    value in its cache, PCSX-Redux let the address pass). The block moved
+    after the stack's; the link asserts `OVL_BASE + OVL_ROOM` is the
+    stack's base.
   - §90.8 nodes and leaves on 16-bit indices: measured, not built. The
     node's two face-block pointers must stay pointers (the zone switch
     patches them to the slot holding a chunk's records) and the boxes

@@ -40,6 +40,7 @@ SECTIONS {
 		__load_end = .;
 	} > APP_RAM
 	ASSERT(__load_end - __load_start <= OVL_ROOM, "engine/load.ld: the load overlay past its room (OVL_ROOM)")
+	ASSERT(OVL_BASE + OVL_ROOM == 0x801ffff0 - STACK_BYTES, "engine/q1psx.ld: the load overlay not right under the stack (OVL_BASE)")
 
 	/* Text section, i.e. code and constants */
 

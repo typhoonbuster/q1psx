@@ -94,26 +94,6 @@ add_custom_command(TARGET q1psx POST_BUILD
 	COMMAND_EXPAND_LISTS
 	VERBATIM)
 
-# The load overlay (docs/porting-notes.md §90.7): the boot's inits and a
-# level's load code (engine/load.ld) linked at the level arena's top under
-# the stack (engine/q1psx.ld's .text.load: OVL_BASE, OVL_ROOM bytes), read
-# from LOAD.BIN at boot and at each load, the room the stream's pool's for
-# the rest of the level. The section is not allocated in the link (INFO: no
-# segment, so the SDK's elf2x leaves it out of the EXE); the file is its
-# bytes dumped; scripts/ovlcheck.py checks that nothing in play calls into
-# it.
-set(Q1PSX_OVL_ROOM 32768)
-math(EXPR Q1PSX_OVL_BASE "0x801ffff0 - ${Q1PSX_STACK_BYTES} - ${Q1PSX_OVL_ROOM}" OUTPUT_FORMAT HEXADECIMAL)
-target_link_options(q1psx PRIVATE -Wl,--defsym=OVL_BASE=${Q1PSX_OVL_BASE} -Wl,--defsym=OVL_ROOM=${Q1PSX_OVL_ROOM})
-find_program(Q1PSX_OBJCOPY NAMES mipsel-none-elf-objcopy REQUIRED)
-add_custom_command(TARGET q1psx POST_BUILD
-	COMMAND ${Q1PSX_OBJCOPY} --dump-section .text.load=${CMAKE_CURRENT_BINARY_DIR}/load.bin $<TARGET_FILE:q1psx> ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
-	COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/ovlcheck.py ${Q1PSX_OBJDUMP} ${PROJECT_SOURCE_DIR}/engine/load.ld $<TARGET_OBJECTS:q1psx>
-	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/load.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
-	COMMENT "The load overlay (LOAD.BIN) out of the link; checking its callers (scripts/ovlcheck.py)"
-	COMMAND_EXPAND_LISTS
-	VERBATIM)
-
 # The RAM's layout (engine/mem.h, docs/porting-notes.md §81.7): the stack's
 # room at the top of the 2 MB, Q1PSX_STACK_BYTES (8 KB: the boot log's
 # "stack:" line says what a map's load reached, a guard stops the game short
@@ -127,6 +107,28 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_STACK_BYTES=${Q1PSX_STACK_BYTES} 
 add_custom_command(TARGET q1psx POST_BUILD
 	COMMAND sh ${PROJECT_SOURCE_DIR}/scripts/ramcheck.sh ${Q1PSX_NM} $<TARGET_FILE:q1psx> ${Q1PSX_STACK_BYTES} ${Q1PSX_LEVEL_MIN}
 	COMMENT "Checking the level arena's room in main RAM (scripts/ramcheck.sh)"
+	VERBATIM)
+
+# The load overlay (docs/porting-notes.md §90.7): the boot's inits and a
+# level's load code (engine/load.ld) linked at the level arena's top under
+# the stack (engine/q1psx.ld's .text.load: OVL_BASE, OVL_ROOM bytes; after
+# Q1PSX_STACK_BYTES above, which the base subtracts: an empty value would
+# link it past the RAM's end, the link checks it), read
+# from LOAD.BIN at boot and at each load, the room the stream's pool's for
+# the rest of the level. The section is not allocated in the link (INFO: no
+# segment, so the SDK's elf2x leaves it out of the EXE); the file is its
+# bytes dumped; scripts/ovlcheck.py checks that nothing in play calls into
+# it.
+set(Q1PSX_OVL_ROOM 32768)
+math(EXPR Q1PSX_OVL_BASE "0x801ffff0 - ${Q1PSX_STACK_BYTES} - ${Q1PSX_OVL_ROOM}" OUTPUT_FORMAT HEXADECIMAL)
+target_link_options(q1psx PRIVATE -Wl,--defsym=OVL_BASE=${Q1PSX_OVL_BASE} -Wl,--defsym=OVL_ROOM=${Q1PSX_OVL_ROOM} -Wl,--defsym=STACK_BYTES=${Q1PSX_STACK_BYTES})
+find_program(Q1PSX_OBJCOPY NAMES mipsel-none-elf-objcopy REQUIRED)
+add_custom_command(TARGET q1psx POST_BUILD
+	COMMAND ${Q1PSX_OBJCOPY} --dump-section .text.load=${CMAKE_CURRENT_BINARY_DIR}/load.bin $<TARGET_FILE:q1psx> ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
+	COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/ovlcheck.py ${Q1PSX_OBJDUMP} ${PROJECT_SOURCE_DIR}/engine/load.ld $<TARGET_OBJECTS:q1psx>
+	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/load.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
+	COMMENT "The load overlay (LOAD.BIN) out of the link; checking its callers (scripts/ovlcheck.py)"
+	COMMAND_EXPAND_LISTS
 	VERBATIM)
 
 # Renderer counters and stage timers (debug overlay, bench breakdown). Off in
