@@ -1224,7 +1224,7 @@ static void bench_pmove_diff(void)
 #define Q1PSX_BENCH_TICKS 0   /* with a VIEW: the game run that many ticks from there (TICKS=n) */
 #endif
 #ifndef Q1PSX_BENCH_USE
-#define Q1PSX_BENCH_USE ""    /* with TICKS: the entities of this targetname used at tick 8, as
+#define Q1PSX_BENCH_USE ""    /* with TICKS: the entities of this targetname (or classname) used at tick 8, as
                                  a button's press would (USE=t53): a door opened in view */
 #endif
 
@@ -1349,7 +1349,9 @@ static void bench_view_ticks(const char *view)
 		int used = 0;
 		for (int i = 2; i < num_edicts; i++) {
 			edict_t *e = &edicts[i];
-			if (!e->inuse || !e->targetname || !e->use || strcmp(world_string(e->targetname), Q1PSX_BENCH_USE))
+			if (!e->inuse || !e->use ||                 /* a targetname, or a classname (USE=func_door_secret) */
+			    ((!e->targetname || strcmp(world_string(e->targetname), Q1PSX_BENCH_USE)) &&
+			     strcmp(world_string(e->classname), Q1PSX_BENCH_USE)))
 				continue;
 			ent_other = ent_activator = ent_player;
 			ENT_CALL(e, use);

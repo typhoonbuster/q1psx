@@ -80,7 +80,7 @@
 #         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B;
 #         TICKS=n with a VIEW: the player put there, the game run n ticks
 #         from there, the view dumped every 8 ticks: a mover, a monster
-#         as the player standing there sees them; USE=<targetname> uses
+#         as the player standing there sees them; USE=<targetname or classname> uses
 #         those entities at tick 8, a button's press: a door
 #         opening in view); RESIDENCY=1 (with
 #         BENCH_MAPS=1 VIEWS=0) reports what the stream loads around the

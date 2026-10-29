@@ -2269,15 +2269,22 @@ followed by R0-R4.
   pixels, the near views -2..-4 % cycles; the game bench's gun views
   +0.3 % (the NCLIP on the gun's near triangles), its pixels the same
   but 37 on the lightning bolt (its back faces, culled as Quake does).
-- **Three reports looked into: walls seen through from afar on E1M1 and
-  E1M3, a block of noise under E1M2's yellow armor** (§95, 
-  2026-10-29). Not reproduced.
-  The distance tests of the renderer drop no wall nearer than what is
-  behind it; a zoned disc shows what its camera zone's chunk lacks, and
-  the main checkout's local.env points at tables cut at 1024 units
-  (`seen_1024_64`) under the 1536 draw distance: CMake now refuses that
-  pairing and announces the seen tables. The bench gained `USE=<targetname>`
-  (a button's targets used at tick 8 of a ticked view: E1M2's doors
-  rise in view, no noise, the arena's traffic printed) and
+- **Walls seen through from afar on E1M1 and E1M3, a block of noise and
+  wall pieces gone on E1M2: one bug, the brush models' pieces' CLUT**
+  (§95, 2026-10-29).
+  Read in DuckStation save states (the RAM, the VRAM, the
+  display list): the pieces of a door whose first record has the
+  texture run's texture were emitted with the register holding the
+  CLUT as the walk's plane tests left it (the camera's distance to a
+  plane); a CLUT on zeroed VRAM is all transparent (the door not drawn:
+  the wall behind seen), on the frame buffer noise, elsewhere black.
+  `ei_pieces` now reloads it from the scratchpad as the walk's own
+  block entry does (one load). The bench, profiled, reloads it at the
+  loop's entry and never showed it; unprofiled, the state-3 camera with
+  the doors up emits 8 such packets a frame, none with the fix. On the
+  way: the zone tables cut under the draw distance refused at configure
+  (the seen ones announced; the `auto_<D>_s<slots>` tables accepted), the
+  bench's `USE=<targetname or classname>` (a button's targets or every
+  entity of a class used at tick 8 of a ticked view) and
   `BMFARENA=<percent>` (the cut arena shrunk: 7-8 rooms given up and
   packed down, the 48 lists identical).

@@ -3424,9 +3424,10 @@ ei_pieces:                               # a0 = the first record (RI_ENT)
 	sw      $t2, SP_VERTPOOL($t8)
 	sw      $t3, SP_FVBASE($t8)
 	la      $t3, ep_back
-.if R_PROFILE
-	lhu     $t9, TIMER2($t8)             # (the record loop's start time)
-.endif
+	lw      $v0, SP_CLUT16($t8)          # the run's CLUT back in v0 (the walk's
+.if R_PROFILE                            #  plane tests took it: a first piece of the
+	lhu     $t9, TIMER2($t8)             #  run's texture would carry the camera's
+.endif                                   #  distance as its CLUT, see-through or noise)
 	b       de_records
 	sw      $t3, SP_BMWALK($t8)
 	ICSEC   ep_back

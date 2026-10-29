@@ -13156,7 +13156,7 @@ Not the merge's (§90) nor the grid's (§92): the same pictures with
   `SZCLIP` path) could skip it, +0.3 % on the gun views.
 - The near exit's back faces (the eye within SZCLIP of a box).
 
-## §95 — Walls seen through from afar, a block of noise on E1M2: three reports looked into (2026-10-29)
+## §95 — Walls seen through from afar, a block of noise on E1M2: the brush models' pieces' CLUT (2026-10-29)
 
 ### 95.1 The reports
 
@@ -13225,14 +13225,75 @@ No save state; the analysis went by the code and the bench.
   is the source record's. What the bench does not cover: a long play's
   state, DuckStation's GPU (the PCSX frames are the bench's).
 
-### 95.4 Left
+### 95.4 The cause, read in a DuckStation save state: the pieces' CLUT
 
-- The three reports stand unreproduced. What settles them: which image
-  was played (the worktree's build-release, cooked pvs_1536_96, or a build
-  of the main checkout, cooked seen_1024_64: the captures would then be
-  the tables' holes); a DuckStation save state at the moment (F2: the
-  player's place, the zones resident, the arena).
-- A frame-by-frame comparison of the ZONES=1 walk's lists with WHOLE=1's
-  along the same walk would list every hole a zoned disc shows in play
-  (the late frames and any table's miss), where the spawn views cannot.
+A play of the ram-batches worktree's release (master a09c161,
+`auto_1536_s3`, three slots) left seven save states (slot 1 on E1M1,
+2-7 on E1M2). A state holds the 2 MB of RAM and the VRAM: its camera
+(`cam`, 1/8 units; `yaw` x 4096 a turn), its frame (the VRAM's first
+320 x 240), the display list's packets and the edicts can all be read
+offline (the state reading of §73, the symbols from the build's
+`q1psx.map`; the RAM's base = the ELF's `.text` found in the state, less
+0x10000; the first 4 KB of `.text` differ: the options' patched words).
 
+State 2 (E1M2, the camera at 1460, -326, 334, yaw 217, the doors *5 and
+*6 up) shows the block of noise. In its RAM the block's packets are
+POLY_GT4s whose CLUT halfword is 0x0024 or 0x002a (a CLUT read at y 0:
+the frame buffer, hence the noise) under the right texture page (6) and
+in-range UVs; the same frame's other faces of that texture carry 0x784b,
+the texture's CLUT (world.textures[11]). No texture table in the RAM
+holds those two words. The polygons sit in the brush models' cut arena
+(bmfrag.c), in records of door *6 whose texture is 11, listed in the
+leaves' render lists as pieces (RI_PIECES), several items a leaf.
+
+The record loop keeps the current texture's words in two registers, v0 =
+CLUT << 16 and v1 = tpage << 16, and the run's index in SP_LASTTEX: a
+record of the run's texture reuses them (3 in 4 do). The walk's plane
+tests use v0 (`wn_side`: n . cam x 4096 - dist), so the walk reloads v0
+from SP_CLUT16 each time it enters a face block (draw_records' entry,
+and the brush models' own walk, bm_walk). `ei_pieces`, the pieces' entry
+into the models' record loop from a leaf's render list, did not: the
+run going on, a first piece of the run's texture (the door's wall
+texture, the wall's own around it) took the camera's distance to the
+last plane as its CLUT, and so did the pieces after it in the list. A
+CLUT landing on zeroed VRAM reads every texel as 0x0000, the GPU's
+transparent: the door is not drawn, the wall behind it shows (E1M1's
+corridor door seen through from the hall, E1M3's trap door with the
+ogre behind: the reports' "transparent walls"); one landing on the frame
+buffer or a texture reads noise (E1M2's block); one on a dark area, a
+black piece (E1M2's pieces gone). The bench never showed it because the
+bench is profiled (R_PROFILE), and the profiled loop's entry reloads v0
+(the `.if R_PROFILE` words at `\p\()_records`): the release's does not.
+
+**The fix** (r_world.s ei_pieces): v0 reloaded from SP_CLUT16 before the
+branch to de_records, one load.
+
+### 95.5 Checked
+
+- The mechanism in the bench: a bench-only count at ei_pieces (not
+  kept) on the state-2 camera, 20 frames, doors up (`MAP=E1M2
+  VIEW=1460,-326,334,217,-3 TICKS=128 USE=t53`): 714 entries, 630 whose
+  first record had the run's texture. The profiled bench stays clean
+  with v0 poisoned there (`lui v0, 0x1234`: no such CLUT in 68 681
+  textured packets): the profile's reload hides it.
+- Unprofiled (`PROFILE=0`), without the fix, the three state cameras
+  (2, 3, 4) with the doors used: 144 textured packets with a CLUT out of
+  the tables' rows (0xffcb: the plane distance's high half), 8 a frame
+  in the state-3 camera's 18 dumps (the view's and its 17 ticks);
+  with the fix: none; packet for packet, the two runs' 66 dumps differ
+  in those 144 packets only, in their CLUT / first-UV word (v0's low
+  half had gone into the UVs too), 18 `H` lines of 66.
+- The 128 spawn views unprofiled (`PROFILE=0 BENCH_MAPS=1 HASHONLY=1`)
+  without and with the fix: 3 `H` lines change (E1M7.v0, E2M3.v0,
+  E3M2.v0: the bug was in those frames too); with the fix, E1M2's 4
+  views hash as the profiled bench's. The release builds.
+- `USE=<name>` now also matches a classname (`USE=func_door_secret`),
+  `scripts/bench.sh`'s help with it.
+
+### 95.6 Left
+
+- The DuckStation look (TESTING 11.74): E1M1's corridor door from the
+  hall, E1M3's trap door from the courtyard, E1M2's doors by the yellow
+  armour after the button.
+- The main checkout's tables are `auto_1536_s3` now (§93), the CMake
+  check accepts them (`auto_<D>_s<slots>`).
