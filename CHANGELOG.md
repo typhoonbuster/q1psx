@@ -2306,4 +2306,6 @@ followed by R0-R4.
   past 128 were not solid), the game arena 90 -> 92 KB. The pools shrink
   where the new kinds' sounds go to the level's RAM block (E4M7 426 ->
   293 KB in the bench); residency on hard: 3 late spots on E2M6, none on
-  E4M7. The 128 views: E1 and START identical.
+  E4M7. The 128 views: E1 and START identical. The dynamic sounds get 14
+  of the SPU's voices (Quake's 8; the static sounds keep 6, a map's most):
+  E4M7's woken fight cuts 2 sounds for want of a channel, not 8.

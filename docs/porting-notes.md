@@ -13510,7 +13510,31 @@ at 3 units. Sheets (Reference ultra | the old cook high | by hand high,
 - The game state with and without the thinning: the E1M3 fight's
   positions and expansions the same.
 
-### 97.9 Left
+### 97.9 Fourteen dynamic sound voices
+
+- The SPU's 24 voices were: the ambients 2, Quake's 8 dynamic channels,
+  12 for the static sounds (one per distinct sound), the music 2. A map
+  has 6 distinct static sounds at most (E3M1; most 1-4): the dynamic
+  channels now take 14, the static sounds 6 (the choice made: more
+  than Quake's 8).
+- The fight bench's `mon sounds` lines: the sounds started, those cut by
+  another while still playing (the channels full), by their own entity's
+  channel (Quake's rule), stopped when their samples left SPU RAM, and
+  those unheard (not in SPU RAM). E4M7 on hard, the 80 monsters woken:
+  in the first 5 s, 8 cut by another with 8 channels, 2 with 14; none
+  swapped out or unheard.
+- Streaming the RAM block's sounds with the zone chunks was measured
+  first: the three resident zones' sounds want up to 157 KB of SPU room
+  on E4M7 (141 E4M5, 119 E2M4, 94 E2M7) against a 43-53 KB swap room, and
+  15 of the 32 maps are whole (E1M3, E2M6, E4M3, E4M6 among the heaviest);
+  the sound fidelity map by map instead (the RAM block at 98 / 97 / 96 /
+  95 % of the energy kept): E4M7 177 / 136 / 108 / 84 KB, E4M5 147 / 107 /
+  82 / 59, E4M3 146 / 103 / 73 / 50, E2M4 127 / 83 / 55 / 34, E4M6 125 /
+  85 / 60 / 21, E2M6 119 / 72 / 43 / 15, E1M3 115 / 76 / 52 / 15, E2M7
+  106 / 65 / 40 / 15. The choice: an experiment of the chunk streaming
+  on a branch of its own.
+
+### 97.10 Left
 
 - A look at the sheets (the six hand cuts, the 15 bodies'
   rebuilt frames) and on DuckStation (the six monsters, END's end).
