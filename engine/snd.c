@@ -17,13 +17,19 @@
 #include "world.h"
 
 int snd_log;
+uint32_t snd_stat_started, snd_stat_stolen, snd_stat_replaced, snd_stat_cut;
 
 /* ---------------------------------------------------------------- voices -- */
 
 #define V_AMBIENT   0            /* water, wind                              */
-#define V_DYNAMIC   2            /* MAX_DYNAMIC_CHANNELS                     */
-#define NUM_DYNAMIC 8
-#define V_STATIC    (V_DYNAMIC + NUM_DYNAMIC)
+#define V_DYNAMIC   2            /* the dynamic channels (snd_dma.c's
+                                    MAX_DYNAMIC_CHANNELS is 8: 14 here, the
+                                    voices the static sounds never take; the
+                                    eight full cut the sounds playing, 8 in
+                                    the first 5 s of E4M7's fight on hard) */
+#define NUM_DYNAMIC 14
+#define V_STATIC    (V_DYNAMIC + NUM_DYNAMIC)   /* (6: a map's distinct static sounds,
+                                                   E3M1's 6 the most) */
 #define NUM_STATIC  (24 - V_STATIC - MUSIC_SPU_VOICES)   /* (the SPU music's two last) */
 #define SND_VOICES  ((1u << (V_STATIC + NUM_STATIC)) - 1)   /* the sounds' voices */
 
@@ -280,6 +286,8 @@ void snd_forget(int s)
 {
 	for (int i = 0; i < NUM_DYNAMIC; i++)
 		if (dyn[i].sfx == s) {
+			if (dyn[i].end > snd_tick)
+				snd_stat_cut++;                  /* (the bench's: playing, its samples gone) */
 			dyn[i].sfx = -1;
 			SpuSetKey(0, 1u << (V_DYNAMIC + i));
 		}
@@ -467,6 +475,13 @@ void snd_start_idx(int entnum, int entchannel, int s, const int32_t origin[3], i
 	if (i < 0)
 		return;
 	channel_t *ch = &dyn[i];
+	if (ch->sfx >= 0 && ch->end > snd_tick) {    /* (the bench's: a sound still playing cut) */
+		if (entchannel != 0 && ch->entnum == entnum && ch->entchannel == entchannel)
+			snd_stat_replaced++;                 /* its own entity's channel: Quake's rule */
+		else
+			snd_stat_stolen++;                   /* the eight dynamic channels full */
+	}
+	snd_stat_started++;
 	memset(ch, 0, sizeof *ch);
 	for (int k = 0; k < 3; k++)
 		ch->origin[k] = origin[k];

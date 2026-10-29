@@ -2,11 +2,13 @@
  * q1psx — sound: Quake's snd_dma.c on the SPU.
  *
  * The map's sound bank (formats/qsound.h) sits in SPU RAM; a Quake channel
- * is an SPU voice: 2 for the area ambients (water, wind), 8 dynamic ones
- * (S_StartSound: picked and spatialized as snd_dma.c does), and one per
- * distinct static sound (the map's ambient entities: Quake sums the volumes
- * of every static source of one sound into a single channel, "so we don't
- * mix five torches every frame"; here that channel is a looping voice).
+ * is an SPU voice: 2 for the area ambients (water, wind), 14 dynamic ones
+ * (S_StartSound: picked and spatialized as snd_dma.c does; Quake has 8,
+ * the voices the static sounds never use are theirs here), and one per
+ * distinct static sound, 6 at most (the map's ambient entities: Quake sums
+ * the volumes of every static source of one sound into a single channel,
+ * "so we don't mix five torches every frame"; here that channel is a
+ * looping voice).
  *
  * Positions are the game's (1/R_POS_SUB world units); volumes 0..255
  * (Quake's fvol x 255); attenuations x64 (ATTN_NORM 1 -> 64); entity
@@ -117,5 +119,9 @@ int  snd_cd_track(void);
 
 /* the bench: print every start ("snd ..." lines) */
 extern int snd_log;
+/* the bench's: dynamic sounds started; started on a channel whose sound
+   still played, another entity's (the eight full) or its own channel's
+   (Quake's rule); playing ones stopped when their samples left SPU RAM */
+extern uint32_t snd_stat_started, snd_stat_stolen, snd_stat_replaced, snd_stat_cut;
 
 #endif

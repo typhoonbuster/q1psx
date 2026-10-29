@@ -3024,7 +3024,7 @@ static void bench_monsters(void)
 				int alive = 0;
 				for (int i = 2; i < num_edicts; i++)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
-				static uint32_t exp0, lerp0;
+				static uint32_t exp0, lerp0, st0, sl0, rp0, ct0, ms0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
 				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn, "
 				       "the frame cache refused %u, packets %u bytes at most, a model's room %d at least, "
@@ -3037,6 +3037,13 @@ static void bench_monsters(void)
 				       (unsigned) (mdl_stat_lerped - lerp0));
 				exp0  = mdl_stat_expanded;
 				lerp0 = mdl_stat_lerped;
+				printf("mon sounds t %d: %u started, %u cut by another (the dynamic channels full), %u by their "
+				       "own channel, %u stopped (their samples swapped out), %u unheard (not in SPU RAM)\n", t + 1,
+				       (unsigned) (snd_stat_started - st0), (unsigned) (snd_stat_stolen - sl0),
+				       (unsigned) (snd_stat_replaced - rp0), (unsigned) (snd_stat_cut - ct0),
+				       (unsigned) (stream_stats.snd_missing - ms0));
+				st0 = snd_stat_started; sl0 = snd_stat_stolen; rp0 = snd_stat_replaced;
+				ct0 = snd_stat_cut; ms0 = stream_stats.snd_missing;
 				fsum = fdrawn = pkt_max = full = 0;
 				room_min = 0x7fffffff;
 				skipped0 = r_model_skipped;
