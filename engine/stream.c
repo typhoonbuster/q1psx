@@ -768,7 +768,12 @@ Q_COLD static int frames_ok(const qst_model *m, uint32_t size)
 		return 0;
 	if (m->flags & QSTM_FMAP)
 		for (int f = 0; f < m->num_frames; f++) {
-			uint32_t i = ((const uint16_t *) (m + 1))[f];
+			const uint16_t *map = (const uint16_t *) (m + 1);
+			uint32_t i = map[f];
+			if (i != QST_NOFRAME && (i & QST_LERP) &&      /* (a frame its neighbours make: */
+			    (i == (QST_LERP | f) && f > 0 && f + 1 < m->num_frames &&   /* both stored) */
+			     map[f - 1] < stored && map[f + 1] < stored))
+				continue;
 			if (i >= stored && i != QST_NOFRAME)
 				return 0;
 		}

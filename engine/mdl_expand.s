@@ -5,6 +5,7 @@
 #   void mdl_expand(qw_vert *dst, const uint32_t *src, int n);
 #   void mdl_expand_shift(qw_vert *dst, const uint32_t *src, int n, int shift);
 #   void mdl_lod_copy(qw_vert *dst, const uint16_t *par, int n, const qw_vert *pool);
+#   void mdl_frame_avg(uint32_t *dst, const uint32_t *a, const uint32_t *b, int n);
 #
 # Word w gives x | y << 16 = w & 0x00ff00ff and z | normal << 16 =
 # (w >> 8) & 0x00ff00ff: two ANDs and a shift, two stores. Two vertices a
@@ -13,7 +14,10 @@
 # z left, the normal kept. mdl_lod_copy (a level of detail's band, formats/
 # qstream.h QSTM_LOD): n collapsed vertices from dst on, each its parent's
 # two words (par[i] the parent's index in the pool, lower than its own: in
-# order, the parent's are final). Clobbers t0-t7.
+# order, the parent's are final). mdl_frame_avg (a frame its neighbours
+# make, formats/qstream.h QST_LERP): n words, each byte the floor of a's
+# and b's average ((a & b) + ((a ^ b) & 0xfefefefe) / 2: no carry between
+# the bytes), the normal's byte a's. Clobbers t0-t7.
 
 	.set noreorder
 	.set noat
@@ -78,6 +82,36 @@ mdl_expand_shift:
 	addiu   $a0, $a0, 8
 2:	jr      $ra
 	nop
+
+	.section .text.mdl_frame_avg, "ax", @progbits
+	.global mdl_frame_avg
+	.type mdl_frame_avg, @function
+mdl_frame_avg:
+	lui     $t0, 0xfefe
+	ori     $t0, $t0, 0xfefe             # each byte's low bit out
+	lui     $t1, 0x00ff
+	blez    $a3, 2f
+	ori     $t1, $t1, 0xffff             # x, z, y (0x00ffffff)
+	lui     $t7, 0xff00                  # the normal's byte
+1:	lw      $t2, 0($a1)
+	lw      $t3, 0($a2)
+	addiu   $a1, $a1, 4
+	xor     $t4, $t2, $t3
+	and     $t4, $t4, $t0
+	srl     $t4, $t4, 1
+	and     $t5, $t2, $t3
+	addu    $t5, $t5, $t4                # each byte's floor average
+	and     $t5, $t5, $t1
+	and     $t6, $t2, $t7                # a's normal
+	or      $t5, $t5, $t6
+	addiu   $a2, $a2, 4
+	sw      $t5, 0($a0)
+	addiu   $a3, $a3, -1
+	bgtz    $a3, 1b
+	addiu   $a0, $a0, 4
+2:	jr      $ra
+	nop
+	.size mdl_frame_avg, . - mdl_frame_avg
 
 	.section .text.mdl_lod_copy, "ax", @progbits
 	.global mdl_lod_copy

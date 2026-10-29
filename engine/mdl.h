@@ -43,12 +43,18 @@ const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f, uint32_t bk
 void mdl_expand(qw_vert *dst, const uint32_t *src, int n);
 void mdl_expand_shift(qw_vert *dst, const uint32_t *src, int n, int shift);
 
+/* engine/mdl_expand.s: a frame its neighbours make (formats/qstream.h
+   QST_LERP): n vertex words, each byte of a's and b's floor-averaged (x, z,
+   y), a's normal */
+void mdl_frame_avg(uint32_t *dst, const uint32_t *a, const uint32_t *b, int n);
+
 /* engine/mdl_expand.s: the level of detail's collapsed vertices: n qw_vert's
    from dst on, each the copy of its parent's (par[i], an index into the
    pool, lower than its own: in order, a parent's is final) */
 void mdl_lod_copy(qw_vert *dst, const uint16_t *par, int n, const qw_vert *pool);
 
-/* the bench: expansions done, frames the cache could not take */
-extern uint32_t mdl_stat_expanded, mdl_stat_refused;
+/* the bench: expansions done, frames the cache could not take, frames
+   made from their neighbours (QST_LERP) */
+extern uint32_t mdl_stat_expanded, mdl_stat_refused, mdl_stat_lerped;
 
 #endif

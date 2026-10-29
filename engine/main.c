@@ -2728,8 +2728,28 @@ static void mon_overlap(const char *what, int t, const edict_t *e)
 	was = lap;
 }
 
+/* engine/mdl_expand.s's mdl_frame_avg against its formula, on made-up
+   vertex words (the frames rebuilt from their neighbours, §97) */
+static void bench_frame_avg_check(void)
+{
+	uint32_t a[64], b[64], d[64], x = 0x9e3779b9u, bad = 0;
+	for (int i = 0; i < 64; i++) {
+		x = x * 1664525u + 1013904223u; a[i] = x;
+		x = x * 1664525u + 1013904223u; b[i] = x;
+	}
+	mdl_frame_avg(d, a, b, 64);
+	for (int i = 0; i < 64; i++) {
+		uint32_t w = a[i] & 0xff000000u;
+		for (int k = 0; k < 24; k += 8)
+			w |= ((a[i] >> k & 0xff) + (b[i] >> k & 0xff)) >> 1 << k;
+		bad += d[i] != w;
+	}
+	printf("mon frame average: %u of 64 words wrong\n", (unsigned) bad);
+}
+
 static void bench_monsters(void)
 {
+	bench_frame_avg_check();
 	const char *mapname = Q1PSX_BENCH_MAP[0] ? Q1PSX_BENCH_MAP : "E1M1";
 	int m = world_find_map(mapname);
 	if (m < 0 || !load_level(m)) {
@@ -2896,6 +2916,8 @@ static void bench_monsters(void)
 			       (int) (end - CORPSE_TICKS));
 		pl.pm.pitch = 0;
 	}
+	printf("mon frames: %u expansions, %u of them rebuilt from their neighbours (QST_LERP)\n",
+	       (unsigned) mdl_stat_expanded, (unsigned) mdl_stat_lerped);
 	/* the crowd: every monster of the map awake and after the player (who
 	   cannot die), the entities' cost a second */
 	int awake = 0;
@@ -3002,15 +3024,19 @@ static void bench_monsters(void)
 				int alive = 0;
 				for (int i = 2; i < num_edicts; i++)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+				static uint32_t exp0, lerp0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
 				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn, "
 				       "the frame cache refused %u, packets %u bytes at most, a model's room %d at least, "
-				       "%u models left out, %u full frames\n",
+				       "%u models left out, %u full frames, %u expansions (%u rebuilt)\n",
 				       t + 1, alive, used, peak, max, (unsigned) stack_untouched(),
 				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) vid_stats.vbl,
 				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10),
 				       (unsigned) mdl_refused_since(), pkt_max, room_min == 0x7fffffff ? -1 : (int) room_min,
-				       (unsigned) (r_model_skipped - skipped0), full);
+				       (unsigned) (r_model_skipped - skipped0), full, (unsigned) (mdl_stat_expanded - exp0),
+				       (unsigned) (mdl_stat_lerped - lerp0));
+				exp0  = mdl_stat_expanded;
+				lerp0 = mdl_stat_lerped;
 				fsum = fdrawn = pkt_max = full = 0;
 				room_min = 0x7fffffff;
 				skipped0 = r_model_skipped;
