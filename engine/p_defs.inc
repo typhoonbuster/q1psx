@@ -182,22 +182,25 @@
 
 # ---- edict_t (engine/ents.h) and a trigger list's walk (engine/ents.c
 # touch_walk_t, engine/e_touch.s) -------------------------------------------------
+.set E_SIZE,       320     # (x 320 = << 8 + << 6: e_tick.s, e_seen.s)
 .set E_INUSE,        0     # uint8
 .set E_MOVETYPE,     3     # uint8 MOVETYPE_*
 .set E_LEAVES,      28     # const qw_leaf *[8]: an alias model's centre leaf first
 .set E_ORIGIN,      64     # int32[3], 1/8 units
-.set E_ABSMIN,     100     # int32[3], 1/8 units, a unit wider (SV_LinkEdict)
-.set E_ABSMAX,     112
-.set E_MDEF,       148     # const mdef_s *: a monster's kind, 0 none
-.set E_PAIN_FINISHED, 176  # int32 ticks (a monster's: a body's end)
-.set E_WATERTYPE,  204     # int8 (a monster's)
-.set E_WATER_AT,   216     # int32[3] (a monster's: where its contents were taken)
-.set E_MOVE_TICKS, 240     # int32
-.set E_NEXTTHINK,  244     # int32 ticks, <= 0 none
-.set E_HEALTH,     312     # int16
-.set E_MASSET,     358     # int16: a streamed model, -1 none
-.set E_FLAGS,      364     # uint32 FL_*
-.set E_ITEM_MODEL, 376     # int32: an item's model, -1 none
+.set E_MINS,        76     # int32[3], the box, local: its world box, a unit wider
+.set E_MAXS,        88     #   (an item's 15 more across), is computed (ents.h
+                           #   ent_absbox; e_touch.s): no absmin / absmax since §90.5
+.set E_MDEF,       124     # const mdef_s *: a monster's kind, 0 none
+.set E_PAIN_FINISHED, 152  # int32 ticks (a monster's: a body's end)
+.set E_WATERTYPE,  180     # int8 (a monster's)
+.set E_WATER_AT,   192     # int32[3] (a monster's: where its contents were taken)
+.set E_MOVE_TICKS, 212     # int32
+.set E_NEXTTHINK,  216     # int32 ticks, <= 0 none
+.set E_HEALTH,     264     # int16
+.set E_MASSET,     296     # int16: a streamed model, -1 none
+.set E_ITEM_MODEL, 302     # int16: an item's model, -1 none
+.set E_FLAGS,      316     # uint32 FL_*
+.set FL_ITEM,      256
 .set TW_COUNT,       0     # uint16 *: the slots linked in each area node's subtree
 .set TW_HEAD,        4     # uint16 *: each node's first slot + 1, 0 none
 .set TW_NEXT,        8     # uint16 *: a slot's next + 1, 0 the end

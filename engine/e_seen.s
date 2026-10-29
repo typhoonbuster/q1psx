@@ -55,13 +55,13 @@ ents_seen_streamed:
 1:	beq     $s0, $s1, 9f                 # past the list
 	lhu     $t0, 0($s0)                  # (delay) the edict's index
 	addiu   $s0, $s0, 2
-	sll     $t1, $t0, 8                  # x 384 (sizeof (edict_t)): 256 + 128
-	sll     $t0, $t0, 7
+	sll     $t1, $t0, 8                  # x 320 (sizeof (edict_t)): 256 + 64
+	sll     $t0, $t0, 6
 	addu    $t0, $t1, $t0
 	addu    $a0, $s5, $t0                # e
 	lbu     $t0, E_INUSE($a0)
 	lh      $t1, E_MASSET($a0)
-	lw      $t2, E_ITEM_MODEL($a0)
+	lh      $t2, E_ITEM_MODEL($a0)
 	beqz    $t0, 1b                      # not in use
 	lw      $v0, E_LEAVES($a0)           # (delay) its centre's leaf
 	xor     $t3, $t2, $t1                # the model asked for: the items'

@@ -59,6 +59,7 @@ set_target_properties(q1psx PROPERTIES LINK_OPTIONS "${_q1psx_link_options}"
 	LINK_DEPENDS "${PROJECT_SOURCE_DIR}/engine/q1psx.ld;${PROJECT_SOURCE_DIR}/engine/icache.ld")
 target_link_options(q1psx PRIVATE -T${PROJECT_SOURCE_DIR}/engine/q1psx.ld -L${PROJECT_SOURCE_DIR}/engine
 	-Wl,-Map=${CMAKE_CURRENT_BINARY_DIR}/q1psx.ldmap)   # (the input sections' places: tools/icache)
+set_property(TARGET q1psx APPEND PROPERTY LINK_DEPENDS "${PROJECT_SOURCE_DIR}/engine/load.ld")
 
 # CMake does not scan `.include` in assembly sources: make every asm file
 # depend on the .inc definition files, or editing an offset there leaves
@@ -93,13 +94,33 @@ add_custom_command(TARGET q1psx POST_BUILD
 	COMMAND_EXPAND_LISTS
 	VERBATIM)
 
+# The load overlay (docs/porting-notes.md §90.7): the boot's inits and a
+# level's load code (engine/load.ld) linked at the level arena's top under
+# the stack (engine/q1psx.ld's .text.load: OVL_BASE, OVL_ROOM bytes), read
+# from LOAD.BIN at boot and at each load, the room the stream's pool's for
+# the rest of the level. The section is not allocated in the link (INFO: no
+# segment, so the SDK's elf2x leaves it out of the EXE); the file is its
+# bytes dumped; scripts/ovlcheck.py checks that nothing in play calls into
+# it.
+set(Q1PSX_OVL_ROOM 32768)
+math(EXPR Q1PSX_OVL_BASE "0x801ffff0 - ${Q1PSX_STACK_BYTES} - ${Q1PSX_OVL_ROOM}" OUTPUT_FORMAT HEXADECIMAL)
+target_link_options(q1psx PRIVATE -Wl,--defsym=OVL_BASE=${Q1PSX_OVL_BASE} -Wl,--defsym=OVL_ROOM=${Q1PSX_OVL_ROOM})
+find_program(Q1PSX_OBJCOPY NAMES mipsel-none-elf-objcopy REQUIRED)
+add_custom_command(TARGET q1psx POST_BUILD
+	COMMAND ${Q1PSX_OBJCOPY} --dump-section .text.load=${CMAKE_CURRENT_BINARY_DIR}/load.bin $<TARGET_FILE:q1psx> ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
+	COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/ovlcheck.py ${Q1PSX_OBJDUMP} ${PROJECT_SOURCE_DIR}/engine/load.ld $<TARGET_OBJECTS:q1psx>
+	BYPRODUCTS ${CMAKE_CURRENT_BINARY_DIR}/load.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx_dump.elf
+	COMMENT "The load overlay (LOAD.BIN) out of the link; checking its callers (scripts/ovlcheck.py)"
+	COMMAND_EXPAND_LISTS
+	VERBATIM)
+
 # The RAM's layout (engine/mem.h, docs/porting-notes.md §81.7): the stack's
-# room at the top of the 2 MB, Q1PSX_STACK_BYTES (12 KB: the boot log's
+# room at the top of the 2 MB, Q1PSX_STACK_BYTES (8 KB: the boot log's
 # "stack:" line says what a map's load reached, a guard stops the game short
 # of it), the level arena everything between the BSS and it. The build fails
 # when that arena comes under Q1PSX_LEVEL_MIN bytes (scripts/ramcheck.sh).
 find_program(Q1PSX_NM NAMES mipsel-none-elf-nm REQUIRED)
-set(Q1PSX_STACK_BYTES 12288 CACHE STRING "The stack's room at the top of RAM, bytes (the level arena takes the rest)")
+set(Q1PSX_STACK_BYTES 8192 CACHE STRING "The stack's room at the top of RAM, bytes (the level arena takes the rest)")
 set(Q1PSX_LEVEL_MIN 1272832 CACHE STRING "Least level arena the link accepts, bytes (1243 KB: its size until §81.7)")
 set(Q1PSX_LEVEL_CAP 0 CACHE STRING "The level arena capped at that many bytes (0: none; a bench matching the release's)")
 target_compile_definitions(q1psx PRIVATE Q1PSX_STACK_BYTES=${Q1PSX_STACK_BYTES} Q1PSX_LEVEL_CAP=${Q1PSX_LEVEL_CAP})
@@ -244,9 +265,11 @@ set(Q1PSX_BENCH_WORLD_HZ 30 CACHE STRING "The world's tick rate the bench runs a
 set(Q1PSX_BENCH_ZONES 0 CACHE STRING "1: the zones' walk: every zoned map walked through its items, the chunk reads, switches and late frames (bench zones lines)")
 set(Q1PSX_BENCH_CDLOG 0 CACHE STRING "1: the drive's journal: a cd line per read (who, where, when; engine/cd.h)")
 set(Q1PSX_BENCH_CDMODEL 0 CACHE STRING "1: every read ends no sooner than a real drive would end it (DuckStation's seek model; engine/cd.c)")
+set(Q1PSX_BENCH_MEMLOG 0 CACHE STRING "1: the level arena's log: a memlog line per block taken or given back, with its caller (engine/mem.c)")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
 		Q1PSX_BENCH_CDLOG=${Q1PSX_BENCH_CDLOG} Q1PSX_BENCH_CDMODEL=${Q1PSX_BENCH_CDMODEL}
+		Q1PSX_BENCH_MEMLOG=${Q1PSX_BENCH_MEMLOG}
 		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_IRQTIME=${Q1PSX_BENCH_IRQTIME}
@@ -329,7 +352,7 @@ set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
 # the music's ring in SPU RAM (engine/music.h: chunks a channel, 0.325 s
 # each; 6 = 2 s) and the seek its refills plan with (engine/music.c)
 set(Q1PSX_MUSIC_RING 6 CACHE STRING "The SPU music's ring: chunks a channel (0.325 s each; 6 = 2 s, 4 = 1.3 s)")
-set(Q1PSX_MUSIC_REFILL 4 CACHE STRING "A refill of the music's ring: chunks a channel at a time (4 = 16 sectors every 1.3 s; 2 = 8 every 0.65 s)")
+set(Q1PSX_MUSIC_REFILL 2 CACHE STRING "A refill of the music's ring: chunks a channel at a time (2 = 8 sectors every 0.65 s, the game's: a 16 KB staging buffer, docs/porting-notes.md §90.3; 4 = 16 every 1.3 s, §84's)")
 set(Q1PSX_MUSIC_SEEK_MS 100 CACHE STRING "The seek the music's refills plan a read around, in ms (100: a hop within a level's section)")
 target_compile_definitions(q1psx PRIVATE MUSIC_RING_CHUNKS=${Q1PSX_MUSIC_RING} MUSIC_REFILL_CHUNKS=${Q1PSX_MUSIC_REFILL}
                            MUSIC_SEEK_MS=${Q1PSX_MUSIC_SEEK_MS})

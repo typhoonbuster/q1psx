@@ -2,7 +2,7 @@
  * q1psx — video core (architecture.md §4-§5).
  *
  * 320x240 NTSC, two framebuffers at (0,0) and (0,240). Each buffer owns an
- * ordering table and a 96 KB packet arena. The CPU builds frame N+1 into one
+ * ordering table and an 80 KB packet arena. The CPU builds frame N+1 into one
  * buffer while the GPU DMA draws frame N from the other; vid_flip() waits for
  * the GPU + vblank, shows the finished frame and kicks the next DMA.
  *
@@ -30,7 +30,18 @@
 #define OT_STRETCH     1     /* the target stretched over the viewport (vid_res_frame) */
 #define OT_OVERLAY     0
 
-#define VID_ARENA_BYTES (96 * 1024)
+/* A buffer's packet arena: 80 KB (docs/porting-notes.md §90.1; 96 until
+   then). What a frame writes, measured in the bench builds (the lines'
+   pkt=, room=: the arena bytes used, the least room an alias model found
+   at its draw_model test against R_MODEL_ROOM, r_defs.inc): the 128 spawn
+   views 53.6 KB at most and a model's room 52.1 KB at least, the game
+   bench 54.9 / 50.1, the fights 57.9 / 51.6 (E1M8), a map cleared 63.9 /
+   46.0 (E1M1); E3M4's crowd fight and the zones' walk through walls reach
+   77.7 KB with a model's room down to 34.5 KB: there, an arena under 88 KB
+   leaves out a far model now and then (the frames differ, mskip=; measured
+   in §90.1). The 16 KB taken from each buffer go to the level arena: the
+   stream's pool. */
+#define VID_ARENA_BYTES (80 * 1024)
 
 typedef struct {
 	uint32_t *ot;      /* +0  this frame's ordering table              */

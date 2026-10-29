@@ -149,7 +149,7 @@ static void wiz_attack_finished(edict_t *self)
 		self->attack_state = AS_SLIDING;
 		self->mstate = WIZ_SIDE1;
 	}
-	self->think = monster_think;
+	self->think = EF_monster_think;
 }
 
 /* makevectors (an entity's angles): a monster's, or the player's (its
@@ -167,7 +167,7 @@ static void makevectors_of(const edict_t *e)
 
 /* Wiz_FastFire (self: the helper): the spike from its place at the enemy,
    13 units to its side (its movedir), if the scrag still lives */
-static void wiz_fast_fire(edict_t *self)
+void wiz_fast_fire(edict_t *self)
 {
 	edict_t *owner = self->owner;
 	if (owner && owner->health > 0) {
@@ -207,7 +207,7 @@ static void wiz_start_fast(edict_t *self)
 		ent_setorigin(m, org);
 		m->enemy = self->enemy;
 		m->nextthink = ent_time + (side > 0 ? TICKS(80) : TICKS(30));
-		m->think     = wiz_fast_fire;
+		m->think     = EF_wiz_fast_fire;
 		for (int k = 0; k < 3; k++)
 			m->movedir[k] = side * r[k];
 		ent_wake(m);
@@ -265,7 +265,7 @@ static void wiz_custom(edict_t *self, int code)
 	}
 }
 
-static void wiz_pain(edict_t *self)
+void wiz_pain(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, s_wpain, 255, ATTN_NORM);
 	if (frand() * 70 > (uint32_t) ai_damage_take << 16)   /* random () x 70 > damage */
@@ -273,7 +273,7 @@ static void wiz_pain(edict_t *self)
 	monster_state(self, WIZ_PAIN1);
 }
 
-static void wiz_die(edict_t *self)
+void wiz_die(edict_t *self)
 {
 	if (self->health < -40) {            /* check for gib */
 		ent_sound(self, CHAN_VOICE, s_udeath, 255, ATTN_NORM);
@@ -296,7 +296,7 @@ const mdef_t mdef_wizard = {
 	.states = states, .num_states = WIZ_COUNT,
 	.th_stand = wiz_stand, .th_walk = wiz_walk, .th_run = wiz_run,
 	.th_missile = wiz_missile, .th_melee = 0,
-	.th_pain = wiz_pain, .th_die = wiz_die,
+	.th_pain = EF_wiz_pain, .th_die = EF_wiz_die,
 	.custom = wiz_custom,
 	.check_attack = wiz_check_attack,
 	.map_start = wiz_map_start,

@@ -22,9 +22,11 @@
 #endif
 #define MUSIC_SPU_BYTES  (2 * MUSIC_RING_CHUNKS * 4096)
 #ifndef MUSIC_REFILL_CHUNKS
-#define MUSIC_REFILL_CHUNKS 4            /* a refill: chunks a channel at a time (CMake
-                                            Q1PSX_MUSIC_REFILL; 4 = 16 sectors every 1.3 s;
-                                            the staging buffer holds 2 x 4 KB of them) */
+#define MUSIC_REFILL_CHUNKS 2            /* a refill: chunks a channel at a time (CMake
+                                            Q1PSX_MUSIC_REFILL; 2 = 8 sectors every 0.65 s,
+                                            the staging buffer 16 KB (stream.c STAGE_SECTORS:
+                                            2 x 4 KB a chunk); 4 = 16 every 1.3 s and 32 KB,
+                                            §84's choice before §90.3 took the RAM) */
 #endif
 
 void music_init(void);

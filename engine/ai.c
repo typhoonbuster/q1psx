@@ -303,27 +303,10 @@ static void new_check(void)
 	ai_view_org(ent_player, eye);
 	const qw_leaf *leaf = eye_leaf(ent_player, eye);
 	check_leaf = leaf;
-	if (leaf)
-		leaf = (const qw_leaf *) ((uintptr_t) leaf | 0x80000000u);
 	uint32_t row = world.vis_rowbytes;
 	if (row > sizeof check_pvs)
 		row = sizeof check_pvs;
-	const uint8_t *in = leaf && leaf->vis ? (const uint8_t *) ((leaf->vis & 0x00ffffffu) | 0x80000000u) : 0;
-	if (!in) {
-		memset(check_pvs, 0xff, row);
-	} else {
-		uint32_t o = 0;                       /* Mod_DecompressVis */
-		while (o < row) {
-			if (*in) {
-				check_pvs[o++] = *in++;
-				continue;
-			}
-			int c = in[1];
-			in += 2;
-			while (c-- > 0 && o < row)
-				check_pvs[o++] = 0;
-		}
-	}
+	world_vis_row(leaf, check_pvs, row);
 	check_ok = 1;
 }
 
@@ -632,11 +615,13 @@ static void new_chase_dir(edict_t *actor, edict_t *enemy, int dist)
 /* SV_CloseEnough */
 static int close_enough(const edict_t *ent, const edict_t *goal, int dist)
 {
-	int32_t d = dist * SUB;
+	int32_t d = dist * SUB, gmin[3], gmax[3], emin[3], emax[3];
+	ent_absbox(goal, gmin, gmax);
+	ent_absbox(ent, emin, emax);
 	for (int i = 0; i < 3; i++) {
-		if (goal->absmin[i] > ent->absmax[i] + d)
+		if (gmin[i] > emax[i] + d)
 			return 0;
-		if (goal->absmax[i] < ent->absmin[i] - d)
+		if (gmax[i] < emin[i] - d)
 			return 0;
 	}
 	return 1;
@@ -696,17 +681,15 @@ int ai_range(edict_t *self, edict_t *targ)
    only asks whether it is clear: clip.h's line of sight (the trace's
    other results are not Quake's then; no caller reads them after it,
    each one traces its own line) */
-/* whether visleaf l (a leaf's index less one) is in the RLE row `in`
+/* byte `byte` of a row in Quake's RLE, the row walked to it and no further
    (Mod_DecompressVis walked to its byte, nothing written) */
-static int row_has(const uint8_t *in, uint32_t rowbytes, int l)
+static uint32_t row_byte(const uint8_t *in, uint32_t byte)
 {
-	uint32_t byte = (uint32_t) l >> 3, o = 0;
-	if (l < 0 || byte >= rowbytes)
-		return 1;
+	uint32_t o = 0;
 	for (;;) {
 		if (*in) {
 			if (o == byte)
-				return (*in >> (l & 7)) & 1;
+				return *in;
 			o++;
 			in++;
 			continue;
@@ -716,6 +699,20 @@ static int row_has(const uint8_t *in, uint32_t rowbytes, int l)
 		if (o > byte)
 			return 0;
 	}
+}
+
+/* leaf l + 1 in the PVS row of leaf k (KSEG0, with a row): its byte, and
+   its base row's when it is a delta (formats/qworld.h qw_leaf vis, §90.9) */
+static int row_has(const qw_leaf *k, uint32_t rowbytes, int l)
+{
+	uint32_t byte = (uint32_t) l >> 3;
+	if (l < 0 || byte >= rowbytes)
+		return 1;
+	const uint8_t *in = (const uint8_t *) ((k->vis & 0x00ffffffu) | 0x80000000u);
+	uint32_t back = *in++, v = row_byte(in, byte);
+	if (back)
+		v ^= row_byte((const uint8_t *) (((k - back)->vis & 0x00ffffffu) | 0x80000000u) + 1, byte);
+	return (v >> (l & 7)) & 1;
 }
 
 /* the leaf lb in the PVS row of la, the eyes' leaves of self and of its
@@ -735,7 +732,7 @@ static int pvs_sees(edict_t *self, const qw_leaf *la, const qw_leaf *lb)
 	}
 	const qw_leaf *k = (const qw_leaf *) ((uintptr_t) la | 0x80000000u);
 	uint32_t row = k->vis & 0x00ffffffu;      /* (the top byte: the render list's id) */
-	int seen = !row || row_has((const uint8_t *) (row | 0x80000000u), world.vis_rowbytes, l);
+	int seen = !row || row_has(k, world.vis_rowbytes, l);
 	if (self != ent_player && (self->item_model >= 0 || self->masset >= 0)) {
 		self->am.vis_from = la;
 		self->am.vis_to   = lb;
@@ -796,14 +793,14 @@ void sub_check_refire(edict_t *self, int state)
 		return;
 	self->cnt = 1;
 	self->mstate = (uint16_t) state;
-	self->think  = monster_think;
+	self->think  = EF_monster_think;
 }
 
 void ai_hunt_target(edict_t *self)
 {
 	int32_t d[3];
 	self->goalentity = self->enemy;
-	self->think = monster_think;
+	self->think = EF_monster_think;
 	const mdef_t *m = self->mdef;
 	for (int k = 0; k < 3; k++)
 		d[k] = self->enemy->origin[k] - self->origin[k];
@@ -1130,9 +1127,10 @@ void ai_melee_side(edict_t *self)
 int ai_can_damage_at(edict_t *targ, const int32_t org[3], edict_t *pass)
 {
 	if (targ->movetype == MOVETYPE_PUSH) {
-		int32_t c[3];
+		int32_t c[3], lo[3], hi[3];
+		ent_absbox(targ, lo, hi);
 		for (int k = 0; k < 3; k++)
-			c[k] = (targ->absmin[k] + targ->absmax[k]) / 2;
+			c[k] = (lo[k] + hi[k]) / 2;
 		q_fixed f = ai_traceline(org, c, 1, pass);
 		return f >= Q_FIX_ONE || ai_trace_ent == targ;
 	}
@@ -1203,11 +1201,11 @@ static void impact(edict_t *e1, edict_t *e2)
 	edict_t *other = ent_other;
 	if (e1->touch && e1->solid != SOLID_NOT) {
 		ent_other = e2;
-		e1->touch(e1);
+		ENT_CALL(e1, touch);
 	}
 	if (e2 && e2->touch && e2->solid != SOLID_NOT && e2->inuse) {
 		ent_other = e1;
-		e2->touch(e2);
+		ENT_CALL(e2, touch);
 	}
 	ent_other = other;
 }
@@ -1333,7 +1331,7 @@ static void run_think(edict_t *e)
 	e->nextthink = 0;
 	ent_other = ent_world;
 	if (e->think)
-		e->think(e);
+		ENT_CALL(e, think);
 }
 
 void ai_physics_step(edict_t *ent)

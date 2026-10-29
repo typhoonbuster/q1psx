@@ -297,7 +297,7 @@ static void zombie_custom(edict_t *self, int code)
 /* zombie_pain: the health back to 60 every hit; a small one does nothing,
    a big one (25) or one while hurting (within 3 s of the last) knocks it
    down */
-static void zombie_pain(edict_t *self)
+void zombie_pain(edict_t *self)
 {
 	int take = ai_damage_take;
 	self->health = 60;                   /* allways reset health */
@@ -336,7 +336,7 @@ static void zombie_pain(edict_t *self)
 		monster_state(self, ZOMBIE_PAIND1);
 }
 
-static void zombie_die(edict_t *self)
+void zombie_die(edict_t *self)
 {
 	ent_sound(self, CHAN_VOICE, s_z_gib, 255, ATTN_NORM);
 	throw_head(self, self->health);
@@ -365,7 +365,7 @@ const mdef_t mdef_zombie = {
 	.states = states, .num_states = ZOMBIE_COUNT,
 	.th_stand = zombie_stand, .th_walk = zombie_walk, .th_run = zombie_run,
 	.th_missile = zombie_missile, .th_melee = 0,
-	.th_pain = zombie_pain, .th_die = zombie_die,
+	.th_pain = EF_zombie_pain, .th_die = EF_zombie_die,
 	.custom = zombie_custom,
 	.spawn = zombie_spawn,
 	.map_start = zombie_map_start,

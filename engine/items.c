@@ -113,7 +113,7 @@ Q_COLD static int drop_to_floor(edict_t *e)
 }
 
 /* PlaceItem: on the floor, touchable */
-Q_COLD static void place_item(edict_t *self)
+Q_COLD void place_item(edict_t *self)
 {
 	self->flags   |= FL_ITEM;                     /* make extra wide */
 	self->solid    = SOLID_TRIGGER;
@@ -131,7 +131,7 @@ Q_COLD static void place_item(edict_t *self)
 static void start_item(edict_t *self)
 {
 	self->nextthink = ent_time + TICKS(20);
-	self->think     = place_item;
+	self->think     = EF_place_item;
 	ent_wake(self);
 }
 
@@ -168,7 +168,7 @@ static int t_heal(int amount, int ignore)
 	return 1;
 }
 
-static void item_megahealth_rot(edict_t *self)
+void item_megahealth_rot(edict_t *self)
 {
 	if (pl.health > 100) {
 		pl.health--;
@@ -180,7 +180,7 @@ static void item_megahealth_rot(edict_t *self)
 	ent_remove(self);
 }
 
-static void health_touch(edict_t *self)
+void health_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -203,7 +203,7 @@ static void health_touch(edict_t *self)
 	if (self->item_extra == 2) {                  /* rot down the player's super health */
 		pl.items |= IT_SUPERHEALTH;
 		self->nextthink = ent_time + 5 * 60;
-		self->think     = item_megahealth_rot;
+		self->think     = EF_item_megahealth_rot;
 		ent_wake(self);
 	}
 	ent_activator = ent_other;
@@ -212,7 +212,7 @@ static void health_touch(edict_t *self)
 
 static void item_health(edict_t *self)
 {
-	self->touch = health_touch;
+	self->touch = EF_health_touch;
 	if (self->spawnflags & H_ROTTEN) {
 		set_model(self, QIM_B_BH10);
 		self->noise      = (int16_t) snd_find("items/r_item1.wav");
@@ -235,7 +235,7 @@ static void item_health(edict_t *self)
 
 /* ----------------------------------------------------------------- armor -- */
 
-static void armor_touch(edict_t *self)
+void armor_touch(edict_t *self)
 {
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
@@ -261,7 +261,7 @@ static void armor_touch(edict_t *self)
 
 Q_COLD static void item_armor(edict_t *self, int qim)
 {
-	self->touch = armor_touch;
+	self->touch = EF_armor_touch;
 	set_model(self, qim);
 	ent_setsize(self, box_weap[0], box_weap[1]);
 	start_item(self);
@@ -277,7 +277,7 @@ static void bound_ammo(void)                    /* bound_other_ammo */
 	if (pl.ammo[AMMO_CELLS] > 100)   pl.ammo[AMMO_CELLS] = 100;
 }
 
-static void weapon_touch(edict_t *self)
+void weapon_touch(edict_t *self)
 {
 	if (ent_other != ent_player)
 		return;
@@ -304,7 +304,7 @@ static void weapon_touch(edict_t *self)
 
 Q_COLD static void weapon_item(edict_t *self, int qim)
 {
-	self->touch = weapon_touch;
+	self->touch = EF_weapon_touch;
 	set_model(self, qim);
 	ent_setsize(self, box_weap[0], box_weap[1]);
 	start_item(self);
@@ -312,7 +312,7 @@ Q_COLD static void weapon_item(edict_t *self, int qim)
 
 /* ------------------------------------------------------------------- ammo -- */
 
-static void ammo_touch(edict_t *self)
+void ammo_touch(edict_t *self)
 {
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
@@ -337,7 +337,7 @@ static void ammo_touch(edict_t *self)
 
 Q_COLD static void ammo_item(edict_t *self, int ammo, int small_qim, int big_qim, int small_n, int big_n)
 {
-	self->touch = ammo_touch;
+	self->touch = EF_ammo_touch;
 	int big = self->spawnflags & WEAPON_BIG2;
 	set_model(self, big ? big_qim : small_qim);
 	self->aflag      = big ? big_n : small_n;
@@ -348,7 +348,7 @@ Q_COLD static void ammo_item(edict_t *self, int ammo, int small_qim, int big_qim
 
 /* ------------------------------------------------------------------- keys -- */
 
-static void key_touch(edict_t *self)
+void key_touch(edict_t *self)
 {
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
@@ -377,14 +377,14 @@ Q_COLD static void item_key(edict_t *self, int gold)
 	self->noise   = (int16_t) snd_find(noise[wt]);
 	set_model(self, qims[gold][wt]);
 	self->items = gold ? IT_KEY2 : IT_KEY1;
-	self->touch = key_touch;
+	self->touch = EF_key_touch;
 	ent_setsize(self, box_small[0], box_small[1]);
 	start_item(self);
 }
 
 /* ------------------------------------------------------------------- rune -- */
 
-static void sigil_touch(edict_t *self)
+void sigil_touch(edict_t *self)
 {
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
@@ -405,14 +405,14 @@ static void item_sigil(edict_t *self)
 	self->noise = (int16_t) snd_find("misc/runekey.wav");
 	int sf = self->spawnflags;
 	set_model(self, sf & 2 ? QIM_END2 : sf & 4 ? QIM_END3 : sf & 8 ? QIM_END4 : QIM_END1);
-	self->touch = sigil_touch;
+	self->touch = EF_sigil_touch;
 	ent_setsize(self, box_small[0], box_small[1]);
 	start_item(self);
 }
 
 /* --------------------------------------------------------------- powerups -- */
 
-static void powerup_touch(edict_t *self)
+void powerup_touch(edict_t *self)
 {
 	if (ent_other != ent_player || pl.health <= 0)
 		return;
@@ -432,7 +432,7 @@ static void powerup_touch(edict_t *self)
 
 Q_COLD static void powerup_item(edict_t *self, int qim, uint32_t it, const char *name, const char *noise)
 {
-	self->touch   = powerup_touch;
+	self->touch   = EF_powerup_touch;
 	self->items   = it;
 	self->netname = name;
 	self->noise   = (int16_t) snd_find(noise);
@@ -443,13 +443,13 @@ Q_COLD static void powerup_item(edict_t *self, int qim, uint32_t it, const char 
 
 /* ---------------------------------------------------- flames, fireballs -- */
 
-static void fire_touch(edict_t *self)
+void fire_touch(edict_t *self)
 {
 	ent_damage(ent_other, self, self, 20);
 	ent_remove(self);
 }
 
-static void fire_fly(edict_t *self)
+void fire_fly(edict_t *self)
 {
 	edict_t *f = ent_spawn();
 	if (f) {
@@ -462,16 +462,16 @@ static void fire_fly(edict_t *self)
 		set_model(f, QIM_LAVABALL);
 		ent_setorigin(f, self->origin);
 		f->nextthink = ent_time + 5 * 60;
-		f->think     = sub_remove;
-		f->touch     = fire_touch;
+		f->think     = EF_sub_remove;
+		f->touch     = EF_fire_touch;
 		ent_wake(f);
 	}
 	self->nextthink = ent_time + (int32_t) ((q_rand() & 0x7fff) * 5 * 60 / 0x8000) + 3 * 60;
-	self->think     = fire_fly;
+	self->think     = EF_fire_fly;
 	ent_wake(self);
 }
 
-static void barrel_explode(edict_t *self)
+void barrel_explode(edict_t *self)
 {
 	self->takedamage = DAMAGE_NO;
 	ents_radius_damage(self->origin, 160, self, 0);
@@ -482,7 +482,7 @@ static void barrel_explode(edict_t *self)
 	ent_remove(self);
 }
 
-static void spikeshooter_use(edict_t *self)
+void spikeshooter_use(edict_t *self)
 {
 	if (self->spawnflags & SPAWNFLAG_LASER)       /* (the laser: a spike drawn, the enforcer's sound) */
 		ent_sound(self, CHAN_VOICE, snd_find("enforcer/enfire.wav"), 255, ATTN_NORM);
@@ -491,7 +491,7 @@ static void spikeshooter_use(edict_t *self)
 	game_launch_spike(self, self->origin, self->movedir, 500, self->spawnflags & SPAWNFLAG_SUPERSPIKE);
 }
 
-static void shooter_think(edict_t *self)
+void shooter_think(edict_t *self)
 {
 	spikeshooter_use(self);
 	self->nextthink = ent_time + TICKS(self->wait);
@@ -521,7 +521,7 @@ static void toss_tick(edict_t *e)
 	if (!ent_other)
 		ent_other = ent_world;
 	if (e->touch)
-		e->touch(e);                              /* (the fireball's: removed) */
+		ENT_CALL(e, touch);                              /* (the fireball's: removed) */
 	if (!e->inuse)
 		return;
 	if (tr.plane_n[2] > 4096 * 7 / 10) {          /* on the ground: stops */
@@ -591,7 +591,7 @@ Q_COLD void items_spawn(edict_t *e, const qw_ent *q)
 		break;
 	case QE_MISC_FIREBALL:
 		e->nextthink = ent_time + (int32_t) ((q_rand() & 0x7fff) * 5 * 60 / 0x8000);
-		e->think     = fire_fly;
+		e->think     = EF_fire_fly;
 		ent_wake(e);
 		/* (if (!self.speed) self.speed == 1000;: the QC's ==, the speed stays 0) */
 		break;
@@ -606,7 +606,7 @@ Q_COLD void items_spawn(edict_t *e, const qw_ent *q)
 			ent_setsize(e, mn, mx);
 		}
 		e->health     = 20;
-		e->th_die     = barrel_explode;
+		e->th_die     = EF_barrel_explode;
 		e->takedamage = DAMAGE_AIM;
 		e->origin[2] += 2 * CLIP_SUB;
 		{
@@ -620,12 +620,12 @@ Q_COLD void items_spawn(edict_t *e, const qw_ent *q)
 	case QE_TRAP_SPIKESHOOTER:
 	case QE_TRAP_SHOOTER:
 		set_movedir(e);
-		e->use = spikeshooter_use;
+		e->use = EF_spikeshooter_use;
 		if (e->class == QE_TRAP_SHOOTER) {
 			if (!e->wait)
 				e->wait = 100;
 			e->nextthink = e->nextthink + TICKS(e->wait) + ent_time;
-			e->think     = shooter_think;
+			e->think     = EF_shooter_think;
 			ent_wake(e);
 		}
 		break;

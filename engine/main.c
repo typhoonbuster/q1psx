@@ -14,6 +14,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <psxapi.h>
 #include <psxgpu.h>
 #include <hwregs_c.h>
 
@@ -278,6 +279,34 @@ Q_COLD static void loading_screen(uint32_t done, uint32_t total)
    load's room: vram_upload's padded copies) */
 #define STREAM_KEEP (8 * 1024)
 
+/* The load overlay (docs/porting-notes.md §90.7): the boot's inits and a
+   level's load (engine/load.ld), linked at the level arena's top under the
+   stack (engine/q1psx.ld: __load_start to __load_end, OVL_ROOM of room),
+   read from LOAD.BIN before any of it runs: the root's copy at boot, the
+   level's directory's at its load (first in the directory: no seek). The
+   stream's pool takes the room after the load (stream_load_done). */
+extern uint8_t __load_start[], __load_end[];
+
+Q_COLD static void ovl_load(const char *dir)
+{
+	char name[32];
+	uint32_t lba, size;
+	q_snprintf(name, sizeof name, "%s\\LOAD.BIN;1", dir);
+	if (!cd_find(name, &lba, &size) && !cd_find("\\LOAD.BIN;1", &lba, &size)) {
+		printf("load: no LOAD.BIN\n");
+		vid_fatal();
+	}
+	if (size != (uint32_t) (__load_end - __load_start) ||
+	    !cd_read_now((int32_t) lba, (size + 2047) / 2048, __load_start, CDW_FILE, 0)) {
+		printf("load: LOAD.BIN %u B, the link's %u, or unread\n", (unsigned) size,
+		       (unsigned) (__load_end - __load_start));
+		vid_fatal();
+	}
+	FlushCache();                               /* (the cache's lines of the last load) */
+}
+
+static void load_level_main(int map);
+
 /* Load `map` at the settings' levels (textures, geometry, models), or at
    the highest lower geometry that fits the level arena; the game data's
    models at the models' level. Sets world_ok and binds the renderer. */
@@ -297,6 +326,16 @@ Q_COLD static int load_level(int map)
 	                                               (docs/porting-notes.md §84) */
 	q_snprintf(dir, sizeof dir, "\\LVL\\%s", world_map_name(map));
 	cd_cache_dir(dir);
+	ovl_load(dir);                              /* the load's code (§90.7): the rest runs from it */
+	load_level_main(map);
+	printf("stack: %u bytes never reached\n", (unsigned) stack_untouched());
+	return world_ok;
+}
+
+/* the load from its overlay on: the bank, the world, the entities, the
+   streamed assets' pool and its preload */
+Q_COLD static void load_level_main(int map)
+{
 	music_level(world_map_name(map));           /* (its copy of the track) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
@@ -331,13 +370,13 @@ Q_COLD static int load_level(int map)
 			zone_preload(eye);
 		}
 		stream_preload();                       /* what the spawn's surroundings want */
+		stream_load_done();                     /* (the overlay's room: the pool's from here;
+		                                           nothing of the overlay runs past this) */
 		game_ws_sync();                         /* (the 2D gun's packets, read: linked) */
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		music_play(snd_cd_track());
 	}
-	printf("stack: %u bytes never reached\n", (unsigned) stack_untouched());
-	return world_ok;
 }
 
 /* --------------------------------------------------------------- frame -- */
@@ -1322,6 +1361,14 @@ static void bench_view_ticks(const char *view)
 /* the level arena's room the world takes, a zoned one's measure (§57):
    the skeleton and the slots, the stream's pool after them (the world's
    load in all: its "world: ... arena" line) */
+/* the brush models' cut arena's traffic since the map's load (§90.6) */
+static void bench_bmf_arena(const char *what)
+{
+	printf("bmf arena %s: rooms taken %u, given up %u, draws without room %u; %u cuts, %u cycles, the dearest %u\n",
+	       what, (unsigned) bmf_stats[7], (unsigned) bmf_stats[8], (unsigned) bmf_stats[9], (unsigned) bmf_stats[2],
+	       (unsigned) bmf_stats[4], (unsigned) bmf_stats[5]);
+}
+
 static void bench_zone_ram(const char *map)
 {
 	if (zone_on())
@@ -1382,9 +1429,12 @@ static void bench_zones(void)
 		int32_t at[3];
 		memcpy(at, wp[0], sizeof at);
 		uint32_t frames = 0, units = 0, walls = 0, late = 0, late_wall = 0, run = 0, worst = 0, bad = 0;
-		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_wall = 1u << 30;
+		uint32_t fsum = 0, fmax = 0, swf = 0, swsum = 0, swmax = 0, since_wall = 1u << 30, pkt_max = 0;
+		int32_t room_min = 0x7fffffff;
+		uint32_t skipped0 = r_model_skipped, full = 0;
 		const int32_t speed = 320 * CLIP_SUB / 60;
 		uint32_t reads0 = stream_stats.reads;
+		prof_sample_start();                          /* (SAMPLE=1: the walk's profile) */
 		for (int w = 1; w < nwp && frames < ZW_FRAMES; w++) {
 			int32_t d[3], e0[3], e1[3];
 			for (int c = 0; c < 3; c++) {
@@ -1417,6 +1467,9 @@ static void bench_zones(void)
 				uint32_t fc = prof_stage[PROF_FRAME];
 				fsum += fc;
 				if (fc > fmax) fmax = fc;
+				if (vid_stats.pkt_bytes > pkt_max) pkt_max = vid_stats.pkt_bytes;
+				if (r_model_room_min < room_min) room_min = r_model_room_min;
+				full += r_arena_full != 0;
 				if (zone_stats.switches != sw0) {
 					swf++;
 					swsum += fc;
@@ -1439,12 +1492,17 @@ static void bench_zones(void)
 		       "%u max; %u patches checked bad), %u reads (%u KB, %u frames each), %u waits for the drive; late: %u "
 		       "events, %u frames (%u through walls), the longest run %u; %u evictions, %u read errors; frames %u "
 		       "cycles avg, %u max; switching frames %u avg, %u max; the stream's reads %u, %u sounds asked, not in, "
-		       "%u swapped from RAM\n",
+		       "%u swapped from RAM; packets %u bytes at most, a model's room %d at least, %u models left out, "
+		       "%u full frames\n",
 		       world_map_name(m), frames, units, walls, nwp - 1, z->switches,
 		       z->switches ? z->switch_cycles / z->switches : 0, z->switch_max, bad, z->loads, z->load_bytes / 1024,
 		       z->loads ? z->load_frames / z->loads : 0, z->waits, z->late_events, late, late_wall, worst,
 		       z->evictions, z->read_errors, frames ? fsum / frames : 0, fmax, swf ? swsum / swf : 0, swmax,
-		       stream_stats.reads - reads0, stream_stats.snd_missing, stream_stats.ram_swaps);
+		       stream_stats.reads - reads0, stream_stats.snd_missing, stream_stats.ram_swaps, pkt_max,
+		       room_min == 0x7fffffff ? -1 : (int) room_min, (unsigned) (r_model_skipped - skipped0), full);
+		bench_bmf_arena(world_map_name(m));
+		prof_sample_stop();
+		prof_sample_print(world_map_name(m));
 		game_active = 0;
 		zone_sync = 1;
 	}
@@ -1630,6 +1688,14 @@ static void ents_place(const int32_t mn[3], const int32_t mx[3], int dz)
 	pl.pm.onground = 0;
 }
 
+/* the player put next to edict e's world box (ent_absbox) */
+static void ents_place_at(const edict_t *e, int dz)
+{
+	int32_t mn[3], mx[3];
+	ent_absbox(e, mn, mx);
+	ents_place(mn, mx, dz);
+}
+
 static void ents_ticks(int n, const game_cmd_t *cmd)
 {
 	for (int i = 0; i < n; i++)
@@ -1673,9 +1739,10 @@ static void ents_dump(const char *name)
 	ents_debug = 0;
 	rl_order_print(name);
 	printf("bmf %s: %u models with pieces, %u pieces made in %u cuts (%u given up), %u cycles, %u the dearest;"
-	       " items %d, lists %d\n", name, (unsigned) bmf_stats[0], (unsigned) bmf_stats[1],
-	       (unsigned) bmf_stats[2], (unsigned) bmf_stats[3], (unsigned) bmf_stats[4], (unsigned) bmf_stats[5],
-	       rl_num_items(), rl_num_lists());
+	       " items %d, lists %d; rooms taken %u, given up %u, drawn whole for want of one %u\n", name,
+	       (unsigned) bmf_stats[0], (unsigned) bmf_stats[1], (unsigned) bmf_stats[2], (unsigned) bmf_stats[3],
+	       (unsigned) bmf_stats[4], (unsigned) bmf_stats[5], rl_num_items(), rl_num_lists(),
+	       (unsigned) bmf_stats[7], (unsigned) bmf_stats[8], (unsigned) bmf_stats[9]);
 }
 
 static edict_t *ents_first(int cls, int (*ok)(const edict_t *))
@@ -1692,11 +1759,12 @@ static int door_with_field(const edict_t *e) { return e->owner == e && e->trigge
    centre pushed out along x or y past e's box */
 static int ents_free_spot(const edict_t *e, const int32_t mn[3], const int32_t mx[3])
 {
-	int32_t c[3];
+	int32_t c[3], emin[3], emax[3];
 	ent_centre(e, c);
+	ent_absbox(e, emin, emax);
 	for (int a = 0; a < 4; a++) {
 		int k = a >> 1, s = a & 1 ? -1 : 1;
-		int32_t half = (e->absmax[k] - e->absmin[k]) / 2 + 24 * CLIP_SUB;
+		int32_t half = (emax[k] - emin[k]) / 2 + 24 * CLIP_SUB;
 		int32_t p[3] = { c[0], c[1], c[2] };
 		p[k] += s * half;
 		if (p[k] < mn[k] || p[k] > mx[k])
@@ -1754,7 +1822,7 @@ static void bench_items(const char *map, const game_cmd_t *cmd)
 		}
 		if (!e->touch)
 			continue;
-		ents_place(e->absmin, e->absmax, 0);
+		ents_place_at(e, 0);
 		ents_ticks(3, cmd);
 		printf("item taken %d: health %d armor %d/%d items %08x ammo %d %d %d %d weapon %d\n",
 		       !e->inuse || (e->item_model < 0 && e->masset < 0), pl.health, pl.armor, pl.armortype, (unsigned) pl.items,
@@ -1804,12 +1872,13 @@ static void bench_ents(void)
 		edict_t *d = ents_first(QE_FUNC_DOOR, door_with_field);
 		if (d) {
 			edict_t *f = d->trigger_field;
-			int32_t c[3];
-			if (!ents_free_spot(d, f->absmin, f->absmax))
-				ents_place(f->absmin, f->absmax, 0);
+			int32_t c[3], fmin[3], fmax[3];
+			ent_absbox(f, fmin, fmax);
+			if (!ents_free_spot(d, fmin, fmax))
+				ents_place(fmin, fmax, 0);
 			ent_centre(d, c);
 			printf("door *%d at %d %d %d, field %d..%d, player %d %d %d\n", d->model, (int) c[0] / 8,
-			       (int) c[1] / 8, (int) c[2] / 8, (int) f->absmin[0] / 8, (int) f->absmax[0] / 8,
+			       (int) c[1] / 8, (int) c[2] / 8, (int) fmin[0] / 8, (int) fmax[0] / 8,
 			       (int) pl.pm.pos[0] / 8, (int) pl.pm.pos[1] / 8, (int) pl.pm.pos[2] / 8);
 			for (int t = 0; t < 360; t++) {
 				game_tick(&cmd);
@@ -1869,9 +1938,8 @@ static void bench_ents(void)
 		edict_t *p = ents_first(QE_FUNC_PLAT, 0);
 		if (p && p->state == STATE_BOTTOM) {
 			int32_t mn[3], mx[3];
-			memcpy(mn, p->absmin, sizeof mn);
-			memcpy(mx, p->absmax, sizeof mx);
-			mn[2] = mx[2] = p->absmax[2] + 25 * CLIP_SUB;
+			ent_absbox(p, mn, mx);
+			mn[2] = mx[2] = mx[2] + 25 * CLIP_SUB;
 			ents_place(mn, mx, 0);
 			for (int t = 0; t < 240; t++) {
 				game_tick(&cmd);
@@ -1884,7 +1952,7 @@ static void bench_ents(void)
 		/* a teleporter */
 		edict_t *tp = ents_first(QE_TRIGGER_TELEPORT, free_teleport);
 		if (tp) {
-			ents_place(tp->absmin, tp->absmax, 0);
+			ents_place_at(tp, 0);
 			int32_t before[3];
 			memcpy(before, pl.pm.pos, sizeof before);
 			ents_ticks(2, &cmd);
@@ -1898,7 +1966,7 @@ static void bench_ents(void)
 		/* a secret */
 		edict_t *se = ents_first(QE_TRIGGER_SECRET, 0);
 		if (se) {
-			ents_place(se->absmin, se->absmax, 0);
+			ents_place_at(se, 0);
 			ents_ticks(3, &cmd);
 			printf("secrets %d of %d\n", ent_found_secrets, ent_total_secrets);
 			ents_dump(mi ? "estart_secret" : "ee1m1_secret");
@@ -1907,7 +1975,7 @@ static void bench_ents(void)
 		/* the exit: the intermission, then the next map */
 		edict_t *cl = ents_first(QE_TRIGGER_CHANGELEVEL, 0);
 		if (cl) {
-			ents_place(cl->absmin, cl->absmax, 0);
+			ents_place_at(cl, 0);
 			ents_ticks(12, &cmd);
 			printf("changelevel to %s: intermission %d\n", world_string(cl->map), level_intermission);
 			ents_ticks(60, &cmd);
@@ -2094,7 +2162,7 @@ static void bench_movers(void)
 			continue;
 		ent_activator = ent_player;                   /* started (a train without a name runs) */
 		if (e->use)
-			e->use(e);
+			ENT_CALL(e, use);
 		q_snprintf(names[ti], sizeof names[ti], "mv.%s.%d", map, e->model);
 		bench_acc_t acc;
 		bench_reset(&acc, names[ti]);
@@ -2159,7 +2227,7 @@ static void bench_movers(void)
 		   of view is not cut again (bmf_draw's all_culled) until it is in
 		   view (the door started again; a train runs on) */
 		if (e->use)
-			e->use(e);
+			ENT_CALL(e, use);
 		uint32_t cuts2 = 0, off0 = bmf_stats[6];
 		for (int f = 0; f < 256; f++) {
 			game_tick(&cmd);
@@ -2651,7 +2719,7 @@ static void bench_monsters(void)
 		ents_look_at(e->origin);
 		if (e->use && e->solid == SOLID_NOT) {    /* the boss: its trigger's use, it rises */
 			ent_activator = ent_player;
-			e->use(e);
+			ENT_CALL(e, use);
 		}
 		char name[32];
 		q_snprintf(name, sizeof name, "m%s_%d_a", mapname, k);
@@ -2787,7 +2855,11 @@ static void bench_monsters(void)
 		game_give_weapon(W_RLAUNCHER);
 		cmd.fire = 1;
 		int peak = 0;
-		uint32_t fsum = 0, fdrawn = 0;               /* (the frames' cycles, the monsters drawn) */
+		uint32_t fsum = 0, fdrawn = 0, pkt_max = 0;  /* (the frames' cycles, the monsters drawn,
+		                                                the packet bytes a frame at most, the
+		                                                least room a model found) */
+		int32_t room_min = 0x7fffffff;
+		uint32_t skipped0 = r_model_skipped, full = 0;
 		mdl_refused_since();
 		prof_sample_start();                         /* (SAMPLE=1: the fight's profile) */
 		for (int t = 0; t < 3600; t++) {
@@ -2816,6 +2888,11 @@ static void bench_monsters(void)
 			run_frame(0, 0);
 			fsum += prof_stage[PROF_FRAME];
 			fdrawn += (uint32_t) monsters_drawn;
+			if (vid_stats.pkt_bytes > pkt_max)
+				pkt_max = vid_stats.pkt_bytes;
+			if (r_model_room_min < room_min)
+				room_min = r_model_room_min;
+			full += r_arena_full != 0;
 #if !Q1PSX_ENGINE_C
 			if (!(t & 15))
 				ents_seen_check();                /* (e_seen.s against its C, untimed; a
@@ -2830,17 +2907,22 @@ static void bench_monsters(void)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
 				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn, "
-				       "the frame cache refused %u\n",
+				       "the frame cache refused %u, packets %u bytes at most, a model's room %d at least, "
+				       "%u models left out, %u full frames\n",
 				       t + 1, alive, used, peak, max, (unsigned) stack_untouched(),
 				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) vid_stats.vbl,
 				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10),
-				       (unsigned) mdl_refused_since());
-				fsum = fdrawn = 0;
+				       (unsigned) mdl_refused_since(), pkt_max, room_min == 0x7fffffff ? -1 : (int) room_min,
+				       (unsigned) (r_model_skipped - skipped0), full);
+				fsum = fdrawn = pkt_max = full = 0;
+				room_min = 0x7fffffff;
+				skipped0 = r_model_skipped;
 			}
 		}
 		cmd.fire = 0;
 		prof_sample_stop();
 		prof_sample_print("fight");
+		bench_bmf_arena("fight");
 #if !Q1PSX_ENGINE_C
 		printf("seendiff %u walks: mismatches %u\n", (unsigned) ents_seen_checked, (unsigned) ents_seen_bad);
 #endif
@@ -2861,7 +2943,9 @@ static void clear_map(void)
 	pl.items |= IT_ROCKET_LAUNCHER;
 	game_give_weapon(W_RLAUNCHER);
 	int killed = 0, peak = 0, skipped = 0;
-	uint32_t ctot = 0, cframes = 0, cdrawn = 0, ccut = 0;   /* the fights' frames */
+	uint32_t ctot = 0, cframes = 0, cdrawn = 0, ccut = 0, cpkt = 0;   /* the fights' frames */
+	int32_t croom = 0x7fffffff;
+	uint32_t cskipped0 = r_model_skipped, cfull = 0;
 	static uint8_t tried[1024];
 	memset(tried, 0, sizeof tried);
 	for (;;) {
@@ -2919,6 +3003,11 @@ static void clear_map(void)
 			cframes++;
 			cdrawn += (uint32_t) monsters_drawn;
 			ccut += (uint32_t) rl_lod_cut;
+			if (vid_stats.pkt_bytes > cpkt)
+				cpkt = vid_stats.pkt_bytes;
+			if (r_model_room_min < croom)
+				croom = r_model_room_min;
+			cfull += r_arena_full != 0;
 		}
 		cmd.fire = 0;
 		for (int u = 0; u < 60; u++) {            /* its death, its gibs */
@@ -2951,8 +3040,11 @@ static void clear_map(void)
 	printf("clear done %s: %d killed, %d alive (%d with no spot), edicts %d (peak %d) of %d, stack %u never "
 	       "reached, level arena %u KB\n", world.map_name, killed, alive, skipped, used, peak, max,
 	       (unsigned) stack_untouched(), (unsigned) (mem_level_used() / 1024));
-	printf("clear frames %s: %u fight frames, %u x 256 cycles, %u streamed models drawn, %u cut to a band\n",
-	       world.map_name, (unsigned) cframes, (unsigned) ctot, (unsigned) cdrawn, (unsigned) ccut);
+	printf("clear frames %s: %u fight frames, %u x 256 cycles, %u streamed models drawn, %u cut to a band, "
+	       "packets %u bytes at most, a model's room %d at least, %u models left out, %u full frames\n",
+	       world.map_name, (unsigned) cframes, (unsigned) ctot, (unsigned) cdrawn, (unsigned) ccut, cpkt,
+	       croom == 0x7fffffff ? -1 : (int) croom, (unsigned) (r_model_skipped - cskipped0), cfull);
+	bench_bmf_arena("clear");
 }
 
 /* MONSTERS=4: MAP (E1M3) loaded and cleared. MONSTERS=5: from MAP (E1M1),
@@ -2981,7 +3073,7 @@ static void bench_clear(void)
 			printf("clear: %s has no exit\n", world.map_name);
 			return;
 		}
-		ents_place(cl->absmin, cl->absmax, 0);
+		ents_place_at(cl, 0);
 		ents_ticks(12, &cmd);
 		ents_ticks(150, &cmd);                    /* the intermission */
 		cmd.fire = 1;
@@ -3123,7 +3215,7 @@ static void bench_key(void)
 		edict_t *c = &edicts[i];
 		if (c->inuse && c->class == QE_FUNC_DOOR_SECRET && c->use) {
 			ent_activator = ent_player;
-			c->use(c);
+			ENT_CALL(c, use);
 			secrets++;
 		}
 	}
@@ -3377,6 +3469,7 @@ int main(void)
 	pad_init();
 	prof_init();
 	cd_init();
+	ovl_load("");                          /* the boot's inits below and the loads' code (§90.7) */
 	snd_init();
 	music_init();
 	r_init();

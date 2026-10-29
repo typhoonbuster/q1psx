@@ -124,6 +124,9 @@ enum { L_NONE, L_WANT, L_SHORT, L_ROOM, L_IN };
 static int32_t  lend_lba;
 static uint32_t lend_bytes;      /* asked for: whole sectors                     */
 static uint8_t *lend_at;         /* given: at pool_end, lend_bytes long          */
+static uint8_t *pool_end_load;   /* the pool's end while the load overlay sits in
+                                    its top (§90.7; 0: none): stream_load_done's */
+extern uint8_t  __load_start[];  /* the overlay (engine/q1psx.ld)                 */
 static uint8_t  lend_state;      /* L_*; L_SHORT: the pool could not spare it
                                     (asked again at the next map's start)       */
 static uint32_t lend_reads;      /* the block's reads: a new one to link again   */
@@ -139,7 +142,8 @@ static uint32_t spu_lo, spu_hi;   /* the SPU pool: SPU RAM past the map's bank  
    is read */
 #define STAGE_SECTORS (MUSIC_REFILL_CHUNKS * 2 * QSPU_CHUNK / QST_SECTOR > 8 ? \
                        MUSIC_REFILL_CHUNKS * 2 * QSPU_CHUNK / QST_SECTOR : 8)   /* (a music
-                                     refill's sectors, 8 at least: 16 with refills of 4) */
+                                     refill's sectors, 8 at least: 8 with refills of 2, the
+                                     game's since §90.3; 16 with refills of 4) */
 static uint8_t *stage;            /* STAGE_SECTORS x QST_SECTOR, the level arena's */
 static struct {
 	int      a;                   /* the sound, -1 none                          */
@@ -1364,6 +1368,15 @@ static void pass(void)
 				stream_stats.vram_used += (uint32_t) (res[i].img[k].w * res[i].img[k].h);
 }
 
+/* the load's end: the load overlay's room (the pool's top) is the pool's */
+Q_COLD void stream_load_done(void)
+{
+	if (pool_end_load) {
+		pool_end      = pool_end_load;
+		pool_end_load = 0;
+	}
+}
+
 void stream_abort(void)
 {
 	if (reading >= 0 || (sread.a >= 0 && sread.step == SR_READ)) {
@@ -1383,6 +1396,7 @@ void stream_abort(void)
 	waiting = -1;
 	DrawSync(0);                              /* (no upload left reading the pool) */
 	pool = pool_top = pool_end = 0;           /* (the level arena is about to be reset) */
+	pool_end_load = 0;
 	ram_block = 0;
 	for (int a = 0; a < num_assets; a++)
 		assets[a].state = A_DISC;
@@ -1430,6 +1444,18 @@ Q_COLD void stream_map_start(uint32_t keep)
 	pool_top = pool;
 	pool_end = pool ? pool + left : 0;
 	lend_at  = lend && pool ? pool_end : 0;
+	/* the load overlay sits in the pool's top until the load's end: the
+	   preload's reads stop under it (stream_load_done gives the rest) */
+	pool_end_load = 0;
+	if (pool && pool < __load_start && pool_end > __load_start) {
+		pool_end_load = pool_end;
+		pool_end      = __load_start;
+	}
+#ifdef Q1PSX_BENCH
+	else if (pool && pool >= __load_start)
+		printf("stream: the pool starts past the load overlay (%u B of level): the overlay overrun\n",
+		       (unsigned) mem_level_used());
+#endif
 	stream_stats.ram_size = left;
 	regions_build();
 	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions; %u KB lent; %d sounds in RAM (%u KB)\n",

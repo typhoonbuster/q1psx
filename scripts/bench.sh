@@ -32,7 +32,7 @@
 #         dumped): "bench mv.*" and "bmfcut" lines, the frame's, the ents'
 #         and the re-cut's cycles; "bmfhash": every 16th frame's hash folded
 #         (the identical-display-list check).
-#         STACK_BYTES=<bytes>: the stack's room (default 12288, the
+#         STACK_BYTES=<bytes>: the stack's room (default 8192, the
 #         game's: engine/mem.h; the level arena takes what the code leaves
 #         under it); LEVEL_MIN=<bytes>: the least level arena the link
 #         accepts (default 1272832, 1243 KB); LEVEL_CAP=<bytes> caps the
@@ -60,7 +60,9 @@
 #         frame it could not expand, not drawn; docs/porting-notes.md
 #         §69); then the crowd: every monster of the map awake, the
 #         entities' cost a second); MONSTERS=2 the crowd alone (SAMPLE=1:
-#         its PC samples, "samples crowd"); MONSTERS=3 the crowd, then a
+#         its PC samples, "samples crowd"; ZONES=1's walk and MOVERS=1's
+#         movers take SAMPLE=1 too, a "samples <map>" / "samples mv.<map>.<model>"
+#         histogram each); MONSTERS=3 the crowd, then a
 #         minute of fight drawn (the player fires rockets turning round):
 #         "mon fight" lines (the stack's high-water mark, the edicts, the
 #         frames' cycles, the streamed models drawn and the frame cache's
@@ -114,11 +116,15 @@
 #         console, in fast forward (docs/porting-notes.md §83). Both go
 #         with MUSIC=1. MUSIC_RING=<chunks> sizes the music's ring in SPU
 #         RAM (6 = 2 s, the game's; 4 = 1.3 s), MUSIC_REFILL=<chunks> a
-#         refill (4, the game's: 16 sectors every 1.3 s; 2: 8 every 0.65 s),
+#         refill (2, the game's: 8 sectors every 0.65 s, a 16 KB staging
+#         buffer; 4: 16 every 1.3 s, 32 KB, §84's),
 #         MUSIC_SEEK=<ms> the seek its refills plan around a read (100, the
 #         game's: a hop within a level's section; docs/porting-notes.md
 #         §84); tools/cdsim/cdsim.py replays a journal on another disc
-#         layout.
+#         layout. MEMLOG=1 logs the level arena: a "memlog" line per
+#         block taken or given back, with its caller's return address
+#         (addr2line -e build-bench/q1psx.elf): a map's RAM block by block
+#         (docs/porting-notes.md §90).
 #         LOD=0 draws every streamed model whole at every distance (CMake
 #         Q1PSX_LOD; the level of detail by the vertices' order,
 #         docs/porting-notes.md §88): an A / B of the engine's cut alone,
@@ -169,6 +175,11 @@
 #
 # Numbers are PCSX-Redux CPU timings: good for comparing variants, not a
 # cycle-exact hardware measurement (see docs/architecture.md §9).
+#
+# The emulator runs in fast forward (EMU= a wrapper with SPU.Speed 10): the
+# 128 views take 40 s, a fight 20 s, the zones' walk 4 min. Give
+# [max-seconds] two or three times that, no more; a run whose console
+# stops growing is stopped after STALL seconds (30, scripts/headless.sh).
 
 set -euo pipefail
 
@@ -186,7 +197,7 @@ WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
 BMFCHK=${BMFCHK:-0}
-STACK_BYTES=${STACK_BYTES:-12288}
+STACK_BYTES=${STACK_BYTES:-8192}
 LEVEL_MIN=${LEVEL_MIN:-1272832}
 LEVEL_CAP=${LEVEL_CAP:-0}
 VIEWS=${VIEWS:-1}
@@ -224,8 +235,9 @@ LOD=${LOD:-1}
 WHOLE=${WHOLE:-0}
 CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
+MEMLOG=${MEMLOG:-0}
 MUSIC_RING=${MUSIC_RING:-6}
-MUSIC_REFILL=${MUSIC_REFILL:-4}
+MUSIC_REFILL=${MUSIC_REFILL:-2}
 MUSIC_SEEK=${MUSIC_SEEK:-100}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
@@ -238,7 +250,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
-      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
+      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
 	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }

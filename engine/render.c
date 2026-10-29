@@ -6,6 +6,7 @@
 #include <psxgte.h>
 #include <inline_c.h>
 
+#include "bmfrag.h"
 #include "gdata.h"
 #include "mem.h"
 #include "prof.h"
@@ -359,6 +360,9 @@ void r_tess_select(const char *map)
    vertex's light factor x 128, from 128 at half the draw distance down to
    0 at it */
 uint8_t r_fogtab[1024];
+uint8_t r_vis_row[256];     /* the camera leaf's PVS row expanded (r_world.s vis_expand: the
+                               marking reads it byte by byte; formats/qworld.h qw_leaf vis,
+                               docs/porting-notes.md §90.9); the cook keeps rows under 256 */
 int32_t r_part_z;
 
 static int opt_dist, opt_flat;
@@ -706,6 +710,11 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 /* ----------------------------------------------------------------- frame -- */
 
 int r_arena_full;
+#ifdef Q1PSX_BENCH
+int32_t r_model_room_min;   /* the least packet room an alias model found this frame (r_world.s
+                               draw_model's test against R_MODEL_ROOM): the arenas' sizing */
+uint32_t r_model_skipped;   /* the alias models left out for the room (never reset: a run's count) */
+#endif
 int r_ui_room;
 
 void r_frame(void)
@@ -720,6 +729,7 @@ void r_frame(void)
 		                                                    passed the walk's gate again, its
 		                                                    test ran on no light) */
 			world.nodes[i].dlstamp = 0;
+		bmf_wrap();                                /* (the brush models' rooms' frames) */
 		r_state.framecount = 1;
 	}
 	if (r_state.visframe >= 0xfff0) {
@@ -754,9 +764,15 @@ void r_frame(void)
 	}
 
 	uint32_t t0 = prof_now();
+#ifdef Q1PSX_BENCH
+	r_model_room_min = 0x7fffffff;
+#endif
 	r_render(&r_state);
 	uint32_t t1 = prof_now();
 #else
+#ifdef Q1PSX_BENCH
+	r_model_room_min = 0x7fffffff;
+#endif
 	r_render(&r_state);   /* release: no counters, no stage timers */
 #endif
 	if (opt_dist && r_state.visframe != mark_visframe) {   /* marked this frame */

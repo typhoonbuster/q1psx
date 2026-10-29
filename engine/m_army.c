@@ -122,10 +122,11 @@ static void army_missile(edict_t *self) { monster_state(self, ARMY_ATK1); }
    gathered on what it hit (AddMultiDamage), or the wall's puff */
 static void fire_bullets(edict_t *self, int shotcount, const int32_t dir[3], int spread)
 {
-	int32_t src[3];
+	int32_t src[3], lo[3], hi[3];
+	ent_absbox(self, lo, hi);
 	src[0] = self->origin[0] + 10 * SUB;
 	src[1] = self->origin[1];
-	src[2] = self->absmin[2] + (self->absmax[2] - self->absmin[2]) * 7 / 10;
+	src[2] = lo[2] + (hi[2] - lo[2]) * 7 / 10;
 	edict_t *multi_ent = 0;              /* ClearMultiDamage */
 	int      multi_damage = 0;
 	while (shotcount-- > 0) {
@@ -242,7 +243,7 @@ static int army_check_attack(edict_t *self)
 	return 0;
 }
 
-static void army_pain(edict_t *self)
+void army_pain(edict_t *self)
 {
 	if (self->pain_finished > ent_time)
 		return;
@@ -262,7 +263,7 @@ static void army_pain(edict_t *self)
 	}
 }
 
-static void army_die(edict_t *self)
+void army_die(edict_t *self)
 {
 	if (self->health < -35) {            /* check for gib */
 		ent_sound(self, CHAN_VOICE, s_udeath, 255, ATTN_NORM);
@@ -289,7 +290,7 @@ const mdef_t mdef_army = {
 	.states = states, .num_states = ARMY_COUNT,
 	.th_stand = army_stand, .th_walk = army_walk, .th_run = army_run,
 	.th_missile = army_missile, .th_melee = 0,
-	.th_pain = army_pain, .th_die = army_die,
+	.th_pain = EF_army_pain, .th_die = EF_army_die,
 	.custom = army_custom,
 	.check_attack = army_check_attack,
 	.map_start = army_map_start,

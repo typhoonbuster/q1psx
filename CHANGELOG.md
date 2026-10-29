@@ -1976,6 +1976,99 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The stream's pool grown: nine RAM levers in three batches**
+  (2026-10-28, `docs/porting-notes.md` §90,
+  not merged: each batch's measures to validate):
+  - §90.1 the packet arenas 2 × 96 → 2 × 80 KB (`engine/vid.h`), sized on
+    what the frames write (the bench lines' new `room=` and `mskip=`: the
+    least room an alias model found at its `R_MODEL_ROOM` test, the models
+    left out): the 128 views, the game bench, the fights of E1M3 and E1M8
+    and E1M1 cleared keep every frame; E3M4's crowd fight loses 47 far
+    models over its 3600 frames (46 in its first 300, all in view) and the
+    walk's legs through walls 543 over 27 maps, no frame full; the
+    release's arena +32 KB (1 343 008 → 1 375 776 B), every pool +32 KB
+    (the smallest, E4M7's, 308 → 340 KB; E1M3's 348 → 380).
+  - `scripts/headless.sh` stops a run whose console stays silent for
+    `STALL` seconds (30: a stalled emulator, or the engine looping) instead
+    of waiting its cap out; `bench.sh`'s caps are to be a few times a
+    fast-forward run's need.
+  - §90.2 ENT_SPARE 96 → 48 (`engine/ents.c`): the fights peak 2-13 edicts
+    over the spawn's count, a map cleared with rockets 27-32 (its gibs
+    10-20 s, its backpacks two minutes), 16-46 slots left at the peaks, no
+    spawn refused; every pool +18-19 KB (E4M7's 340 → 359 KB, E1M3's 380 →
+    399). A reserve for the looks' spawns is left open.
+  - §90.3 the music refilled by 2 chunks a channel (`Q1PSX_MUSIC_REFILL`
+    2, `MUSIC_REFILL=`): the staging buffer 32 → 16 KB; under the drive
+    model with the music the ring never runs dry, the walk's late frames
+    3150 → 3293 (+4.5 %); every pool +16 KB.
+  - §90.4 the stack 12 → 8 KB (`Q1PSX_STACK_BYTES`, `engine/mem.h`): every
+    run's deepest point 2.6 KB, the guard a KB; the release's arena
+    1 379 888 B, every pool +4 KB. Batch 1 in all: every pool +71 KB (E4M7's
+    308 → 379 KB, E1M3's 348 → 419). An existing build directory keeps the
+    old cache defaults: configure it with `-DQ1PSX_STACK_BYTES=8192
+    -DQ1PSX_MUSIC_REFILL=2`, or afresh.
+  - §90.5 `edict_t` 384 → 320 bytes (`engine/ents.h`): the seven function
+    pointers a byte each into one table (`engine/ent_fns.[ch]`, 104
+    functions, `ENT_CALL`), `absmin` / `absmax` computed where read
+    (`ent_absbox`, `e_touch.s`), the items' words halfwords, `finaldest`
+    (the move's start plus its delta), `t_length`, `t_width` and `style`
+    gone; every pool +18-19 KB (E4M7's 379 → 397 KB, E1M3's 419 → 438);
+    every frame and scenario identical; the crowd's entity tick +3.3 %,
+    the views +0.1 % (the boxes computed).
+  - §90.6 the brush models' rooms as one cut arena sized by the PVS
+    (`engine/bmfrag.c`, `tools/qcook/bmf.c` `arena_of`, `qw_header`
+    `bmf_arena_recs` / `bmf_arena_verts`, QWVF → QWVG, QWZG → QWZH): the
+    cook sums, over every leaf with a PVS row, the rooms of the models
+    whose pieces or box leaves the row sees (whole pages), plus the
+    largest room; the engine's models take their pages when drawn and
+    give them up, the longest undrawn first, when a model of the frame
+    needs them (the blocks packed down), every model of the frame marked
+    before any takes; the arenas 65 % of the rooms over the 32 maps;
+    E1M3's brush models 71 584 → 53 792 B, every frame identical (the 128
+    views, the C engine's, the game bench, the movers, the entities, the
+    monsters, the fights), the pools +10 KB a map on average at the
+    release's arena (E4M7's 397 → 418 KB, E1M3's 438 → 453; the maps
+    given every room −1..−4: START, E1M7, E1M8, END, E3M6), the walk's
+    late frames 2314 → 2263; the cost +0.5 % on the walk's frames (E3M4's
+    +2.0 %), +0.9 % on E1M3 cleared, the release's code +3 072 B.
+    `world_vis_row` decodes a PVS row for the AI and the load alike;
+    `SAMPLE=1` samples the walk and the movers too.
+  - §90.7 the loads' code as an overlay at the level arena's top
+    (`engine/load.ld`, `engine/q1psx.ld`'s `.text.load` at `OVL_BASE`
+    under the stack, 32 KB of room; `scripts/ovlcheck.py` at every link):
+    36 functions only the boot's inits and a level's load run (the world's,
+    the entities', the sounds', the zones' and the stream's loaders, the
+    boot's inits, 15 016 B) are left out of the EXE (315 392 → 299 008 B)
+    and read from `LOAD.BIN` (the root's copy at boot, a copy first in
+    every level's directory at its load: `scripts/cd_image.cmake`) into
+    the arena's top before they run; the stream's pool takes the whole
+    rest but keeps its end under them until the load's end
+    (`stream_load_done`). The respawn's spawners, the menu and what runs
+    before the drive is up stay. The release's arena +14 672 B (1 374 448
+    → 1 389 120), every pool +14 KB (E4M7's 418 → 432 KB, E1M3's 453 →
+    467); every frame identical; a load reads 8 sectors more.
+  - §90.8 nodes and leaves on 16-bit indices: measured, not built. The
+    node's two face-block pointers must stay pointers (the zone switch
+    patches them to the slot holding a chunk's records) and the boxes
+    their 12 bytes unless the walk rebuilds them from the parent's at
+    20-25 cycles a node (2-3 % of a frame): 16-bit children, marks and
+    vis offsets give 32-byte nodes and 24-byte leaves, 7-20 KB a map
+    (E1M3 15 KB), a quarter of the promise; the byte-boxes variant and
+    its cycles are a call left open.
+  - §90.9 the PVS rows as deltas (`tools/qcook/world.c`, `formats/qworld.h`
+    `qw_leaf` vis: a byte `back`, then Quake's RLE of the row or of its
+    XOR against the plain row of the leaf `back` before; QWVG → QWVH,
+    QWZH → QWZI): the cook tries the last four plain rows within 255
+    leaves and keeps the shorter; the marking (`r_world.s` `vis_expand`)
+    expands the camera leaf's row into `r_vis_row` (256 B) first, then
+    stamps from the buffer; `world_vis_row` and the AI's `row_has`
+    decode the same way. The rows 929 → 742 KB over the 32 maps (−20 %;
+    E3M5 50.0 → 39.5 KB, E4M7 42.4 → 32.8, E1M3 25.5 → 19.9); every pool
+    +4.7 KB on average (E4M7's 432 → 441 KB, E3M5's 586 → 595, E1M3's
+    467 → 470); every frame identical, the walk's frames +0.09 %, its
+    late frames the same.
+  - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
+    (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**
   (2026-10-25, `docs/porting-notes.md` §88): the cook orders each hand-made body's
   vertices by what the eye would lose without them (half-edge collapses,

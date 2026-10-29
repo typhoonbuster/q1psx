@@ -18,6 +18,10 @@ void bench_reset(bench_acc_t *b, const char *name)
 {
 	memset(b, 0, sizeof *b);
 	b->name = name;
+	b->room_min = 0x7fffffff;
+#ifdef Q1PSX_BENCH
+	b->skipped0 = r_model_skipped;
+#endif
 #if Q1PSX_BENCH_SLOWSTAT
 	for (int i = 0; i < 16; i++)
 		r_slow_stat[i] = 0;
@@ -30,6 +34,10 @@ void bench_add(bench_acc_t *b, uint32_t vbl)
 	if (vid_stats.pkt_bytes > b->pkt_max)
 		b->pkt_max = vid_stats.pkt_bytes;
 	b->full_frames += r_arena_full != 0;
+#ifdef Q1PSX_BENCH
+	if (r_model_room_min < b->room_min)
+		b->room_min = r_model_room_min;
+#endif
 	b->vbl_sum += vbl;
 	b->gpu_sum += vid_stats.gpu_cycles;
 	if (vid_stats.gpu_cycles > b->gpu_max)
@@ -77,7 +85,14 @@ void bench_print(const bench_acc_t *b)
 		       b->tess_sum[2] / n, b->tess_sum[3] / n, b->tess_sum[4] / n, b->tess_sum[5] / n);
 	if (b->irq_count && n > 1)             /* (IRQTIME: the handler's cycles a frame, interrupts x 100) */
 		printf(" irq=%u/%u", b->irq_sum / (n - 1), b->irq_count * 100 / (n - 1));
-	printf(" pkt=%u%s\n", b->pkt_max, b->full_frames ? " FULL" : "");
+	printf(" pkt=%u", b->pkt_max);
+	if (b->room_min != 0x7fffffff)     /* (an alias model drawn: the least room one found) */
+		printf(" room=%d", (int) b->room_min);
+#ifdef Q1PSX_BENCH
+	if (r_model_skipped != b->skipped0)   /* (alias models left out for the room, R_MODEL_ROOM) */
+		printf(" mskip=%u", (unsigned) (r_model_skipped - b->skipped0));
+#endif
+	printf("%s\n", b->full_frames ? " FULL" : "");
 #if Q1PSX_BENCH_SLOWSTAT
 	printf("slowstat %s", b->name);         /* (a frame's, on average) */
 	for (int i = 0; i < 9; i++)

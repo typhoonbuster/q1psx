@@ -40,8 +40,13 @@ int      ent_killed_monsters, ent_total_monsters;
 int      ent_force_retouch;
 int      ents_first_spawn;
 
-#define ENT_SPARE 96         /* edicts beyond the map's: what the QC spawns
-                                (door fields, plat triggers, delays, fogs) */
+#define ENT_SPARE 48         /* edicts beyond the map's: what the QC spawns in
+                                play (delays, fogs, gibs, backpacks, missiles; the
+                                door fields and plat triggers are the spawn's own:
+                                counted before ents_trim). 96 until §90.2: the
+                                fights measured peak 2-13 over the spawn's count,
+                                a map cleared with rockets 32 (its backpacks live
+                                two minutes), docs/porting-notes.md §90.2 */
 #define ENT_WORDS 32         /* the active bitmap: up to 1024 edicts */
 
 static uint32_t active[ENT_WORDS];   /* edicts with a think or a move pending */
@@ -87,6 +92,28 @@ int ents_log;
 #else
 #define ELOG(...) ((void) 0)
 #endif
+
+/* an edict's box in the world, a unit wider, an item's 15 more across in x
+   and y (SV_LinkEdict's absmin / absmax; 1/CLIP_SUB units): inline at this
+   file's sites (the links and the touches every tick, the brush models'
+   tests every frame: a call there cost the crowd's tick 3.9 %), a call
+   elsewhere (ent_absbox) */
+static inline __attribute__((always_inline)) void absbox(const edict_t *e, int32_t lo[3], int32_t hi[3])
+{
+	for (int k = 0; k < 3; k++) {
+		lo[k] = e->origin[k] + e->mins[k] - CLIP_SUB;
+		hi[k] = e->origin[k] + e->maxs[k] + CLIP_SUB;
+	}
+	if (e->flags & FL_ITEM) {
+		lo[0] -= 15 * CLIP_SUB; lo[1] -= 15 * CLIP_SUB;
+		hi[0] += 15 * CLIP_SUB; hi[1] += 15 * CLIP_SUB;
+	}
+}
+
+void ent_absbox(const edict_t *e, int32_t lo[3], int32_t hi[3])
+{
+	absbox(e, lo, hi);
+}
 
 /* ------------------------------------------------------------- the pool -- */
 
@@ -285,8 +312,7 @@ static void clip_box(edict_t *e)
 	clip_bmodel_t *cb = &clip_bmodels[e->clip - 1];
 	__builtin_memcpy(cb->origin, e->origin, sizeof cb->origin);
 	if ((uintptr_t) cb->bm > 1) {
-		__builtin_memcpy(cb->absmin, e->absmin, sizeof cb->absmin);
-		__builtin_memcpy(cb->absmax, e->absmax, sizeof cb->absmax);
+		absbox(e, cb->absmin, cb->absmax);
 	} else {                                  /* a box: its own, exact (clip.h), a */
 		cb->bm = (e->flags & FL_MONSTER) ? CLIP_BM_MONSTER : 0;   /* monster's marked */
 		for (int k = 0; k < 3; k++) {
@@ -308,8 +334,11 @@ static void clip_update(edict_t *e)
 		return;
 	}
 	clip_box(e);
-	if (clip_bmodels[e->clip - 1].area == CLIP_NO_AREA)
-		clip_link(&clip_bmodels[e->clip - 1], e->absmin, e->absmax);
+	if (clip_bmodels[e->clip - 1].area == CLIP_NO_AREA) {
+		int32_t absmin[3], absmax[3];
+		absbox(e, absmin, absmax);
+		clip_link(&clip_bmodels[e->clip - 1], absmin, absmax);
+	}
 }
 
 /* SV_LinkEdict for the entry: its box, relinked (a solid edict) or
@@ -325,7 +354,9 @@ static void clip_relink(edict_t *e)
 		return;
 	}
 	clip_box(e);
-	clip_link(cb, e->absmin, e->absmax);
+	int32_t absmin[3], absmax[3];
+	absbox(e, absmin, absmax);
+	clip_link(cb, absmin, absmax);
 }
 
 /* a SOLID_BBOX (or SLIDEBOX) entity without a brush model into the traces:
@@ -353,31 +384,25 @@ void ent_remove(edict_t *e)
 	ents_relink = 1;
 }
 
+
 void ent_link(edict_t *e)
 {
-	for (int k = 0; k < 3; k++) {             /* a unit wider (SV_LinkEdict) */
-		e->absmin[k] = e->origin[k] + e->mins[k] - CLIP_SUB;
-		e->absmax[k] = e->origin[k] + e->maxs[k] + CLIP_SUB;
-	}
-	if (e->flags & FL_ITEM) {                 /* items: 15 more across */
-		for (int k = 0; k < 2; k++) {
-			e->absmin[k] -= 15 * CLIP_SUB;
-			e->absmax[k] += 15 * CLIP_SUB;
-		}
-	}
+	int32_t absmin[3], absmax[3];             /* a unit wider, an item's 15 more
+	                                             across (SV_LinkEdict) */
+	absbox(e, absmin, absmax);
 	if (e->item_model >= 0 || e->masset >= 0) {   /* an alias model: drawn in its centre's leaf, */
 		e->leaves[0]   = 0;                       /* found when it is drawn (ent_model_leaf) */
 		e->am.eye_leaf = 0;
 		e->num_leaves  = 1;
 	} else if (e->draw && e->model) {
 		uint16_t idx[ENT_MAX_LEAVES];
-		e->num_leaves = (uint8_t) world_box_leaves(e->absmin, e->absmax, idx, ENT_MAX_LEAVES);
+		e->num_leaves = (uint8_t) world_box_leaves(absmin, absmax, idx, ENT_MAX_LEAVES);
 		for (int k = 0; k < e->num_leaves; k++)
 			e->leaves[k] = &world.leaves[idx[k]];
 		int32_t lo[3], hi[3];                 /* camera_side_leaf's points: the box, */
 		for (int k = 0; k < 3; k++) {         /* 2 units beyond it, truncated to units */
-			lo[k] = (e->absmin[k] >> 3) - 2;  /* (CLIP_SUB 8), with a unit to spare */
-			hi[k] = (e->absmax[k] >> 3) + 3;
+			lo[k] = (absmin[k] >> 3) - 2;     /* (CLIP_SUB 8), with a unit to spare */
+			hi[k] = (absmax[k] >> 3) + 3;
 		}
 		e->topnode = world_box_topnode(lo, hi);
 		e->vis_stamp = 0xffff;
@@ -560,7 +585,7 @@ Q_COLD void init_trigger(edict_t *self)
 	self->draw = 0;
 }
 
-static void delay_think(edict_t *self)
+void delay_think(edict_t *self)
 {
 	ent_activator = self->enemy;
 	sub_use_targets(self);
@@ -576,7 +601,7 @@ void sub_use_targets(edict_t *self)
 		if (!t)
 			return;
 		t->nextthink  = ent_time + TICKS(self->delay);
-		t->think      = delay_think;
+		t->think      = EF_delay_think;
 		t->enemy      = ent_activator;
 		t->message    = self->message;
 		t->msgtext    = self->msgtext;
@@ -598,9 +623,9 @@ void sub_use_targets(edict_t *self)
 		for (edict_t *t = ent_find(0, self->target); t; t = ent_find(t, self->target)) {
 			edict_t *otemp = ent_other;
 			ent_other = self;
-			if (t->use && t->use != sub_null) {
+			if (t->use && t->use != EF_sub_null) {
 				ELOG("ent: %s uses %s\n", world_string(self->classname), world_string(t->classname));
-				t->use(t);
+				ENT_CALL(t, use);
 			}
 			ent_other = otemp;
 			ent_activator = act;
@@ -608,29 +633,35 @@ void sub_use_targets(edict_t *self)
 	}
 }
 
-static void sub_calc_move_done(edict_t *self)
+void sub_calc_move_done(edict_t *self)
 {
+	int32_t dest[3];                      /* the move's end: its start plus its delta */
+	for (int k = 0; k < 3; k++)
+		dest[k] = self->move_from[k] + self->move_delta[k];
 	self->move_ticks = 0;
-	ent_setorigin(self, self->finaldest);
+	ent_setorigin(self, dest);
 	self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
 	self->nextthink = -1;
 	if (self->think1)
-		self->think1(self);
+		ENT_CALL(self, think1);
 }
 
 /* SUB_CalcMove, exact in ticks: the travel's ticks from the distance and
    the speed (at least 0.1 s, else a jump at its end), the position each
    tick from the start, the delta and the ticks elapsed */
-void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func)
+void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, int func)
 {
-	self->think1 = func;
-	__builtin_memcpy(self->finaldest, tdest, sizeof self->finaldest);
-	self->think = sub_calc_move_done;
+	self->think1 = (uint8_t) func;
+	self->think = EF_sub_calc_move_done;
 	self->move_ticks = 0;
 	ent_wake(self);
 	int32_t d[3];
 	for (int k = 0; k < 3; k++)
 		d[k] = tdest[k] - self->origin[k];
+	__builtin_memcpy(self->move_from, self->origin, sizeof self->move_from);   /* (the move's end
+	                                                                              for sub_calc_move_done:
+	                                                                              from + delta) */
+	__builtin_memcpy(self->move_delta, d, sizeof self->move_delta);
 	if (!d[0] && !d[1] && !d[2]) {
 		self->velocity[0] = self->velocity[1] = self->velocity[2] = 0;
 		self->nextthink = self->ltime + TICKS(10);
@@ -647,8 +678,6 @@ void sub_calc_move(edict_t *self, const int32_t tdest[3], int speed, ent_fn func
 		return;
 	}
 	self->nextthink = self->ltime + ticks;
-	__builtin_memcpy(self->move_from, self->origin, sizeof self->move_from);
-	__builtin_memcpy(self->move_delta, d, sizeof self->move_delta);
 	self->move_t0    = self->ltime;
 	self->move_ticks = ticks;
 	for (int k = 0; k < 3; k++) {
@@ -669,20 +698,20 @@ static void killed(edict_t *targ, edict_t *attacker)
 		targ->health = -99;               /* don't let sbar look bad if a player */
 	if (targ->movetype == MOVETYPE_PUSH || targ->movetype == MOVETYPE_NONE) {
 		if (targ->th_die)
-			targ->th_die(targ);           /* doors, triggers, etc */
+			ENT_CALL(targ, th_die);           /* doors, triggers, etc */
 		return;
 	}
 	targ->enemy = attacker;
 	if (targ->flags & FL_MONSTER)         /* bump the monster counter */
 		ent_killed_monsters++;
 	targ->takedamage = DAMAGE_NO;
-	targ->touch = sub_null;
+	targ->touch = EF_sub_null;
 	if (targ->mdef) {
 		targ->pain_finished = ent_time + CORPSE_TICKS;   /* its body's end (monsters.h) */
 		monster_death_use(targ);
 	}
 	if (targ->th_die)
-		targ->th_die(targ);
+		ENT_CALL(targ, th_die);
 }
 
 /* combat.qc T_Damage, the damage x256 (the QC's damage is a float: a
@@ -700,8 +729,10 @@ void ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int d
 	if (targ == ent_player) {
 		int32_t c[3];
 		if (inflictor && inflictor != ent_world) {
+			int32_t lo[3], hi[3];
+			absbox(inflictor, lo, hi);
 			for (int k = 0; k < 3; k++)
-				c[k] = (inflictor->absmin[k] + inflictor->absmax[k]) / 2;
+				c[k] = (lo[k] + hi[k]) / 2;
 			game_damage_player_x256(damage, c);
 		} else {
 			game_damage_player_x256(damage, 0);
@@ -728,7 +759,7 @@ void ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int d
 	}
 	if (targ->th_pain) {
 		ai_damage_take = take;
-		targ->th_pain(targ);
+		ENT_CALL(targ, th_pain);
 		if (game_skill == 3 && targ->mdef)   /* nightmare mode monsters don't go into pain frames often
 		                                        (a monster's field: not a shootable door's stops) */
 			targ->pain_finished = ent_time + TICKS(500);
@@ -756,7 +787,7 @@ void ents_impact(int ent)
 		return;
 	ent_time  = game_tick_count;
 	ent_other = ent_player;
-	e->touch(e);
+	ENT_CALL(e, touch);
 }
 
 void ents_radius_damage(const int32_t org[3], int damage, edict_t *attacker, edict_t *ignore)
@@ -797,11 +828,8 @@ static void sync_player(void)
 {
 	edict_t *p = ent_player;
 	__builtin_memcpy(p->origin, pl.pm.pos, sizeof p->origin);
-	__builtin_memcpy(p->velocity, pl.pm.vel, sizeof p->velocity);
-	for (int k = 0; k < 3; k++) {
-		p->absmin[k] = p->origin[k] + player_mins[k] - CLIP_SUB;
-		p->absmax[k] = p->origin[k] + player_maxs[k] + CLIP_SUB;
-	}
+	__builtin_memcpy(p->velocity, pl.pm.vel, sizeof p->velocity);   /* (its box: player_mins /
+	                                                                   maxs, ents_load's) */
 	p->health     = (int16_t) pl.health;
 	p->items      = pl.items;
 	p->takedamage = pl.dead || game_intermission() ? DAMAGE_NO : DAMAGE_AIM;
@@ -851,12 +879,13 @@ static void push_move(edict_t *pusher, int movetime)
 		pusher->ltime += movetime;
 		return;
 	}
-	int32_t to[3], move[3], mins[3], maxs[3], pushorig[3];
+	int32_t to[3], move[3], mins[3], maxs[3], pushorig[3], pmin[3], pmax[3];
 	move_at(pusher, pusher->ltime + movetime - pusher->move_t0, to);
+	absbox(pusher, pmin, pmax);
 	for (int k = 0; k < 3; k++) {
 		move[k] = to[k] - pusher->origin[k];
-		mins[k] = pusher->absmin[k] + move[k];
-		maxs[k] = pusher->absmax[k] + move[k];
+		mins[k] = pmin[k] + move[k];
+		maxs[k] = pmax[k] + move[k];
 	}
 	__builtin_memcpy(pushorig, pusher->origin, sizeof pushorig);
 	pusher->ltime += movetime;
@@ -867,10 +896,11 @@ static void push_move(edict_t *pusher, int movetime)
 	int32_t plorig[3];
 	int player_moved = 0;
 	__builtin_memcpy(plorig, pl.pm.pos, sizeof plorig);
+	absbox(p, pmin, pmax);
 	if (p->movetype != MOVETYPE_NOCLIP && !pl.dead && !game_intermission() &&
 	    (player_ground() == pusher ||
-	     (!(p->absmin[0] >= maxs[0] || p->absmin[1] >= maxs[1] || p->absmin[2] >= maxs[2] ||
-	        p->absmax[0] <= mins[0] || p->absmax[1] <= mins[1] || p->absmax[2] <= mins[2]) && player_stuck()))) {
+	     (!(pmin[0] >= maxs[0] || pmin[1] >= maxs[1] || pmin[2] >= maxs[2] ||
+	        pmax[0] <= mins[0] || pmax[1] <= mins[1] || pmax[2] <= mins[2]) && player_stuck()))) {
 		int32_t end[3];
 		for (int k = 0; k < 3; k++)
 			end[k] = pl.pm.pos[k] + move[k];
@@ -892,7 +922,7 @@ static void push_move(edict_t *pusher, int movetime)
 			if (pusher->blocked) {
 				ent_other = p;
 				ELOG("ent: %s blocked\n", world_string(pusher->classname));
-				pusher->blocked(pusher);
+				ENT_CALL(pusher, blocked);
 			}
 			return;
 		}
@@ -920,8 +950,10 @@ static void push_move(edict_t *pusher, int movetime)
 			continue;
 		/* if the entity is standing on the pusher, it will definitely be moved */
 		if (!((c->flags & FL_ONGROUND) && c->groundentity == pusher)) {
-			if (c->absmin[0] >= maxs[0] || c->absmin[1] >= maxs[1] || c->absmin[2] >= maxs[2] ||
-			    c->absmax[0] <= mins[0] || c->absmax[1] <= mins[1] || c->absmax[2] <= mins[2])
+			int32_t cmin[3], cmax[3];
+			absbox(c, cmin, cmax);
+			if (cmin[0] >= maxs[0] || cmin[1] >= maxs[1] || cmin[2] >= maxs[2] ||
+			    cmax[0] <= mins[0] || cmax[1] <= mins[1] || cmax[2] <= mins[2])
 				continue;
 			if (!ai_test_position(c))      /* not in the pusher's final position */
 				continue;
@@ -959,7 +991,7 @@ static void push_move(edict_t *pusher, int movetime)
 		if (pusher->blocked) {
 			ent_other = c;
 			ELOG("ent: %s blocked by %s\n", world_string(pusher->classname), world_string(c->classname));
-			pusher->blocked(pusher);
+			ENT_CALL(pusher, blocked);
 		}
 		/* move back any entities we already moved */
 		for (int j = 0; j < nmoved; j++)
@@ -997,7 +1029,7 @@ void ents_physics_pusher(edict_t *e)
 		e->nextthink = 0;
 		ent_other = ent_world;
 		if (e->think)
-			e->think(e);
+			ENT_CALL(e, think);
 	}
 }
 
@@ -1009,16 +1041,18 @@ void ents_run_think(edict_t *e)
 	e->nextthink = 0;
 	ent_other = ent_world;
 	if (e->think)
-		e->think(e);
+		ENT_CALL(e, think);
 }
 
 /* a box in whole units, the touch passes' (floor of the mins, ceiling of
    the maxs: it holds the exact one) */
 static void box16(const edict_t *e, int16_t b[6])
 {
+	int32_t absmin[3], absmax[3];
+	absbox(e, absmin, absmax);
 	for (int k = 0; k < 3; k++) {
-		b[k]     = (int16_t) (e->absmin[k] >> 3);
-		b[k + 3] = (int16_t) ((e->absmax[k] + 7) >> 3);
+		b[k]     = (int16_t) (absmin[k] >> 3);
+		b[k + 3] = (int16_t) ((absmax[k] + 7) >> 3);
 	}
 }
 
@@ -1081,7 +1115,9 @@ static void touch_relink(const edict_t *e)
 	touch_slot_t *t = &touch_slots[s];
 	box16(e, t->box);
 	touch_unlink(s);
-	int n = area_of(e->absmin, e->absmax);
+	int32_t absmin[3], absmax[3];
+	absbox(e, absmin, absmax);
+	int n = area_of(absmin, absmax);
 	t->area = (uint8_t) n;
 	/* the monsters' list: the slots whose touch can do something to
 	   another edict than the player (id's QC: an item's touch, a
@@ -1199,7 +1235,9 @@ int touch_gather_c(const edict_t *e, uint16_t out[TOUCH_MAX], const touch_walk_t
 {
 	const uint16_t *count = w->count, *head = w->head, *next = w->next;
 	int16_t eb[6];
+	int32_t absmin[3], absmax[3];
 	box16(e, eb);
+	absbox(e, absmin, absmax);
 	int n = 0;
 	uint8_t stack[CLIP_AREA_DEPTH + 2];          /* the nodes to walk (depth first, */
 	int     sp = 0;                              /* children[0] on top) */
@@ -1210,9 +1248,9 @@ int touch_gather_c(const edict_t *e, uint16_t out[TOUCH_MAX], const touch_walk_t
 		const clip_area_t *an = &clip_areas[a];
 		if (!(an->flags & CLIP_AREA_LEAF)) {
 			int axis = an->flags & CLIP_AREA_Y;
-			if (e->absmin[axis] < an->dist && count[an->child1])
+			if (absmin[axis] < an->dist && count[an->child1])
 				stack[sp++] = an->child1;
-			if (e->absmax[axis] > an->dist && count[a + 1])
+			if (absmax[axis] > an->dist && count[a + 1])
 				stack[sp++] = (uint8_t) (a + 1);     /* children[0]: the next node */
 		}
 		for (uint16_t l = head[a]; l; l = next[l - 1]) {
@@ -1254,8 +1292,9 @@ void ents_touch_diff(int n)
 			                 (CLIP_SUB / QW_VSCALE);
 			rng = rng * 1103515245u + 12345u;
 			int32_t h = (int32_t) (8 + (rng >> 8) % 505);   /* 1 to 64 units, 1/8 units */
-			probe.absmin[k] = c - h;
-			probe.absmax[k] = c + h;
+			probe.origin[k] = c;              /* (its world box c - h .. c + h: ent_absbox */
+			probe.mins[k]   = -h + CLIP_SUB;  /*  widens it by a unit) */
+			probe.maxs[k]   = h - CLIP_SUB;
 		}
 		for (int list = 0; list < 2; list++) {
 			uint16_t a[TOUCH_MAX], c[TOUCH_MAX];
@@ -1289,18 +1328,22 @@ void ents_touch_links(edict_t *e)
 	uint32_t t0 = prof_now();
 #endif
 	uint16_t hit[TOUCH_MAX];
+	int32_t emin[3], emax[3], tmin[3], tmax[3];
 	int n = touch_slots ? touch_gather(e, hit, &touch_walks[e != ent_player]) : 0;   /* (another
 	                                                                    edict: the monsters' list) */
+	if (n)
+		absbox(e, emin, emax);
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (t == e || !t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
 			continue;
-		if (e->absmin[0] > t->absmax[0] || e->absmin[1] > t->absmax[1] || e->absmin[2] > t->absmax[2] ||
-		    e->absmax[0] < t->absmin[0] || e->absmax[1] < t->absmin[1] || e->absmax[2] < t->absmin[2])
+		absbox(t, tmin, tmax);
+		if (emin[0] > tmax[0] || emin[1] > tmax[1] || emin[2] > tmax[2] ||
+		    emax[0] < tmin[0] || emax[1] < tmin[1] || emax[2] < tmin[2])
 			continue;
 		edict_t *other = ent_other;
 		ent_other = e;
-		t->touch(t);
+		ENT_CALL(t, touch);
 		ent_other = other;
 		if (!e->inuse)
 			break;
@@ -1318,16 +1361,20 @@ static void touch_player(void)
 	if (p->solid == SOLID_NOT || !touch_slots)
 		return;
 	uint16_t hit[TOUCH_MAX];
+	int32_t pmin[3], pmax[3], tmin[3], tmax[3];
 	int n = touch_gather(p, hit, &touch_walks[0]);
+	if (n)
+		absbox(p, pmin, pmax);
 	for (int i = 0; i < n; i++) {
 		edict_t *t = &edicts[hit[i]];
 		if (!t->inuse || !t->touch || t->solid != SOLID_TRIGGER)
 			continue;
-		if (p->absmin[0] > t->absmax[0] || p->absmin[1] > t->absmax[1] || p->absmin[2] > t->absmax[2] ||
-		    p->absmax[0] < t->absmin[0] || p->absmax[1] < t->absmin[1] || p->absmax[2] < t->absmin[2])
+		absbox(t, tmin, tmax);
+		if (pmin[0] > tmax[0] || pmin[1] > tmax[1] || pmin[2] > tmax[2] ||
+		    pmax[0] < tmin[0] || pmax[1] < tmin[1] || pmax[2] < tmin[2])
 			continue;
 		ent_other = p;
-		t->touch(t);
+		ENT_CALL(t, touch);
 	}
 }
 
@@ -1519,7 +1566,6 @@ static edict_t *ent_new(const qw_ent *q)
 	e->speed  = q->speed;  e->wait   = q->wait;   e->delay  = q->delay;
 	e->lip    = q->lip;    e->height = q->height; e->dmg    = q->dmg;
 	e->health = q->health; e->count  = q->count;  e->sounds = q->sounds;
-	e->style  = q->style;
 	e->target = q->target; e->targetname = q->targetname; e->killtarget = q->killtarget;
 	e->message = q->message; e->map = q->map;
 	e->item_model = -1;
@@ -1695,10 +1741,11 @@ static int leaf_in_front(const qw_leaf *l, int32_t *depth)
 /* a model's box not wholly behind the eye (leaf_in_front's test) */
 static int box_in_front(const edict_t *e)
 {
-	int32_t c[3], h = 0;
+	int32_t c[3], h = 0, lo[3], hi[3];
+	absbox(e, lo, hi);
 	for (int k = 0; k < 3; k++) {                 /* 1/8 units -> vertex units */
-		c[k] = (e->absmin[k] + e->absmax[k]) >> 2;
-		h   += (e->absmax[k] - e->absmin[k]) >> 2;
+		c[k] = (lo[k] + hi[k]) >> 2;
+		h   += (hi[k] - lo[k]) >> 2;
 	}
 	int32_t z = ((r_state.rot[6] * c[0] + r_state.rot[7] * c[1] + r_state.rot[8] * c[2]) >> 12) +
 	            r_state.tr[2];
@@ -1763,10 +1810,11 @@ static void ents_visible(uint16_t vis)
    nearest leaf in front is taken instead). */
 static const qw_leaf *camera_side_leaf(const edict_t *e, uint16_t vis)
 {
-	int32_t cam[3], p[3], d[3], m = 0;
+	int32_t cam[3], p[3], d[3], m = 0, amin[3], amax[3];
+	absbox(e, amin, amax);
 	for (int k = 0; k < 3; k++) {
 		cam[k] = r_state.cam[k] * CLIP_SUB / QW_VSCALE;        /* vertex units -> 1/8 */
-		int32_t lo = e->absmin[k] + CLIP_SUB, hi = e->absmax[k] - CLIP_SUB;   /* (the link's spread off) */
+		int32_t lo = amin[k] + CLIP_SUB, hi = amax[k] - CLIP_SUB;   /* (the link's spread off) */
 		p[k] = cam[k] < lo ? lo : cam[k] > hi ? hi : cam[k];
 		d[k] = cam[k] - p[k];
 		int32_t a = d[k] < 0 ? -d[k] : d[k];
@@ -1797,6 +1845,32 @@ void ents_render_bmodels(void)
 	if (vis_list_stamp != vis || ents_relink)
 		ents_visible(vis);
 	bmf_cache *const *bm = bmf_models;
+	if (bm) {
+		/* a model the frame draws without room for its pieces (the cut
+		   arena, §90.6): every model the frame draws marked first, so that
+		   none gives its room up to another of the frame, then each
+		   without room given it, before any is drawn; a frame whose
+		   models all have theirs skips this (bmf_draw marks them as it
+		   draws) */
+		int need = 0;
+		for (int i = 0; i < num_vis && !need; i++) {
+			const edict_t *e = &edicts[vis_list[i]];
+			const bmf_cache *c = bm[e->model];
+			need = c && !bmf_resident(c) && box_in_front(e);
+		}
+		if (need) {
+			for (int i = 0; i < num_vis; i++) {
+				const edict_t *e = &edicts[vis_list[i]];
+				if (bm[e->model] && box_in_front(e))
+					bmf_keep(e);
+			}
+			for (int i = 0; i < num_vis; i++) {
+				const edict_t *e = &edicts[vis_list[i]];
+				if (bm[e->model] && box_in_front(e))
+					bmf_prepare(e);
+			}
+		}
+	}
 	for (int i = 0; i < num_vis; i++) {
 		edict_t *e = &edicts[vis_list[i]];
 		STAT(1);

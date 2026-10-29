@@ -27,6 +27,8 @@ typedef struct {
 	uint32_t    count_sum[PROF_COUNTERS];
 	uint32_t    pkt_max;        /* the most arena bytes a frame used          */
 	uint32_t    full_frames;    /* frames whose walk ran out of arena         */
+	int32_t     room_min;       /* the least packet room an alias model found */
+	uint32_t    skipped0;       /* r_model_skipped at the reset: the run's since */
 	uint32_t    gpu_sum, gpu_max;   /* GPUTIME: the GPU's cycles (vid_stats)  */
 	uint32_t    irq_sum, irq_count; /* IRQTIME: the handler's cycles, its entries */
 	uint32_t    tess_sum[6];        /* the regular subdivision's counters (engine/r_tess.s) */

@@ -76,9 +76,9 @@ typedef struct mdef_s {
 	void (*th_run)(edict_t *self);
 	void (*th_missile)(edict_t *self);   /* NULL: none                              */
 	void (*th_melee)(edict_t *self);
-	void (*th_pain)(edict_t *self);      /* attacker: ent_damage_attacker, the damage
-	                                        taken: ai_damage_take                     */
-	void (*th_die)(edict_t *self);
+	uint8_t th_pain;                     /* EF_* (ent_fns.h): attacker: ent_damage_attacker,
+	                                        the damage taken: ai_damage_take          */
+	uint8_t th_die;
 	void (*custom)(edict_t *self, int code);   /* A_CUSTOM's code                    */
 	int  (*check_attack)(edict_t *self);       /* CheckAnyAttack's kind's, NULL:
 	                                              CheckAttack                       */

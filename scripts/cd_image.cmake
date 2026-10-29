@@ -31,6 +31,9 @@ endif()
 set(_cooked_dir ${ROOT}/cooked)
 
 set(ROOT_ENTRIES "")
+# the load overlay (docs/porting-notes.md §90.7): the boot's copy in the
+# root, a copy first in every level's directory (its load reads it first)
+string(APPEND ROOT_ENTRIES "<file name=\"LOAD.BIN\" type=\"data\" source=\"load.bin\" />\n\t\t\t")
 if(EXISTS ${_cooked_dir}/id1/game_0.dat)
 	string(APPEND ROOT_ENTRIES "<file name=\"GAME_0.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/game_0.dat\" />\n\t\t\t")
 endif()
@@ -75,7 +78,8 @@ set(_nsections 0)
 foreach(_map ${_maps})
 	string(TOUPPER "${_map}" _MAP)
 	set(_entries "")
-	# in the load's order: the bank, the textures, the world, the models
+	# in the load's order: the load's code, the bank, the textures, the world, the models
+	string(APPEND _entries "<file name=\"LOAD.BIN\" type=\"data\" source=\"load.bin\" />\n\t\t\t\t")
 	string(APPEND _entries "<file name=\"${_MAP}.SND\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}.snd\" />\n\t\t\t\t")
 	if(EXISTS ${_cooked_dir}/id1/${_map}_t${_tex_level}.tx4)
 		string(APPEND _entries "<file name=\"${_MAP}_T${_tex_level}.TX4\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_t${_tex_level}.tx4\" />\n\t\t\t\t")
