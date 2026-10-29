@@ -352,13 +352,14 @@ endif()
 # The tables the cook reads (local.env's Q1PSX_ZONE_TABLES: the command
 # line's, when scripts/cook.sh is run by hand, is not seen here) are cut
 # for one draw distance, in their directory's name (pvs_1536_96: every
-# record the PVS may draw within 1536 units; seen_1024_64: those the
+# record the PVS may draw within 1536 units; auto_1536_s3: the same, the
+# cap chosen a map for three slots, §93; seen_1024_64: those the
 # analysis' renders saw within 1024). A zoned disc drawn farther than its
 # tables' cut loses every wall between the two distances, from afar: it
 # is refused. The seen tables carry only what the renders saw: a wall seen
 # from a place the scan did not sample is missing there (docs/porting-notes.md
-# §57.8, §94).
-if(_disc_zones AND _zone_tables AND _zone_tables MATCHES "(pvs|seen)_([0-9]+)_([0-9]+)/?$")
+# §57.8, §95).
+if(_disc_zones AND _zone_tables AND _zone_tables MATCHES "(pvs|seen|auto)_([0-9]+)_s?([0-9]+)/?$")
 	set(_tables_kind ${CMAKE_MATCH_1})
 	set(_tables_dist ${CMAKE_MATCH_2})
 	if(_tables_dist LESS Q1PSX_DRAWDIST)

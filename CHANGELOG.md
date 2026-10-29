@@ -1976,6 +1976,20 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The zone cut per level** (2026-10-29, §93; the QuakeSpasm
+  tool outside the repo, the repo's docs only): the 64 KB cap of the PVS
+  zone tables was under a leaf's own need (43 KB median, 82 KB worst on
+  E1M1), so it cut E1M1 into 145 zones and the prefetch could not keep up
+  (a zone within 320 units not loaded on 24 % of the eyes, 54 % on E1M1).
+  `analysis/export.py` `auto:<slots>` now picks each map's cap, the
+  largest of 256..96 KB that frees 32 KB over the whole world with
+  `slots` chunks, else the map stays whole; the tiny zones are merged,
+  the flood's islands dropped. `chunkscan.c`'s flood climbs out of
+  liquid (the water jump) and is seeded from the items and the player's
+  teleporters: E1M1's secret teleporter is reached (74 → 144 of 277
+  teleporters touched). With `auto_1536_s3` and three slots: 17 maps
+  zoned, E1M1 whole, the 128 views identical, the walk's late frames
+  off the walls 672 → 85, the reads 111 → 52 MB, E4M7's pool 401 KB.
 - **The stream's pool grown: nine RAM levers in three batches**
   (2026-10-28, `docs/porting-notes.md` §90,
   not merged: each batch's measures to validate):
@@ -2075,6 +2089,11 @@ followed by R0-R4.
     +4.7 KB on average (E4M7's 432 → 441 KB, E3M5's 586 → 595, E1M3's
     467 → 470); every frame identical, the walk's frames +0.09 %, its
     late frames the same.
+  - §90.12 the pools under the four cuts of the PVS zone tables at the
+    1536 draw distance (64 or 96 KB a zone, three or four slots), before
+    and after the batch: the gain is the cut's base plus 88-133 KB a map;
+    a 64 KB cap cuts E1M1 into 145 zones whose chunks run to 90 KB, so
+    four slots keep 17 of the 32 maps whole, and 96 KB with four 30.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**
@@ -2237,7 +2256,7 @@ followed by R0-R4.
   polygons (boards to look at); the planned cooked per-band form not
   built (RAM, the same cracks); the eleven forms measured on the way in
   §92.5-92.6.
-- **The item boxes drawn inside out up close** (§93, 2026-10-29). A model's triangle that fails
+- **The item boxes drawn inside out up close** (§94, 2026-10-29). A model's triangle that fails
   CAREFUL went to the slow path with no back-face test (§54 relied on
   the guns' cooked order); a box has no order, so a medkit a few steps
   away showed its far walls' inner faces over its front ones. The model
@@ -2251,7 +2270,7 @@ followed by R0-R4.
   +0.3 % (the NCLIP on the gun's near triangles), its pixels the same
   but 37 on the lightning bolt (its back faces, culled as Quake does).
 - **Three reports looked into: walls seen through from afar on E1M1 and
-  E1M3, a block of noise under E1M2's yellow armor** (§94, 
+  E1M3, a block of noise under E1M2's yellow armor** (§95, 
   2026-10-29). Not reproduced.
   The distance tests of the renderer drop no wall nearer than what is
   behind it; a zoned disc shows what its camera zone's chunk lacks, and
