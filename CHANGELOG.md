@@ -1976,6 +1976,20 @@ followed by R0-R4.
   arena, and the level arena takes every byte between the BSS and it:
   1243 → 1318 KB in the release, every map's stream pool +75 KB (E4M7
   237 → 312 KB); RAM freed later goes to the arena by itself.
+- **The zone cut per level** (2026-10-29, §93; the QuakeSpasm
+  tool outside the repo, the repo's docs only): the 64 KB cap of the PVS
+  zone tables was under a leaf's own need (43 KB median, 82 KB worst on
+  E1M1), so it cut E1M1 into 145 zones and the prefetch could not keep up
+  (a zone within 320 units not loaded on 24 % of the eyes, 54 % on E1M1).
+  `analysis/export.py` `auto:<slots>` now picks each map's cap, the
+  largest of 256..96 KB that frees 32 KB over the whole world with
+  `slots` chunks, else the map stays whole; the tiny zones are merged,
+  the flood's islands dropped. `chunkscan.c`'s flood climbs out of
+  liquid (the water jump) and is seeded from the items and the player's
+  teleporters: E1M1's secret teleporter is reached (74 → 144 of 277
+  teleporters touched). With `auto_1536_s3` and three slots: 17 maps
+  zoned, E1M1 whole, the 128 views identical, the walk's late frames
+  off the walls 672 → 85, the reads 111 → 52 MB, E4M7's pool 401 KB.
 - **The stream's pool grown: nine RAM levers in three batches**
   (2026-10-28, `docs/porting-notes.md` §90,
   not merged: each batch's measures to validate):

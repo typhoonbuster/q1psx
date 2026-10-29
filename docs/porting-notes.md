@@ -12375,3 +12375,205 @@ E4M7's 471 KB (before 340); 96/4 E4M7's 313 KB (before 180); 96/3 E3M4's
 | E4M7 | 268 | 399 | 340 | 471 | 180 | 313 | 274 | 407 |
 | END | 904 | 995 | 904 | 995 | 904 | 995 | 904 | 995 |
 | mean | 478 | 593 | 532 | 647 | 459 | 575 | 487 | 602 |
+
+## §93 — The zone cut per level (2026-10-29)
+
+In play with the PVS zone tables (`pvs_1536_64`, three slots;
+the `seen` tables are out: their chunks miss records the PSX draws),
+chunks were found loading late: on E1M1 the zone past the secret's teleporter
+(the yellow armour's, reached under the water) came in only once the
+player had gone through it, and the underwater part only once in the
+water; elsewhere too. He asked for every map's prefetch to be looked at
+again, then, on the cut's numbers, for the cut itself to be redone,
+variable per level and coherent (E1M1 in five chunks, ten at most).
+
+### 93.1 What was wrong: the cap, not the prefetch
+
+The prefetch (§57.2, §82) loads the camera's zone and its nearest by
+walking distance, one a slot. Measured over the scan's eyes (`analysis/lead.py`: for every sampled eye, the zones within L units of
+walking, teleporters a step, that its leaf's set does not hold), under
+`pvs_1536_64` and own + 3 nearest, an eye has an unprefetched zone within
+320 units on 24 % of the eyes over the 32 maps (E1M1 54 %, E1M8 93 %,
+END 91 %, E3M6 70 %), within 160 units on 15 %; 2 nearest: 28 %, 4: 21 %,
+5: 18 %. The prefetch rule is not the cause: the cut is. A PVS zone's
+chunk holds every record the PSX could draw from the zone's leaves within
+the draw distance, hidden or not (§57.8's `pvs` tables), and that need
+is 43 KB for E1M1's median leaf, 82 KB for its worst (E1M8 59 / 94 KB,
+START 36 / 71): a 64 KB cap is under one leaf's need, so the cut leaves
+the leaves alone (E1M1 145 zones, E1M8 148, E3M6 129, START 55; 8.9 MB
+of chunks for E1M1's 568 KB world), every zone has many neighbours
+within a few steps, and three slots cannot hold them. The cap over a
+leaf's need, the cut is sound and the lead comes back by itself
+(`cutcurve.py`, own + 3 nearest):
+
+| cap | E1M1 zones | its largest chunk | eyes with a zone within 320 u not prefetched, 32 maps (E1M1, E1M8) |
+|---|---|---|---|
+| 64 KB | 145 | 83 KB | 24 % (54, 93) |
+| 96 | 10 | 91 | 0.9 % (0.1, 25.8) |
+| 128 | 7 | 111 | 0.0 % (0, 0) |
+| 160 | 4 | 149 | 0.0 % |
+| 192 | 4 | 175 | 0.0 % |
+| 256 | 3 | 203 | 0.0 % |
+
+### 93.2 What zoning gives with PVS chunks
+
+Little, and only with small chunks and few slots. The resident world
+of a zoned map is its skeleton and `slots` chunks of the largest; a
+chunk is at least a leaf's need and the cut fills every zone to the cap,
+so three slots of 91 KB (cap 96) hold 273 KB against E1M1's 323 KB of
+records: +50 KB for ten zones; cap 128 and over, or four slots, cost
+more than the whole map. An arena holding the wanted chunks at their
+real size instead of fixed slots (§57.8's alternative) was measured too
+(`set max` in `cutcurve.py`): nothing, every chunk is near the cap. The
+pool each cut leaves at the release's arena, with three slots (the
+§90.12 runs' whole pools, the curve's chunks):
+
+| map | whole | 96 KB | 128 | 160 | 192 |
+|---|---|---|---|---|---|
+| E1M1 | 633 | 683 (10 z) | whole | whole | whole |
+| E1M4 | 458 | 567 (7) | 486 (4) | 486 (4) | whole |
+| E2M4 | 357 | 460 (12) | 373 (6) | whole | whole |
+| E2M7 | 383 | 474 (9) | 390 (6) | whole | whole |
+| E3M4 | 396 | 474 (8) | whole | whole | whole |
+| E3M5 | 440 | 583 (8) | 493 (6) | whole | whole |
+| E3M6 | 429 | 538 (12) | 466 (5) | whole | whole |
+| E4M4 | 497 | 604 (17) | 523 (8) | whole | whole |
+| E4M7 | 305 | 416 (10) | 335 (6) | whole | whole |
+
+With four slots only E1M4, E2M4, E2M7, E3M5, E3M6, E4M4 and E4M7 gain
+anything, 2 to 53 KB, at cap 96. Three slots were chosen.
+
+### 93.3 The cut per level (the export's `auto` tables)
+
+`analysis/export.py` (the QuakeSpasm tool, outside the repo: §56) has a
+variant `auto:<slots>` writing `zones/auto_<D>_s<slots>/`: for each map,
+the largest cap of `AUTO_CAPS` (256, 192, 160, 128, 96 KB) whose
+resident world, the skeleton (the world file less the records and their
+vertices) plus `slots` chunks of the largest, frees `AUTO_MIN_GAIN`
+(32 KB) over the whole world; none: one zone, and the cook keeps the map
+whole as before (§57.1). The largest chunk is judged after the leaves no
+eye reached have added their records (`complete()`: the step the export
+always did after the cut, now a function the choice runs per cap), since
+they can grow a chunk past the cap (E3M6's 95 → 148 KB on the second
+scan below). Two clean-ups on the way, for every variant: a zone whose
+chunk is under 16 KB (a monster closet whose PVS is itself, the door
+shut when vis ran: E2M1 had three of 0 to 5 KB) is joined to the zone
+nearest by walking (`merge_small`), and the pieces of the voxel graph
+whose leaves' PVS costs under 32 KB are dropped before the cut
+(`Map.drop_islands`: an item's seed in a closet or an alcove the player
+never enters; E4M7 had four zones of 0.5 KB from them). The leaf lines
+(the three nearest zones by walking distance) and the cook (`qcook
+zones`, §57.1) are unchanged; `local.env` points at `auto_1536_s3` with
+`Q1PSX_ZONE_SLOTS=3`. `Q1PSX_SCAN` picks the scan folder (`analyse.py`);
+`lead.py` and `cutcurve.py` (the measures of §93.1 and §93.2) sit in
+`analysis/` beside them.
+
+### 93.4 The scan's flood: out of the water, seeded where the player goes
+
+The teleporter's own case was another flaw. The zone tables rank the
+zones by walking distance over the scan's voxel graph, teleporters an
+edge from the voxels whose player box touches the trigger to its
+destination (§56); E1M1's scan had no teleporter edge: no reached voxel
+touched the trigger. A probe added to `chunkscan.c`
+(`CHUNKSCAN_PROBE="x y z0 z1"`: a column's voxel states after the flood)
+showed why: the flood swims up through water voxels and climbs only
+into voxels a floor holds (within 80 units below), and the air over a
+liquid's surface has no floor within reach, so the flood never left the
+water; the armour room's floor is 32 units over the last water voxel.
+Quake's player gets out by the water jump (225 units a second up: 32
+units) and keeps the 18-unit step while still touching the water. Three
+changes to `Quake/chunkscan.c` (built with `make USE_SDL2=1`):
+
+- **Out of the water:** from a water voxel, the one to three voxels
+  above (48 units) are reached when empty and not water. E1M1's secret:
+  577 eyes in the armour room, 43 teleporter edges.
+- **Seeds where the player goes:** the items (`item_*`, `weapon_*`) and
+  the player's teleporters (a `trigger_teleport` without a targetname;
+  every empty voxel whose player box touches the trigger) seed the flood
+  as the starts and the teleport destinations did: a place past a move
+  the flood does not make (a shot door, a lift a button calls) is
+  reached from there. A monster closet's teleporter pad lies in solid:
+  no seed. Eyes +0 to +24 % a map (E1M8, E3M4 +18 %, E3M1 +15 %).
+- **The trigger's reach:** the box the player's origin touches the
+  trigger from is grown by half a voxel (8 units) more: a trigger 10
+  units deep in a wall (E2M7's, E2M6's) was touched from no voxel
+  centre.
+
+The command line's map list is cut past about 28 maps (Quake's line):
+`scan_all3.sh` scans in three runs. Teleporter edges in the scan, before / after (the maps that changed): E1M1 0 / 43,
+E1M2 66 / 116, E1M3 2 / 27, E1M4 0 / 98, E1M5 17 / 165, E1M6 48 / 114,
+E1M7 33 / 75, E1M8 0 / 12, E2M1 32 / 166, E2M2 53 / 83, E2M6 0 / 184,
+E3M1 208 / 445, E3M2 60 / 221, E3M3 36 / 234, E3M4 168 / 523, E3M6 6 / 15,
+E3M7 346 / 441, E4M1 34 / 46, E4M2 242 / 368, E4M3 87 / 1342, E4M4 38 /
+667, E4M5 0 / 558, E4M6 10 / 450, E4M7 124 / 398, E4M8 40 / 154, START
+338 / 499; the teleporters some reached voxel touches, 74 / 277 → 144 /
+277 (`teleport.py`); the rest are monster closets' pads (E2M4's 8,
+E2M5's 4, E2M6's 8: in solid, `CHUNKSCAN_PROBE` shows) and E2M7's one,
+a 26 x 10 x 34 trigger in solid rock that no path reaches.
+
+### 93.5 Measured
+
+The export's `auto:3` tables from the third scan (`zones/auto_1536_s3`),
+cooked with `Q1PSX_ZONE_SLOTS=3`, at the release's arena (1 388 304 B,
+`LEVEL_CAP`): 17 maps zoned, 15 whole; `BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`
+for the pools, `ZONES=1` for the zones' walk (§57.6: 3600 frames a map,
+the late frames those drawn with the camera's zone not in; the legs
+through walls apart), against `pvs_1536_64` with three slots (27 maps
+zoned; the walk's figures are the second scan's tables, the same cut),
+`BENCH_MAPS=1 HASHONLY=1` for the 128 spawn views against the whole
+worlds (`WHOLE=1`): the 128 `H` lines identical.
+
+| map | pool whole | the cut: cap, zones | chunks KB | pool | reads KB auto / 64 | late frames (clear legs), longest run: auto / 64 |
+|---|---|---|---|---|---|---|
+| START | 667 | 96 KB, 7 | 37..91 | 699 | 1360 / 3223 | 0 (0), 0 / 206 (37), 24 |
+| E1M1 | 633 | whole | - | 632 | - / 8072 | whole / 547 (42), 56 |
+| E1M2 | 522 | 96 KB, 9 | 25..90 | 558 | 3210 / 5005 | 96 (0), 22 / 265 (0), 20 |
+| E1M3 | 442 | whole | - | 442 | - / 1820 | whole / 116 (0), 15 |
+| E1M4 | 458 | 96 KB, 7 | 52..83 | 558 | 2738 / 4779 | 150 (0), 20 / 369 (22), 47 |
+| E1M5 | 548 | whole | - | 548 | - / 3482 | whole / 202 (12), 20 |
+| E1M6 | 664 | whole | - | 664 | - / - | whole / whole |
+| E1M7 | 1076 | whole | - | 1076 | - / - | whole / whole |
+| E1M8 | 866 | whole | - | 866 | - / - | whole / whole |
+| E2M1 | 558 | 96 KB, 16 | 20..98 | 599 | 4197 / 6145 | 199 (0), 23 / 509 (0), 22 |
+| E2M2 | 507 | 96 KB, 9 | 29..96 | 564 | 2991 / 4661 | 119 (7), 22 / 212 (53), 28 |
+| E2M3 | 538 | 96 KB, 11 | 51..92 | 591 | 3616 / 6211 | 132 (19), 22 / 436 (22), 41 |
+| E2M4 | 357 | 96 KB, 11 | 30..102 | 415 | 3298 / 4209 | 149 (0), 29 / 203 (0), 21 |
+| E2M5 | 568 | 96 KB, 10 | 31..91 | 630 | 2494 / 4331 | 95 (20), 21 / 288 (54), 44 |
+| E2M6 | 444 | whole | - | 444 | - / 6056 | whole / 296 (76), 18 |
+| E2M7 | 383 | 96 KB, 8 | 42..97 | 435 | 3405 / 3218 | 84 (7), 18 / 153 (21), 18 |
+| E3M1 | 605 | 96 KB, 10 | 34..97 | 635 | 3923 / 7390 | 201 (21), 22 / 486 (67), 36 |
+| E3M2 | 734 | whole | - | 734 | - / - | whole / whole |
+| E3M3 | 726 | whole | - | 726 | - / 1739 | whole / 61 (0), 19 |
+| E3M4 | 396 | 96 KB, 5 | 101..103 | 426 | 2917 / 3105 | 120 (0), 24 / 281 (97), 52 |
+| E3M5 | 440 | 128 KB, 6 | 29..121 | 475 | 1979 / 2835 | 200 (0), 27 / 192 (28), 16 |
+| E3M6 | 429 | 96 KB, 12 | 50..98 | 519 | 1970 / 6086 | 95 (0), 23 / 418 (42), 49 |
+| E3M7 | 643 | whole | - | 643 | - / 3624 | whole / 169 (52), 19 |
+| E4M1 | 579 | 96 KB, 9 | 49..91 | 624 | 4642 / 7167 | 252 (0), 41 / 453 (0), 49 |
+| E4M2 | 599 | whole | - | 599 | - / 3058 | whole / 129 (35), 17 |
+| E4M3 | 475 | whole | - | 475 | - / 2742 | whole / 128 (8), 16 |
+| E4M4 | 497 | 96 KB, 16 | 37..95 | 580 | 5913 / 6577 | 353 (11), 34 / 543 (4), 44 |
+| E4M5 | 489 | 96 KB, 6 | 53..90 | 511 | 1336 / 2042 | 43 (0), 22 / 66 (0), 14 |
+| E4M6 | 664 | whole | - | 664 | - / 1237 | whole / 62 (0), 14 |
+| E4M7 | 305 | 96 KB, 10 | 25..92 | 401 | 1628 / 2304 | 89 (0), 22 / 99 (0), 17 |
+| END | 995 | whole | - | 995 | - / - | whole / whole |
+| the 32 maps | mean 575 | 17 zoned | | mean 603 | 51617 / 111118 | 2377 (85) / 6889 (672) |
+
+E1M1 stays whole, so its secret has nothing left to load; the walk's
+late frames off the legs through walls go from 672 to 85 (E3M1 21,
+E2M5 20, E2M3 19, E4M4 11, E2M2 7, E2M7 7: 7 to 16 frames at a time,
+the drive busy with the stream's read), the reads from 111 to 52 MB
+over the 32 maps (the switches from 921 to 319, the chunks 25 to 121
+KB), E4M7's pool from 305 KB whole (or 416 at 64/3) to 401, E2M4's
+from 357 to 415; the pools' mean 603 KB against 647 at 64 / 3 slots
+(§90.12: that cut zoned 27 maps, with the late frames above). Two
+things the zones still carry: the leaves no eye reached (300 to 1500
+records a map on ten maps, E2M7 1490, E3M4 1513: the records go to the
+zone sharing most of them that stays under the cap, else the one that
+grows least) and E3M5's cap of 128 KB (its chunks at 96 would free
+under 32 KB).
+
+**Left to do:** the main checkout's `local.env` (it named
+`seen_1024_64`): `Q1PSX_ZONE_TABLES=.../zones/auto_1536_s3/` and
+`Q1PSX_ZONE_SLOTS=3`; at the 1024 draw distance the same export runs
+with `D=1024` (`export.py`'s argument) from the same scan, the chunks
+smaller. The DuckStation checks: TESTING 11.70.
