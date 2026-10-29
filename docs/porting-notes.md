@@ -13297,3 +13297,222 @@ branch to de_records, one load.
   armour after the button.
 - The main checkout's tables are `auto_1536_s3` now (§93), the CMake
   check accepts them (`auto_<D>_s<slots>`).
+
+## §97 — The registered game's six monsters, by hand, and the animations thinned (2026-10-28)
+
+(Provisional number: §96 is another session's, not merged yet.)
+
+### 97.1 The ask
+
+- The six monsters the port still lacked, the registered game's: the
+  enforcer, the hell knight, the spawn, the vore, the rotfish and
+  Shub-Niggurath with END's end. monsters.c `kind_of` had no kind for
+  them: removed at their spawn, 423 monsters on hard over 21 maps (E4M6
+  73 of 81, E4M7 55 of 80, E4M5 39 of 94, E2M1 26 of 46...).
+- Their models remade by hand as §62/§64, the skins cooked at high (half
+  the skin; ultra is the native resolution); comparison sheets for a
+  look.
+- Fewer animation frames for the monsters that have many, with an
+  interpolation only if it costs few cycles.
+
+### 97.2 The code, 1.06's
+
+- The source: pak0's progs.dat 1.06 (it holds every monster's QC),
+  disassembled by a throwaway tool outside the repo (the statements, the
+  constants named); each frame function's state, next state and code
+  printed as `ST()` lines, the bodies transcribed by hand; the frames'
+  names from the rerelease's QC (`reference/quake-rerelease-qc`).
+- engine/m_enforcer.c (106 states): `enforcer_fire` (EF_MUZZLEFLASH,
+  LaunchLaser from 30 forward, 8.5 right and 16 up towards the enemy's
+  origin, 600 a second, 5 s to live); Laser_Touch (enfstop.wav on
+  CHAN_WEAPON at ATTN_STATIC, the origin 8 units back along the flight,
+  SpawnBlood's particles through the protocol: the velocity x 0.02 x 16
+  to a char, back, x 15 / 16; 15 damage, else TE_GUNSHOT); SightSound's
+  four sounds by rint (random () x 3); `enf_pain` draws its random before
+  the pain_finished test (1.06's order); the backpack with 5 cells.
+- engine/m_hknight.c (166 states): `hknight_shot` (vectoangles' whole
+  degrees, the yaw offset x 6, from the box's centre + 20 forward, the
+  height flipped back from makevectors' pitch and jittered, 300 a
+  second; the knightspike: TE_KNIGHTSPIKE's 20 particles of 226 and
+  hknight/hit.wav, the second tracer's trail); CheckForCharge and
+  CheckContinueCharge; `hknight_melee`'s turn is the QC's global
+  `hknight_type`, every hell knight's (reset at each map, as the progs'
+  globals are); `hknight_pain`'s two rules (5 s since the last, or
+  random () x 30 over the damage). The knight's sword sounds come with
+  it (the cook's SHARED_SOUNDS).
+- engine/m_tarbaby.c (64 states): MOVETYPE_BOUNCE leaps (the engine's
+  toss physics, its touch), Tar_JumpTouch (10 + 10 x random () at over
+  400 a second, never on another spawn), the leap again at the fourth fly
+  frame, the death's radius 120 from itself, TE_TAREXPLOSION
+  (R_BlobExplosion at the explosions' scale: 48 particles, pt_blob and
+  pt_blob2, the r_exp3 sound, no light), the edict gone (BecomeExplosion's
+  sprite in the game's pool).
+- engine/m_shalrath.c (48 states): its start a tenth of a second late
+  (monster_shalrath sets walkmonster_start as a think: `monster_start`
+  is one now); ShalMissile (towards the enemy + 10 up at 400 a second,
+  avelocity 300, its first home after the distance x 0.002 s, 0.1 at
+  least), ShalHome every 0.2 s at 250 (350 in nightmare) on its owner's
+  enemy, gone with it; ShalMissileTouch (no sky test, 110 on a zombie,
+  the radius 40, two r_exp3: the QC's and TE_EXPLOSION's); the voor
+  trail.
+- engine/m_fish.c (93 states): swimmonster_start (`MS_SWIM`; 1.06 counts
+  each fish twice in the level's total, swimmonster_start and its _go:
+  kept), the bite within 60 units, (random () + random ()) x 3, a pain
+  at every hurt; its body non-solid at the last death frame.
+- engine/m_oldone.c (66 states): no AI, its idle loop; DAMAGE_YES; nopain
+  gives its health back (40000 does not fit the edicts' 16 bits: 30000,
+  the same, the teleporter's telefrag of 50000 alone reaches it); not
+  FL_MONSTER, so its death is not counted (1.06's). Its death is the
+  game's end (97.3).
+- The framework: `A_CHARGEMELEE` (ai_charge then ai_melee, the hell
+  knight's 27 swings), `sight_fn` (a kind's own SightSound), `MS_*`
+  (walk, fly, swim), `ai_face` taking the QC's world for an enemy an
+  ai_run cleared earlier in the same think (CheckContinueCharge's run
+  then ai_charge).
+- The projectiles in the game's pool (engine/game.c): PJ_LASER
+  (MOVETYPE_FLY: MOVE_NORMAL; EF_DIMLIGHT's light), PJ_KSPIKE and
+  PJ_VSPIKE (MOVE_MISSILE), the vore's ball's enemy in the proj_t's
+  union with a beam's far end (80 bytes still).
+
+### 97.3 END's end
+
+- finale_1 (Shub's th_die): the train removed, `level_finale_begin`
+  (intermission 2: the camera at info_intermission, the finale's
+  picture, the empty text; no way out, the QC's exit time + 10^7 s), a
+  timer edict: finale_2 a second on (TE_TELEPORT 100 units before Shub,
+  r_tele1), finale_3 2 s on (Shub thrashes, its death cry, light style 0
+  `abcdefghijklmlkjihgfedcb`), the thrash a letter each 0.1 s (1-15 three
+  times, then 16-20), finale_4 (pop2, fifty gibs at -999 from a 2 x 5 x 5
+  grid over its body, the text, the player's statue, CD track 3, the
+  light back to `m`).
+- The world's light style 0: the port bakes the light into the vertices
+  and animates no style; Shub's pulse is drawn over the viewport as a
+  dim, the letter's light ((c - 'a') x 22 / 256) at the nearest power of
+  a half: a black (an opaque tile), b 1/16, c 1/8, d-e 1/4, f-i 1/2, j and
+  up as is (the GPU's (B + F) / 2 with F black, once per halving);
+  `level_lightstyle0`, `vid_dim`, at 10 letters a second as R_AnimateLight.
+- The text: the cook takes finale_4's string as END's (qg_finale "END").
+  The statue: progs/player.mdl's frame 1 alone (stream_model.frame1, the
+  cook's `qc_mdl_one_frame`: 14 KB, not its 143 frames).
+- The bench (MONSTERS=1 MAP=END): Shub telefragged (50000), the four
+  parts dumped (the fog, the dark thrash, the gibs and the statue, the
+  text).
+
+### 97.4 The cook
+
+- The groups G_ENFORCER .. G_OLDONE (`G_LAST_MONSTER`), from pak1.
+- A body without its hand table (a new monster's first cook,
+  QCOOK_NOHAND's A / B) cooks the low level's reduction at every level:
+  the shared asset's check (§88: one LOD block, one frame map for every
+  level) failed on the old per-level reduction.
+- The image table 256 -> 512 (the stream's every model).
+- The game arena 90 -> 92 KB: the stream's directory 179 -> 224 assets,
+  56 bytes each in the engine's table.
+- The clip entries 128 -> 160 (engine/clip.h): on hard, E4M3 needs 157,
+  E4M5 146, E2M6 and E4M7 136, E4M8 132; past 128 a monster had no entry
+  (neither solid nor hit). +1.5 KB.
+
+### 97.5 The models by hand
+
+The §64 tools (outside the repo, `quakespasm-q1psx/mobs`,
+now reading `pak0:pak1`): the kept-whole rules (`mobcut.py` RULES), the
+hidden triangles over every frame, the collapses within 3 units and 4
+texels (Shub 13 units: its vertices' grid is Chthon's), the hidden ones
+confirmed at 24 px (`vhid.py`: none seen 3 px).
+
+| Monster | Kept whole | Triangles | Vertices | Hidden | Asset (high) |
+|---|---|---|---|---|---|
+| enforcer | the laser gun and its flash, the head, the hands on the gun, the feet | 424 -> 304 | 222 -> 166 | 8 (6 of the flash's) | 94 KB |
+| hell knight | the sword, the horns, the eight spikes, the head, both hands, the feet | 452 -> 380 | 250 -> 221 | 14 | 168 KB |
+| spawn | its dome (the face) | 256 -> 246 | 130 -> 125 | 0 | 56 KB |
+| vore | the head, the hands and claws, the legs' points | 414 -> 330 | 208 -> 167 | 2 | 45 KB |
+| rotfish | the spines, the head, the tail's tip | 172 -> 124 | 97 -> 73 | 0 | 40 KB |
+| Shub | the tentacles' tips | 364 -> 250 | 182 -> 126 | 2 | 54 KB |
+
+(The cook's old reduction for comparison: 192, 220, 136, 138, 45 and 356
+triangles.) The spawn's blob deforms too much in its leaps for more cuts
+at 3 units. Sheets (Reference ultra | the old cook high | by hand high,
+8 frames x 8 sides each) to look at.
+
+### 97.6 The animations thinned
+
+- A frame f of a body is left out when the floor average of its
+  neighbours' vertex bytes (f - 1 and f + 1, played frames of the same
+  animation: the names alike less the digits) puts every vertex within
+  the body's tolerance of f's: never two neighbours out, never a frame
+  another one shares (§67's equal frames: the ogre's stand6 and stand8
+  were lost before that rule). Its map entry is `QST_LERP | f`
+  (formats/qstream.h): the frame cache's key part as is, so the lookup
+  (engine/mdl_frame.s) is unchanged.
+- On the cache's miss (engine/mdl.c `mdl_expand_new`): the two
+  neighbours' words averaged into the pool's upper half
+  (engine/mdl_expand.s `mdl_frame_avg`: (a & b) + ((a ^ b) & 0xfefefefe)
+  / 2, no carry between the bytes, a's normal) and expanded in place.
+  About 2000 cycles a rebuild (~15 a vertex); the E1M3 fight with every
+  body thinned at 3 units: +60..171 cycles a frame (+0.01..0.03 %), the
+  same expansions, 10-26 rebuilds every 300 frames.
+- The tolerance: 3 units (the hand cuts' bound), 13 for Chthon and Shub
+  (`ANIM_THIN`, `QCOOK_ANIM_TOL=<units>` for every body). 135 KB of
+  frames less over the 15 bodies:
+
+| Body | Frames rebuilt | KB less | Body | Frames rebuilt | KB less |
+|---|---|---|---|---|---|
+| soldier | 18 of 102 | 9 | boss | 20 of 104 | 21 |
+| dog | 6 of 78 | 5 | enforcer | 23 of 101 | 14 |
+| ogre | 10 of 129 | 6 | hell knight | 16 of 162 | 14 |
+| knight | 10 of 92 | 3 | spawn | 23 of 60 | 11 |
+| zombie | 53 of 194 | 25 | vore | 2 of 35 | 1 |
+| wizard | 10 of 40 | 2 | rotfish | 18 of 65 | 5 |
+| demon | 11 of 69 | 5 | Shub | 22 of 65 | 10 |
+| shambler | 8 of 87 | 4 | | | |
+
+- Wider tolerances (Quake's models, every other frame at most): the hell
+  knight 26 frames at 3 units, 38 at 5, 50 at 8, 72 at most; the zombie
+  87, 88, 89; the soldier 44, 47, 49; the ogre 26, 39, 55. Sheets of each
+  body's four worst rebuilt frames (Quake's | rebuilt, four sides): at 3
+  units no difference shows.
+- An interpolation at every rendered frame (QuakeSpasm's model lerp) is
+  not done: each visible body re-blended every frame at a weight that
+  changes (the cache's hits gone, a multiply-based blend ~50 cycles a
+  vertex), ~10k cycles a 200-vertex body a frame: 2-4 bodies on screen,
+  +3..6 % a frame.
+
+### 97.7 RAM and residency on hard
+
+- The pools shrink: ~20 KB everywhere (the code, the game arena, the clip
+  table), and where the new kinds' sounds overflow the SPU bank into the
+  level's RAM block (§86): E4M7's RAM sounds 118 -> 216 KB, E4M5 78 ->
+  176, E4M6 32 -> 148, E2M6 88 -> 142. The bench's pools (`SKILL=2
+  RESIDENCY=1`, base a394d1b -> this branch): E4M7 426 -> 293 KB, E4M5
+  533 -> 404, E4M6 684 -> 534, E2M6 466 -> 388, E2M4 439 -> 398, E3M6 542
+  -> 456; the wants (every kind's models and the items at once) grow with
+  the kinds: E2M6 611 -> 836 KB, E4M7 381 -> 739.
+- Residency (the spots with a monster in the player's PVS whose model is
+  not in, after the stream's reads), 32 maps, ~1000 spots: the base 2
+  (E1M7 1, E4M4 1 before the reads, 0 after), this branch 5 (E2M6 3 / 3,
+  E1M7 1 / 1, E4M4 1 / 0). E4M7, the smallest pool, has none.
+- The levers left open: the new kinds' sounds at a lower rate or
+  streamed (back to §52's), the edicts in the stream's pool, a wider
+  thinning tolerance for the hell knight (8 units: ~44 KB of its frames,
+  ~30 more than at 3).
+
+### 97.8 Checked
+
+- `MONSTERS=1` on E2M1 (enforcer), E2M3 (hell knight, rotfish), E4M3
+  (spawn), E3M6 (vore), END (vore, rotfish, Shub and the finale): each
+  woken, fighting, hurt, killed (the spawn's blast, the vore's ball
+  homing, Shub's four finale dumps right).
+- The 128 spawn views (`BENCH_MAPS=1 HASHONLY=1`): E1 and START identical
+  to master's; 14 views of E2-E4 change (the new monsters in them); the
+  thinning changes none of the 128.
+- The asm and C engines' E1M3 monster dumps identical (16 `H` lines);
+  `mdl_frame_avg` against its formula (asm and C: 0 of 64 words wrong).
+- The game state with and without the thinning: the E1M3 fight's
+  positions and expansions the same.
+
+### 97.9 Left
+
+- A look at the sheets (the six hand cuts, the 15 bodies'
+  rebuilt frames) and on DuckStation (the six monsters, END's end).
+- The RAM choice (97.7).
+- This branch's first commit says §96 (the number taken since).
