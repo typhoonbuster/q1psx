@@ -49,8 +49,10 @@ void bench_add(bench_acc_t *b, uint32_t vbl)
 	}
 	for (int i = 0; i < PROF_COUNTERS; i++)
 		b->count_sum[i] += prof_count[i];
+#ifdef Q1PSX_BENCH
 	for (int i = 0; i < 6; i++)
 		b->tess_sum[i] += r_tess_stat[i];
+#endif
 #if Q1PSX_BENCH_IRQTIME
 	extern volatile uint32_t q_irq_ticks, q_irq_count;   /* (engine/irq.s) */
 	static uint32_t last_ticks, last_count;
