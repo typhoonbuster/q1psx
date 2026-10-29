@@ -165,6 +165,7 @@ void    qc_set_palette(const uint8_t *pal);
 qc_mdl *qc_mdl_load(const char *file, const uint8_t *data, uint32_t len, int skin, int skin_div, int flat);
 void    qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px);
 int     qc_mdl_flags(const qc_mdl *q);
+void    qc_mdl_one_frame(qc_mdl *q, int frame);   /* that frame alone */
 void    qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out);
 /* the compact format of the streamed models (formats/qstream.h): each
    model level's whole asset (qst_model, frames, records, skin: out[level],
@@ -191,8 +192,9 @@ int cmd_spumusic(int argc, char **argv);
    assets of one monster share its; tools/qcook/stream.c MODELS) */
 enum {
 	G_GIBS = 1, G_BACKPACK, G_ARMY, G_DOG, G_OGRE, G_KNIGHT, G_ZOMBIE, G_WIZARD, G_DEMON,
-	G_SHAMBLER, G_BOSS, G_ITEMS, G_WORLD
+	G_SHAMBLER, G_BOSS, G_ENFORCER, G_HKNIGHT, G_TARBABY, G_SHALRATH, G_FISH, G_OLDONE, G_ITEMS, G_WORLD
 };
+#define G_LAST_MONSTER G_OLDONE     /* the monsters' groups: G_ARMY .. G_LAST_MONSTER */
 int stream_kind_group(const char *classname);   /* a monster's classname: its group, 0 none */
 int stream_sound_group(const char *name);       /* a monster's sound: its group, 0 none */
 int stream_monster_needs(const ent_list *l, const char **list, int max);

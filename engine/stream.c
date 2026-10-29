@@ -349,6 +349,11 @@ int stream_frame_stored(int a, int frame)
 	return bench_fmap_at[a] == 0xffff || bench_fmap[bench_fmap_at[a] + frame] != QST_NOFRAME;
 }
 
+uint32_t stream_asset_size(int a)
+{
+	return a >= 0 && a < num_assets ? ALIGN16(assets[a].d.size) : 0;
+}
+
 uint32_t stream_kept(int a)
 {
 	return a >= 0 && a < num_assets && a < BENCH_ASSETS ? bench_keep[a] : 0;

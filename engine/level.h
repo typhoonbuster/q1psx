@@ -26,6 +26,19 @@ extern int         game_skill;              /* 0 easy .. 3 nightmare (trigger_se
 /* a new map started (the entities spawned) */
 void level_begin(void);
 
+/* oldone.qc's finale_1: the finale at an info_intermission (`pos`), its
+   text to come (SVC_FINALE ""), no way out; finale_4: its text */
+struct edict_s;
+void level_finale_begin(const struct edict_s *pos);
+void level_finale_say(const char *text);
+
+/* lightstyle (0, s): the world's own light style (Shub's death pulses
+   it; "m" again at each map), at 10 letters a second as R_AnimateLight
+   plays it; the frame's dim for it (the GPU blends no product: 0 none,
+   1-4 the screen halved that many times, 5 black; engine/vid.c vid_dim) */
+void level_lightstyle0(const char *s);
+int  level_style0_dim(void);
+
 /* the player's think while the intermission runs (PlayerPreThink's
    IntermissionThink): fire or jump goes on */
 void level_think(const game_cmd_t *cmd);

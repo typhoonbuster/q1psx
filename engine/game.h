@@ -173,15 +173,21 @@ void game_set_current_ammo(void);                  /* W_SetCurrentAmmo: out of a
 void game_powerup(uint32_t item);                  /* its 30 s */
 void game_radius_damage_player(const int32_t org[3], int damage);
 void game_explosion(const int32_t org[3]);         /* BecomeExplosion's */
+void game_tar_explosion(const int32_t org[3]);     /* TE_TAREXPLOSION + BecomeExplosion */
 struct edict_s;
 void game_launch_spike(struct edict_s *owner, const int32_t org[3], const int32_t dir[3], int speed, int super);
 /* a monster's missile (the projectiles': its owner's box passed, the
    damage its), from org at vel: MM_GRENADE (OgreFireGrenade's), MM_ZOMGIB
    (ZombieFireGrenade's: s1 its hit sound, s2 its miss), MM_WIZSPIKE (s1
-   TE_WIZSPIKE's sound), MM_LAVABALL; masset its streamed model */
-enum { MM_GRENADE, MM_ZOMGIB, MM_WIZSPIKE, MM_LAVABALL };
+   TE_WIZSPIKE's sound), MM_LAVABALL, MM_LASER (the enforcer's LaunchLaser:
+   s1 its stop sound), MM_KSPIKE (the hell knight's knightspike: s1
+   TE_KNIGHTSPIKE's sound); masset its streamed model */
+enum { MM_GRENADE, MM_ZOMGIB, MM_WIZSPIKE, MM_LAVABALL, MM_LASER, MM_KSPIKE };
 void game_monster_missile(int kind, struct edict_s *owner, const int32_t org[3], const int32_t vel[3], int masset,
                           int s1, int s2);
+/* the shalrath's ShalMissile: homing on its owner's enemy (ShalHome every
+   0.2 s from `ticks` on), masset v_spike.mdl */
+void game_vore_missile(struct edict_s *owner, const int32_t org[3], const int32_t vel[3], int masset, int ticks);
 
 /* a shambler's lightning: TE_LIGHTNING1 (its beam, masset bolt.mdl) and
    LightningDamage from `from` along p1-p2 */
@@ -195,7 +201,7 @@ extern uint32_t game_ents_cycles, game_ents_max, game_ents_ticks;   /* ents_tick
 #endif
 
 /* R_RocketTrail's particles at org (one a tick), flying at vel */
-enum { TR_ROCKET, TR_SMOKE, TR_BLOOD, TR_TRACER, TR_SLIGHT_BLOOD };
+enum { TR_ROCKET, TR_SMOKE, TR_BLOOD, TR_TRACER, TR_SLIGHT_BLOOD, TR_TRACER2, TR_VOOR };
 void game_trail(const int32_t org[3], int type, const int32_t vel[3]);
 
 /* R_RunParticleEffect at org, no velocity (TE_GUNSHOT: colour 0, 20;

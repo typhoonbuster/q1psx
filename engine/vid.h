@@ -93,6 +93,7 @@ void *vid_ovl_alloc(int bytes);                /* NULL when the arena is full */
 void *vid_ovl_alloc_run(int bytes, int n);
 void  vid_ovl_append(void *head, void *tail);  /* a ready chain (terminated) at its end */
 void  vid_tint(int r, int g, int b);           /* a 50 % blend of a colour over the viewport */
+void  vid_dim(int n);                           /* the viewport halved n times (1-4), 5: black */
 /* V_UpdatePalette's damage, bonus and powerup shifts over the viewport:
    v the mid grey's (128) colour after them, contrast how much of a
    colour's distance to the grey is kept (x256) */

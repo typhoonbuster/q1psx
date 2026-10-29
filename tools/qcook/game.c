@@ -112,12 +112,14 @@ typedef struct {
 	int         page, u, v;    /* u, v: the image's own origin (past the border) */
 } image;
 
-static image images[256];
+#define MAX_IMAGES 512   /* (the stream's every model and its skin: the registered
+                           game's monsters past 256) */
+static image images[MAX_IMAGES];
 static int   nimages;
 
 static image *add_image(const char *what, int w, int h, int border)
 {
-	if (nimages >= 256) die("too many images");
+	if (nimages >= MAX_IMAGES) die("too many images");
 	if (w < 1 || h < 1 || w + 2 * border > PT || h + 2 * border > PT)
 		die("%s: %dx%d does not fit a texture page", what, w, h);
 	image *im = &images[nimages++];
@@ -168,7 +170,7 @@ static void free_add(int p, rect r)
 
 static void place_images(void)
 {
-	image *order[256];
+	image *order[MAX_IMAGES];
 	for (int i = 0; i < nimages; i++) order[i] = &images[i];
 	qsort(order, (size_t) nimages, sizeof *order, by_area);
 	for (int p = 0; p < GP_PAGES; p++) {
@@ -2825,6 +2827,17 @@ void qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px)
 	*px = q->bordered;
 }
 
+/* the model's frame `frame` alone (the finale's player, oldone.qc
+   finale_4: a statue of its frame 1) */
+void qc_mdl_one_frame(qc_mdl *q, int frame)
+{
+	mdl_t *m = &q->src.mdl;
+	if (frame < 0 || frame >= m->nframes)
+		die("%s: no frame %d of %d", q->file, frame, m->nframes);
+	m->frames[0] = m->frames[frame];
+	m->nframes   = 1;
+}
+
 int qc_mdl_flags(const qc_mdl *q)
 {
 	return q->src.mdl.flags;
@@ -3117,6 +3130,7 @@ static const mob_frames MOB_FRAMES[] = {
 	{ "progs/zombie.mdl",   { { 78, 1 } } },                /* attb14 (zombie_attb14 shows attb13) */
 	{ "progs/wizard.mdl",   { { 8, 7 }, { 35, 7 } } },      /* hover9-15, magatt7-13 */
 	{ "progs/shambler.mdl", { { 71, 2 } } },                /* magic7-8 */
+	{ "progs/oldone.mdl",   { { 58, 1 } } },                /* shake13 */
 };
 
 typedef struct frame_plan {
@@ -3667,8 +3681,14 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 	const mob_hand *hand = body ? mob_hand_find(q->file) : NULL;
 	q->sort = body;                               /* (its triangles drawn by depth: QSTM_SORT) */
 	for (int l = 0; l < 3; l++) {
+		/* (a body without its hand table, QCOOK_NOHAND's A / B or a new
+		   monster's first cook: the low level's reduction, the one level
+		   on the disc since §52, at every level, as a hand-made one is
+		   the same model at every level: the frame map and the level of
+		   detail's tables are every level's) */
 		orig[l] = xmalloc((size_t) m->nverts * sizeof *orig[l]);
-		reduced[l] = hand ? mob_hand_reduce(m, hand, &red[l], orig[l]) : stream_reduce(m, l, body, &red[l], orig[l]);
+		reduced[l] = hand ? mob_hand_reduce(m, hand, &red[l], orig[l])
+		                  : stream_reduce(m, body ? 0 : l, body, &red[l], orig[l]);
 		if (!reduced[l]) {                        /* the model as it is */
 			red[l] = *m;
 			for (int v = 0; v < m->nverts; v++)
@@ -3927,6 +3947,30 @@ static void finales_cook(const uint8_t *pak, long pak_len, gbuf *table, gbuf *te
 		gput(texts, t, strlen(t) + 1);
 		gput(table, &fz, sizeof fz);
 		(*num)++;
+	}
+	/* oldone.qc's finale_4: Shub-Niggurath's death's text (SVC_FINALE),
+	   END's own */
+	int f4 = -1;
+	for (int i = 0; i < nfn; i++) {
+		const int32_t *fn = (const int32_t *) (d + ofs_fn + i * 36);
+		if (fn[4] >= 0 && fn[4] < nstr && !strcmp(str + fn[4], "finale_4"))
+			f4 = fn[0];
+	}
+	for (int i = f4; f4 > 0 && i < nst && ST_OP(i) != PR_OP_DONE; i++) {
+		if (ST_OP(i) < PR_OP_STORE_F || ST_OP(i) > PR_OP_STORE_S || ST_B(i) != PR_OFS_PARM1)
+			continue;
+		const char *t = GSTR(ST_A(i));
+		if (strlen(t) < 40 || !strchr(t, '\n'))
+			continue;
+		qg_finale fz;
+		memset(&fz, 0, sizeof fz);
+		memcpy(fz.map, "END", 4);
+		fz.len = (uint16_t) strlen(t);
+		fz.ofs = (uint32_t) texts->len;
+		gput(texts, t, strlen(t) + 1);
+		gput(table, &fz, sizeof fz);
+		(*num)++;
+		break;
 	}
 	/* a block with two texts: its first is the shareware game's */
 	for (uint32_t i = 0; i < *num; i++) {

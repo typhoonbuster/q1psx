@@ -815,7 +815,9 @@ void ai_hunt_target(edict_t *self)
 static void sight_sound(edict_t *self)
 {
 	const mdef_t *m = self->mdef;
-	if (m->sight)
+	if (m->sight_fn)
+		m->sight_fn(self);
+	else if (m->sight)
 		ent_sound(self, CHAN_VOICE, *m->sight, 255, ATTN_NORM);
 }
 
@@ -1061,8 +1063,10 @@ int ai_check_attack(edict_t *self)
 void ai_face(edict_t *self)
 {
 	int32_t d[3];
+	const edict_t *en = self->enemy ? self->enemy : ent_world;   /* (the QC's world: an
+	                                                              ai_run that lost it before) */
 	for (int k = 0; k < 3; k++)
-		d[k] = self->enemy->origin[k] - self->origin[k];
+		d[k] = en->origin[k] - self->origin[k];
 	self->ideal_yaw = (int16_t) vectoyaw(d);
 	ai_changeyaw(self);
 }
