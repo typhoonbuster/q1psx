@@ -1223,6 +1223,10 @@ static void bench_pmove_diff(void)
 #ifndef Q1PSX_BENCH_TICKS
 #define Q1PSX_BENCH_TICKS 0   /* with a VIEW: the game run that many ticks from there (TICKS=n) */
 #endif
+#ifndef Q1PSX_BENCH_USE
+#define Q1PSX_BENCH_USE ""    /* with TICKS: the entities of this targetname used at tick 8, as
+                                 a button's press would (USE=t53): a door opened in view */
+#endif
 
 static void bench_stream_frames(void);
 
@@ -1315,6 +1319,8 @@ static void bench_residency(const char *map)
 #undef AVG
 }
 
+static void bench_bmf_arena(const char *what);
+
 /* a VIEW's ticks (TICKS=n): the player standing there, the game running
    (his touches, the movers, the monsters, the stream), the view dumped
    every 8 ticks as <map>.v<view>t<tick> */
@@ -1338,6 +1344,19 @@ static void bench_view_ticks(const char *view)
 	cmd.weapon_group = -1;
 	game_active = 1;
 	for (int t = 0; t <= Q1PSX_BENCH_TICKS; t++) {
+	if (Q1PSX_BENCH_USE[0] && t == 8) {      /* the targets used, as a button's press would
+	                                            (at tick 8: the doors' links are made at 0.1 s) */
+		int used = 0;
+		for (int i = 2; i < num_edicts; i++) {
+			edict_t *e = &edicts[i];
+			if (!e->inuse || !e->targetname || !e->use || strcmp(world_string(e->targetname), Q1PSX_BENCH_USE))
+				continue;
+			ent_other = ent_activator = ent_player;
+			ENT_CALL(e, use);
+			used++;
+		}
+		printf("use %s: %d entities\n", Q1PSX_BENCH_USE, used);
+	}
 		if (t % 8 == 0) {
 			memcpy(cam.pos, at.pos, sizeof cam.pos);
 			cam.yaw = at.yaw;
@@ -1356,6 +1375,7 @@ static void bench_view_ticks(const char *view)
 		bench_stream_frames();
 	}
 	game_active = 0;
+	bench_bmf_arena(view);
 }
 
 /* the level arena's room the world takes, a zoned one's measure (§57):

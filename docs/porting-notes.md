@@ -12887,3 +12887,84 @@ Not the merge's (§90) nor the grid's (§92): the same pictures with
   already dropped the back ones): a flag of the model (the view model's
   `SZCLIP` path) could skip it, +0.3 % on the gun views.
 - The near exit's back faces (the eye within SZCLIP of a box).
+
+## §94 — Walls seen through from afar, a block of noise on E1M2: three reports looked into (2026-10-29)
+
+### 94.1 The reports
+
+- E1M1: a wall transparent from afar, in a corridor (the capture: the hall's
+  ceiling lights showing above the doorway at the corridor's end, where the
+  wall over the doorway should be).
+- E1M3: the same at the level's start, the ogre behind the wall the key's
+  trap opens seen through it (door *68, targetname t83, the ogres at
+  (34, -1466, 72) and (28, -1352, 72)).
+- E1M2: a block of noise under the yellow armor (1340, -544, 384) and wall
+  pieces gone; the doors *5 and *6 (t53) beside the armor rise on the button
+  *56 (x 1545).
+
+No save state; the analysis went by the code and the bench.
+
+### 94.2 What the engine does with distance (read, unchanged)
+
+- The record loops (r_world.s RECLOOP `_o_dcull`, the models' `ds_o_dcull`)
+  cull a record only when its nearest depth (z - rho) is past the draw
+  distance: a wall nearer than what is behind it is never dropped alone.
+  The far marking (`mark_pvs_far`) skips a leaf only when its box is past
+  1.61 x the distance + 64 on an axis; the leaves' boxes are the BSP's.
+- A brush model is drawn when the PVS stamps one of its pieces' leaves
+  (ents.c `ents_visible`, bmfrag.c `bmf_seen`: exact for a model with
+  pieces, its box's eight leaves otherwise), `box_in_front` and
+  `all_culled` are frustum tests, conservative. The door *68 of E1M3,
+  benched from three places of the courtyard (VIEW=-440,-1250,110,338,0
+  and nearer), draws its pieces at every distance.
+- What can show the world behind a wall: the zones. The walk draws the
+  camera zone's chunk alone (§57.2); a record the chunk lacks lets what
+  the chunk holds behind it show. The `pvs` tables hold every record the
+  PVS may draw within their distance (§57.8: exact, the 128 spawn views
+  identical); the `seen` tables only what the analysis' renders saw, from
+  the eyes it sampled. A table cut at 1024 units under a 1536 draw
+  distance lacks every wall between the two, from afar. The main
+  checkout's local.env points at `seen_1024_64` (the §89 branch's draw
+  distance, not merged), the worktree's at `pvs_1536_96`: which disc image
+  was played decides what the captures show. CMakeLists.txt now refuses a
+  zoned disc whose tables are cut under its draw distance (the tables'
+  distance read from their directory's name) and says when the tables are
+  the seen ones.
+- The PVS rows as deltas (§90.9): E1M1's 12 views before and after §90 have
+  the same lists (the bisect worktrees' logs).
+
+### 94.3 E1M2: the button scenario in the bench
+
+- `USE=<targetname>` added to the bench (main.c `bench_view_ticks`): with
+  TICKS, the entities of that targetname are used at tick 8 (the doors'
+  links are made at 0.1 s), as a button's press would. `BENCH_MAPS=1
+  MAP=E1M2 VIEW=1432,-408,350,236,-12,1624,-376,350,211,-6 TICKS=128
+  USE=t53`: the eyes are the analysis' sampled ones nearest the capture's
+  place (scan/e1m2/samples.bin: the two that saw the most faces east of
+  the armor), the second view the capture's. The doors rise (their cuts'
+  origin z 107, 214, ... 1312 in 1/8 units, re-cut at every dump, 11-28
+  groups), the pictures right at every tick, no noise; the screen area
+  under the armor is drawn with ordinary textured primitives (texture
+  page 6, in-range UVs).
+- `BMFARENA=<percent>` added (bmfrag.c `bmf_reserve`): the cut arena at
+  that share of the cook's size, the rooms given up and packed down in
+  play (§90.6). At 50 % the scenario takes 28-29 rooms, gives 7-8 up,
+  draws none without room, and its 48 lists are the full arena's, hash
+  for hash: the eviction and the compaction change nothing. After a
+  ticked view the bench prints the arena's traffic (`bmf arena` line).
+- The noise is not reproduced. The pieces' vertex indices are all pool
+  indices (put_record), renumbered as a block moves; the records' texture
+  is the source record's. What the bench does not cover: a long play's
+  state, DuckStation's GPU (the PCSX frames are the bench's).
+
+### 94.4 Left
+
+- The three reports stand unreproduced. What settles them: which image
+  was played (the worktree's build-release, cooked pvs_1536_96, or a build
+  of the main checkout, cooked seen_1024_64: the captures would then be
+  the tables' holes); a DuckStation save state at the moment (F2: the
+  player's place, the zones resident, the arena).
+- A frame-by-frame comparison of the ZONES=1 walk's lists with WHOLE=1's
+  along the same walk would list every hole a zoned disc shows in play
+  (the late frames and any table's miss), where the spawn views cannot.
+

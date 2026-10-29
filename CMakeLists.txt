@@ -245,6 +245,7 @@ set(Q1PSX_BENCH_FLAT 1 CACHE STRING "The flat shading the bench renders with: 0 
 set(Q1PSX_BENCH_BMF 1 CACHE STRING "0: the brush models drawn whole, not cut by the world's BSP (an A / B)")
 set(Q1PSX_BENCH_BMFCULL 1 CACHE STRING "0: a moved brush model is cut again out of view too (an A / B)")
 set(Q1PSX_BENCH_BMFCHK 0 CACHE STRING "1: every mover cut at 33 places along its ways in its room (bmfchk lines)")
+set(Q1PSX_BENCH_BMFARENA 100 CACHE STRING "The brush models' cut arena, percent of the cook's size: the rooms given up and packed down in play (an A / B)")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
@@ -253,6 +254,7 @@ set(Q1PSX_BENCH_MOVERS 0 CACHE STRING "1: the big movers moving in view: the fra
 set(Q1PSX_BENCH_MONSTERS 0 CACHE STRING "1: the monsters' scenarios (one of each kind wakes, attacks, is killed; the streaming), then the crowd; 2: the crowd alone")
 set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map, dumped")
 set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the game run this many ticks, a picture every 8")
+set(Q1PSX_BENCH_USE "" CACHE STRING "With TICKS: the entities of this targetname used at tick 8 (a door opened in view)")
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 set(Q1PSX_BENCH_WARPDYN 0 CACHE STRING "1: the views with the game's dynamic warp control (T its floor), the T each ends at printed")
@@ -281,11 +283,11 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
 		Q1PSX_BENCH_BMF=${Q1PSX_BENCH_BMF}
 		Q1PSX_BENCH_BMFCULL=${Q1PSX_BENCH_BMFCULL}
-		Q1PSX_BENCH_BMFCHK=${Q1PSX_BENCH_BMFCHK}
+		Q1PSX_BENCH_BMFCHK=${Q1PSX_BENCH_BMFCHK} Q1PSX_BENCH_BMFARENA=${Q1PSX_BENCH_BMFARENA}
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
 		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS} Q1PSX_BENCH_MONSTERS=${Q1PSX_BENCH_MONSTERS}
-		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
+		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_USE="${Q1PSX_BENCH_USE}" Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
 		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS} Q1PSX_BENCH_ZONES=${Q1PSX_BENCH_ZONES}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ} Q1PSX_BENCH_RES=${Q1PSX_BENCH_RES}
 		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN}
@@ -319,6 +321,9 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/local.env")
 		if(_line MATCHES "^[ \t]*QUAKE_PAK0[ \t]*=[ \t]*(.+)$")
 			string(STRIP "${CMAKE_MATCH_1}" _pak0_path)
 		endif()
+		if(_line MATCHES "^[ \t]*Q1PSX_ZONE_TABLES[ \t]*=[ \t]*(.+)$")
+			string(STRIP "${CMAKE_MATCH_1}" _zone_tables)
+		endif()
 	endforeach()
 endif()
 if(_pak0_path AND EXISTS "${_pak0_path}")
@@ -343,6 +348,29 @@ elseif(Q1PSX_ZONES)
 	set(_disc_zones 1)
 else()
 	set(_disc_zones 0)
+endif()
+# The tables the cook reads (local.env's Q1PSX_ZONE_TABLES: the command
+# line's, when scripts/cook.sh is run by hand, is not seen here) are cut
+# for one draw distance, in their directory's name (pvs_1536_96: every
+# record the PVS may draw within 1536 units; seen_1024_64: those the
+# analysis' renders saw within 1024). A zoned disc drawn farther than its
+# tables' cut loses every wall between the two distances, from afar: it
+# is refused. The seen tables carry only what the renders saw: a wall seen
+# from a place the scan did not sample is missing there (docs/porting-notes.md
+# §57.8, §94).
+if(_disc_zones AND _zone_tables AND _zone_tables MATCHES "(pvs|seen)_([0-9]+)_([0-9]+)/?$")
+	set(_tables_kind ${CMAKE_MATCH_1})
+	set(_tables_dist ${CMAKE_MATCH_2})
+	if(_tables_dist LESS Q1PSX_DRAWDIST)
+		message(FATAL_ERROR "q1psx: the zone tables ${_zone_tables} are cut at ${_tables_dist} units, the draw distance is ${Q1PSX_DRAWDIST}: "
+		        "the walls between the two would be missing from afar. Point local.env's Q1PSX_ZONE_TABLES at a *_${Q1PSX_DRAWDIST}_* set, "
+		        "or build with -DQ1PSX_DRAWDIST=${_tables_dist}, or -DQ1PSX_ZONES=OFF for the whole worlds.")
+	endif()
+	if(_tables_kind STREQUAL "seen")
+		message(STATUS "q1psx: zone tables ${_tables_kind}_${_tables_dist}: the chunks hold what the analysis' renders saw only (a wall the scan never looked at is missing there; the pvs tables are exact)")
+	else()
+		message(STATUS "q1psx: zone tables ${_tables_kind}_${_tables_dist}, the draw distance ${Q1PSX_DRAWDIST}")
+	endif()
 endif()
 
 # The music (docs/porting-notes.md §48, §52): Quake's CD tracks 2..11 as

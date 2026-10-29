@@ -20,7 +20,10 @@
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the
 #         world's BSP (engine/bmfrag.c): an A / B. NOBMFCULL=1 cuts a moved
 #         brush model again even when none of it is in view (an A / B: the
-#         same frames). BMFCHK=1 (with
+#         same frames). BMFARENA=<percent> shrinks the brush models' cut
+#         arena (engine/bmfrag.c §90.6) to that share of the cook's size:
+#         the rooms given up and packed down in play (an A / B: the same
+#         frames while every drawn model still fits). BMFCHK=1 (with
 #         BENCH_MAPS=1 VIEWS=0) cuts every door, button, plat, train and
 #         secret door at 33 places along each of its ways in the room the
 #         cook measured ("bmfchk" lines: the cuts that do not fit, the
@@ -77,7 +80,9 @@
 #         a view there, more groups of five more views, NOENTS=1 leaves the entities out, an A / B;
 #         TICKS=n with a VIEW: the player put there, the game run n ticks
 #         from there, the view dumped every 8 ticks: a mover, a monster
-#         as the player standing there sees them); RESIDENCY=1 (with
+#         as the player standing there sees them; USE=<targetname> uses
+#         those entities at tick 8, a button's press: a door
+#         opening in view); RESIDENCY=1 (with
 #         BENCH_MAPS=1 VIEWS=0) reports what the stream loads around the
 #         player at the map's items ("res" lines: a simulation charging a
 #         model what it keeps once its skin is in VRAM, then the stream's
@@ -196,6 +201,7 @@ FLAT=${FLAT:-1}
 WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
+BMFARENA=${BMFARENA:-100}
 BMFCHK=${BMFCHK:-0}
 STACK_BYTES=${STACK_BYTES:-8192}
 LEVEL_MIN=${LEVEL_MIN:-1272832}
@@ -215,6 +221,7 @@ MAP=${MAP:-}
 VIEW=${VIEW:-}
 NOENTS=${NOENTS:-0}
 TICKS=${TICKS:-0}
+USE=${USE:-}
 RESIDENCY=${RESIDENCY:-0}
 ENTS=${ENTS:-0}
 MONSTERS=${MONSTERS:-0}
@@ -245,9 +252,9 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
-      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
+      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_BENCH_BMFARENA="$BMFARENA" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
-      -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
+      -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \

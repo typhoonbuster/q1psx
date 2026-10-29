@@ -93,6 +93,9 @@ uint32_t bmf_stats[10];          /* ... [7] rooms taken, [8] given up for anothe
    every drawn model had its room for the whole level (E1M3: 69.9 KB; the
    arena 23.7). */
 #define BMF_PAGE 64
+#ifndef Q1PSX_BENCH_BMFARENA
+#define Q1PSX_BENCH_BMFARENA 100 /* the cut arena's size, percent of the cook's (BMFARENA=50 scripts/bench.sh) */
+#endif
 #define BMF_COLD __attribute__((optimize("Os")))   /* the load's code, the rare ways' (a room taken
                                                      or given up, an alias model among pieces):
                                                      small before fast */
@@ -1032,6 +1035,10 @@ BMF_COLD void bmf_reserve(void)
 	   whole pages; the pool's indices 16-bit */
 	uint32_t arena = world.bmf_arena_recs ? world.bmf_arena_recs : rooms;
 	uint32_t vpool = world.bmf_arena_verts ? world.bmf_arena_verts : vrooms;
+#if Q1PSX_BENCH_BMFARENA != 100                  /* (BMFARENA=<percent> scripts/bench.sh: the arena
+	arena = arena * Q1PSX_BENCH_BMFARENA / 100;     shrunk, the rooms given up and packed down in
+	vpool = vpool * Q1PSX_BENCH_BMFARENA / 100;     play; the lists must not change: an A / B) */
+#endif
 	if (arena < biggest) arena = biggest;
 	if (vpool < vbiggest) vpool = vbiggest;
 	if (arena > rooms) arena = rooms;
