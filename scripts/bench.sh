@@ -23,7 +23,9 @@
 #         same frames). BMFARENA=<percent> shrinks the brush models' cut
 #         arena (engine/bmfrag.c §90.6) to that share of the cook's size:
 #         the rooms given up and packed down in play (an A / B: the same
-#         frames while every drawn model still fits). BMFCHK=1 (with
+#         frames while every drawn model still fits). BMFTRACE=<model>
+#         (with BMF_C=1) prints every piece of that brush model's cut, its
+#         leaf and contents (bmftrace lines). BMFCHK=1 (with
 #         BENCH_MAPS=1 VIEWS=0) cuts every door, button, plat, train and
 #         secret door at 33 places along each of its ways in the room the
 #         cook measured ("bmfchk" lines: the cuts that do not fit, the
@@ -214,6 +216,7 @@ WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
 BMFARENA=${BMFARENA:-100}
+BMFTRACE=${BMFTRACE:-0}
 BMFCHK=${BMFCHK:-0}
 STACK_BYTES=${STACK_BYTES:-8192}
 LEVEL_MIN=${LEVEL_MIN:-1272832}
@@ -266,7 +269,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
-      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_BENCH_BMFARENA="$BMFARENA" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
+      -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_BENCH_BMFARENA="$BMFARENA" -DQ1PSX_BENCH_BMFTRACE="$BMFTRACE" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_SKILL="${SKILL:-1}" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \

@@ -2288,6 +2288,19 @@ followed by R0-R4.
   entity of a class used at tick 8 of a ticked view) and
   `BMFARENA=<percent>` (the cut arena shrunk: 7-8 rooms given up and
   packed down, the 48 lists identical).
+- **E1M1's bridge darkened at a corner, the shambler's lightning aimed at
+  the floor** (§96, 2026-10-29).
+  The shambler's trace ran 600 in the positions' 1/8 units (75 world
+  units): now 600 units, the bolt and its damage reach the player. The
+  bridge's top face, one 224 x 224 polygon, sampled Quake's lightmap at
+  a corner sitting in a 64-texel shadow, which the vertex lights spread
+  over half the face as a dark wedge: a brush model's face whose four
+  corner lights miss its lightmap by more than 56 at a luxel is now cut
+  every 128 texels at every geometry level (`QL_BM_LIGHT_GRID`,
+  `QL_BM_LIGHT_ERR`, the cook's `bm_face_needs_grid`; 1-3 KB a map of
+  records and cut arena, six settings measured; the world's faces keep
+  the ultra level's grid). The bench gains `BMFTRACE=<model>` (BMF_C=1:
+  every piece of a model's cut, its leaf) and a `sham bolt` line.
 - **The registered game's six monsters, by hand, and the animations
   thinned** (§97, provisional number, 2026-10-28). The enforcer, the hell knight, the spawn, the
   vore, the rotfish and Shub-Niggurath (423 monsters on hard over 21

@@ -409,6 +409,12 @@ static void cross(bmf_v *o, const bmf_v *a, const bmf_v *b, int32_t da, int32_t 
 /* R_RecursiveClipBPoly: the polygon down the world's BSP from `top`, cut at
    every plane it straddles (d > 0: the front, as the walk), its pieces in
    non-solid leaves kept in bmf_pieces[] */
+#ifdef Q1PSX_BENCH
+static int bmf_trace, bmf_trace_poly;   /* (the bench: BMFTRACE=<model>, every piece of its cut printed) */
+#ifndef Q1PSX_BENCH_BMFTRACE
+#define Q1PSX_BENCH_BMFTRACE 0
+#endif
+#endif
 static void cut_poly(uint32_t top, const bmf_v *in, int n, int quad)
 {
 	bmf_v cur[BMF_CORNERS], side[2][BMF_CORNERS];
@@ -456,6 +462,18 @@ static void cut_poly(uint32_t top, const bmf_v *in, int n, int quad)
 			cutting = 1;
 		}
 		const qw_leaf *leaf = (const qw_leaf *) ((at & ~1u) | 0x80000000u);
+#ifdef Q1PSX_BENCH
+		if (bmf_trace) {
+			int16_t mn[3] = { 32767, 32767, 32767 }, mx[3] = { -32768, -32768, -32768 };
+			for (int i = 0; i < n; i++)
+				for (int k = 0; k < 3; k++) {
+					if (cur[i].p[k] < mn[k]) mn[k] = cur[i].p[k];
+					if (cur[i].p[k] > mx[k]) mx[k] = cur[i].p[k];
+				}
+			printf("bmftrace poly %d piece: leaf %d contents %d n %d box %d %d %d - %d %d %d\n", bmf_trace_poly,
+			       (int) (leaf - world.leaves), leaf->contents, n, mn[0], mn[1], mn[2], mx[0], mx[1], mx[2]);
+		}
+#endif
 		if (leaf->contents != QW_CONTENTS_SOLID) {
 			if (num_pieces >= BMF_PIECES) { bmf_cut_overflow = 1; return; }
 			bmf_piece *pc = &bmf_pieces[num_pieces++];
@@ -708,6 +726,9 @@ static int cut_record(bmf_cache *c, const uint8_t *rp, const int16_t off[3], uin
 			v[j].pad = 0;
 			v[j].pad2 = 0;
 		}
+#ifdef Q1PSX_BENCH
+		bmf_trace_poly = i;
+#endif
 		cut_poly(top, v, n, quad);
 		if (bmf_cut_overflow)
 			return 0;
@@ -720,6 +741,11 @@ static int cut_record(bmf_cache *c, const uint8_t *rp, const int16_t off[3], uin
 static int cut_model_c(bmf_cache *c, int model, const int32_t org[3], uint32_t top)
 {
 	const qw_bmodel *bm = &world.bmodels[model];
+#ifdef Q1PSX_BENCH
+	bmf_trace = Q1PSX_BENCH_BMFTRACE && model == Q1PSX_BENCH_BMFTRACE;
+	if (bmf_trace)
+		printf("bmftrace *%d org %d %d %d top %08x\n", model, (int) org[0], (int) org[1], (int) org[2], (unsigned) top);
+#endif
 	int16_t off[3];
 	bmf_cut_pieces = 0;
 	for (int k = 0; k < 3; k++)                   /* 1/8 units -> vertex units */

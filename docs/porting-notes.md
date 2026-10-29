@@ -13300,9 +13300,95 @@ branch to de_records, one load.
 - The main checkout's tables are `auto_1536_s3` now (§93), the CMake
   check accepts them (`auto_<D>_s<slots>`).
 
+## §96 — E1M1's bridge darkened at a corner, the shambler's lightning aimed at the floor (2026-10-29)
+
+Two reports from the main checkout's release (master a394d1b), read
+in the DuckStation save states as §95's (slot 1: E1M1, the camera on
+the shore at 404, 2750, -34 looking down the extended bridge; slot 2:
+E1M3, the menu open after the fight).
+
+### 96.1 The shambler's lightning
+
+`cast_lightning` (m_shambler.c, Quake's CastLightning) traced from the
+shambler's origin 40 up toward the enemy's 16 up, `self.origin + dir x
+600`: the port scaled the unit direction by 600 in the positions' 1/8
+units, 75 world units, so the trace ended 75 units from the shambler's
+feet, 40 under the beam's start: the bolt sloped into the floor and the
+damage (LightningDamage along the trace) rarely reached the player.
+Now `600 x SUB`. The ogre's, zombie's and wizard's `x 600 / len` are
+velocities (units a second): right as they were.
+
+### 96.2 The bridge: a shadow at a corner, spread by the vertex lights
+
+A piece of the bridge was seen missing. The save state's frame shows
+the bridge's top drawn whole (its two cut pieces, both in the display
+list, both after the slime in the draw order, the texture window of
+their texture in effect, checked packet by packet against the chain's
+links) but with a dark wedge over its near half. Its top face (the
+model's face 5164, 224 x 224 units) is one polygon with four vertex
+lights: 158, 48, 148, 144 (x 1.66). Quake's lightmap for it (15 x 15
+luxels) is bright but for a diagonal shadow in one corner, 4 luxels (64
+texels) wide along one edge over 9 rows: the vertex there samples 29.
+The GPU's Gouraud spreads that corner over half of the face, where Quake
+keeps the shadow to its luxels.
+
+The cook already cuts the world's faces on a 128-texel grid at the
+ultra geometry level for this (QL_LIGHT_GRID, §39.2). The brush models'
+faces now take a light grid at every level, but only the faces whose
+four corner lights misrepresent their lightmap: `bm_face_needs_grid`
+(world.c) takes the bilinear of the samples at the face's (s, t)
+extents as the Gouraud the GPU will draw and compares it with the
+lightmap at every luxel of the face's box; past `QL_BM_LIGHT_ERR`
+(formats/qlevels.h) at one luxel, the face is cut every
+`QL_BM_LIGHT_GRID` texels (world.c `face_pieces`). The cook prints the
+count (`brush models' light grid: N faces`). Every brush model's face
+on a 64-texel grid was tried first: +7 to +36 KB a cooked world,
+dropped. The settings, measured on four maps (the cook's `brush models'
+rooms` line: the records' bytes, the cut arena's; the baseline has no
+grid):
+
+| grid, threshold | E1M1 faces, records, arena | E1M2 | E1M5 | E2M6 |
+|---|---|---|---|---|
+| none | 0, 19 360, 12 544 | 0, 19 692, 17 920 | 0, 20 112, 11 712 | 0, 39 216, 37 568 |
+| 64, 40 | 25, 22 660, 16 192 | 59, 26 020, 22 400 | 83, 28 928, 18 432 | 133, 56 628, 52 032 |
+| 64, 56 | 17, 22 140, 16 000 | 43, 24 848, 21 888 | 51, 25 640, 15 808 | 89, 52 808, 48 704 |
+| 64, 72 | 12, 21 548, 15 424 | 40, 24 768, 21 824 | 34, 24 260, 14 720 | 61, 48 528, 45 056 |
+| 128, 40 | 25, 20 428, 13 504 | 59, 21 468, 19 200 | 83, 22 372, 13 376 | 133, 43 736, 41 344 |
+| **128, 56** | 17, 20 140, 13 376 | 43, 21 204, 18 880 | 51, 21 548, 12 800 | 89, 42 620, 40 320 |
+
+128 and 56 kept: 1 to 3 KB a map of records and arena together; the
+bridge's dark corner is held to a quarter of its face (a 64-texel cell
+would hold it to the cell, at twice the records). The bridge's top goes
+from one polygon to four cells: its cut at the extended place 912 B of
+records in 14 groups before, 1 180 B in 14 groups after (the 64-texel grid: 2 156 B, 280 vertices). The bench's
+`BMFTRACE=<model>` (BMF_C=1) prints every piece of a brush model's C
+cut with its leaf, written for this (the pieces were all there).
+
+### 96.3 Checked
+
+- The save state's bridge pieces: the cache (14 groups, 912 B, valid,
+  resident), the render lists (5 of the groups, the others' leaves not in
+  the lists: the models' sides), the display list's packets of the top's
+  texture (a quad and the slow path's 60 triangles over the whole top),
+  the chain's links from the slime's quad to them (drawn after it), the
+  texture-window commands met on the way (the top's own, right before
+  them), the page's texels under the top's CLUT (none transparent): the
+  top is drawn; its lights are the fault. BMF_C=2 on the scenario: 21
+  cuts, 0 mismatches between the asm cut and the C.
+- `BENCH_MAPS=1 MAP=E1M1 VIEW=404,2750,-34,176,4 TICKS=704 USE=t2` (the
+  bridge extended by its button's target t2, 88 dumps): the dark wedge
+  on the bench's pictures before, the top evenly lit after (the shadow's corner cell darker alone). The cooked worlds: +1 030 B a map on the mean, +3 260 at most (32 maps).
+- `BENCH_MAPS=1 HASHONLY=1` after (128 views) against the §95 run's:
+  8 of 128 `H` lines change (E1M6.v3, E1M7.v0, E3M2.v0, E3M3.v0, E4M5.v0, E4M5.v1, E4M6.v0, E4M7.v0: a brush model with a cut face in view), the others identical.
+- The shambler: `MONSTERS=3 MAP=E1M3` and `MONSTERS=4 MAP=E1M3` cast no
+  bolt (the bench's `sham bolt` line, kept: a bolt's start, end and
+  length, the enemy's distance); the fix is the units alone, unchecked in
+  the bench. DuckStation: E1M3's shambler.
+- The release builds.
+
 ## §97 — The registered game's six monsters, by hand, and the animations thinned (2026-10-28)
 
-(Provisional number: §96 is another session's, not merged yet.)
+(Provisional number then: §96 was another session's, merged into master on 2026-10-31 with §109-§110.)
 
 ### 97.1 The ask
 

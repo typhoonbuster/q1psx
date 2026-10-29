@@ -572,6 +572,33 @@ static uint8_t face_light_at(const facelight *fl, double s, double t)
 	return (uint8_t) (l > 255 ? 255 : l);
 }
 
+/* A brush model's face whose four corner lights, spread by the GPU's
+   Gouraud, would miss its lightmap by more than QL_BM_LIGHT_ERR at some
+   luxel (a shadow at a corner, a light in the middle): cut on the light
+   grid (docs/porting-notes.md §96). The Gouraud is taken as the bilinear
+   of the samples at the face's (s, t) extents, over every luxel of its
+   box (a few outside an L-shaped face: a cut for nothing, harmless). */
+static int bm_face_needs_grid(const bsp_t *b, int f, const poly_t *pl, double smin, double smax, double tmin, double tmax)
+{
+	facelight fl;
+	face_light_setup(b, f, pl, &fl);
+	if (!fl.nmaps || smax - smin < 16 || tmax - tmin < 16)
+		return 0;
+	double c00 = face_light_at(&fl, smin, tmin), c10 = face_light_at(&fl, smax, tmin);
+	double c01 = face_light_at(&fl, smin, tmax), c11 = face_light_at(&fl, smax, tmax);
+	for (int j = 0; j < fl.h; j++)
+		for (int i = 0; i < fl.w; i++) {
+			double sl = fl.smin + 16 * i, tl = fl.tmin + 16 * j;
+			if (sl < smin || sl > smax || tl < tmin || tl > tmax)
+				continue;
+			double fs = (sl - smin) / (smax - smin), ft = (tl - tmin) / (tmax - tmin);
+			double est = (c00 * (1 - fs) + c10 * fs) * (1 - ft) + (c01 * (1 - fs) + c11 * fs) * ft;
+			if (fabs(est - face_light_at(&fl, sl, tl)) > QL_BM_LIGHT_ERR)
+				return 1;
+		}
+	return 0;
+}
+
 /* union-find over faces */
 static int uf_find(int *up, int x)
 {
@@ -649,6 +676,7 @@ static int     *pc_first, *pc_count;   /* per face */
 static uint32_t tj_inserted, tj_pieces;
 
 static int light_grid;                   /* the ultra level's extra cuts, texels (0: none) */
+static int bm_grid_faces;                /* the brush models' faces cut on their light grid (§96) */
 
 static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 {
@@ -684,6 +712,9 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 		if (pl.v[i].t < tmin) tmin = pl.v[i].t;
 		if (pl.v[i].t > tmax) tmax = pl.v[i].t;
 	}
+	int bm_grid = face_model[f] && bm_face_needs_grid(b, f, &pl, smin, smax, tmin, tmax);
+	if (bm_grid)
+		bm_grid_faces++;
 
 	/* Cells, in Quake texels. A wrapped axis: 256 cooked texels (a byte of
 	   UV), from an origin on a repetition boundary so the virtual
@@ -711,7 +742,10 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 			clip_poly(&d, &cell, 1, t0 + (j + 1) * H, -1);
 			/* the light grid's lines inside the cell (none: the cell whole) */
 			double cs0 = s0 + i * W, cs1 = cs0 + W, ct0 = t0 + j * H, ct1 = ct0 + H;
-			double gs0 = cs0, gs1 = cs1, gt0 = ct0, gt1 = ct1, G = light_grid;
+			double gs0 = cs0, gs1 = cs1, gt0 = ct0, gt1 = ct1;
+			double G = light_grid;
+			if (face_model[f] && bm_grid)   /* (a brush model's face the vertex lights misrepresent: every level) */
+				G = QL_BM_LIGHT_GRID;
 			if (G > 0) {                 /* (the cell's sub-cells the face reaches) */
 				gs0 = cs0 + floor(((smin > cs0 ? smin : cs0) - cs0) / G) * G;
 				gt0 = ct0 + floor(((tmin > ct0 ? tmin : ct0) - ct0) / G) * G;
@@ -1184,6 +1218,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 {
 	const bsp_model *wm = &b->models[0];
 	light_grid = geo_level == QL_ULTRA ? QL_LIGHT_GRID : 0;
+	bm_grid_faces = 0;
 	if (b->num_models > 254)
 		die("%d models: more than 254", b->num_models);
 
@@ -1929,6 +1964,8 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	       tj_inserted, tj_pieces, o.pieces_eared, geo_level == QL_LOW ? " (not repaired: low)" : "");
 	if (light_grid)
 		printf("qcook:   light grid: cut every %d texels\n", light_grid);
+	if (bm_grid_faces)
+		printf("qcook:   brush models' light grid: %d faces cut every %d texels\n", bm_grid_faces, QL_BM_LIGHT_GRID);
 	if (has_spawn)
 		printf("qcook:   spawn %d %d %d yaw %d\n", h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
 	{

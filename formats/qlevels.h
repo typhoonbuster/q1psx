@@ -41,5 +41,15 @@ enum { QL_TEXTURES, QL_GEOMETRY, QL_MODELS, QL_EFFECTS, QL_AXES };
    texels as well, so their vertex light follows the lightmap (Quake's
    luxels are 16 texels) */
 #define QL_LIGHT_GRID   128
+/* the brush models' faces at every geometry level: a door's or a bridge's
+   face is one big polygon whose corner may sit in a shadow of Quake's
+   lightmap (E1M1's bridge: a 64-texel shadow at one corner), which four
+   corner lights would spread over half of it; a 128-texel cell keeps it
+   to a quarter (64: to the cell, at twice the records). Only the faces
+   whose corner lights miss their lightmap (QL_BM_LIGHT_ERR) are cut
+   (docs/porting-notes.md §96: 1-3 KB a map of records and arena) */
+#define QL_BM_LIGHT_GRID 128
+#define QL_BM_LIGHT_ERR  56   /* the face is cut when its corner lights' Gouraud misses a
+                                 luxel of its lightmap by more than this (0..255, after the gain) */
 
 #endif

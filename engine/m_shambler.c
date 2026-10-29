@@ -206,10 +206,15 @@ static void cast_lightning(edict_t *self)
 		d[k] = self->enemy->origin[k] + (k == 2 ? 16 * SUB : 0) - org[k];
 	}
 	int32_t len = (int32_t) q_isqrt64((uint64_t) ai_vlen2(d));
-	for (int k = 0; k < 3; k++)
-		end[k] = self->origin[k] + (len ? d[k] * 600 / len : 0);
+	for (int k = 0; k < 3; k++)                   /* (600 units: the positions are 1/SUB units) */
+		end[k] = self->origin[k] + (len ? (int32_t) ((int64_t) d[k] * 600 * SUB / len) : 0);
 	ai_traceline(org, end, 1, self);
 	int32_t hit[3] = { ai_trace_endpos[0], ai_trace_endpos[1], ai_trace_endpos[2] };
+#ifdef Q1PSX_BENCH
+	printf("sham bolt: from %d %d %d to %d %d %d, %d units (the enemy %d away, %d under the start)\n",
+	       (int) org[0] / SUB, (int) org[1] / SUB, (int) org[2] / SUB, (int) hit[0] / SUB, (int) hit[1] / SUB, (int) hit[2] / SUB,
+	       ai_vlen((int32_t[3]) { hit[0] - org[0], hit[1] - org[1], hit[2] - org[2] }), len / SUB, (int) (org[2] - hit[2]) / SUB);
+#endif
 	game_monster_beam(self, org, hit, monster_asset(self, 3));   /* TE_LIGHTNING1 */
 	game_lightning_damage(self, org, hit, 10);
 }

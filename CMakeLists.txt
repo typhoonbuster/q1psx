@@ -249,6 +249,7 @@ set(Q1PSX_BENCH_BMF 1 CACHE STRING "0: the brush models drawn whole, not cut by 
 set(Q1PSX_BENCH_BMFCULL 1 CACHE STRING "0: a moved brush model is cut again out of view too (an A / B)")
 set(Q1PSX_BENCH_BMFCHK 0 CACHE STRING "1: every mover cut at 33 places along its ways in its room (bmfchk lines)")
 set(Q1PSX_BENCH_BMFARENA 100 CACHE STRING "The brush models' cut arena, percent of the cook's size: the rooms given up and packed down in play (an A / B)")
+set(Q1PSX_BENCH_BMFTRACE 0 CACHE STRING "A brush model: every piece of its C cut printed (bmftrace lines; BMF_C=1)")
 set(Q1PSX_BENCH_HASHONLY 0 CACHE STRING "1: the bench dumps only the frames' hashes (no packets, no pictures)")
 set(Q1PSX_BENCH_PLAY 0 CACHE STRING "1: the maps bench also runs the loading screen and 30 interactive frames per map")
 set(Q1PSX_BENCH_MAP "" CACHE STRING "A map name (E1M1): the maps bench runs that map only")
@@ -289,7 +290,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
 		Q1PSX_BENCH_BMF=${Q1PSX_BENCH_BMF}
 		Q1PSX_BENCH_BMFCULL=${Q1PSX_BENCH_BMFCULL}
-		Q1PSX_BENCH_BMFCHK=${Q1PSX_BENCH_BMFCHK} Q1PSX_BENCH_BMFARENA=${Q1PSX_BENCH_BMFARENA}
+		Q1PSX_BENCH_BMFCHK=${Q1PSX_BENCH_BMFCHK} Q1PSX_BENCH_BMFARENA=${Q1PSX_BENCH_BMFARENA} Q1PSX_BENCH_BMFTRACE=${Q1PSX_BENCH_BMFTRACE}
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
 		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS} Q1PSX_BENCH_MONSTERS=${Q1PSX_BENCH_MONSTERS}
