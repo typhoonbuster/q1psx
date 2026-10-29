@@ -12309,3 +12309,64 @@ measured, not built; the smallest pool is E4M7's throughout).
 | E4M7 | 308 | 340 | 359 | 379 | 397 | 418 | 432 | 441 |
 | END | 904 | 936 | 955 | 975 | 985 | 982 | 996 | 995 |
 | mean | 521 | 553 | 572 | 592 | 607 | 617 | 631 | 636 |
+
+### 90.12 The pools by the zone cut: 64 or 96 leaves a zone, 3 or 4 slots
+
+The same runs as §90.11 (`BENCH_MAPS=1 VIEWS=0 RESIDENCY=1`, the release's
+arena: 1 343 008 B before the batch, 1 388 304 B after it) over the four
+cuts the zone tables offer at the 1536 draw distance: zones of 64 or 96
+seen leaves (`Q1PSX_ZONE_TABLES` seen_1536_64 / seen_1536_96), three or
+four chunk slots (`Q1PSX_ZONE_SLOTS`). The pool, KB, before and after
+the nine levers; "before" is master 795bfb2, "after" 90b52bd.
+
+The cook keeps a map whole when its skeleton and slots would take as
+much RAM as the whole world (`tools/qcook/zones.c`): with 96-leaf zones
+and four slots that is 27 of the 32 maps (E4M7's chunks are 90 KB, its
+four slots 360 KB against 62 KB and 248 under 64/4), with 96 and three 8
+(E1M6, E1M7, E1M8, E3M2, E3M3, E4M3, E4M6, END), with 64 and four 5
+(E1M6, E1M7, E1M8, E3M2, END), with 64 and three 3 (E1M7, E3M2, END). A
+whole map's pool is the world's rest, the same under every cut.
+
+The batch's gain is the same under every cut, +88 to +133 KB a map
+(the arena's +45 KB, then the map's blocks): the cut and the slots pick
+the base, the levers add to it.
+
+The smallest pool after the batch: 64/4 E4M7's 441 KB (before 308); 64/3
+E4M7's 503 KB (before 370); 96/4 E4M7's 329 KB (before 196); 96/3 E4M7's
+419 KB (before 286). The mean over the 32 maps: 64/4 521 -> 636; 64/3
+575 -> 690; 96/4 462 -> 578; 96/3 506 -> 622.
+
+| map | 64/4 before | 64/4 after | 64/3 before | 64/3 after | 96/4 before | 96/4 after | 96/3 before | 96/3 after |
+|---|---|---|---|---|---|---|---|---|
+| START | 631 | 725 | 695 | 789 | 591 | 685 | 665 | 759 |
+| E1M1 | 578 | 690 | 644 | 756 | 518 | 632 | 560 | 674 |
+| E1M2 | 466 | 576 | 532 | 642 | 410 | 522 | 454 | 564 |
+| E1M3 | 348 | 470 | 412 | 534 | 318 | 442 | 322 | 446 |
+| E1M4 | 438 | 560 | 502 | 624 | 336 | 458 | 412 | 534 |
+| E1M5 | 463 | 584 | 525 | 646 | 425 | 548 | 447 | 568 |
+| E1M6 | 549 | 664 | 567 | 684 | 549 | 664 | 549 | 664 |
+| E1M7 | 988 | 1076 | 988 | 1076 | 988 | 1076 | 988 | 1076 |
+| E1M8 | 773 | 866 | 783 | 876 | 773 | 866 | 773 | 866 |
+| E2M1 | 525 | 641 | 591 | 707 | 441 | 559 | 501 | 617 |
+| E2M2 | 491 | 608 | 555 | 672 | 389 | 506 | 471 | 588 |
+| E2M3 | 504 | 615 | 570 | 681 | 428 | 539 | 492 | 603 |
+| E2M4 | 350 | 477 | 414 | 541 | 230 | 357 | 314 | 439 |
+| E2M5 | 542 | 656 | 606 | 720 | 454 | 568 | 516 | 630 |
+| E2M6 | 372 | 494 | 434 | 556 | 320 | 444 | 344 | 466 |
+| E2M7 | 358 | 485 | 422 | 549 | 256 | 383 | 326 | 453 |
+| E3M1 | 560 | 679 | 624 | 743 | 486 | 605 | 542 | 659 |
+| E3M2 | 609 | 734 | 609 | 734 | 609 | 734 | 609 | 734 |
+| E3M3 | 633 | 748 | 691 | 806 | 609 | 726 | 609 | 726 |
+| E3M4 | 363 | 488 | 427 | 552 | 271 | 396 | 337 | 462 |
+| E3M5 | 479 | 595 | 543 | 659 | 359 | 477 | 453 | 571 |
+| E3M6 | 454 | 561 | 520 | 627 | 350 | 457 | 442 | 549 |
+| E3M7 | 583 | 691 | 647 | 755 | 535 | 643 | 563 | 671 |
+| E4M1 | 528 | 642 | 594 | 708 | 464 | 578 | 516 | 630 |
+| E4M2 | 537 | 653 | 601 | 717 | 483 | 599 | 541 | 657 |
+| E4M3 | 355 | 481 | 419 | 545 | 351 | 475 | 351 | 475 |
+| E4M4 | 494 | 610 | 560 | 676 | 390 | 506 | 482 | 598 |
+| E4M5 | 405 | 537 | 469 | 601 | 357 | 489 | 379 | 511 |
+| E4M6 | 551 | 670 | 609 | 728 | 545 | 664 | 545 | 664 |
+| E4M7 | 308 | 441 | 370 | 503 | 196 | 329 | 286 | 419 |
+| END | 904 | 995 | 904 | 995 | 904 | 995 | 904 | 995 |
+| mean | 521 | 636 | 575 | 690 | 462 | 578 | 506 | 622 |

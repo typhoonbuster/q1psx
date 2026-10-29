@@ -2067,6 +2067,10 @@ followed by R0-R4.
     +4.7 KB on average (E4M7's 432 → 441 KB, E3M5's 586 → 595, E1M3's
     467 → 470); every frame identical, the walk's frames +0.09 %, its
     late frames the same.
+  - §90.12 the pools under the four zone cuts at the 1536 draw distance
+    (64 or 96 seen leaves a zone, three or four slots), before and after
+    the batch: the gain is the cut's base plus 88-133 KB a map; with 96
+    and four slots the cook keeps 27 of the 32 maps whole.
   - `MEMLOG=1 scripts/bench.sh`: the level arena logged block by block
     (`engine/mem.c`).
 - **The monsters' level of detail by their vertices' order**
