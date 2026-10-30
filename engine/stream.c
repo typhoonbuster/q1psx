@@ -151,10 +151,11 @@ static struct {
 	uint32_t left;                /* its samples' bytes still to upload          */
 	uint16_t sector, sectors;     /* the next piece's (from its first), its count */
 	uint8_t  step;                /* SR_*                                        */
-	uint8_t  ram;                 /* its samples come from the RAM block (one DMA) */
-} sread = { -1, 0, 0, 0, 0, 0, 0 };
+} sread = { -1, 0, 0, 0, 0, 0 };
 enum { SR_WAIT, SR_READ, SR_UPLOAD };   /* (SR_WAIT: for the music's room) */
 static int      waiting = -1;  /* the asset whose read waits for the music's room */
+static int      swap_a = -1;   /* the RAM sound whose DMA is in flight (§86), -1 none:
+                                  the swaps go on beside the drive's reads (§99) */
 static uint32_t frame_no;
 
 
@@ -561,8 +562,10 @@ static uint16_t page_tpage(int p)   /* 8bpp, no semi-transparency (game.c's) */
 
 /* next_wanted found nothing to read and nothing it reads changed since:
    not asked again every idle frame (a pass, a slot freed, an asset in or
-   stuck clear it) */
+   stuck clear it); a bit per kind it looks at (W_*) */
 static uint8_t none_wanted;
+enum { W_DRIVE = 1, W_SWAP = 2, W_ANY = 3 };   /* the drive's reads, the RAM sounds'
+                                                 swaps (§99), both (the preload) */
 
 static void slot_free(res_t *r)
 {
@@ -678,6 +681,9 @@ static void set_stuck(int a)
 	none_wanted = 0;
 	as->stuck = ST_ROOM;
 	held_by_more(as->last, &as->stuck_ram, &as->stuck_vram, &as->stuck_spu);
+	SLOG("stream: no room for %08x (score %u; the assets wanted as much hold %u B, %u texels, %u B of SPU)\n",
+	     (unsigned) as->d.hash, (unsigned) as->last, (unsigned) as->stuck_ram, (unsigned) as->stuck_vram,
+	     (unsigned) as->stuck_spu);
 }
 
 /* the resident asset wanted least, if it is wanted less than `score` (and
@@ -1015,7 +1021,7 @@ static int sound_room(int a)
 	return 1;
 }
 
-static void sound_done(int ok, int broken);
+static void sound_in(int a, int ok, int broken);
 
 static int sound_start(int a)
 {
@@ -1027,13 +1033,12 @@ static int sound_start(int a)
 	sread.left   = n;
 	sread.sector = 0;
 	sread.step   = SR_WAIT;
-	sread.ram    = 0;
 	return 1;
 }
 
 /* a RAM-resident sound (§86): its place in the SPU's swap room taken as a
-   disc read's, its samples sent from the block by one DMA, no read (0: no
-   room, or not a sound this engine reads) */
+   disc read's, its samples sent from the block by one DMA, no read; the
+   SPU's DMA free (0: no room) */
 static int ram_start(int a)
 {
 	if (!sound_room(a))
@@ -1041,11 +1046,9 @@ static int ram_start(int a)
 	asset_t *as = &assets[a];
 	res_t *r = &res[as->res];
 	const qst_sound *h = (const qst_sound *) (ram_block + as->ram_ofs);
-	sread.a   = a;
-	sread.ram = 1;
 	if (sizeof *h + h->len > as->d.size || !h->len || (h->len & 15)) {
-		sound_done(0, 1);
-		return 0;
+		sound_in(a, 0, 1);                    /* (not a sound this engine reads: never again) */
+		return 1;
 	}
 	r->snd.len   = h->len;
 	r->snd.pitch = h->pitch;
@@ -1055,9 +1058,7 @@ static int ram_start(int a)
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetTransferStartAddr(r->snd.spu);
 	SpuWrite((const uint32_t *) (h + 1), n);
-	sread.spu  = r->snd.spu + n;
-	sread.left = 0;
-	sread.step = SR_UPLOAD;
+	swap_a = a;
 	stream_stats.ram_swaps++;
 	return 1;
 }
@@ -1097,6 +1098,8 @@ static int sound_upload_piece(void)
 	}
 	if (bytes > sread.left)
 		bytes = sread.left;
+	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (a RAM sound's swap in flight: the
+	                                               loading screen's back-to-back frames) */
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetTransferStartAddr(sread.spu);
 	SpuWrite((const uint32_t *) src, bytes);
@@ -1115,7 +1118,7 @@ static void sound_in(int a, int ok, int broken)
 	none_wanted = 0;
 	if (ok) {
 		as->state = A_RES;
-		if (!sread.ram) {
+		if (!ram_block || as->ram_ofs == ~0u) {   /* (a read, not a swap) */
 			stream_stats.reads++;
 			stream_stats.read_bytes += as->d.size;
 		}
@@ -1273,19 +1276,23 @@ static void start_read(int a)
 
 /* the wanted asset to read next: the most wanted on the disc within its
    reach (the biggest of equals first: its room found before the small
-   ones break it up), -1 if none */
-static int next_wanted(void)
+   ones break it up), -1 if none; `which`: the drive's reads, the RAM
+   sounds' swaps, or both (W_*) */
+static int next_wanted(int which)
 {
-	if (none_wanted)
+	if ((none_wanted & which) == which)
 		return -1;
 	int best = -1, num_held = -1;                /* (-1: not sorted yet) */
+	int swaps = ram_block != 0;                  /* (no block: the RAM sounds read) */
 	held_t held[MAX_RES];
 	for (int a = 0; a < num_assets; a++) {
 		asset_t *as = &assets[a];
-		if (as->state != A_DISC || as->backoff || as->stuck == ST_BROKEN)
+		if (as->last >= STREAM_DEAD || as->state != A_DISC || as->backoff || as->stuck == ST_BROKEN)
+			continue;                         /* (the unwanted first: most of them) */
+		if (!(which & (swaps && as->ram_ofs != ~0u ? W_SWAP : W_DRIVE)))
 			continue;
 		uint32_t reach = as->d.kind == QSTK_SOUND ? STREAM_SOUND_REACH : STREAM_REACH;
-		if ((as->last & STREAM_DIST) > reach || as->last >= STREAM_DEAD)
+		if ((as->last & STREAM_DIST) > reach)
 			continue;
 		if (as->absent) {                     /* (in the level's bank, or not in its file: the
 		                                         cook's list missed it; never read) */
@@ -1310,7 +1317,8 @@ static int next_wanted(void)
 		    (as->last == assets[best].last && as->d.size > assets[best].d.size))
 			best = a;
 	}
-	none_wanted = best < 0;
+	if (best < 0)
+		none_wanted |= (uint8_t) which;
 	return best;
 }
 
@@ -1318,10 +1326,10 @@ static int next_wanted(void)
 
 int stream_reading(void)
 {
-	return reading >= 0 || (sread.a >= 0 && !sread.ram && (sread.step == SR_READ ||
+	return reading >= 0 || (sread.a >= 0 && (sread.step == SR_READ ||
 	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK)))) ||
 	       zone_reading();                   /* (a world chunk's read: the drive's too; a RAM
-	                                             sound's DMA is not) */
+	                                             sound's swap is not) */
 }
 
 uint8_t *stream_stage(void)
@@ -1389,9 +1397,9 @@ void stream_abort(void)
 	lend_at = 0;                              /* (asked for again at the map's start) */
 	if (lend_state != L_NONE)
 		lend_state = L_WANT;
-	if (sread.a >= 0) {
-		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (no DMA left reading the stage) */
-		sread.a = -1;
+	if (sread.a >= 0 || swap_a >= 0) {
+		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (no DMA left reading the stage, the block) */
+		sread.a = swap_a = -1;
 	}
 	waiting = -1;
 	DrawSync(0);                              /* (no upload left reading the pool) */
@@ -1491,20 +1499,27 @@ uint8_t *stream_lent(uint32_t *reads)
 	return lend_state == L_IN ? lend_at : 0;
 }
 
-void stream_frame(void)
+/* the RAM sounds' swaps (§86) beside the drive's reads, a world chunk's,
+   a model's, a sound's (§99: after a teleport the chunks' reads held them
+   back, the ring's pickup 367 units away unheard): the one in flight in
+   once its DMA is done, the next started while the SPU's DMA is free */
+static void swap_step(void)
 {
-	if (!num_assets || !pool)
-		return;
-	frame_no++;
-	memcpy(stream_origin, pl.pm.pos, sizeof stream_origin);
-	trims();
-	int jump = 0;
-	for (int k = 0; k < 3; k++) {
-		int32_t d = stream_origin[k] - pass_origin[k];
-		jump |= d > PASS_JUMP || d < -PASS_JUMP;
+	if (!SpuIsTransferCompleted(SPU_TRANSFER_PEEK))
+		return;                               /* (the swap's, or a disc sound's piece) */
+	if (swap_a >= 0) {
+		int a = swap_a;
+		swap_a = -1;
+		sound_in(a, 1, 0);
 	}
-	if (frame_no % PASS_FRAMES == 0 || jump)
-		pass();
+	int a = next_wanted(W_SWAP);
+	if (a >= 0 && !ram_start(a))
+		set_stuck(a);
+}
+
+/* the drive's reads: the one in flight, the next */
+static void drive_step(void)
+{
 	if (reading >= 0) {                       /* a model's read */
 		int left = cd_poll();                 /* (also runs CdReadRetry's retries) */
 		if (left > 0)
@@ -1516,14 +1531,9 @@ void stream_frame(void)
 	if (zone_drive_wanted())                 /* (a world chunk's read goes first: engine/zone.c) */
 		return;
 	if (waiting < 0) {
-		int a = next_wanted();
+		int a = next_wanted(W_DRIVE);
 		if (a < 0)
 			return;
-		if (assets[a].d.kind == QSTK_SOUND && ram_block && assets[a].ram_ofs != ~0u) {
-			if (!ram_start(a))                /* (from RAM: no drive, no wait) */
-				set_stuck(a);
-			return;
-		}
 		if (assets[a].d.kind == QSTK_SOUND ? !sound_start(a) : reserve(a) < 0) {
 			set_stuck(a);
 			return;
@@ -1540,6 +1550,26 @@ void stream_frame(void)
 		start_read(a);
 	else if (!sound_read_piece())
 		sound_done(0, 0);
+}
+
+void stream_frame(void)
+{
+	if (!num_assets || !pool)
+		return;
+	frame_no++;
+	memcpy(stream_origin, pl.pm.pos, sizeof stream_origin);
+	trims();
+	int jump = 0;
+	for (int k = 0; k < 3; k++) {
+		int32_t d = stream_origin[k] - pass_origin[k];
+		jump |= d > PASS_JUMP || d < -PASS_JUMP;
+	}
+	if (frame_no % PASS_FRAMES == 0 || jump)
+		pass();
+	drive_step();
+	if (ram_block)                            /* (after: a piece's upload the drive started
+	                                             goes first) */
+		swap_step();
 }
 
 #ifdef Q1PSX_BENCH
@@ -1640,16 +1670,17 @@ Q_COLD void stream_preload(void)
 		memcpy(stream_origin, pl.pm.pos, sizeof stream_origin);
 	pass();
 	for (;;) {
-		int a = next_wanted();
+		int a = next_wanted(W_ANY);
 		if (a < 0)
 			break;
 		if (assets[a].d.kind == QSTK_SOUND) {
 			if (ram_block && assets[a].ram_ofs != ~0u) {
 				if (!ram_start(a))
 					set_stuck(a);
-				else if (sread.a >= 0) {
+				else if (swap_a >= 0) {
 					SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
-					sound_done(1, 0);
+					swap_a = -1;
+					sound_in(a, 1, 0);
 				}
 			} else if (!sound_start(a)) {
 				set_stuck(a);

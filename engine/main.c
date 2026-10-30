@@ -223,12 +223,25 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
    CL_AdjustAngles), moves and fires; the world's runs at its own rate
    (game_world_hz, engine/ents.c ents_tick). The camera at the last tick's
    view. */
+#ifdef Q1PSX_BENCH
+typedef struct cap_step_s cap_step_t;
+static const cap_step_t *cap_step;          /* the capture's script (CAPTURE=1), NULL: none */
+static void cap_cmd(game_cmd_t *cmd);
+#define CAPTURING (cap_step != 0)
+#else
+#define CAPTURING 0
+#endif
+
 static void player_update(const pad_t *polls, int n)
 {
 	uint32_t t0 = prof_now();
 	for (int i = 0; i < n; i++) {
 		game_cmd_t cmd;
 		player_cmd(&cmd, &polls[i]);
+#ifdef Q1PSX_BENCH
+		if (cap_step)
+			cap_cmd(&cmd);                   /* (the capture's script: its command for the tick) */
+#endif
 		game_tick(&cmd);
 	}
 	game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
@@ -638,6 +651,8 @@ static void opt_draw(void)
 		if (o == opt_sel)
 			ui_rect(x - 4, y - 1, 148, 10, 60, 70, 120);
 	}
+	if (CAPTURING)                          /* (the capture shows the game alone) */
+		return;
 	const char *hint[2];
 	settings_hint(opt_sel, hint);
 	vid_text(16, 210, hint[0]);
@@ -3191,6 +3206,246 @@ static void key_phase(const char *what, int ticks, int yaw)
 	       (unsigned) vid_stats.vbl);
 }
 
+#ifndef Q1PSX_BENCH_CAPTURE
+#define Q1PSX_BENCH_CAPTURE 0   /* 1: the capture's scenarios (CAPTURE=1 scripts/bench.sh) */
+#endif
+
+/* The capture (CAPTURE=1 scripts/bench.sh): the sounds the levels read
+   from the disc (docs/porting-notes.md §98: the teleporters' fogs, the
+   powerups' sounds) in their worst cases, played through the game's own
+   loop for an emulator's recording: run_frame(1, 0), a tick each vblank's
+   poll, the drive, the music and the voices as in play, the pad's commands
+   replaced by a script a tick at a time. Each step prints a line; each
+   scenario the sounds asked and not in. */
+enum { CS_END, CS_NOTE, CS_WAIT, CS_GOTO, CS_FACE, CS_JUMP, CS_TELE, CS_USE, CS_HURT, CS_ENDSOON };
+struct cap_step_s {
+	uint8_t     kind;
+	int16_t     ticks;           /* CS_WAIT, CS_FACE: its ticks; CS_GOTO: at most */
+	int16_t     x, y, z;         /* world units: the place to go to, face or jump to */
+	int16_t     arg;             /* CS_JUMP: the yaw; CS_TELE: the teleporter's brush model;
+	                                CS_HURT: the damage; CS_ENDSOON: hundredths of a second */
+	int16_t     pitch;           /* CS_JUMP: degrees (up: negative) */
+	const char *text;            /* CS_NOTE: the caption; CS_USE: the targetname */
+};
+static int cap_left = -1;        /* the step's ticks left, -1: not begun */
+static int32_t cap_dist;         /* CS_GOTO: the distance left a few ticks ago */
+
+/* a turn toward `want` (binary degrees), at most 64 a tick (338 degrees a second) */
+static int cap_turn(int want)
+{
+	int d = (want - pl.pm.yaw) & (ANG_TURN - 1);
+	if (d >= ANG_TURN / 2)
+		d -= ANG_TURN;
+	int step = d > 64 ? 64 : d < -64 ? -64 : d;
+	pl.pm.yaw = (pl.pm.yaw + step) & (ANG_TURN - 1);
+	return d - step;
+}
+
+static void cap_cmd(game_cmd_t *cmd)
+{
+	memset(cmd, 0, sizeof *cmd);
+	cmd->weapon_group = -1;
+	for (; cap_step->kind != CS_END; cap_step++, cap_left = -1) {
+		const cap_step_t *s = cap_step;
+		int32_t at[3] = { s->x * CLIP_SUB, s->y * CLIP_SUB, s->z * CLIP_SUB };
+		if (cap_left < 0)
+			cap_left = s->ticks;
+		switch (s->kind) {
+		case CS_NOTE:
+			printf("capture: %s (tick %d)\n", s->text, (int) game_tick_count);
+			hud_notify(s->text);
+			break;
+		case CS_WAIT:
+			if (cap_left-- > 0)
+				return;
+			break;
+		case CS_FACE:
+			cap_turn(r_atan2(at[1] - pl.pm.pos[1], at[0] - pl.pm.pos[0]));
+			if (cap_left-- > 0)
+				return;
+			break;
+		case CS_GOTO: {
+			int32_t dx = at[0] - pl.pm.pos[0], dy = at[1] - pl.pm.pos[1];
+			int32_t d = (dx < 0 ? -dx : dx) > (dy < 0 ? -dy : dy) ? (dx < 0 ? -dx : dx) : (dy < 0 ? -dy : dy);
+			if (d > 16 * CLIP_SUB && cap_left-- > 0) {
+				int left = cap_turn(r_atan2(dy, dx));
+				cmd->fwd = (left < 0 ? -left : left) < ANG_TURN / 16 ? PM_AXIS : 0;
+				if (cap_left % 8 == 0) {     /* (no way made in 8 ticks: a step too high, jumped) */
+					cmd->jump = cmd->fwd && cap_dist - d < 8 * CLIP_SUB;
+					cap_dist = d;
+				}
+				return;
+			}
+			printf("capture: at %d %d %d (tick %d)\n", (int) (pl.pm.pos[0] / CLIP_SUB),
+			       (int) (pl.pm.pos[1] / CLIP_SUB), (int) (pl.pm.pos[2] / CLIP_SUB), (int) game_tick_count);
+			break;
+		}
+		case CS_JUMP:                     /* (a cut: no teleporter, no fog) */
+			memcpy(pl.pm.pos, at, sizeof at);
+			memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+			pl.pm.yaw = s->arg * ANG_TURN / 360;
+			pl.pm.pitch = s->pitch * ANG_TURN / 360;
+			printf("capture: jump to %d %d %d (tick %d)\n", s->x, s->y, s->z, (int) game_tick_count);
+			break;
+		case CS_TELE:                     /* into a teleporter: its touch takes the player
+		                                     (Quake's teleport_touch: the fogs at both ends) */
+			for (int i = 2; i < num_edicts; i++) {
+				const edict_t *e = &edicts[i];
+				if (!e->inuse || e->model != s->arg)
+					continue;
+				int32_t lo[3], hi[3];
+				ent_absbox(e, lo, hi);
+				for (int k = 0; k < 3; k++)
+					pl.pm.pos[k] = (lo[k] + hi[k]) / 2;
+				memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+				printf("capture: into the teleporter *%d (tick %d)\n", s->arg, (int) game_tick_count);
+				break;
+			}
+			break;
+		case CS_USE: {                    /* the targets used, as a trigger would */
+			int used = 0;
+			for (int i = 2; i < num_edicts; i++) {
+				edict_t *e = &edicts[i];
+				if (!e->inuse || !e->use || !e->targetname || strcmp(world_string(e->targetname), s->text))
+					continue;
+				ent_other = ent_activator = ent_player;
+				ENT_CALL(e, use);
+				used++;
+			}
+			printf("capture: use %s, %d entities (tick %d)\n", s->text, used, (int) game_tick_count);
+			break;
+		}
+		case CS_HURT:
+			ent_damage(ent_player, ent_world, ent_world, s->arg);
+			printf("capture: hurt %d (tick %d)\n", s->arg, (int) game_tick_count);
+			break;
+		case CS_ENDSOON: {                /* the running powerups end in arg hundredths */
+			int32_t t = (int32_t) game_tick_count + TICKS(s->arg);
+			int32_t *fin[4] = { &pl.invisible_finished, &pl.invincible_finished, &pl.super_damage_finished,
+			                    &pl.radsuit_finished };
+			for (int k = 0; k < 4; k++)
+				if (*fin[k] > t)
+					*fin[k] = t;
+			printf("capture: the powerups end in %d.%02d s (tick %d)\n", s->arg / 100, s->arg % 100,
+			       (int) game_tick_count);
+			break;
+		}
+		}
+	}
+}
+
+/* E2M4's scrag trap (t67, then t68 four seconds later as the map's relays
+   have it): the scrags teleported over the arena, two fogs each (every one
+   of the five read from the disc), the arena's fiends awake */
+static const cap_step_t cap_e2m4[] = {
+	{ CS_JUMP, 0, 80, 1336, 216, 30, 0, 0 },     /* (the upper floor: the scrags arrive in view) */
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Scrag trap: fogs from the disc" },
+	{ CS_WAIT, 90, 0, 0, 0, 0, 0, 0 },
+	{ CS_USE, 0, 0, 0, 0, 0, 0, "t67" },
+	{ CS_WAIT, 240, 0, 0, 0, 0, 0, 0 },
+	{ CS_USE, 0, 0, 0, 0, 0, 0, "t68" },
+	{ CS_WAIT, 360, 0, 0, 0, 0, 0, 0 },
+	{ CS_END, 0, 0, 0, 0, 0, 0, 0 }
+};
+
+/* E4M7: six teleporters in a row (twelve fogs, the zones switching: the
+   chunks', the music's and the fogs' reads on one drive) */
+static const cap_step_t cap_e4m7_chain[] = {
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Six teleports: 12 fogs" },
+	{ CS_WAIT, 90, 0, 0, 0, 0, 0, 0 },
+	{ CS_TELE, 0, 0, 0, 0, 98, 0, 0 },
+	{ CS_WAIT, 45, 0, 0, 0, 0, 0, 0 },
+	{ CS_TELE, 0, 0, 0, 0, 24, 0, 0 },
+	{ CS_WAIT, 45, 0, 0, 0, 0, 0, 0 },
+	{ CS_TELE, 0, 0, 0, 0, 26, 0, 0 },
+	{ CS_WAIT, 45, 0, 0, 0, 0, 0, 0 },
+	{ CS_TELE, 0, 0, 0, 0, 48, 0, 0 },
+	{ CS_WAIT, 45, 0, 0, 0, 0, 0, 0 },
+	{ CS_TELE, 0, 0, 0, 0, 19, 0, 0 },
+	{ CS_WAIT, 45, 0, 0, 0, 0, 0, 0 },
+	{ CS_TELE, 0, 0, 0, 0, 23, 0, 0 },
+	{ CS_WAIT, 90, 0, 0, 0, 0, 0, 0 },
+	{ CS_END, 0, 0, 0, 0, 0, 0, 0 }
+};
+
+/* E4M7 from its start: the maps' worst lead for a powerup's sounds.
+   Teleporter *23 lands 367 units from the ring of shadows, which is 2584
+   units from the spawn: out of every sound's reach there, none of its
+   sounds in (the chain above passes 814 units from it at *24 and has
+   them in); the ring picked up about a second after; its warning then
+   brought forward */
+static const cap_step_t cap_e4m7_ring[] = {
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Teleport 367 units from a ring, none of its sounds in" },
+	{ CS_WAIT, 90, 0, 0, 0, 0, 0, 0 },
+	{ CS_TELE, 0, 0, 0, 0, 23, 0, 0 },
+	{ CS_WAIT, 20, 0, 0, 0, 0, 0, 0 },
+	{ CS_GOTO, 300, -1976, -32, 8, 0, 0, 0 },
+	{ CS_WAIT, 120, 0, 0, 0, 0, 0, 0 },
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Its end brought forward" },
+	{ CS_ENDSOON, 0, 0, 0, 0, 350, 0, 0 },
+	{ CS_WAIT, 300, 0, 0, 0, 0, 0, 0 },
+	{ CS_END, 0, 0, 0, 0, 0, 0, 0 }
+};
+
+/* E4M7 again, beyond what the maps allow: cuts onto the other ring (no
+   lead at all), onto the pentagram (hit a second after), onto the biosuit
+   (the three powerups' ends brought forward together: their warnings at
+   once) */
+static const cap_step_t cap_e4m7_cuts[] = {
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Synthetic: cut onto a ring" },
+	{ CS_WAIT, 90, 0, 0, 0, 0, 0, 0 },
+	{ CS_JUMP, 0, 1088, 1120, 32, 0, 0, 0 },
+	{ CS_WAIT, 300, 0, 0, 0, 0, 0, 0 },
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Synthetic: cut onto the pentagram" },
+	{ CS_JUMP, 0, -352, -1952, 56, 0, 0, 0 },
+	{ CS_WAIT, 60, 0, 0, 0, 0, 0, 0 },
+	{ CS_HURT, 0, 0, 0, 0, 10, 0, 0 },
+	{ CS_WAIT, 130, 0, 0, 0, 0, 0, 0 },
+	{ CS_HURT, 0, 0, 0, 0, 10, 0, 0 },
+	{ CS_WAIT, 90, 0, 0, 0, 0, 0, 0 },
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Synthetic: cut onto the biosuit" },
+	{ CS_JUMP, 0, -1056, 912, -216, 0, 0, 0 },
+	{ CS_WAIT, 60, 0, 0, 0, 0, 0, 0 },
+	{ CS_NOTE, 0, 0, 0, 0, 0, 0, "Three ends brought forward" },
+	{ CS_ENDSOON, 0, 0, 0, 0, 350, 0, 0 },
+	{ CS_WAIT, 300, 0, 0, 0, 0, 0, 0 },
+	{ CS_END, 0, 0, 0, 0, 0, 0, 0 }
+};
+
+static void cap_scenario(const char *map, const cap_step_t *script)
+{
+	int m = world_find_map(map);
+	if (m < 0 || !load_level(m)) {
+		printf("capture: no %s\n", map);
+		return;
+	}
+	game_spawn();
+	game_active = 1;
+	overlay_on = 0;
+	uint32_t miss0 = stream_stats.snd_missing, reads0 = stream_stats.reads, frames = 0;
+	printf("capture %s start\n", map);
+	cap_left = -1;
+	cap_step = script;
+	stream_log = 1;
+	while (cap_step->kind != CS_END && frames < 60 * 90) {
+		run_frame(1, 0);
+		frames++;
+	}
+	stream_log = 0;
+	cap_step = 0;
+	printf("capture %s end: %u frames, %u sounds asked and not in, the stream's reads %u\n", map,
+	       (unsigned) frames, (unsigned) (stream_stats.snd_missing - miss0),
+	       (unsigned) (stream_stats.reads - reads0));
+}
+
+static void bench_capture(void)
+{
+	cap_scenario("E2M4", cap_e2m4);
+	cap_scenario("E4M7", cap_e4m7_chain);
+	cap_scenario("E4M7", cap_e4m7_ring);
+	cap_scenario("E4M7", cap_e4m7_cuts);
+}
+
 /* MONSTERS=6: E1M3's gold key (the crash reported 2026-10-22, usually on the way back from the key): the monsters within
    1200 units of the key awake and after the player; the key picked up
    among them; then the gold doors (*21, *22, x -496) from their east and
@@ -3293,6 +3548,13 @@ static void run_bench(void)
 
 	printf("bench start\n");
 	zone_sync = 1;                              /* (a view's zone read before its frame) */
+	if (Q1PSX_BENCH_CAPTURE) {
+		zone_sync = 0;                          /* (the zones read as in play) */
+		bench_capture();
+		bench_done();
+		for (;;)
+			run_frame(0, 0);
+	}
 	if (Q1PSX_BENCH_ZONES) {
 		bench_zones();
 		bench_done();

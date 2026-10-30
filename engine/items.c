@@ -440,7 +440,10 @@ Q_COLD static void powerup_item(edict_t *self, int qim, uint32_t it, const char 
 	/* the sounds it plays while it runs (engine/game.c), wanted of the
 	   stream by the artifact's distance as its pickup's is (a level that
 	   reads them from the disc has them in at the pickup: the ring's
-	   breath plays at once); not played from here */
+	   breath plays at once); not played from here. run1 the one heard
+	   first (the ring's breath at the pickup, the pentagram's at the
+	   first hit), run2 the warning 3 s before the end: at one distance
+	   the stream wants them in that order (engine/ents.c, §99) */
 	self->noise1  = (int16_t) snd_find(run1);
 	self->noise2  = (int16_t) (run2 ? snd_find(run2) : SND_NULL);
 	set_model(self, qim);
@@ -567,14 +570,14 @@ Q_COLD void items_spawn(edict_t *e, const qw_ent *q)
 	case QE_ITEM_SIGIL:   item_sigil(e); break;
 	case QE_ITEM_ARTIFACT_INVULNERABILITY:
 		powerup_item(e, QIM_INVULNER, IT_INVULNERABILITY, "Pentagram of Protection", "items/protect.wav",
-		             "items/protect2.wav", "items/protect3.wav");
+		             "items/protect3.wav", "items/protect2.wav");
 		break;
 	case QE_ITEM_ARTIFACT_ENVIROSUIT:
 		powerup_item(e, QIM_SUIT, IT_SUIT, "Biosuit", "items/suit.wav", "items/suit2.wav", 0);
 		break;
 	case QE_ITEM_ARTIFACT_INVISIBILITY:
-		powerup_item(e, QIM_INVISIBL, IT_INVISIBILITY, "Ring of Shadows", "items/inv1.wav", "items/inv2.wav",
-		             "items/inv3.wav");
+		powerup_item(e, QIM_INVISIBL, IT_INVISIBILITY, "Ring of Shadows", "items/inv1.wav", "items/inv3.wav",
+		             "items/inv2.wav");
 		break;
 	case QE_ITEM_ARTIFACT_SUPER_DAMAGE:
 		powerup_item(e, QIM_QUADDAMA, IT_QUAD, "Quad Damage", "items/damage.wav", "items/damage2.wav", 0);

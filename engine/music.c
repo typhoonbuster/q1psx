@@ -129,6 +129,7 @@ static uint32_t played(uint32_t *samples)
    first block marked its loop's start, its last its end */
 static void upload(uint8_t *src, uint32_t slot)
 {
+	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (a RAM sound's swap in flight: engine/stream.c) */
 	for (int c = 0; c < 2; c++) {
 		uint8_t *d = src + c * QSPU_CHUNK;
 		d[1] = slot == 0 ? 0x04 : 0;

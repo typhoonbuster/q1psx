@@ -1957,9 +1957,11 @@ void ents_stream_wants(void)
 			}
 			d /= CLIP_SUB;
 			const int16_t n[5] = { e->noise, e->noise1, e->noise2, e->noise3, e->noise4 };
-			for (int k = 0; k < 5; k++)
+			for (int k = 0; k < 5; k++)              /* (+ its rank: at one distance the first
+			                                            noise goes first, an artifact's pickup
+			                                            before the sounds it plays while it runs) */
 				if (n[k] >= SND_STREAM)
-					stream_want(n[k] - SND_STREAM, d);
+					stream_want(n[k] - SND_STREAM, d + (uint32_t) k);
 		}
 	}
 	game_stream_wants();

@@ -149,6 +149,10 @@ void snd_set_cd_volume(int tenths)
    asset): their SPU address and header, 0 when they are not in */
 typedef struct { uint32_t addr, len, ticks; uint16_t pitch, flags; } sfx_t;
 
+#ifdef Q1PSX_BENCH
+static uint8_t told[256];                         /* the bench's sndmiss lines, per asset */
+#endif
+
 static int sfx_get(int s, sfx_t *o)
 {
 	if (s >= SND_STREAM) {
@@ -156,9 +160,8 @@ static int sfx_get(int s, sfx_t *o)
 		if (!ss) {
 			stream_stats.snd_missing++;       /* (asked to play, not in: the bench's figure) */
 #ifdef Q1PSX_BENCH
-			{                                 /* (the first three asks of each: its asset,
-			                                     its name's hash, its last want) */
-				static uint8_t told[256];
+			{                                 /* (the first three asks of each a level: its
+			                                     asset, its name's hash, its last want) */
 				int a = s - SND_STREAM;
 				if (a < 256 && told[a] < 3) {
 					told[a]++;
@@ -225,6 +228,9 @@ Q_COLD int snd_load_bank(const char *map)
 	bank_n = statics_n = cd_track = 0;
 	for (int i = 0; i < S_COUNT; i++)
 		named[i] = -1;
+#ifdef Q1PSX_BENCH
+	memset(told, 0, sizeof told);
+#endif
 	mem_level_reset();                               /* the bank passes through the arena */
 	uint32_t size;
 	const uint8_t *f = cd_load(name, &size, NULL);
@@ -620,35 +626,53 @@ void snd_update(const int32_t origin[3], int yaw, int pitch, int roll, int ticks
    over their reach as a full one's (ATTN_STATIC's 333 units weigh as
    ATTN_NORM's 1000) */
 /* the teleporters' fogs kept in the swap room: two of the five (their
-   variant index), the next to come in */
-static int tele_pin[2] = { 0, 1 }, tele_next = 2;
+   variant index), the next to come in; the one coming in and the pin it
+   takes once in (-1: none), wanted under every living want, the two kept
+   pinned until then (§99: read at once, it held the drive the teleport's
+   other reads wanted) */
+static int tele_pin[2] = { 0, 1 }, tele_next = 2, tele_in = -1, tele_out;
+#define TELE_IN_SCORE (STREAM_DEAD - STREAM_HIDDEN + STREAM_SOUND_REACH)   /* (the tier
+                                       over the dead's, at the sounds' reach) */
 
 int snd_tele_fog(void)
 {
 	int can[5], n = 0, pinned = 0;
 	for (int v = 0; v < 5; v++) {
-		int s = named[S_R_TELE1 + v];
-		sfx_t o;
-		if (s >= 0 && sfx_get(s, &o))              /* (the bank's, or in the swap room) */
+		int s = named[S_R_TELE1 + v];             /* (the bank's, or in the swap room: a look,
+		                                             not an ask; a missing one is no miss) */
+		if (s >= 0 && (s < SND_STREAM || stream_sound(s - SND_STREAM)))
 			can[n++] = v;
 	}
+#ifdef Q1PSX_BENCH
+	printf("fog: %d of the five in\n", n);
+#endif
 	for (int k = 0; k < 2; k++)
 		pinned += named[S_R_TELE1 + tele_pin[k]] >= SND_STREAM;
 	int v = n ? can[(int) ((q_rand() & 0x7fff) * n / 0x8000)] : (int) ((q_rand() & 0x7fff) * 5 / 0x8000);   /* random () * n */
-	if (pinned)                                    /* a RAM one played: the next of the five takes
-	                                                  its place in the swap room at the next pass */
+	if (pinned && tele_in < 0)                     /* a streamed one played: the next of the five
+	                                                  comes in, then takes its place (snd_stream_wants) */
 		for (int k = 0; k < 2; k++)
 			if (tele_pin[k] == v) {
-				tele_pin[k] = tele_next;
-				tele_next = (tele_next + 1) % 5;
-				if (tele_next == tele_pin[1 - k])
+				tele_in  = tele_next;
+				tele_out = k;
+				do
 					tele_next = (tele_next + 1) % 5;
+				while (tele_next == tele_pin[0] || tele_next == tele_pin[1] || tele_next == tele_in);
 			}
 	return S_R_TELE1 + v;
 }
 
 void snd_stream_wants(void)
 {
+	if (tele_in >= 0) {                            /* the fog coming in: once in, the played one's pin */
+		int s = named[S_R_TELE1 + tele_in];
+		if (s < SND_STREAM || stream_sound(s - SND_STREAM)) {
+			tele_pin[tele_out] = tele_in;
+			tele_in = -1;
+		} else {
+			stream_want(s - SND_STREAM, TELE_IN_SCORE);
+		}
+	}
 	for (int k = 0; k < 2; k++) {                  /* the two teleporter fogs the swap room keeps */
 		int s = named[S_R_TELE1 + tele_pin[k]];
 		if (s >= SND_STREAM)

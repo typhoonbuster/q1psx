@@ -844,9 +844,11 @@ static void bank_write(const qs_static *statics, int nstatics, int cd_track, int
 
 /* the powerups' sounds while they run: the player's, anywhere (engine/
    game.c game_stream_wants pins them from the pickup; engine/items.c has
-   the artifacts want them by their distance before) */
-static const char *const powerup_sounds[] = { "items/inv2.wav", "items/inv3.wav", "items/protect2.wav",
-                                              "items/protect3.wav", "items/damage2.wav", "items/suit2.wav" };
+   the artifacts want them by their distance before); the ring's breath
+   (inv3, at the pickup) and the pentagram's hit (protect3, from the first
+   one) stay in RAM, played too soon for a read after a teleport (§99) */
+static const char *const powerup_sounds[] = { "items/inv2.wav", "items/protect2.wav", "items/damage2.wav",
+                                              "items/suit2.wav" };
 
 static int powerup_sound(const char *name)
 {

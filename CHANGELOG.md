@@ -2308,3 +2308,28 @@ followed by R0-R4.
   sounds filled the stream's 48 slots: the monsters' models evicted and
   read again): removed before the merge (the branch keeps it). The
   bench's `sndmiss` lines name a sound asked and not in.
+- **The powerups' sounds after a teleport: the RAM swaps beside the
+  drive, the fogs' rotation last, the breath and the hit in RAM** (§99,
+  2026-10-30). A new bench mode,
+  `CAPTURE=1`, plays scripted scenarios in real time through the game's
+  loop (jumps, teleporters, walks, uses, hits, powerups' ends brought
+  forward) for an emulator's recording; DuckStation's recordings of
+  §98's worst cases showed a ring of shadows picked up 1.2 s after
+  E4M7's teleporter *23 without its pickup sound and its first breath.
+  After a teleport the world's chunks are read first and the stream
+  waited behind them, its RAM swaps included; each fog played pinned
+  the next variant, read before anything else. Now the RAM swaps go on
+  beside the drive's reads (one SPU DMA at a time); the next fog
+  variant is wanted after every living want, the two pinned until it
+  is in; the ring's breath and the pentagram's hit are in the RAM
+  block again (112 KB over 7 maps); an artifact's sounds are wanted in
+  the order they are heard. Recorded again: no sound missed on E2M4's
+  trap, E4M7's six teleports or the ring after *23 from the map's start
+  (its pickup sound in 67 ms after the teleport, the breath 117 ms);
+  the cuts onto the items miss only what plays on the cut's own tick
+  and the biosuit's warning 1.5 s after a cut. The 32 maps' walk misses
+  no sound; 352 bytes of code. The stream's pool a level measured at
+  the release's arena with the `auto_1536_s3` tables and 3 slots: 450
+  (E4M7) to 1071 KB (E1M7), 621 on average. At 99 % of the sounds'
+  energy the RAM blocks would take 1 MB more over the 32 maps (the
+  pools 0 to 68 KB smaller a map): the energy kept stays 98 %.

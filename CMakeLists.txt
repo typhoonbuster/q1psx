@@ -266,6 +266,7 @@ target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,SLOW
 set(Q1PSX_BENCH_GPUTIME 0 CACHE STRING "1: each frame's display list drawn alone, the CPU waiting: the bench lines' gpu= (an emulator that counts the GPU's time: DuckStation)")
 set(Q1PSX_BENCH_RES 0 CACHE STRING "The 3D view's internal resolution the bench renders with: engine/render.c r_res_table's index (0: 320, the screen's)")
 set(Q1PSX_BENCH_WORLD_HZ 30 CACHE STRING "The world's tick rate the bench runs at: 60 or 30 (the game's default; the player's: 60)")
+set(Q1PSX_BENCH_CAPTURE 0 CACHE STRING "1: the capture's scenarios: the sounds read from the disc in their worst cases, played in real time for an emulator's recording")
 set(Q1PSX_BENCH_ZONES 0 CACHE STRING "1: the zones' walk: every zoned map walked through its items, the chunk reads, switches and late frames (bench zones lines); 2: every map, the whole ones too (their sounds)")
 set(Q1PSX_BENCH_CDLOG 0 CACHE STRING "1: the drive's journal: a cd line per read (who, where, when; engine/cd.h)")
 set(Q1PSX_BENCH_CDMODEL 0 CACHE STRING "1: every read ends no sooner than a real drive would end it (DuckStation's seek model; engine/cd.c)")
@@ -289,6 +290,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS} Q1PSX_BENCH_MONSTERS=${Q1PSX_BENCH_MONSTERS}
 		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_USE="${Q1PSX_BENCH_USE}" Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
 		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS} Q1PSX_BENCH_ZONES=${Q1PSX_BENCH_ZONES}
+		Q1PSX_BENCH_CAPTURE=${Q1PSX_BENCH_CAPTURE}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ} Q1PSX_BENCH_RES=${Q1PSX_BENCH_RES}
 		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN}
 		Q1PSX_BENCH_SEQCHK=${Q1PSX_BENCH_SEQCHK})

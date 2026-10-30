@@ -13468,3 +13468,201 @@ c511f6c); what went in is 98.4. (§96 and
 - The rest of the RAM blocks (the monsters' and the entities' sounds,
   468 KB over 18 maps before 98.4) has no such lead: a monster's sound
   is wanted when it is near, as before §86.
+
+## §99 — The powerups' sounds after a teleport: the RAM swaps beside the drive, the fogs' rotation last, the breath and the hit in RAM (2026-10-30)
+
+§98's worst cases, recorded on DuckStation through a new bench mode
+(99.1), showed two powerup sounds missed at a pickup (99.2); the three
+fixes chosen (99.3-99.5) were recorded the same way (99.6).
+
+### 99.1 The capture bench (`CAPTURE=1`)
+
+`CAPTURE=1 MUSIC=1 scripts/bench.sh` (engine/main.c `bench_capture`)
+plays scripted scenarios in real time through the game's loop
+(`run_frame(1, 0)`: a tick a vblank poll), the pad's commands replaced
+by the script's steps: `JUMP` (the player put at a point, facing a
+way), `TELE` (into a teleporter's trigger, by its brush model), `GOTO`
+(walked to a point, a jump when stalled 8 ticks), `USE` (a targetname's
+entities used), `HURT` (damage from the world), `ENDSOON` (the four
+powerups' ends brought to now + n hundredths), `WAIT`, `NOTE` (a line
+on the screen and in the log). Each step prints a `capture:` line,
+each scenario a `capture <map> end` line (its frames, the sounds asked
+and not in, the stream's reads), and the stream's log (`stream: in`,
+`out`, and `no room for` from `set_stuck`) runs during the scenarios.
+The four scenarios:
+
+- E2M4's scrag trap: t67, then t68 four seconds later (eight fogs).
+- E4M7's six teleporters in a row (*98, *24, *26, *48, *19, *23:
+  twelve fogs, the zones switching at each).
+- E4M7 from its start, the maps' worst lead for a powerup's sounds:
+  teleporter *23 lands 367 units from a ring of shadows that is 2584
+  units from the spawn, out of every sound's reach there (none of its
+  sounds in); the ring picked up about a second later, its end then
+  brought forward. (The chain above passes 814 units from the ring at
+  *24 and has its sounds in by *23.)
+- E4M7's synthetic cuts, which the maps never allow: onto the other
+  ring, onto the pentagram (hit 1 s and 3 s later), onto the biosuit,
+  the three ends then brought forward (their warnings 1.5 s after the
+  last cut). A cut lands on the item: its pickup sound plays on the
+  cut's own tick, with no lead at all.
+
+The DuckStation recordings are made outside the repo: the AppImage
+extracted, a private `settings.ini`, the menu's Tools > Media Capture
+pressed through AT-SPI, FFV1 + PCM, cut into 640x480 AV1 clips with
+the log's events as captions. PCSX-Redux runs the same bench headless.
+
+### 99.2 What the first recording showed (§98 as merged)
+
+- E2M4's eight fogs and the chain's twelve: none missed, two variants
+  in each time.
+- The ring after *23: at the pickup, 1.2 s after the teleport, the
+  pickup sound (`items/inv1.wav`, RAM) and the first breath
+  (`items/inv3.wav`, disc) missed.
+- The cuts: the pickups' sounds (RAM: the same on master), the first
+  breath, the pentagram's first hit (`items/protect3.wav`, disc, 1 s
+  after) and the biosuit's warning (`items/suit2.wav`, disc, 1.5 s
+  after) missed.
+- Why: after a teleport the world's chunks are read first
+  (`zone_drive_wanted`), and `stream_frame` returned before anything
+  else, the RAM swaps included though they take no drive; and each fog
+  played pinned the next variant at `STREAM_PIN`, read before anything
+  else and holding the drive.
+
+### 99.3 The RAM swaps beside the drive's reads
+
+- engine/stream.c: a RAM sound's swap has its own state (`swap_a`, no
+  longer `sread`'s); `stream_frame` runs the drive's step (`drive_step`:
+  a model's read, a sound's pieces, the world's chunks first, the next
+  read), then `swap_step`: the swap in flight in once the SPU's DMA is
+  done, the next one started while it is free, whatever the drive does.
+- `next_wanted(which)`: the drive's assets, the RAM sounds, or both (the
+  preload); `none_wanted` a bit for each; the unwanted assets left by
+  its first test (most of them).
+- One SPU DMA at a time: a swap starts only with the DMA free and after
+  the drive's step in the frame; a disc sound's piece and the music's
+  refill (engine/music.c `upload`) wait for a swap's DMA in flight (the
+  loading screen calls `stream_frame` back to back, and a cheap frame
+  can bring `music_tick` within a swap's DMA).
+- `set_stuck` logs `no room for` lines (the stream's log).
+
+### 99.4 The fogs' rotation after every living want
+
+engine/snd.c: a pinned fog played no longer pins the next variant at
+once. The variant coming in (`tele_in`) is wanted at `TELE_IN_SCORE`,
+the tier above the dead's at the sounds' reach: after every living
+want, and it takes room only from what nothing else wants. The two
+pinned stay pinned until it is in; then it takes the played one's pin.
+One rotation at a time. On E2M4 and E4M7 it found no room most of the
+time (the pool full of what is wanted more): the same two variants
+play meanwhile, none missed.
+
+### 99.5 The ring's breath and the pentagram's hit in RAM; the artifacts' sounds in the order heard
+
+- tools/qcook/sound.c: `items/inv3.wav` (the breath, from the pickup)
+  and `items/protect3.wav` (the hit, from the first one) leave the disc
+  list: out of the SPU they go to the RAM block again. inv3 on E1M3,
+  E3M2, E4M3, E4M5 and E4M7 (10 sectors each), protect3 on E2M4, E2M6
+  and E4M7 (2 sectors each): 112 KB of RAM blocks over the 7 maps, of
+  the 812 KB §98 gave back. The warnings (inv2, protect2, damage2,
+  suit2) and the fogs stay on the disc.
+- engine/items.c: an artifact's `noise1` is now the sound heard first
+  (the breath, the hit) and `noise2` the warning. At one distance the
+  stream wants an entity's noises in their order (engine/ents.c: the
+  rank is added to the distance), so the ring's warning was wanted one
+  unit ahead of the breath; the recording showed the warning's read
+  evict the breath at the pickup, and the breath swapped in again.
+
+### 99.6 Measured
+
+- `CAPTURE=1 MUSIC=1` on PCSX-Redux, then recorded on DuckStation (the
+  four scenarios; the misses are the `sndmiss` lines):
+
+| scenario | §98 as merged (DuckStation) | 99.3-99.5 (PCSX-Redux) | 99.3-99.5 (DuckStation) |
+|---|---|---|---|
+| E2M4's trap, 8 fogs | none missed | none | none (2 variants in each time) |
+| E4M7's six teleports, 12 fogs | none missed | none | none (2 or 3 variants in) |
+| E4M7, the ring after *23 | the pickup sound, the first breath | none | none |
+| the cuts | 3 pickups, the breath, the first hit, the biosuit's warning | 3 pickups, the breath, the biosuit's warning | the same |
+
+  (§98's recording took *23 at the chain's end, the ring's sounds out
+  then; the other two columns take it from the map's start, as 99.1
+  says.) On DuckStation the ring's pickup sound was in 67 ms after the
+  teleport and the breath 117 ms after, while the world's chunks were
+  read; the ring was picked up 1.19 s after the teleport; its warning
+  (disc) was in 2.8 s after, before its end brought forward. The
+  pentagram's first hit, 1 s after its cut, now plays. Before the
+  artifacts' sounds were put in the order heard, PCSX-Redux once missed
+  the breath three times after *23 in the chain's form, and DuckStation
+  showed the warning's read evict it at the pickup.
+- `ZONES=2 MUSIC=1 CDMODEL=1` (the 32 maps walked under the drive's
+  model): no sound asked and not in on any map; the RAM swaps E2M4 237,
+  E1M3 232, E2M7 132, E1M5 81, E4M3 74, E4M7 33, E1M2 25, E2M6 13, four
+  maps 1 to 4.
+- The release's level arena 1 383 216 → 1 382 864 bytes: 352 bytes of
+  code (the swaps' step, the fog coming in, the DMA waits).
+- The stream's pool a level (`BENCH_MAPS=1 VIEWS=0
+  LEVEL_CAP=1382864`: the release's arena; the zone tables
+  `auto_1536_s3`, 3 slots), KB, with the RAM block of sounds and
+  §93.5's pool (before §98; the arena 5.3 KB larger then):
+
+| map | the cut | RAM block | pool | §93.5 |
+|---|---|---|---|---|
+| START | 7 zones | 0 | 694 | 699 |
+| E1M1 | whole | 0 | 626 | 632 |
+| E1M2 | 9 zones | 34 | 599 | 558 |
+| E1M3 | whole | 94 | 479 | 442 |
+| E1M4 | 7 zones | 6 | 595 | 558 |
+| E1M5 | whole | 50 | 589 | 548 |
+| E1M6 | whole | 0 | 686 | 664 |
+| E1M7 | whole | 0 | 1071 | 1076 |
+| E1M8 | whole | 0 | 861 | 866 |
+| E2M1 | 16 zones | 0 | 594 | 599 |
+| E2M2 | 9 zones | 0 | 586 | 564 |
+| E2M3 | 11 zones | 0 | 586 | 591 |
+| E2M4 | 11 zones | 78 | 468 | 415 |
+| E2M5 | 10 zones | 0 | 625 | 630 |
+| E2M6 | whole | 36 | 490 | 444 |
+| E2M7 | 8 zones | 60 | 482 | 435 |
+| E3M1 | 10 zones | 0 | 630 | 635 |
+| E3M2 | whole | 20 | 771 | 734 |
+| E3M3 | whole | 0 | 721 | 726 |
+| E3M4 | 5 zones | 8 | 467 | 426 |
+| E3M5 | 6 zones | 0 | 482 | 475 |
+| E3M6 | 12 zones | 0 | 514 | 519 |
+| E3M7 | whole | 0 | 650 | 643 |
+| E4M1 | 9 zones | 0 | 619 | 624 |
+| E4M2 | whole | 0 | 593 | 599 |
+| E4M3 | whole | 96 | 522 | 475 |
+| E4M4 | 16 zones | 0 | 587 | 580 |
+| E4M5 | 6 zones | 34 | 550 | 511 |
+| E4M6 | whole | 0 | 691 | 664 |
+| E4M7 | 10 zones | 64 | 450 | 401 |
+| E4M8 | whole | 0 | 591 | - |
+| END | whole | 0 | 990 | 995 |
+
+  The mean 621 KB (603 at §93.5); the least E4M7 450, E3M4 467, E2M4
+  468. 99.5's RAM costs E1M3, E3M2, E4M3, E4M5 and E4M7 20 KB of pool
+  each against §98 as merged (E4M7 24), E2M4 and E2M6 4.
+
+### 99.7 The sounds' energy at 99 % (measured, kept at 98)
+
+`QCOOK_SOUND_KEEP=99` (§87.2), cooked with the same tables and slots
+and loaded at the release's arena (`BENCH_MAPS=1 VIEWS=0
+LEVEL_CAP=1382864`): the RAM blocks 580 → 1614 KB over the 32 maps
+(E1M3 94 → 158 KB, E4M3 96 → 156, E2M4 78 → 140, E1M6 0 → 58), the
+maps whose sounds all fit in the SPU 14 → 8, the fogs on the disc on
+six maps more; the stream's pool 1034 KB smaller in all, 0 to 68 KB a
+map (the least: E3M4 467 → 403 KB, E4M7 450 → 404, E2M4 468 → 406);
+the levels' streamed files +1.7 MB on the disc. The energy kept stays
+98 %.
+
+### 99.8 Left
+
+- The cuts' misses: a pickup sound played on the cut's own tick (no
+  lead at all), and the biosuit's warning 1.5 s after a cut (read from
+  the disc behind the world's chunks). In the maps a warning comes
+  27 s after the pickup, and the artifact wants its sounds as the
+  player nears it.
+- DuckStation: the four clips; in play, a ring of shadows
+  picked up after a teleport (E4M7's *23), a pentagram hit early
+  (E2M4, E2M6, E4M7), the fogs where monsters teleport in.
