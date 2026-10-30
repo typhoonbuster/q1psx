@@ -325,6 +325,55 @@ static void load_level_main(int map);
    models at the models' level. Sets world_ok and binds the renderer. */
 static uint32_t stack_untouched(void);
 
+#ifdef Q1PSX_BENCH
+uint32_t stream_asset_size(int a);
+/* everything the level's entities may ask the stream for: the streamed
+   models of its items, each monster kind's model, gibs and head, the
+   backpack; their RAM once loaded (kept) and while loading (whole) */
+static void bench_level_wants(void)
+{
+	static uint8_t seen[512];
+	memset(seen, 0, sizeof seen);
+	uint32_t kept = 0, whole = 0, kinds = 0, monsters = 0, items = 0;
+	int n = 0;
+	for (int i = 2; i < num_edicts; i++) {
+		const edict_t *e = &edicts[i];
+		if (!e->inuse)
+			continue;
+		int as[MK_ASSETS + 1], na = 0;
+		if (e->masset >= 0) as[na++] = e->masset;
+		if (e->mdef) {
+			monsters++;
+			for (int k = 0; k < MK_ASSETS; k++)
+				if (monsters_kind_asset(e->mdef->kind, k) >= 0)
+					as[na++] = monsters_kind_asset(e->mdef->kind, k);
+			if (!(kinds & 1u << e->mdef->kind)) kinds |= 1u << e->mdef->kind;
+		} else if (e->masset >= 0 || e->item_model >= 0)
+			items++;
+		for (int k = 0; k < na; k++)
+			if (as[k] < 512 && !seen[as[k]]) {
+				seen[as[k]] = 1;
+				kept += stream_kept(as[k]);
+				whole += stream_asset_size(as[k]);
+				n++;
+			}
+	}
+	for (int k = 0; k < MK_COUNT; k++) {                /* each kind's own assets */
+		uint32_t kk = 0, kw = 0;
+		for (int j = 0; j < MK_ASSETS; j++) {
+			int a = monsters_kind_asset(k, j);
+			if (a >= 0) { kk += stream_kept(a); kw += stream_asset_size(a); }
+		}
+		if (kk) printf("level wants kind %d: %u KB kept, %u KB while loading\n", k, (unsigned) (kk / 1024), (unsigned) (kw / 1024));
+	}
+	int bp = stream_find("progs/backpack.mdl");
+	if (bp >= 0 && bp < 512 && !seen[bp]) { kept += stream_kept(bp); whole += stream_asset_size(bp); n++; }
+	printf("level wants %s skill %d: %u monsters of %d kinds, %u items; %d streamed assets, %u KB kept, %u KB while loading\n",
+	       world_map_name(load_map), game_skill, (unsigned) monsters, __builtin_popcount(kinds), (unsigned) items, n,
+	       (unsigned) (kept / 1024), (unsigned) (whole / 1024));
+}
+#endif
+
 Q_COLD static int load_level(int map)
 {
 	world_ok = 0;
@@ -341,6 +390,10 @@ Q_COLD static int load_level(int map)
 	cd_cache_dir(dir);
 	ovl_load(dir);                              /* the load's code (§90.7): the rest runs from it */
 	load_level_main(map);
+#ifdef Q1PSX_BENCH
+	if (world_ok)
+		bench_level_wants();
+#endif
 	printf("stack: %u bytes never reached\n", (unsigned) stack_untouched());
 	return world_ok;
 }
@@ -2691,8 +2744,28 @@ static void mon_overlap(const char *what, int t, const edict_t *e)
 	was = lap;
 }
 
+/* engine/mdl_expand.s's mdl_frame_avg against its formula, on made-up
+   vertex words (the frames rebuilt from their neighbours, §97) */
+static void bench_frame_avg_check(void)
+{
+	uint32_t a[64], b[64], d[64], x = 0x9e3779b9u, bad = 0;
+	for (int i = 0; i < 64; i++) {
+		x = x * 1664525u + 1013904223u; a[i] = x;
+		x = x * 1664525u + 1013904223u; b[i] = x;
+	}
+	mdl_frame_avg(d, a, b, 64);
+	for (int i = 0; i < 64; i++) {
+		uint32_t w = a[i] & 0xff000000u;
+		for (int k = 0; k < 24; k += 8)
+			w |= ((a[i] >> k & 0xff) + (b[i] >> k & 0xff)) >> 1 << k;
+		bad += d[i] != w;
+	}
+	printf("mon frame average: %u of 64 words wrong\n", (unsigned) bad);
+}
+
 static void bench_monsters(void)
 {
+	bench_frame_avg_check();
 	const char *mapname = Q1PSX_BENCH_MAP[0] ? Q1PSX_BENCH_MAP : "E1M1";
 	int m = world_find_map(mapname);
 	if (m < 0 || !load_level(m)) {
@@ -2738,7 +2811,8 @@ static void bench_monsters(void)
 						continue;
 					memcpy(spot, tr.endpos, sizeof spot);
 					int32_t feet[3] = { spot[0], spot[1], spot[2] - 23 * CLIP_SUB };
-					if (clip_contents(0, feet) != QW_CONTENTS_EMPTY)
+					int fc = clip_contents(0, feet);   /* (a swimmer's: in its water) */
+					if (fc != QW_CONTENTS_EMPTY && !(c->mdef->fly == MS_SWIM && fc == QW_CONTENTS_WATER))
 						continue;
 					int32_t ea[3] = { spot[0], spot[1], spot[2] + 22 * CLIP_SUB }, eb[3];
 					ai_view_org(c, eb);
@@ -2804,6 +2878,27 @@ static void bench_monsters(void)
 				mon_log("shot", e);
 		}
 		cmd.fire = 0;
+		if (e->health > 0 && e->mdef && e->mdef->kind == MK_OLDONE) {
+			/* Shub-Niggurath: the shotgun never kills it; the teleporter's
+			   telefrag (tdeath_touch's 50000), then the finale's parts
+			   dumped: the fog, the thrash, the gibs and the statue, the
+			   text */
+			ent_damage(e, ent_world, ent_world, 50000);
+			static const int16_t at[4] = { TICKS(150), TICKS(400), TICKS(900), TICKS(1500) };
+			int32_t t0 = ent_time;
+			for (int part = 0; part < 4; part++) {
+				while (ent_time < t0 + at[part]) {
+					game_tick(&cmd);
+					bench_stream_frames();
+				}
+				printf("mon finale %d: t %d, intermission %d, light style dim %d, shub %s, text %s\n", part,
+				       (int) (ent_time - t0), level_intermission, level_style0_dim(),
+				       e->inuse ? "there" : "gone", level_finale_text && level_finale_text[0] ? "out" : "none");
+				q_snprintf(name, sizeof name, "m%s_%d_f%d", mapname, k, part);
+				ents_dump(name);
+			}
+			continue;
+		}
 		mon_log("killed", e);
 		for (int t = 0; t < 120; t++) {           /* its death, its backpack */
 			game_tick(&cmd);
@@ -2837,6 +2932,8 @@ static void bench_monsters(void)
 			       (int) (end - CORPSE_TICKS));
 		pl.pm.pitch = 0;
 	}
+	printf("mon frames: %u expansions, %u of them rebuilt from their neighbours (QST_LERP)\n",
+	       (unsigned) mdl_stat_expanded, (unsigned) mdl_stat_lerped);
 	/* the crowd: every monster of the map awake and after the player (who
 	   cannot die), the entities' cost a second */
 	int awake = 0;
@@ -2943,15 +3040,26 @@ static void bench_monsters(void)
 				int alive = 0;
 				for (int i = 2; i < num_edicts; i++)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
+				static uint32_t exp0, lerp0, st0, sl0, rp0, ct0, ms0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
 				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn, "
 				       "the frame cache refused %u, packets %u bytes at most, a model's room %d at least, "
-				       "%u models left out, %u full frames\n",
+				       "%u models left out, %u full frames, %u expansions (%u rebuilt)\n",
 				       t + 1, alive, used, peak, max, (unsigned) stack_untouched(),
 				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) vid_stats.vbl,
 				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10),
 				       (unsigned) mdl_refused_since(), pkt_max, room_min == 0x7fffffff ? -1 : (int) room_min,
-				       (unsigned) (r_model_skipped - skipped0), full);
+				       (unsigned) (r_model_skipped - skipped0), full, (unsigned) (mdl_stat_expanded - exp0),
+				       (unsigned) (mdl_stat_lerped - lerp0));
+				exp0  = mdl_stat_expanded;
+				lerp0 = mdl_stat_lerped;
+				printf("mon sounds t %d: %u started, %u cut by another (the dynamic channels full), %u by their "
+				       "own channel, %u stopped (their samples swapped out), %u unheard (not in SPU RAM)\n", t + 1,
+				       (unsigned) (snd_stat_started - st0), (unsigned) (snd_stat_stolen - sl0),
+				       (unsigned) (snd_stat_replaced - rp0), (unsigned) (snd_stat_cut - ct0),
+				       (unsigned) (stream_stats.snd_missing - ms0));
+				st0 = snd_stat_started; sl0 = snd_stat_stolen; rp0 = snd_stat_replaced;
+				ct0 = snd_stat_cut; ms0 = stream_stats.snd_missing;
 				fsum = fdrawn = pkt_max = full = 0;
 				room_min = 0x7fffffff;
 				skipped0 = r_model_skipped;
@@ -3010,7 +3118,8 @@ static void clear_map(void)
 						continue;
 					memcpy(spot, tr.endpos, sizeof spot);
 					int32_t feet[3] = { spot[0], spot[1], spot[2] - 23 * CLIP_SUB };
-					if (clip_contents(0, feet) != QW_CONTENTS_EMPTY)
+					int fc = clip_contents(0, feet);   /* (a swimmer's: in its water) */
+					if (fc != QW_CONTENTS_EMPTY && !(c->mdef->fly == MS_SWIM && fc == QW_CONTENTS_WATER))
 						continue;
 					int32_t ea[3] = { spot[0], spot[1], spot[2] + 22 * CLIP_SUB }, eb[3];
 					ai_view_org(c, eb);
@@ -3773,6 +3882,7 @@ int main(void)
 	game_init();
 	printf("mem: game arena %u of %u B\n", (unsigned) mem_game_used(), (unsigned) MEM_GAME_BYTES);
 #ifdef Q1PSX_BENCH
+	game_skill = Q1PSX_BENCH_SKILL;              /* (SKILL=: the entities spawned on it) */
 	if (!Q1PSX_BENCH_MAPS && Q1PSX_BENCH_MAP[0] && world_find_map(Q1PSX_BENCH_MAP) >= 0)
 		map_index = world_find_map(Q1PSX_BENCH_MAP);  /* MAP=: the physics diffs there too */
 	if (load_level(map_index))

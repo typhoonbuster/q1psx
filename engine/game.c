@@ -103,7 +103,7 @@ static const uint8_t ramp1[8] = { 0x6f, 0x6d, 0x6b, 0x69, 0x67, 0x65, 0x63, 0x61
 static const uint8_t ramp2[8] = { 0x6f, 0x6e, 0x6d, 0x6c, 0x6b, 0x6a, 0x68, 0x66 };
 static const uint8_t ramp3[8] = { 0x6d, 0x6b, 6, 5, 4, 3, 3, 3 };
 
-enum { PT_STATIC, PT_GRAV, PT_SLOWGRAV, PT_FIRE, PT_EXPLODE, PT_EXPLODE2 };
+enum { PT_STATIC, PT_GRAV, PT_SLOWGRAV, PT_FIRE, PT_EXPLODE, PT_EXPLODE2, PT_BLOB, PT_BLOB2 };
 
 #define MAX_PARTICLES 256   /* the pool at every effects level offered (medium, high:
                                QL_EFFECT_MASK); the ultra level's 512 left with §52 */
@@ -179,7 +179,8 @@ static particle_t *particle_new(void)
    many as the effects level makes of them, their dir straight up at vz
    units a second (the protocol's: dir x16 clamped to a char, back /16,
    x15) */
-static void particle_effect_dir(const int32_t org[3], const qw_leaf *leaf, int colour, int count, int vz)
+static void particle_effect_vel(const int32_t org[3], const qw_leaf *leaf, int colour, int count,
+                                const int32_t vel[3])
 {
 	count = fx_count(count);
 	for (int i = 0; i < count; i++) {
@@ -191,10 +192,15 @@ static void particle_effect_dir(const int32_t org[3], const qw_leaf *leaf, int c
 		p->leaf   = leaf;
 		for (int k = 0; k < 3; k++) {
 			p->org[k] = org[k] + crandom(8) * SUB;
-			p->vel[k] = 0;
+			p->vel[k] = pvel(vel[k]);
 		}
-		p->vel[2] = pvel(vz);
 	}
+}
+
+static void particle_effect_dir(const int32_t org[3], const qw_leaf *leaf, int colour, int count, int vz)
+{
+	const int32_t vel[3] = { 0, 0, vz };
+	particle_effect_vel(org, leaf, colour, count, vel);
 }
 
 static void particle_effect(const int32_t org[3], const qw_leaf *leaf, int colour, int count)
@@ -279,17 +285,25 @@ static void particle_trail_one(const int32_t org[3], const qw_leaf *leaf, int ty
 		p->type   = PT_GRAV;
 		p->colour = (uint8_t) (67 + (q_rand() & 3));
 		break;
-	case TR_TRACER: {                                 /* across the flight, side to side */
+	case TR_TRACER:                                   /* across the flight, side to side */
+	case TR_TRACER2: {                                /* (the hell knight's: its colour) */
 		int32_t d[3];
 		vnormalize(vel, d);
 		p->type   = PT_STATIC;
-		p->colour = (uint8_t) (52 + ((tracercount & 4) << 1));
+		p->colour = (uint8_t) ((type == TR_TRACER ? 52 : 230) + ((tracercount & 4) << 1));
 		__builtin_memcpy(p->org, org, sizeof p->org);
 		int s = tracercount++ & 1 ? 1 : -1;
 		p->vel[0] = pvel(s * 30 * d[1] / 4096);
 		p->vel[1] = pvel(-s * 30 * d[0] / 4096);
 		break;
 	}
+	case TR_VOOR:                                     /* the shalrath's ball: still, 0.3 s */
+		p->colour = (uint8_t) (9 * 16 + 8 + (q_rand() & 3));
+		p->type   = PT_STATIC;
+		p->die    = game_tick_count + TICKS(30);
+		for (int k = 0; k < 3; k++)
+			p->org[k] = org[k] + ((int32_t) (q_rand() & 15) - 8) * SUB;
+		break;
 	}
 }
 
@@ -337,6 +351,16 @@ static void particles_step(int now)
 					p->vel[k] -= p->vel[k] / GAME_HZ;
 				p->vel[2] -= PGRAV;
 				break;
+			case PT_BLOB:                                 /* speeds up, falls */
+				for (int k = 0; k < 3; k++)
+					p->vel[k] += p->vel[k] / 15;
+				p->vel[2] -= PGRAV;
+				break;
+			case PT_BLOB2:                                /* slows down across, falls */
+				for (int k = 0; k < 2; k++)
+					p->vel[k] -= p->vel[k] / 15;
+				p->vel[2] -= PGRAV;
+				break;
 			case PT_GRAV:
 			case PT_SLOWGRAV:
 				p->vel[2] -= PGRAV;
@@ -368,7 +392,7 @@ static void particles_tick(void)
 /* ----------------------------------------------------------- projectiles -- */
 
 enum { PJ_FREE, PJ_SPIKE, PJ_SSPIKE, PJ_GRENADE, PJ_ROCKET, PJ_EXPLOSION, PJ_BEAM, PJ_BUBBLE, PJ_BUBBLER,
-       PJ_ZOMGIB, PJ_WIZSPIKE, PJ_LAVABALL };
+       PJ_ZOMGIB, PJ_WIZSPIKE, PJ_LAVABALL, PJ_LASER, PJ_KSPIKE, PJ_VSPIKE };
 
 #define MAX_PROJ 48
 
@@ -379,7 +403,10 @@ typedef struct {
 	uint8_t  landed;       /* a zombie's gib that missed: its next touch ends it */
 	int32_t  org[3];       /* 1/SUB units                                  */
 	int32_t  vel[3];       /* u/s                                          */
-	int32_t  end[3];       /* a beam's far end                             */
+	union {
+		int32_t  end[3];   /* a beam's far end                             */
+		edict_t *enemy;    /* a shalrath's ball: what it homes on          */
+	};
 	int      yaw, pitch, roll;
 	int16_t  dmg;          /* a grenade's blast: 120, an ogre's 40         */
 	int16_t  masset;       /* a monster's missile's streamed model         */
@@ -423,6 +450,7 @@ void game_trail(const int32_t org[3], int type, const int32_t vel[3])
 }
 
 static void t_radius_damage(const int32_t org[3], int damage, int self_inflicted);
+static void vore_home(proj_t *p);
 static void t_damage_x256(int damage, const int32_t inflictor[3]);
 #define t_damage(d, inf) t_damage_x256((d) * 256, inf)
 
@@ -434,7 +462,7 @@ static void proj_trace(const proj_t *p, const int32_t end[3], trace_t *tr)
 	memset(clip_mover.box, 0, sizeof clip_mover.box);
 	clip_mover.pass       = p->owner ? p->owner->clip : 1;
 	clip_mover.nomonsters = 0;
-	clip_mover.missile    = p->type != PJ_GRENADE && p->type != PJ_ZOMGIB;
+	clip_mover.missile    = p->type != PJ_GRENADE && p->type != PJ_ZOMGIB && p->type != PJ_LASER;
 	clip_trace_ent(0, p->org, end, tr);
 }
 
@@ -459,6 +487,19 @@ static void proj_radius_damage(edict_t *owner, const int32_t org[3], int damage,
 		t_radius_damage(org, damage, attacker == ent_player);
 }
 
+/* BecomeExplosion's sprite (s_explode1-6) at org */
+static void explosion_sprite(const int32_t org[3], const qw_leaf *leaf)
+{
+	proj_t *e = proj_new(PJ_EXPLOSION);
+	if (e) {
+		for (int k = 0; k < 3; k++) e->org[k] = org[k];
+		e->leaf       = leaf;
+		e->frame      = 0;
+		e->frame_tick = game_tick_count + TICKS(10);
+		e->die        = game_tick_count + 6 * TICKS(10);
+	}
+}
+
 /* TE_EXPLOSION + BecomeExplosion at org */
 static void explode_at(const int32_t org[3])
 {
@@ -470,14 +511,30 @@ static void explode_at(const int32_t org[3])
 	dl->radius = 350;
 	dl->die    = game_tick_count + TICKS(50);
 	dl->decay  = 300;
-	proj_t *e = proj_new(PJ_EXPLOSION);
-	if (e) {
-		for (int k = 0; k < 3; k++) e->org[k] = org[k];
-		e->leaf       = leaf;
-		e->frame      = 0;
-		e->frame_tick = game_tick_count + TICKS(10);
-		e->die        = game_tick_count + 6 * TICKS(10);
+	explosion_sprite(org, leaf);
+}
+
+/* TE_TAREXPLOSION (R_BlobExplosion, scaled down from 1024 to 48 as
+   particle_explosion; the explosion's sound, no light) + BecomeExplosion
+   at org: the spawn's end */
+void game_tar_explosion(const int32_t org[3])
+{
+	const qw_leaf *leaf = leaf_at(org);
+	int n = fx_count(48);
+	for (int i = 0; i < n; i++) {
+		particle_t *p = particle_new();
+		if (!p) break;
+		p->die    = game_tick_count + TICKS(100) + (int) (q_rand() & 8) * TICKS(5);
+		p->type   = (i & 1) ? PT_BLOB : PT_BLOB2;
+		p->colour = (uint8_t) (((i & 1) ? 66 : 150) + q_rand() % 6);
+		p->leaf   = leaf;
+		for (int k = 0; k < 3; k++) {
+			p->org[k] = org[k] + ((int32_t) (q_rand() % 32) - 16) * SUB;
+			p->vel[k] = pvel((int32_t) (q_rand() % 512) - 256);
+		}
 	}
+	snd_start(ENT_TEMP, 0, S_R_EXP3, org, 255, ATTN_NORM);
+	explosion_sprite(org, leaf);
 }
 
 /* GrenadeExplode, OgreGrenadeExplode (its own sound besides the
@@ -516,6 +573,10 @@ static void proj_move(proj_t *p)
 		p->pitch += DEG(200) / GAME_HZ * game_dt;
 		p->yaw += DEG(100) / GAME_HZ * game_dt;
 		p->roll += DEG(300) / GAME_HZ * game_dt;
+	} else if (p->type == PJ_VSPIKE) {                /* '300 300 300' */
+		p->pitch += DEG(300) / GAME_HZ * game_dt;
+		p->yaw += DEG(300) / GAME_HZ * game_dt;
+		p->roll += DEG(300) / GAME_HZ * game_dt;
 	}
 	int32_t end[3];
 	for (int k = 0; k < 3; k++)                       /* x 8 dt / 60 (in 32 bits: under */
@@ -530,6 +591,7 @@ static void proj_move(proj_t *p)
 		return;
 
 	if (p->type != PJ_GRENADE && p->type != PJ_ZOMGIB &&   /* the missiles' touches: */
+	    p->type != PJ_VSPIKE &&                            /* (ShalMissileTouch's none) */
 	    clip_contents(0, p->org) == -6) {                  /* CONTENTS_SKY, gone */
 		p->type = PJ_FREE;
 		return;
@@ -539,6 +601,7 @@ static void proj_move(proj_t *p)
 	case PJ_SPIKE:
 	case PJ_SSPIKE:
 	case PJ_WIZSPIKE:
+	case PJ_KSPIKE:
 		if (other && other->takedamage) {             /* spike_touch: spawn_touchblood */
 			int dmg = p->type == PJ_SSPIKE ? 18 : 9;
 			particle_effect(p->org, p->leaf, 73, dmg * 2);
@@ -546,8 +609,11 @@ static void proj_move(proj_t *p)
 			p->type = PJ_FREE;
 			break;
 		}
-		if (p->type == PJ_WIZSPIKE) {                 /* TE_WIZSPIKE */
-			particle_effect(p->org, p->leaf, 20, 30);
+		if (p->type == PJ_WIZSPIKE || p->type == PJ_KSPIKE) {   /* TE_WIZSPIKE, TE_KNIGHTSPIKE */
+			if (p->type == PJ_WIZSPIKE)
+				particle_effect(p->org, p->leaf, 20, 30);
+			else
+				particle_effect(p->org, p->leaf, 226, 20);
 			snd_start_idx(ENT_TEMP, 0, p->s1, p->org, 255, ATTN_NORM);
 			p->type = PJ_FREE;
 			break;
@@ -575,6 +641,39 @@ static void proj_move(proj_t *p)
 		for (int k = 0; k < 3; k++)
 			org[k] = p->org[k] - 8 * SUB * dir[k] / 4096;
 		p->type = PJ_FREE;
+		explode_at(org);
+		break;
+	}
+	case PJ_LASER: {                                  /* Laser_Touch */
+		int32_t dir[3], org[3];
+		snd_start_idx(ENT_PROJ + (int) (p - projs), CHAN_WEAPON, p->s1, p->org, 255, ATTN_STATIC);
+		vnormalize(p->vel, dir);
+		for (int k = 0; k < 3; k++)
+			org[k] = p->org[k] - 8 * SUB * dir[k] / 4096;
+		if (other && other->health) {
+			/* SpawnBlood (org, velocity x 0.2, 15): particle (org, vel x 0.1)
+			   through the protocol (dir x 16 a char, back / 16, x 15) */
+			int32_t v[3];
+			for (int k = 0; k < 3; k++) {
+				int32_t c = p->vel[k] * 32 / 100;
+				v[k] = (c > 127 ? 127 : c < -128 ? -128 : c) * 15 / 16;
+			}
+			particle_effect_vel(org, leaf_at(org), 73, 30, v);
+			proj_damage(p, other, 15 * 256);
+		} else {
+			particle_effect(org, leaf_at(org), 0, 20);   /* TE_GUNSHOT */
+		}
+		p->type = PJ_FREE;
+		break;
+	}
+	case PJ_VSPIKE: {                                 /* ShalMissileTouch */
+		int32_t org[3] = { p->org[0], p->org[1], p->org[2] };
+		edict_t *owner = p->owner;
+		p->type = PJ_FREE;
+		if (other && other->mdef && other->mdef->kind == MK_ZOMBIE)
+			ent_damage(other, owner, owner, 110);     /* (self, self: the ball, gone here) */
+		proj_radius_damage(owner, org, 40, ent_world);
+		snd_start(ENT_PROJ + (int) (p - projs), CHAN_WEAPON, S_R_EXP3, org, 255, ATTN_NORM);
 		explode_at(org);
 		break;
 	}
@@ -750,11 +849,20 @@ static void projs_tick(void)
 				p->type = PJ_FREE;
 				break;
 			}
+			if (p->type == PJ_VSPIKE && game_tick_count >= p->frame_tick) {
+				vore_home(p);
+				if (p->type == PJ_FREE)
+					break;
+			}
 			proj_move(p);
 			if (p->type == PJ_ROCKET || p->type == PJ_LAVABALL)
 				particle_trail(p->org, p->leaf, TR_ROCKET, p->vel);
 			else if (p->type == PJ_WIZSPIKE)
 				particle_trail(p->org, p->leaf, TR_TRACER, p->vel);
+			else if (p->type == PJ_KSPIKE)
+				particle_trail(p->org, p->leaf, TR_TRACER2, p->vel);
+			else if (p->type == PJ_VSPIKE)
+				particle_trail(p->org, p->leaf, TR_VOOR, p->vel);
 			else if (p->type == PJ_ZOMGIB && !p->onground)
 				particle_trail(p->org, p->leaf, TR_SLIGHT_BLOOD, p->vel);
 			break;
@@ -1306,13 +1414,14 @@ void game_launch_spike(edict_t *owner, const int32_t org[3], const int32_t dir[3
 	p->owner = owner;
 }
 
-void game_monster_missile(int kind, edict_t *owner, const int32_t org[3], const int32_t vel[3], int masset,
-                          int s1, int s2)
+static proj_t *monster_missile(int kind, edict_t *owner, const int32_t org[3], const int32_t vel[3], int masset,
+                               int s1, int s2)
 {
-	static const uint8_t type[] = { PJ_GRENADE, PJ_ZOMGIB, PJ_WIZSPIKE, PJ_LAVABALL };
-	static const int16_t life[] = { TICKS(250), TICKS(250), TICKS(600), TICKS(600) };
+	static const uint8_t type[] = { PJ_GRENADE, PJ_ZOMGIB, PJ_WIZSPIKE, PJ_LAVABALL, PJ_LASER, PJ_KSPIKE,
+	                                PJ_VSPIKE };
+	static const int16_t life[] = { TICKS(250), TICKS(250), TICKS(600), TICKS(600), TICKS(500), TICKS(600), 0 };
 	proj_t *p = proj_new(type[kind]);
-	if (!p) return;
+	if (!p) return 0;
 	for (int k = 0; k < 3; k++) {
 		p->org[k] = org[k];
 		p->vel[k] = vel[k];
@@ -1329,6 +1438,43 @@ void game_monster_missile(int kind, edict_t *owner, const int32_t org[3], const 
 	printf("proj: kind %d from edict %d at %d %d %d\n", kind, (int) (owner - edicts), (int) vel[0], (int) vel[1],
 	       (int) vel[2]);
 #endif
+	return p;
+}
+
+void game_monster_missile(int kind, edict_t *owner, const int32_t org[3], const int32_t vel[3], int masset,
+                          int s1, int s2)
+{
+	monster_missile(kind, owner, org, vel, masset, s1, s2);
+}
+
+#define MM_VSPIKE (MM_KSPIKE + 1)
+
+void game_vore_missile(edict_t *owner, const int32_t org[3], const int32_t vel[3], int masset, int ticks)
+{
+	proj_t *p = monster_missile(MM_VSPIKE, owner, org, vel, masset, SND_NONE, SND_NONE);
+	if (!p) return;
+	p->yaw = p->pitch = p->roll = 0;                  /* (its angles never set: avelocity's) */
+	p->die        = 0x7fffffff;                       /* (no end but its touch or its enemy's death) */
+	p->frame_tick = game_tick_count + ticks;          /* ShalHome */
+	p->enemy      = owner->enemy ? owner->enemy : ent_world;   /* (the world: gone at its first home) */
+}
+
+/* ShalHome: towards the enemy's origin + 10 up, 250 a second (350 in
+   nightmare), again in 0.2 s; gone with the enemy */
+static void vore_home(proj_t *p)
+{
+	edict_t *en = p->enemy;
+	if (!en->inuse || en->health < 1) {
+		p->type = PJ_FREE;
+		return;
+	}
+	int32_t d[3] = { en->origin[0] - p->org[0], en->origin[1] - p->org[1], en->origin[2] + 10 * SUB - p->org[2] };
+	int32_t dir[3];
+	vnormalize(d, dir);
+	int speed = game_skill == 3 ? 350 : 250;
+	for (int k = 0; k < 3; k++)
+		p->vel[k] = dir[k] * speed / 4096;
+	p->frame_tick = game_tick_count + TICKS(20);
 }
 
 static void w_fire_spikes(int ox)
@@ -2540,6 +2686,12 @@ void game_render(void)
 			for (int k = 0; k < 3; k++) dl->origin[k] = projs[i].org[k];
 			dl->radius = 200;
 			dl->die    = game_tick_count + 1;
+		} else if (projs[i].type == PJ_LASER) {      /* EF_DIMLIGHT */
+			dlight_t *dl = dl_alloc(ENT_PROJ + i, game_tick_count);
+			for (int k = 0; k < 3; k++) dl->origin[k] = projs[i].org[k];
+			dl->radius   = 200 + (int) (q_rand() & 31);
+			dl->minlight = 0;
+			dl->die      = game_tick_count + 1;
 		}
 	uint32_t t0 = prof_now();
 	dl_push(game_tick_count);
@@ -2603,7 +2755,10 @@ void game_render(void)
 			break;
 		case PJ_ZOMGIB:
 		case PJ_WIZSPIKE:
-		case PJ_LAVABALL:                             /* the monsters' (streamed: once in) */
+		case PJ_LAVABALL:
+		case PJ_LASER:
+		case PJ_KSPIKE:
+		case PJ_VSPIKE:                               /* the monsters' (streamed: once in) */
 			if (stream_model(p->masset))
 				rl_add_model(p->leaf, rl_model_stream(p->masset, 0, p->org, p->yaw, p->pitch, p->roll, light),
 				             p->org, 0);
@@ -2687,6 +2842,9 @@ void game_render_particles(void)
    and lava's 150 are shown at 50 % too) */
 void game_view_tint(void)
 {
+	int dim = level_style0_dim();                /* the world's light style 0 (Shub's death) */
+	if (dim)
+		vid_dim(dim);
 	if (r_state.view_leaf) {
 		const qw_leaf *l = (const qw_leaf *) (r_state.view_leaf | 0x80000000u);
 		switch (l->contents) {

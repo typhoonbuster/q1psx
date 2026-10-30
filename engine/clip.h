@@ -63,7 +63,9 @@ typedef struct {
 	uint16_t         pad;
 } clip_bmodel_t;                       /* 48 bytes: p_defs.inc CB_* */
 #define CLIP_BM_MONSTER  ((const qw_bmodel *) 1)   /* an FL_MONSTER's box: MOVE_MISSILE grows it */
-#define CLIP_MAX_BMODELS 128
+#define CLIP_MAX_BMODELS 160   /* (128 until the registered game's monsters: E4M3 on hard
+                                  needs 157 entries, E4M5 146, E2M6 and E4M7 136, E4M8 132;
+                                  every one made at the load; `self` a byte) */
 extern clip_bmodel_t clip_bmodels[CLIP_MAX_BMODELS];
 extern int           clip_num_bmodels;
 /* Entry 0 is the player's box (engine/ents.c keeps it): the player's own

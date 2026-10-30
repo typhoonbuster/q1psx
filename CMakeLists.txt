@@ -254,6 +254,7 @@ set(Q1PSX_BENCH_MOVERS 0 CACHE STRING "1: the big movers moving in view: the fra
 set(Q1PSX_BENCH_MONSTERS 0 CACHE STRING "1: the monsters' scenarios (one of each kind wakes, attacks, is killed; the streaming), then the crowd; 2: the crowd alone")
 set(Q1PSX_BENCH_VIEW "" CACHE STRING "x,y,z,yaw,pitch: one more view of that map, dumped")
 set(Q1PSX_BENCH_TICKS 0 CACHE STRING "With a VIEW: the player put there, the game run this many ticks, a picture every 8")
+set(Q1PSX_BENCH_SKILL 1 CACHE STRING "The skill the bench plays: 0 easy .. 3 nightmare")
 set(Q1PSX_BENCH_USE "" CACHE STRING "With TICKS: the entities of this targetname used at tick 8 (a door opened in view)")
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
@@ -288,7 +289,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_HASHONLY=${Q1PSX_BENCH_HASHONLY} Q1PSX_BENCH_PLAY=${Q1PSX_BENCH_PLAY}
 		Q1PSX_BENCH_MAP="${Q1PSX_BENCH_MAP}" Q1PSX_BENCH_NOENTS=${Q1PSX_BENCH_NOENTS}
 		Q1PSX_BENCH_ENTS=${Q1PSX_BENCH_ENTS} Q1PSX_BENCH_MONSTERS=${Q1PSX_BENCH_MONSTERS}
-		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_USE="${Q1PSX_BENCH_USE}" Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
+		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_USE="${Q1PSX_BENCH_USE}" Q1PSX_BENCH_SKILL=${Q1PSX_BENCH_SKILL} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
 		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS} Q1PSX_BENCH_ZONES=${Q1PSX_BENCH_ZONES}
 		Q1PSX_BENCH_CAPTURE=${Q1PSX_BENCH_CAPTURE}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ} Q1PSX_BENCH_RES=${Q1PSX_BENCH_RES}

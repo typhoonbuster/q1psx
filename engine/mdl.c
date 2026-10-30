@@ -34,7 +34,7 @@ _Static_assert(offsetof(mdl_cache_t, ofs) == 144 && offsetof(mdl_cache_t, stamp)
 mdl_cache_t mdl_cache = { .now = 1 };
 static uint32_t ring_size, head;
 
-uint32_t mdl_stat_expanded, mdl_stat_refused;
+uint32_t mdl_stat_expanded, mdl_stat_refused, mdl_stat_lerped;
 
 void mdl_reset(void *buf, uint32_t bytes)
 {
@@ -127,7 +127,8 @@ const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f, uint32_t bk
 	c->stamp[slot] = c->now;
 	head = at + need;
 	qw_vert *dst = (qw_vert *) (c->ring + at);
-	const uint32_t *src = (const uint32_t *) ((const uint8_t *) m + m->ofs_frames) + f * m->num_verts;
+	const uint32_t *frames = (const uint32_t *) ((const uint8_t *) m + m->ofs_frames);
+	const uint32_t *src = frames + f * m->num_verts;
 	/* the level of detail's band (QSTM_LOD): its vertices expanded, the
 	   others copied from their parents (the first n of a frame are the
 	   band's: formats/qstream.h) */
@@ -136,6 +137,16 @@ const qw_vert *mdl_expand_new(int a, const qst_model *m, uint32_t f, uint32_t bk
 	if (bkey) {
 		l = qst_lod_of(m);
 		n = l->num_verts[bkey >> 11];
+	}
+	if (f & QST_LERP) {                       /* a frame its neighbours make (§97): their
+		                                         average's words in the pool's upper half,
+		                                         expanded in place (each read before its
+		                                         place is written) */
+		const uint16_t *map = (const uint16_t *) (m + 1);
+		uint32_t q = f & (QST_LERP - 1), *words = (uint32_t *) dst + n;
+		mdl_frame_avg(words, frames + map[q - 1] * m->num_verts, frames + map[q + 1] * m->num_verts, n);
+		src = words;
+		mdl_stat_lerped++;
 	}
 	if (m->shift)
 		mdl_expand_shift(dst, src, n, m->shift);
@@ -185,6 +196,17 @@ void mdl_expand_shift(qw_vert *dst, const uint32_t *src, int n, int shift)
 		uint32_t w = src[i];
 		d[2 * i]     = (w & 0x00ff00ff) << shift;
 		d[2 * i + 1] = (w >> 8 & 0xff) << shift | (w >> 8 & 0x00ff0000);
+	}
+}
+
+/* engine/mdl_expand.s's mdl_frame_avg in C (the C engine): each vertex
+   word's bytes floor-averaged (the SWAR way), a's normal */
+void mdl_frame_avg(uint32_t *dst, const uint32_t *a, const uint32_t *b, int n)
+{
+	for (int i = 0; i < n; i++) {
+		uint32_t x = a[i], y = b[i];
+		uint32_t v = (x & y) + (((x ^ y) & 0xfefefefeu) >> 1);
+		dst[i] = (v & 0x00ffffffu) | (x & 0xff000000u);
 	}
 }
 

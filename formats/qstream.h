@@ -46,7 +46,9 @@
  * the frame's place among the frames stored (QST_NOFRAME: one no state
  * plays), padded to 4 bytes; the frames stored follow it (ofs_frames),
  * Quake's order, a frame equal to an earlier one (every vertex's word)
- * not stored again.
+ * not stored again. A frame its neighbours make well enough (§97: the
+ * animations thinned, QST_LERP) is not stored: its entry QST_LERP | its
+ * own number, the frame cache's key as a stored one's place is.
  *
  * A body's level of detail by its vertices' order (QSTM_LOD, docs/
  * porting-notes.md §88): the cook numbers the vertices by what the eye
@@ -125,6 +127,11 @@ typedef struct {
 #define QSTM_LOD  8          /* the vertices in relevance order, a qst_lod
                                 after the frame map (above, §88)          */
 #define QST_NOFRAME 0xffffu  /* the map's entry for a frame not stored    */
+#define QST_LERP    1024u    /* the map's entry QST_LERP | f: frame f not
+                                stored, made from its neighbours' (f - 1
+                                and f + 1, both stored): each byte of their
+                                vertex words floor-averaged, f - 1's normal
+                                (§97: the animations thinned)             */
 #define QSTM_EF(flags) ((flags) >> 8)   /* the MDL's own flags (its EF_*: the client's
                                            rotation, trails and light) */
 #define QSTM_EF_ROCKET   1   /* the fire trail and a light (lavaball.mdl)         */

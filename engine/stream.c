@@ -350,6 +350,11 @@ int stream_frame_stored(int a, int frame)
 	return bench_fmap_at[a] == 0xffff || bench_fmap[bench_fmap_at[a] + frame] != QST_NOFRAME;
 }
 
+uint32_t stream_asset_size(int a)
+{
+	return a >= 0 && a < num_assets ? ALIGN16(assets[a].d.size) : 0;
+}
+
 uint32_t stream_kept(int a)
 {
 	return a >= 0 && a < num_assets && a < BENCH_ASSETS ? bench_keep[a] : 0;
@@ -769,7 +774,12 @@ Q_COLD static int frames_ok(const qst_model *m, uint32_t size)
 		return 0;
 	if (m->flags & QSTM_FMAP)
 		for (int f = 0; f < m->num_frames; f++) {
-			uint32_t i = ((const uint16_t *) (m + 1))[f];
+			const uint16_t *map = (const uint16_t *) (m + 1);
+			uint32_t i = map[f];
+			if (i != QST_NOFRAME && (i & QST_LERP) &&      /* (a frame its neighbours make: */
+			    (i == (QST_LERP | f) && f > 0 && f + 1 < m->num_frames &&   /* both stored) */
+			     map[f - 1] < stored && map[f + 1] < stored))
+				continue;
 			if (i >= stored && i != QST_NOFRAME)
 				return 0;
 		}

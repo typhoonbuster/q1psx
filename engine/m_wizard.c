@@ -292,7 +292,7 @@ const mdef_t mdef_wizard = {
 	.mins = { -16, -16, -24 }, .maxs = { 16, 16, 40 },
 	.health = 80,
 	.kind = MK_WIZARD,
-	.fly = 1,
+	.fly = MS_FLY,
 	.states = states, .num_states = WIZ_COUNT,
 	.th_stand = wiz_stand, .th_walk = wiz_walk, .th_run = wiz_run,
 	.th_missile = wiz_missile, .th_melee = 0,

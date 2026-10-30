@@ -112,12 +112,14 @@ typedef struct {
 	int         page, u, v;    /* u, v: the image's own origin (past the border) */
 } image;
 
-static image images[256];
+#define MAX_IMAGES 512   /* (the stream's every model and its skin: the registered
+                           game's monsters past 256) */
+static image images[MAX_IMAGES];
 static int   nimages;
 
 static image *add_image(const char *what, int w, int h, int border)
 {
-	if (nimages >= 256) die("too many images");
+	if (nimages >= MAX_IMAGES) die("too many images");
 	if (w < 1 || h < 1 || w + 2 * border > PT || h + 2 * border > PT)
 		die("%s: %dx%d does not fit a texture page", what, w, h);
 	image *im = &images[nimages++];
@@ -168,7 +170,7 @@ static void free_add(int p, rect r)
 
 static void place_images(void)
 {
-	image *order[256];
+	image *order[MAX_IMAGES];
 	for (int i = 0; i < nimages; i++) order[i] = &images[i];
 	qsort(order, (size_t) nimages, sizeof *order, by_area);
 	for (int p = 0; p < GP_PAGES; p++) {
@@ -252,6 +254,8 @@ typedef struct {
 	int   (*st)[3];                 /* onseam, s, t                  */
 	int   (*tris)[4];               /* facesfront, v0, v1, v2        */
 	tvert **frames;                 /* [nframes][nverts]             */
+	const char **fnames;            /* [nframes]: each frame's name (16 bytes,
+	                                   NUL-padded)                   */
 	double *fine;                   /* a view model the cook cut (tess_build):
 	                                   [nverts][nframes][3], Quake's steps, its
 	                                   middles' exact; NULL: the frames' bytes */
@@ -316,6 +320,7 @@ static void mdl_parse(mdl_t *m, const uint8_t *d, uint32_t len, const char *name
 	/* frames: groups are flattened in order */
 	int cap = 16;
 	m->frames = xmalloc((size_t) cap * sizeof *m->frames);
+	m->fnames = xmalloc((size_t) cap * sizeof *m->fnames);
 	m->nframes = 0;
 	size_t fv = 4 * (size_t) m->nverts;
 	for (int f = 0; f < nfr; f++) {
@@ -330,12 +335,14 @@ static void mdl_parse(mdl_t *m, const uint8_t *d, uint32_t len, const char *name
 		}
 		for (int b = 0; b < nb; b++) {
 			NEED(24 + fv);
-			p += 24;                /* bboxmin, bboxmax, name */
 			if (m->nframes == cap) {
 				cap *= 2;
 				m->frames = realloc(m->frames, (size_t) cap * sizeof *m->frames);
-				if (!m->frames) die("out of memory");
+				m->fnames = realloc(m->fnames, (size_t) cap * sizeof *m->fnames);
+				if (!m->frames || !m->fnames) die("out of memory");
 			}
+			m->fnames[m->nframes] = (const char *) p + 8;
+			p += 24;                /* bboxmin, bboxmax, name */
 			m->frames[m->nframes++] = (tvert *) p;
 			p += fv;
 		}
@@ -2825,6 +2832,18 @@ void qc_mdl_skin(const qc_mdl *q, int *w, int *h, const uint8_t **px)
 	*px = q->bordered;
 }
 
+/* the model's frame `frame` alone (the finale's player, oldone.qc
+   finale_4: a statue of its frame 1) */
+void qc_mdl_one_frame(qc_mdl *q, int frame)
+{
+	mdl_t *m = &q->src.mdl;
+	if (frame < 0 || frame >= m->nframes)
+		die("%s: no frame %d of %d", q->file, frame, m->nframes);
+	m->frames[0] = m->frames[frame];
+	m->fnames[0] = m->fnames[frame];
+	m->nframes   = 1;
+}
+
 int qc_mdl_flags(const qc_mdl *q)
 {
 	return q->src.mdl.flags;
@@ -3088,16 +3107,91 @@ static const uint16_t BOSS_DROP[] = {
 	148, 157, 160, 175, 178, 341,
 };
 
+/* The registered game's (§97). */
+
+/* progs/enforcer.mdl: 424 -> 304 triangles, 222 -> 166 vertices; the laser
+   gun and its muzzle flash (folded in the body but in the shot), the head,
+   the hands on the gun and the feet whole */
+static const uint16_t ENFORCER_CUTS[][2] = {
+	{ 32, 21 }, { 24, 27 }, { 17, 18 }, { 28, 22 }, { 205, 109 }, { 125, 124 }, { 185, 79 },
+	{ 194, 79 }, { 20, 19 }, { 23, 30 }, { 145, 219 }, { 154, 147 }, { 148, 149 }, { 31, 21 },
+	{ 25, 26 }, { 169, 168 }, { 177, 206 }, { 181, 186 }, { 143, 144 }, { 170, 168 }, { 121, 120 },
+	{ 137, 72 }, { 207, 100 }, { 112, 203 }, { 85, 73 }, { 83, 84 }, { 172, 105 }, { 139, 138 },
+	{ 208, 178 }, { 147, 220 }, { 111, 218 }, { 129, 131 }, { 18, 21 }, { 67, 68 }, { 90, 84 },
+	{ 82, 218 }, { 22, 21 }, { 209, 210 }, { 135, 134 }, { 146, 106 }, { 188, 178 }, { 130, 167 },
+	{ 41, 43 }, { 200, 203 }, { 98, 160 }, { 27, 30 }, { 35, 36 }, { 39, 44 }, { 29, 26 }, { 69, 61 },
+	{ 131, 128 }, { 68, 114 }, { 64, 180 }, { 102, 101 }, { 113, 218 }, { 116, 118 },
+};
+static const uint16_t ENFORCER_DROP[] = { 1, 9, 18, 19, 28, 29, 319, 342 };
+
+/* progs/hknight.mdl: 452 -> 380 triangles, 250 -> 221 vertices; the sword,
+   the horns, the spikes, the head, the hand on the hilt, the free hand and
+   the feet whole */
+static const uint16_t HKNIGHT_CUTS[][2] = {
+	{ 114, 118 }, { 230, 222 }, { 186, 247 }, { 190, 193 }, { 200, 236 }, { 171, 172 }, { 221, 222 },
+	{ 227, 150 }, { 244, 174 }, { 137, 239 }, { 129, 130 }, { 228, 234 }, { 218, 120 }, { 214, 198 },
+	{ 173, 231 }, { 192, 209 }, { 105, 152 }, { 155, 127 }, { 187, 109 }, { 205, 204 }, { 159, 158 },
+	{ 104, 103 }, { 206, 204 }, { 168, 203 }, { 136, 151 }, { 106, 235 }, { 183, 145 }, { 140, 116 },
+	{ 204, 222 },
+};
+static const uint16_t HKNIGHT_DROP[] = { 2, 3, 32, 33, 67, 68, 79, 80, 91, 92, 97, 98, 103, 104 };
+
+/* progs/tarbaby.mdl: 256 -> 246 triangles, 130 -> 125 vertices; its dome (the face) whole */
+static const uint16_t TARBABY_CUTS[][2] = {
+	{ 123, 129 }, { 72, 76 }, { 7, 67 }, { 81, 82 }, { 66, 22 },
+};
+
+/* progs/shalrath.mdl: 414 -> 330 triangles, 208 -> 167 vertices; the head,
+   the hands and their claws and the legs' points whole */
+static const uint16_t SHALRATH_CUTS[][2] = {
+	{ 38, 49 }, { 29, 37 }, { 93, 94 }, { 30, 25 }, { 99, 100 }, { 101, 102 }, { 103, 95 },
+	{ 34, 146 }, { 114, 121 }, { 8, 7 }, { 1, 95 }, { 24, 100 }, { 26, 151 }, { 78, 76 }, { 88, 76 },
+	{ 32, 31 }, { 132, 108 }, { 123, 121 }, { 108, 163 }, { 119, 118 }, { 69, 75 }, { 122, 130 },
+	{ 98, 96 }, { 0, 5 }, { 71, 59 }, { 73, 72 }, { 65, 96 }, { 155, 148 }, { 146, 147 },
+	{ 127, 179 }, { 169, 129 }, { 154, 107 }, { 131, 109 }, { 25, 153 }, { 151, 147 }, { 152, 147 },
+	{ 160, 107 }, { 90, 76 }, { 128, 130 }, { 7, 102 },
+};
+static const uint16_t SHALRATH_DROP[] = { 254, 367 };
+
+/* progs/fish.mdl: 172 -> 124 triangles, 97 -> 73 vertices; the spines, the
+   head (the jaws, the teeth, the eyes) and the tail's tip whole */
+static const uint16_t FISH_CUTS[][2] = {
+	{ 89, 90 }, { 67, 88 }, { 65, 90 }, { 28, 88 }, { 32, 86 }, { 26, 27 }, { 71, 86 }, { 87, 86 },
+	{ 68, 66 }, { 55, 53 }, { 69, 66 }, { 64, 66 }, { 90, 88 }, { 53, 52 }, { 45, 95 }, { 96, 30 },
+	{ 41, 43 }, { 33, 85 }, { 27, 25 }, { 17, 85 }, { 57, 66 }, { 47, 48 }, { 44, 46 }, { 43, 95 },
+};
+
+/* progs/oldone.mdl: 364 -> 250 triangles, 182 -> 126 vertices; the
+   tentacles' tips whole; its vertices' grid as coarse as Chthon's: 13
+   units */
+static const uint16_t OLDONE_CUTS[][2] = {
+	{ 22, 62 }, { 17, 16 }, { 1, 16 }, { 146, 74 }, { 14, 39 }, { 65, 63 }, { 147, 144 }, { 26, 20 },
+	{ 40, 41 }, { 73, 148 }, { 6, 7 }, { 119, 120 }, { 19, 18 }, { 117, 121 }, { 29, 30 },
+	{ 115, 114 }, { 152, 42 }, { 150, 153 }, { 74, 143 }, { 30, 113 }, { 41, 154 }, { 46, 48 },
+	{ 57, 58 }, { 75, 38 }, { 80, 9 }, { 39, 15 }, { 137, 8 }, { 93, 18 }, { 71, 49 }, { 85, 37 },
+	{ 84, 35 }, { 72, 144 }, { 151, 153 }, { 145, 144 }, { 126, 110 }, { 27, 16 }, { 28, 16 },
+	{ 23, 62 }, { 140, 67 }, { 139, 141 }, { 177, 128 }, { 0, 2 }, { 163, 36 }, { 125, 15 },
+	{ 122, 9 }, { 116, 31 }, { 111, 31 }, { 97, 18 }, { 142, 63 }, { 86, 90 }, { 128, 98 },
+	{ 144, 143 }, { 42, 100 }, { 154, 51 }, { 148, 143 }, { 91, 96 },
+};
+static const uint16_t OLDONE_DROP[] = { 190, 252 };
+
 static const mob_hand MOBS[] = {
-	{ "progs/ogre.mdl",     OGRE_CUTS,     GUN_N(OGRE_CUTS),     OGRE_DROP,   GUN_N(OGRE_DROP) },
-	{ "progs/soldier.mdl",  SOLDIER_CUTS,  GUN_N(SOLDIER_CUTS),  NULL,        0 },
-	{ "progs/dog.mdl",      DOG_CUTS,      GUN_N(DOG_CUTS),      DOG_DROP,    GUN_N(DOG_DROP) },
-	{ "progs/knight.mdl",   KNIGHT_CUTS,   GUN_N(KNIGHT_CUTS),   NULL,        0 },
-	{ "progs/zombie.mdl",   ZOMBIE_CUTS,   GUN_N(ZOMBIE_CUTS),   ZOMBIE_DROP, GUN_N(ZOMBIE_DROP) },
-	{ "progs/wizard.mdl",   WIZARD_CUTS,   GUN_N(WIZARD_CUTS),   WIZARD_DROP, GUN_N(WIZARD_DROP) },
-	{ "progs/demon.mdl",    DEMON_CUTS,    GUN_N(DEMON_CUTS),    DEMON_DROP,  GUN_N(DEMON_DROP) },
-	{ "progs/shambler.mdl", SHAMBLER_CUTS, GUN_N(SHAMBLER_CUTS), NULL,        0 },
-	{ "progs/boss.mdl",     BOSS_CUTS,     GUN_N(BOSS_CUTS),     BOSS_DROP,   GUN_N(BOSS_DROP) },
+	{ "progs/ogre.mdl",     OGRE_CUTS,      GUN_N(OGRE_CUTS),      OGRE_DROP,     GUN_N(OGRE_DROP) },
+	{ "progs/soldier.mdl",  SOLDIER_CUTS,   GUN_N(SOLDIER_CUTS),   NULL,          0 },
+	{ "progs/dog.mdl",      DOG_CUTS,       GUN_N(DOG_CUTS),       DOG_DROP,      GUN_N(DOG_DROP) },
+	{ "progs/knight.mdl",   KNIGHT_CUTS,    GUN_N(KNIGHT_CUTS),    NULL,          0 },
+	{ "progs/zombie.mdl",   ZOMBIE_CUTS,    GUN_N(ZOMBIE_CUTS),    ZOMBIE_DROP,   GUN_N(ZOMBIE_DROP) },
+	{ "progs/wizard.mdl",   WIZARD_CUTS,    GUN_N(WIZARD_CUTS),    WIZARD_DROP,   GUN_N(WIZARD_DROP) },
+	{ "progs/demon.mdl",    DEMON_CUTS,     GUN_N(DEMON_CUTS),     DEMON_DROP,    GUN_N(DEMON_DROP) },
+	{ "progs/shambler.mdl", SHAMBLER_CUTS,  GUN_N(SHAMBLER_CUTS),  NULL,          0 },
+	{ "progs/boss.mdl",     BOSS_CUTS,      GUN_N(BOSS_CUTS),      BOSS_DROP,     GUN_N(BOSS_DROP) },
+	{ "progs/enforcer.mdl", ENFORCER_CUTS,  GUN_N(ENFORCER_CUTS),  ENFORCER_DROP, GUN_N(ENFORCER_DROP) },
+	{ "progs/hknight.mdl",  HKNIGHT_CUTS,   GUN_N(HKNIGHT_CUTS),   HKNIGHT_DROP,  GUN_N(HKNIGHT_DROP) },
+	{ "progs/tarbaby.mdl",  TARBABY_CUTS,   GUN_N(TARBABY_CUTS),   NULL,          0 },
+	{ "progs/shalrath.mdl", SHALRATH_CUTS,  GUN_N(SHALRATH_CUTS),  SHALRATH_DROP, GUN_N(SHALRATH_DROP) },
+	{ "progs/fish.mdl",     FISH_CUTS,      GUN_N(FISH_CUTS),      NULL,          0 },
+	{ "progs/oldone.mdl",   OLDONE_CUTS,    GUN_N(OLDONE_CUTS),    OLDONE_DROP,   GUN_N(OLDONE_DROP) },
 };
 
 /* The frames a body's QC never plays (Quake's frame numbers: the state
@@ -3117,6 +3211,7 @@ static const mob_frames MOB_FRAMES[] = {
 	{ "progs/zombie.mdl",   { { 78, 1 } } },                /* attb14 (zombie_attb14 shows attb13) */
 	{ "progs/wizard.mdl",   { { 8, 7 }, { 35, 7 } } },      /* hover9-15, magatt7-13 */
 	{ "progs/shambler.mdl", { { 71, 2 } } },                /* magic7-8 */
+	{ "progs/oldone.mdl",   { { 58, 1 } } },                /* shake13 */
 };
 
 typedef struct frame_plan {
@@ -3141,9 +3236,129 @@ static void mob_played_frames(const mdl_t *m, const char *file, uint8_t *played)
 				}
 }
 
+/* The animations thinned (§97): a body's frame f stored, between two
+   played frames of its animation (f - 1, f + 1: the frames named alike,
+   less the digits) is left out when their average, as the engine makes it
+   on the frame cache's miss (engine/mdl.c: each byte of the vertex words
+   floor-averaged, f - 1's normal), puts every vertex within the model's
+   tolerance (units) of f's; never two neighbours left out (each one's
+   neighbours stay). Its map's entry: QST_LERP | f (formats/qstream.h).
+   QCOOK_ANIM_TOL=<units> gives every body that tolerance (0: none; the
+   measures). */
+typedef struct {
+	const char *file;
+	double      tol;               /* units */
+} anim_thin;
+
+static const anim_thin ANIM_THIN[] = {   /* (the hand cuts' bound: 3 units, Chthon's and
+                                            Shub's 13: their vertices' grid four times
+                                            coarser) */
+	{ "progs/soldier.mdl",  3 }, { "progs/dog.mdl",      3 }, { "progs/ogre.mdl",     3 },
+	{ "progs/knight.mdl",   3 }, { "progs/zombie.mdl",   3 }, { "progs/wizard.mdl",   3 },
+	{ "progs/demon.mdl",    3 }, { "progs/shambler.mdl", 3 }, { "progs/boss.mdl",     13 },
+	{ "progs/enforcer.mdl", 3 }, { "progs/hknight.mdl",  3 }, { "progs/tarbaby.mdl",  3 },
+	{ "progs/shalrath.mdl", 3 }, { "progs/fish.mdl",     3 }, { "progs/oldone.mdl",   13 },
+};
+
+static double anim_tol(const char *file)
+{
+	const char *e = getenv("QCOOK_ANIM_TOL");
+	if (e && *e)
+		return atof(e);
+	for (size_t i = 0; i < sizeof ANIM_THIN / sizeof ANIM_THIN[0]; i++)
+		if (!strcmp(ANIM_THIN[i].file, file))
+			return ANIM_THIN[i].tol;
+	return 0;
+}
+
+/* frames f and g of one animation: their names alike, less the digits */
+static int same_anim(const mdl_t *m, int f, int g)
+{
+	char a[17], b[17];
+	memcpy(a, m->fnames[f], 16);
+	memcpy(b, m->fnames[g], 16);
+	a[16] = b[16] = 0;
+	for (char *t = a + strlen(a); t > a && t[-1] >= '0' && t[-1] <= '9'; )
+		*--t = 0;
+	for (char *t = b + strlen(b); t > b && t[-1] >= '0' && t[-1] <= '9'; )
+		*--t = 0;
+	return !strcmp(a, b);
+}
+
+/* frame f made the engine's average of f - 1 and f + 1: its farthest
+   vertex's distance from f's own (units), over the nv vertices `order`
+   keeps */
+static double avg_error(const mdl_t *m, int f, const int *order, int nv)
+{
+	double worst = 0;
+	for (int j = 0; j < nv; j++) {
+		const tvert *a = &m->frames[f - 1][order[j]], *b = &m->frames[f + 1][order[j]];
+		const tvert *c = &m->frames[f][order[j]];
+		double d2 = 0;
+		for (int k = 0; k < 3; k++) {
+			double e = (((a->v[k] + b->v[k]) >> 1) - c->v[k]) * m->scale[k];
+			d2 += e * e;
+		}
+		if (d2 > worst)
+			worst = d2;
+	}
+	return sqrt(worst);
+}
+
+/* the thinning (above) on a plan: the frames left out, the others renumbered */
+static void frame_plan_thin(const mdl_t *m, const char *file, const int *order, int nv, frame_plan *fp)
+{
+	double tol = anim_tol(file), worst = 0;
+	if (!(tol > 0))
+		return;
+	uint8_t *out = xcalloc((size_t) m->nframes, 1);
+	int *users = xcalloc((size_t) fp->nstored, sizeof *users), n = 0;
+	for (int f = 0; f < m->nframes; f++)      /* (a frame equal to it keeps it stored) */
+		if (fp->map[f] != QST_NOFRAME)
+			users[fp->map[f]]++;
+	for (int f = 1; f + 1 < m->nframes; f++) {
+		if (fp->map[f] == QST_NOFRAME || fp->src[fp->map[f]] != f || users[fp->map[f]] > 1 || out[f - 1])
+			continue;                         /* (not played, another's, another's too, a
+			                                     neighbour's out) */
+		if (fp->map[f - 1] == QST_NOFRAME || fp->map[f + 1] == QST_NOFRAME ||
+		    !same_anim(m, f - 1, f) || !same_anim(m, f, f + 1))
+			continue;
+		double e = avg_error(m, f, order, nv);
+		if (e > tol)
+			continue;
+		out[f] = 1;                           /* (the first of a run of candidates first:
+		                                         a path's most, every other one) */
+		if (e > worst)
+			worst = e;
+		n++;
+	}
+	if (n) {
+		int *place = xmalloc((size_t) fp->nstored * sizeof *place), kept = 0;
+		for (int i = 0; i < fp->nstored; i++)
+			place[i] = out[fp->src[i]] ? -1 : kept++;
+		for (int i = 0, k = 0; i < fp->nstored; i++)
+			if (place[i] >= 0)
+				fp->src[k++] = fp->src[i];
+		for (int f = 0; f < m->nframes; f++)
+			if (out[f])
+				fp->map[f] = (uint16_t) (QST_LERP | f);
+			else if (fp->map[f] != QST_NOFRAME)
+				fp->map[f] = (uint16_t) place[fp->map[f]];
+		printf("qcook: %-22s %d of %d stored frames rebuilt from their neighbours (to %.2f units, %.2f "
+		       "worst): %d stored\n", file, n, fp->nstored, tol, worst, kept);
+		fp->nstored = kept;
+		if (kept >= (int) QST_LERP)
+			die("%s: %d frames stored with frames rebuilt (QST_LERP)", file, kept);
+		free(place);
+	}
+	free(users);
+	free(out);
+}
+
 /* a body's frames stored: those played, each once (its vertices' words, in
    the shared numbering `order`, the nv the high level keeps: equal there,
-   equal at every level); 0 when every frame would be stored */
+   equal at every level), the animations thinned (frame_plan_thin); 0 when
+   every frame would be stored */
 static int frame_plan_make(const mdl_t *m, const char *file, const int *order, int nv, frame_plan *fp)
 {
 	if (getenv("QCOOK_NOFMAP"))
@@ -3178,6 +3393,7 @@ static int frame_plan_make(const mdl_t *m, const char *file, const int *order, i
 		}
 	}
 	free(played);
+	frame_plan_thin(m, file, order, nv, fp);
 	if (fp->nstored == m->nframes) {
 		free(fp->map);
 		free(fp->src);
@@ -3667,8 +3883,14 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 	const mob_hand *hand = body ? mob_hand_find(q->file) : NULL;
 	q->sort = body;                               /* (its triangles drawn by depth: QSTM_SORT) */
 	for (int l = 0; l < 3; l++) {
+		/* (a body without its hand table, QCOOK_NOHAND's A / B or a new
+		   monster's first cook: the low level's reduction, the one level
+		   on the disc since §52, at every level, as a hand-made one is
+		   the same model at every level: the frame map and the level of
+		   detail's tables are every level's) */
 		orig[l] = xmalloc((size_t) m->nverts * sizeof *orig[l]);
-		reduced[l] = hand ? mob_hand_reduce(m, hand, &red[l], orig[l]) : stream_reduce(m, l, body, &red[l], orig[l]);
+		reduced[l] = hand ? mob_hand_reduce(m, hand, &red[l], orig[l])
+		                  : stream_reduce(m, body ? 0 : l, body, &red[l], orig[l]);
 		if (!reduced[l]) {                        /* the model as it is */
 			red[l] = *m;
 			for (int v = 0; v < m->nverts; v++)
@@ -3927,6 +4149,30 @@ static void finales_cook(const uint8_t *pak, long pak_len, gbuf *table, gbuf *te
 		gput(texts, t, strlen(t) + 1);
 		gput(table, &fz, sizeof fz);
 		(*num)++;
+	}
+	/* oldone.qc's finale_4: Shub-Niggurath's death's text (SVC_FINALE),
+	   END's own */
+	int f4 = -1;
+	for (int i = 0; i < nfn; i++) {
+		const int32_t *fn = (const int32_t *) (d + ofs_fn + i * 36);
+		if (fn[4] >= 0 && fn[4] < nstr && !strcmp(str + fn[4], "finale_4"))
+			f4 = fn[0];
+	}
+	for (int i = f4; f4 > 0 && i < nst && ST_OP(i) != PR_OP_DONE; i++) {
+		if (ST_OP(i) < PR_OP_STORE_F || ST_OP(i) > PR_OP_STORE_S || ST_B(i) != PR_OFS_PARM1)
+			continue;
+		const char *t = GSTR(ST_A(i));
+		if (strlen(t) < 40 || !strchr(t, '\n'))
+			continue;
+		qg_finale fz;
+		memset(&fz, 0, sizeof fz);
+		memcpy(fz.map, "END", 4);
+		fz.len = (uint16_t) strlen(t);
+		fz.ofs = (uint32_t) texts->len;
+		gput(texts, t, strlen(t) + 1);
+		gput(table, &fz, sizeof fz);
+		(*num)++;
+		break;
 	}
 	/* a block with two texts: its first is the shareware game's */
 	for (uint32_t i = 0; i < *num; i++) {

@@ -2288,6 +2288,27 @@ followed by R0-R4.
   entity of a class used at tick 8 of a ticked view) and
   `BMFARENA=<percent>` (the cut arena shrunk: 7-8 rooms given up and
   packed down, the 48 lists identical).
+- **The registered game's six monsters, by hand, and the animations
+  thinned** (§97, provisional number, 2026-10-28). The enforcer, the hell knight, the spawn, the
+  vore, the rotfish and Shub-Niggurath (423 monsters on hard over 21
+  maps, removed at their spawn until now) transcribed state by state
+  from the 1.06 progs.dat: the laser (EF_DIMLIGHT), the knight's spikes
+  and its charge, the spawn's leaps and blast, the vore's homing ball,
+  the fish swimming (counted twice in the total, as 1.06 counts them),
+  Shub's idle and END's end (the finale's camera, the fog, the thrash
+  pulsing the world's light as a dimmed screen, fifty gibs, the text,
+  the player's statue). Their models cut by hand as §64's (424 -> 304,
+  452 -> 380, 256 -> 246, 414 -> 330, 172 -> 124, 364 -> 250 triangles),
+  the skins at high. Every body's animations thinned: a frame its
+  neighbours' average makes within 3 units (Chthon's and Shub's 13) is
+  rebuilt on the frame cache's miss (+0.01..0.03 % a frame in a fight),
+  135 KB of frames less. The clip entries 128 -> 160 (E4M3's monsters
+  past 128 were not solid), the game arena 90 -> 92 KB. The pools shrink
+  where the new kinds' sounds go to the level's RAM block (E4M7 426 ->
+  293 KB in the bench); residency on hard: 3 late spots on E2M6, none on
+  E4M7. The 128 views: E1 and START identical. The dynamic sounds get 14
+  of the SPU's voices (Quake's 8; the static sounds keep 6, a map's most):
+  E4M7's woken fight cuts 2 sounds for want of a channel, not 8.
 - **Sounds from the disc: the teleporters' fogs and the powerups' sounds
   out of the RAM block; the zones' sounds tried and removed** (§98,
   2026-10-29). The fogs (played among

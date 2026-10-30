@@ -27,8 +27,12 @@
 /* the monsters' kinds (the shareware's, then the registered game's) */
 enum {
 	MK_ARMY, MK_DOG, MK_OGRE, MK_KNIGHT, MK_ZOMBIE, MK_WIZARD, MK_DEMON, MK_SHAMBLER, MK_BOSS,
+	MK_ENFORCER, MK_HKNIGHT, MK_TARBABY, MK_SHALRATH, MK_FISH, MK_OLDONE,
 	MK_COUNT
 };
+
+/* how a kind starts (mdef_t.fly) */
+enum { MS_WALK, MS_FLY, MS_SWIM };
 
 /* a kind's assets: its model, its head, its projectiles (the stream's
    names), wanted together */
@@ -49,10 +53,11 @@ enum { DEAD_NO, DEAD_DYING, DEAD_DEAD };
 #define FL_PARTIALGROUND 1024
 #define EF_MUZZLEFLASH    2
 
-/* a state's action (its QC function's code) */
+/* a state's action (its QC function's code; A_CHARGEMELEE: ai_charge (arg),
+   then ai_melee, the hell knight's swings) */
 enum {
 	A_NONE, A_STAND, A_WALK, A_RUN, A_FACE, A_CHARGE, A_PAIN, A_PAINFWD, A_FORWARD, A_BACK,
-	A_TURN, A_MELEE, A_CHARGESIDE, A_MELEESIDE, A_CUSTOM
+	A_TURN, A_MELEE, A_CHARGESIDE, A_MELEESIDE, A_CUSTOM, A_CHARGEMELEE
 };
 
 typedef struct {
@@ -68,7 +73,7 @@ typedef struct mdef_s {
 	int16_t         mins[3], maxs[3]; /* setsize, world units                        */
 	int16_t         health;
 	uint8_t         kind;             /* MK_*                                        */
-	uint8_t         fly;              /* flymonster_start (else walkmonster_start)   */
+	uint8_t         fly;              /* MS_*: walk-, fly- or swimmonster_start      */
 	const mstate_t *states;
 	uint8_t         num_states;
 	void (*th_stand)(edict_t *self);
@@ -86,6 +91,8 @@ typedef struct mdef_s {
 	                                     started it (no walk/flymonster_start)   */
 	void (*map_start)(void);          /* the kind's sounds found in the map's bank  */
 	const int16_t  *sight;            /* SightSound's sound (snd_find's)            */
+	void (*sight_fn)(edict_t *self);  /* SightSound's own pick (the enforcer's four),
+	                                     NULL: `sight`                              */
 } mdef_t;
 
 /* ---- the AI (engine/ai.c: ai.qc, fight.qc, monsters.qc, sv_move.c) ------- */
@@ -193,6 +200,10 @@ void monster_state(edict_t *self, int s);
 
 /* the think every state sets: the state the last one named */
 void monster_think(edict_t *self);
+
+/* walkmonster_start / flymonster_start (its kind's): the start spread,
+   counted; a think too */
+void monster_start(edict_t *self);
 
 /* `self.think = <state>; self.nextthink = time + t` (a touch's, a use's):
    state `s` runs `ticks` on */

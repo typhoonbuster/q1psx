@@ -40,10 +40,49 @@ int level_total_secrets(void)   { return ent_total_secrets; }
 int level_killed_monsters(void) { return ent_killed_monsters; }
 int level_total_monsters(void)  { return ent_total_monsters; }
 
+static char style0[32] = "m";
+
+void level_lightstyle0(const char *s)
+{
+	q_snprintf(style0, sizeof style0, "%s", s);
+}
+
+int level_style0_dim(void)
+{
+	/* (the letter's light, ('x' - 'a') x 22 / 256, as the nearest power of
+	   a half: a black, b 1/16 .. i 1/2, j and up as they are) */
+	static const uint8_t dim[13] = { 5, 4, 3, 2, 2, 1, 1, 1, 1, 0, 0, 0, 0 };
+	size_t n = strlen(style0);
+	if (!n)
+		return 0;
+	int c = style0[(size_t) (game_tick_count / 6) % n] - 'a';   /* (cl.time x 10) */
+	return c >= 0 && c < 13 ? dim[c] : 0;
+}
+
+void level_finale_begin(const edict_t *pos)
+{
+	level_intermission    = 2;
+	intermission_exittime = 0x3fffffff;          /* (time + 10000000) */
+	level_finale_text     = "";
+	level_finale_tick     = game_tick_count;
+	memcpy(level_camera, pos->origin, sizeof level_camera);
+	for (int k = 0; k < 3; k++)
+		level_camera_angles[k] = DEG(pos->mangle[k]);
+	hud_centerprint_clear();
+}
+
+void level_finale_say(const char *text)
+{
+	level_finale_text = text ? text : "";
+	level_finale_tick = game_tick_count;
+}
+
 void level_begin(void)
 {
 	level_intermission = 0;
 	level_finale_text  = 0;
+	style0[0] = 'm';
+	style0[1] = 0;
 	level_start_tick   = game_tick_count;
 	change_wanted      = 0;
 }

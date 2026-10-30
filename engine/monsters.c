@@ -25,7 +25,8 @@
 
 /* the kinds (engine/m_*.c) */
 extern const mdef_t mdef_army, mdef_dog, mdef_ogre, mdef_ogre_marksman, mdef_knight, mdef_zombie, mdef_wizard,
-                    mdef_demon, mdef_shambler, mdef_boss;
+                    mdef_demon, mdef_shambler, mdef_boss, mdef_enforcer, mdef_hknight, mdef_tarbaby,
+                    mdef_shalrath, mdef_fish, mdef_oldone;
 
 static const mdef_t *const KINDS[MK_COUNT] = {
 	[MK_ARMY]     = &mdef_army,
@@ -37,6 +38,12 @@ static const mdef_t *const KINDS[MK_COUNT] = {
 	[MK_DEMON]    = &mdef_demon,
 	[MK_SHAMBLER] = &mdef_shambler,
 	[MK_BOSS]     = &mdef_boss,
+	[MK_ENFORCER] = &mdef_enforcer,
+	[MK_HKNIGHT]  = &mdef_hknight,
+	[MK_TARBABY]  = &mdef_tarbaby,
+	[MK_SHALRATH] = &mdef_shalrath,
+	[MK_FISH]     = &mdef_fish,
+	[MK_OLDONE]   = &mdef_oldone,
 };
 
 static int16_t kind_asset[MK_COUNT][MK_ASSETS];   /* the stream's indices, -1 none */
@@ -85,6 +92,12 @@ static int kind_of(int cls)
 	case QE_MONSTER_DEMON1:   return MK_DEMON;
 	case QE_MONSTER_SHAMBLER: return MK_SHAMBLER;
 	case QE_MONSTER_BOSS:     return MK_BOSS;
+	case QE_MONSTER_ENFORCER: return MK_ENFORCER;
+	case QE_MONSTER_HELL_KNIGHT: return MK_HKNIGHT;
+	case QE_MONSTER_TARBABY:  return MK_TARBABY;
+	case QE_MONSTER_SHALRATH: return MK_SHALRATH;
+	case QE_MONSTER_FISH:     return MK_FISH;
+	case QE_MONSTER_OLDONE:   return MK_OLDONE;
 	default:                  return -1;
 	}
 }
@@ -117,6 +130,10 @@ void monster_state(edict_t *self, int s)
 	case A_CHARGESIDE: ai_charge_side(self); break;
 	case A_MELEESIDE:  ai_melee_side(self); break;
 	case A_CUSTOM:  m->custom(self, st->arg); break;
+	case A_CHARGEMELEE:
+		ai_charge(self, st->arg);
+		ai_melee(self);
+		break;
 	default:        break;
 	}
 }
@@ -244,9 +261,44 @@ Q_COLD void flymonster_start_go(edict_t *self)
 	}
 }
 
-/* walkmonster_start / flymonster_start: delayed (the doors spawned first),
-   the thinks spread, counted */
-static void monster_start(edict_t *self)
+/* swimmonster_start_go (1.06: counted again here, as swimmonster_start
+   did: a map's every fish twice in its total) */
+Q_COLD void swimmonster_start_go(edict_t *self)
+{
+	const mdef_t *m = self->mdef;
+	self->takedamage = DAMAGE_AIM;
+	ent_total_monsters++;
+	self->ideal_yaw = (int16_t) ((int32_t) self->ang[1] * 360 / 65536);
+	if (!self->yaw_speed)
+		self->yaw_speed = 10;
+	self->view_ofs_z = 10 * SUB;
+	self->use = EF_monster_use;
+	self->flags |= FL_SWIM;
+	self->flags |= FL_MONSTER;
+	ent_link(self);                       /* (its clip entry marked a monster's: clip.h) */
+	if (self->target) {
+		self->goalentity = self->movetarget = ent_find(0, self->target);
+		if (!self->movetarget)
+			printf("Monster can't find target at %d %d %d\n", (int) self->origin[0] / SUB,
+			       (int) self->origin[1] / SUB, (int) self->origin[2] / SUB);
+		const edict_t *g = self->goalentity ? self->goalentity : ent_world;
+		int32_t d[3];
+		for (int k = 0; k < 3; k++)
+			d[k] = g->origin[k] - self->origin[k];
+		self->ideal_yaw = (int16_t) vectoyaw(d);
+		m->th_walk(self);
+	} else {
+		self->pausetime = NEVER;
+		m->th_stand(self);
+	}
+	/* spread think times so they don't all happen at same time */
+	self->nextthink += (int32_t) (frand() * TICKS(50) >> 16);
+}
+
+/* walkmonster_start / flymonster_start / swimmonster_start: delayed (the
+   doors spawned first), the thinks spread, counted; a think too (the
+   shalrath's start) */
+void monster_start(edict_t *self)
 {
 	self->nextthink += (int32_t) (frand() * TICKS(50) >> 16);
 	if (self->nextthink <= 0)                /* (Quake's random () x 0.5 seconds is
@@ -255,7 +307,8 @@ static void monster_start(edict_t *self)
 	                                            monster stood there for good, solid, not
 	                                            hurt; the first tick) */
 		self->nextthink = 1;
-	self->think = self->mdef->fly ? EF_flymonster_start_go : EF_walkmonster_start_go;
+	self->think = self->mdef->fly == MS_FLY ? EF_flymonster_start_go
+	            : self->mdef->fly == MS_SWIM ? EF_swimmonster_start_go : EF_walkmonster_start_go;
 	ent_wake(self);
 	ent_total_monsters++;
 }

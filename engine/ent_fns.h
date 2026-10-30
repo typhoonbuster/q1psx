@@ -43,6 +43,8 @@
 	X(door_touch) \
 	X(door_trigger_touch) \
 	X(door_use) \
+	X(enf_die) \
+	X(enf_pain) \
 	X(execute_changelevel) \
 	X(fd_secret_done) \
 	X(fd_secret_move1) \
@@ -52,12 +54,19 @@
 	X(fd_secret_move5) \
 	X(fd_secret_move6) \
 	X(fd_secret_use) \
+	X(finale_1) \
+	X(finale_2) \
+	X(finale_3) \
 	X(fire_fly) \
 	X(fire_touch) \
+	X(fish_die) \
+	X(fish_pain) \
 	X(flymonster_start_go) \
 	X(func_train_find) \
 	X(func_wall_use) \
 	X(health_touch) \
+	X(hknight_die) \
+	X(hknight_pain) \
 	X(hurt_on) \
 	X(hurt_touch) \
 	X(item_megahealth_rot) \
@@ -68,6 +77,7 @@
 	X(lightning_use) \
 	X(link_doors) \
 	X(make_bubbles) \
+	X(monster_start) \
 	X(monster_think) \
 	X(monster_use) \
 	X(multi_killed) \
@@ -75,6 +85,7 @@
 	X(multi_use) \
 	X(multi_wait) \
 	X(ogre_die) \
+	X(old_nopain) \
 	X(ogre_pain) \
 	X(place_item) \
 	X(plat_center_touch) \
@@ -88,6 +99,8 @@
 	X(powerup_touch) \
 	X(secret_blocked) \
 	X(secret_touch) \
+	X(shalrath_die) \
+	X(shalrath_pain) \
 	X(sham_die) \
 	X(sham_pain) \
 	X(shooter_think) \
@@ -97,6 +110,9 @@
 	X(sub_null) \
 	X(sub_remove) \
 	X(sub_use_targets) \
+	X(swimmonster_start_go) \
+	X(tar_jump_touch) \
+	X(tbaby_die) \
 	X(tdeath_touch) \
 	X(teleport_touch) \
 	X(teleport_use) \

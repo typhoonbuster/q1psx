@@ -41,7 +41,9 @@
 # QCOOK_SEQ: the maps whose zone chunks carry the cooked walk ("start
 # e1m1", "all"; "none" by default: measured slower than the tree walk),
 # and its knobs QCOOK_SEQ_FAST, QCOOK_SEQ_TEST, QCOOK_SEQ_PRUNE,
-# QCOOK_SEQ_ZERO, tools/qcook/seq.c, §91;
+# QCOOK_SEQ_ZERO, tools/qcook/seq.c, §91; QCOOK_ANIM_TOL: every body's
+# animations thinned to that many units (a frame its neighbours' average
+# makes well enough left out, tools/qcook/game.c ANIM_THIN, §97; 0 none);
 # QCOOK_MUSIC_RING_KB: the
 # SPU RAM the music's ring takes, 48 by default: the bank fills the rest
 # beside a swap room, §86). `cook.sh --stale <file>`, the
@@ -125,7 +127,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-}"
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-}"
 	echo "qcook walk: QCOOK_SEQ=${QCOOK_SEQ-none} QCOOK_SEQ_FAST=${QCOOK_SEQ_FAST:-} QCOOK_SEQ_TEST=${QCOOK_SEQ_TEST:-} QCOOK_SEQ_PRUNE=${QCOOK_SEQ_PRUNE:-} QCOOK_SEQ_ZERO=${QCOOK_SEQ_ZERO:-}"
 }
 if [ "${1:-}" = --stale ]; then

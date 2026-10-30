@@ -55,7 +55,10 @@
                                           the game arena gave goes to what follows
                                           the world (the stream's pool, the 2D
                                           gun's packets), not to a larger world */
-#define MEM_GAME_BYTES  (90 * 1024)    /* (the boot's tables: 85 KB, "mem: game
+#define MEM_GAME_BYTES  (92 * 1024)    /* (90 KB until the registered game's six
+                                          monsters: the stream's directory 162 ->
+                                          224 assets, 56 B each in the engine's
+                                          table; the boot's tables: 85 KB, "mem: game
                                           arena" at boot, 86 KB with the 2D gun's
                                           tables; 115 KB until §53, the guns' frames
                                           then Quake's own vertex words, 100 KB until

@@ -189,6 +189,22 @@ static void blend_tile(int mode, int r, int g, int b)
 	setRGB0(t, r, g, b);
 }
 
+void vid_dim(int n)
+{
+	if (n >= 5) {                                /* black: an opaque tile */
+		TILE *t = vid_ovl_alloc(sizeof *t);
+		if (!t)
+			return;
+		setTile(t);
+		setXY0(t, 0, 0);
+		setWH(t, VID_W, viewport_rows);
+		setRGB0(t, 0, 0, 0);
+		return;
+	}
+	while (n-- > 0)
+		blend_tile(0, 0, 0, 0);                  /* (B + F) / 2, F black: B / 2 */
+}
+
 /* Quake lerps each palette colour toward a shift's colour (r += pct *
    (dest - r) >> 8); the GPU blends a flat only as B + F, B - F or
    (B + F) / 2. The lerps are taken exact on the mid grey: kept contrast

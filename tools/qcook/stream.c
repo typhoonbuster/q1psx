@@ -34,67 +34,83 @@ typedef struct {
 	int         skin;       /* its skin (the asset's name: "<file>#<skin>" past 0) */
 	int         item;       /* an item's: skipped when the paks lack it (the
 	                           registered game's keys and runes)            */
+	int         frame1;     /* a frame + 1: that frame alone (the finale's
+	                           player), 0: every frame                      */
 } stream_model;
 
 /* (the groups: qcook.h G_*) */
 
 static const stream_model MODELS[] = {
-	{ "progs/gib1.mdl",     G_GIBS,     4, 0, 0, 0, 0 },     /* player.qc ThrowGib: every monster */
-	{ "progs/gib2.mdl",     G_GIBS,     4, 0, 0, 0, 0 },
-	{ "progs/gib3.mdl",     G_GIBS,     4, 0, 0, 0, 0 },
-	{ "progs/backpack.mdl", G_BACKPACK, 4, 0, 0, 0, 0 },     /* items.qc DropBackpack */
-	{ "progs/soldier.mdl",  G_ARMY,     2, 0, 0, 0, 0 },     /* monster_army */
-	{ "progs/h_guard.mdl",  G_ARMY,     4, 0, 0, 0, 0 },
-	{ "progs/dog.mdl",      G_DOG,      2, 0, 0, 0, 0 },     /* monster_dog */
-	{ "progs/h_dog.mdl",    G_DOG,      4, 0, 0, 0, 0 },
-	{ "progs/ogre.mdl",     G_OGRE,     2, 0, 0, 0, 0 },     /* monster_ogre (its grenade: GAME_<n>.DAT) */
-	{ "progs/h_ogre.mdl",   G_OGRE,     4, 0, 0, 0, 0 },
-	{ "progs/knight.mdl",   G_KNIGHT,   2, 0, 0, 0, 0 },     /* monster_knight */
-	{ "progs/h_knight.mdl", G_KNIGHT,   4, 0, 0, 0, 0 },
-	{ "progs/zombie.mdl",   G_ZOMBIE,   2, 0, 0, 0, 0 },     /* monster_zombie */
-	{ "progs/h_zombie.mdl", G_ZOMBIE,   4, 0, 0, 0, 0 },
-	{ "progs/zom_gib.mdl",  G_ZOMBIE,   4, 0, 0, 0, 0 },
-	{ "progs/wizard.mdl",   G_WIZARD,   2, 0, 0, 0, 0 },     /* monster_wizard */
-	{ "progs/h_wizard.mdl", G_WIZARD,   4, 0, 0, 0, 0 },
-	{ "progs/w_spike.mdl",  G_WIZARD,   4, 1, 0, 0, 0 },
-	{ "progs/demon.mdl",    G_DEMON,    2, 0, 0, 0, 0 },     /* monster_demon1 */
-	{ "progs/h_demon.mdl",  G_DEMON,    4, 0, 0, 0, 0 },
-	{ "progs/shambler.mdl", G_SHAMBLER, 2, 0, 0, 0, 0 },     /* monster_shambler */
-	{ "progs/h_shams.mdl",  G_SHAMBLER, 4, 0, 0, 0, 0 },
-	{ "progs/s_light.mdl",  G_SHAMBLER, 4, 1, 0, 0, 0 },
-	{ "progs/bolt.mdl",     G_SHAMBLER, 4, 1, 0, 0, 0 },
-	{ "progs/boss.mdl",     G_BOSS,     2, 0, 0, 0, 0 },     /* monster_boss */
-	{ "progs/lavaball.mdl", G_BOSS,     4, 1, 0, 0, 0 },
-	{ "progs/bolt3.mdl",    G_BOSS,     4, 1, 0, 0, 0 },     /* event_lightning's beam */
+	{ "progs/gib1.mdl",     G_GIBS,     4, 0, 0, 0, 0, 0 },     /* player.qc ThrowGib: every monster */
+	{ "progs/gib2.mdl",     G_GIBS,     4, 0, 0, 0, 0, 0 },
+	{ "progs/gib3.mdl",     G_GIBS,     4, 0, 0, 0, 0, 0 },
+	{ "progs/backpack.mdl", G_BACKPACK, 4, 0, 0, 0, 0, 0 },     /* items.qc DropBackpack */
+	{ "progs/soldier.mdl",  G_ARMY,     2, 0, 0, 0, 0, 0 },     /* monster_army */
+	{ "progs/h_guard.mdl",  G_ARMY,     4, 0, 0, 0, 0, 0 },
+	{ "progs/dog.mdl",      G_DOG,      2, 0, 0, 0, 0, 0 },     /* monster_dog */
+	{ "progs/h_dog.mdl",    G_DOG,      4, 0, 0, 0, 0, 0 },
+	{ "progs/ogre.mdl",     G_OGRE,     2, 0, 0, 0, 0, 0 },     /* monster_ogre (its grenade: GAME_<n>.DAT) */
+	{ "progs/h_ogre.mdl",   G_OGRE,     4, 0, 0, 0, 0, 0 },
+	{ "progs/knight.mdl",   G_KNIGHT,   2, 0, 0, 0, 0, 0 },     /* monster_knight */
+	{ "progs/h_knight.mdl", G_KNIGHT,   4, 0, 0, 0, 0, 0 },
+	{ "progs/zombie.mdl",   G_ZOMBIE,   2, 0, 0, 0, 0, 0 },     /* monster_zombie */
+	{ "progs/h_zombie.mdl", G_ZOMBIE,   4, 0, 0, 0, 0, 0 },
+	{ "progs/zom_gib.mdl",  G_ZOMBIE,   4, 0, 0, 0, 0, 0 },
+	{ "progs/wizard.mdl",   G_WIZARD,   2, 0, 0, 0, 0, 0 },     /* monster_wizard */
+	{ "progs/h_wizard.mdl", G_WIZARD,   4, 0, 0, 0, 0, 0 },
+	{ "progs/w_spike.mdl",  G_WIZARD,   4, 1, 0, 0, 0, 0 },
+	{ "progs/demon.mdl",    G_DEMON,    2, 0, 0, 0, 0, 0 },     /* monster_demon1 */
+	{ "progs/h_demon.mdl",  G_DEMON,    4, 0, 0, 0, 0, 0 },
+	{ "progs/shambler.mdl", G_SHAMBLER, 2, 0, 0, 0, 0, 0 },     /* monster_shambler */
+	{ "progs/h_shams.mdl",  G_SHAMBLER, 4, 0, 0, 0, 0, 0 },
+	{ "progs/s_light.mdl",  G_SHAMBLER, 4, 1, 0, 0, 0, 0 },
+	{ "progs/bolt.mdl",     G_SHAMBLER, 4, 1, 0, 0, 0, 0 },
+	{ "progs/boss.mdl",     G_BOSS,     2, 0, 0, 0, 0, 0 },     /* monster_boss */
+	{ "progs/lavaball.mdl", G_BOSS,     4, 1, 0, 0, 0, 0 },
+	{ "progs/bolt3.mdl",    G_BOSS,     4, 1, 0, 0, 0, 0 },     /* event_lightning's beam */
+	/* the registered game's (pak1) */
+	{ "progs/enforcer.mdl", G_ENFORCER, 2, 0, 1, 0, 0, 0 },     /* monster_enforcer */
+	{ "progs/h_mega.mdl",   G_ENFORCER, 4, 0, 1, 0, 0, 0 },
+	{ "progs/laser.mdl",    G_ENFORCER, 4, 1, 1, 0, 0, 0 },
+	{ "progs/hknight.mdl",  G_HKNIGHT,  2, 0, 1, 0, 0, 0 },     /* monster_hell_knight */
+	{ "progs/h_hellkn.mdl", G_HKNIGHT,  4, 0, 1, 0, 0, 0 },
+	{ "progs/k_spike.mdl",  G_HKNIGHT,  4, 1, 1, 0, 0, 0 },
+	{ "progs/tarbaby.mdl",  G_TARBABY,  2, 0, 1, 0, 0, 0 },     /* monster_tarbaby */
+	{ "progs/shalrath.mdl", G_SHALRATH, 2, 0, 1, 0, 0, 0 },     /* monster_shalrath */
+	{ "progs/h_shal.mdl",   G_SHALRATH, 4, 0, 1, 0, 0, 0 },
+	{ "progs/v_spike.mdl",  G_SHALRATH, 4, 1, 1, 0, 0, 0 },
+	{ "progs/fish.mdl",     G_FISH,     2, 0, 1, 0, 0, 0 },     /* monster_fish */
+	{ "progs/oldone.mdl",   G_OLDONE,   2, 0, 1, 0, 0, 0 },     /* monster_oldone */
+	{ "progs/player.mdl",   G_OLDONE,   4, 0, 0, 0, 0, 2 },     /* its finale's player (frame 1) */
 	/* the items' models (items.qc, misc.qc: the map keeps the boxes, BSP
 	   models over its own textures): a quarter of their skins' resolution,
 	   the flames a half (fullbright: flat) */
-	{ "progs/g_shot.mdl",   G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/g_nail.mdl",   G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/g_nail2.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/g_rock.mdl",   G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/g_rock2.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/g_light.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/armor.mdl",    G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/armor.mdl",    G_ITEMS,    4, 0, 0, 1, 1 },
-	{ "progs/armor.mdl",    G_ITEMS,    4, 0, 0, 2, 1 },
-	{ "progs/w_s_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/w_g_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/m_s_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/m_g_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/b_s_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/b_g_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/end1.mdl",     G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/end2.mdl",     G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/end3.mdl",     G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/end4.mdl",     G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/invulner.mdl", G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/suit.mdl",     G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/invisibl.mdl", G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/quaddama.mdl", G_ITEMS,    4, 0, 0, 0, 1 },
-	{ "progs/flame.mdl",    G_ITEMS,    2, 1, 0, 0, 1 },
-	{ "progs/flame2.mdl",   G_ITEMS,    2, 1, 0, 0, 1 },
-	{ "progs/teleport.mdl", G_ITEMS,    4, 1, 0, 0, 1 },
+	{ "progs/g_shot.mdl",   G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/g_nail.mdl",   G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/g_nail2.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/g_rock.mdl",   G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/g_rock2.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/g_light.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/armor.mdl",    G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/armor.mdl",    G_ITEMS,    4, 0, 0, 1, 1, 0 },
+	{ "progs/armor.mdl",    G_ITEMS,    4, 0, 0, 2, 1, 0 },
+	{ "progs/w_s_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/w_g_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/m_s_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/m_g_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/b_s_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/b_g_key.mdl",  G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/end1.mdl",     G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/end2.mdl",     G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/end3.mdl",     G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/end4.mdl",     G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/invulner.mdl", G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/suit.mdl",     G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/invisibl.mdl", G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/quaddama.mdl", G_ITEMS,    4, 0, 0, 0, 1, 0 },
+	{ "progs/flame.mdl",    G_ITEMS,    2, 1, 0, 0, 1, 0 },
+	{ "progs/flame2.mdl",   G_ITEMS,    2, 1, 0, 0, 1, 0 },
+	{ "progs/teleport.mdl", G_ITEMS,    4, 1, 0, 0, 1, 0 },
 };
 #define NUM_MODELS (int) (sizeof MODELS / sizeof MODELS[0])
 
@@ -134,8 +150,31 @@ static const struct { const char *file; int group; } MONSTER_SOUNDS[] = {
 	{ "boss1/out1.wav",      G_BOSS },     { "boss1/sight1.wav",    G_BOSS },
 	{ "boss1/throw.wav",     G_BOSS },     { "boss1/pain.wav",      G_BOSS },
 	{ "boss1/death.wav",     G_BOSS },
+	{ "enforcer/death1.wav", G_ENFORCER }, { "enforcer/enfire.wav", G_ENFORCER },
+	{ "enforcer/enfstop.wav", G_ENFORCER }, { "enforcer/idle1.wav", G_ENFORCER },
+	{ "enforcer/pain1.wav",  G_ENFORCER }, { "enforcer/pain2.wav",  G_ENFORCER },
+	{ "enforcer/sight1.wav", G_ENFORCER }, { "enforcer/sight2.wav", G_ENFORCER },
+	{ "enforcer/sight3.wav", G_ENFORCER }, { "enforcer/sight4.wav", G_ENFORCER },
+	{ "hknight/attack1.wav", G_HKNIGHT },  { "hknight/death1.wav",  G_HKNIGHT },
+	{ "hknight/pain1.wav",   G_HKNIGHT },  { "hknight/sight1.wav",  G_HKNIGHT },
+	{ "hknight/hit.wav",     G_HKNIGHT },  { "hknight/slash1.wav",  G_HKNIGHT },
+	{ "hknight/idle.wav",    G_HKNIGHT },
+	{ "blob/death1.wav",     G_TARBABY },  { "blob/hit1.wav",       G_TARBABY },
+	{ "blob/land1.wav",      G_TARBABY },  { "blob/sight1.wav",     G_TARBABY },
+	{ "shalrath/attack.wav", G_SHALRATH }, { "shalrath/attack2.wav", G_SHALRATH },
+	{ "shalrath/death.wav",  G_SHALRATH }, { "shalrath/idle.wav",   G_SHALRATH },
+	{ "shalrath/pain.wav",   G_SHALRATH }, { "shalrath/sight.wav",  G_SHALRATH },
+	{ "fish/death.wav",      G_FISH },     { "fish/bite.wav",       G_FISH },
+	{ "fish/idle.wav",       G_FISH },
+	{ "boss2/death.wav",     G_OLDONE },   { "boss2/pop2.wav",      G_OLDONE },
 };
 #define NUM_MONSTER_SOUNDS (int) (sizeof MONSTER_SOUNDS / sizeof MONSTER_SOUNDS[0])
+
+/* a kind's sounds another kind's group streams (the hell knight's swords:
+   the knight's), wanted with that kind too */
+static const struct { const char *file; int group; } SHARED_SOUNDS[] = {
+	{ "knight/sword1.wav", G_HKNIGHT }, { "knight/sword2.wav", G_HKNIGHT },
+};
 #define MAX_WORLD_SOUNDS 96
 
 /* the outputs: STREAM_<level>.DAT for the three model levels (the low one
@@ -240,8 +279,10 @@ int cmd_stream(int argc, char **argv)
 		else
 			snprintf(name, sizeof name, "%s", sm->file);
 		qc_mdl *q = qc_mdl_load(name, d, len, sm->skin, sm->div, sm->flat);
+		if (sm->frame1)
+			qc_mdl_one_frame(q, sm->frame1 - 1);
 		entry *e = &ents[n++];
-		int body = sm->group >= G_ARMY && sm->group <= G_BOSS && sm->div == 2;   /* a monster's body */
+		int body = sm->group >= G_ARMY && sm->group <= G_LAST_MONSTER && sm->div == 2;   /* a monster's body */
 		buf_t lv[3], shared;
 		qc_mdl_cook_levels(q, body, lv, &shared);
 		for (int o = 0; o < NOUT; o++) {      /* each asset on a sector of its own */
@@ -317,13 +358,15 @@ int cmd_stream(int argc, char **argv)
 
 /* The streamed assets a map's monsters bring (the XA carousels' until
    docs/porting-notes.md §52): each kind's group (its models, head,
-   projectiles, sounds), the gibs and the backpack with any monster (the
-   registered game's kinds are not streamed); their names */
+   projectiles, sounds), the gibs and the backpack with any monster; their
+   names */
 static const struct { const char *classname; int group; } KINDS[] = {
 	{ "monster_army", G_ARMY }, { "monster_dog", G_DOG }, { "monster_ogre", G_OGRE },
 	{ "monster_ogre_marksman", G_OGRE }, { "monster_knight", G_KNIGHT }, { "monster_zombie", G_ZOMBIE },
 	{ "monster_wizard", G_WIZARD }, { "monster_demon1", G_DEMON }, { "monster_shambler", G_SHAMBLER },
-	{ "monster_boss", G_BOSS },
+	{ "monster_boss", G_BOSS }, { "monster_enforcer", G_ENFORCER }, { "monster_hell_knight", G_HKNIGHT },
+	{ "monster_tarbaby", G_TARBABY }, { "monster_shalrath", G_SHALRATH }, { "monster_fish", G_FISH },
+	{ "monster_oldone", G_OLDONE },
 };
 
 /* a streamed sound's group (a monster's, or G_WORLD), 0 for a name that is none */
@@ -374,6 +417,13 @@ int stream_monster_needs(const ent_list *l, const char **list, int max)
 		if (n >= max)
 			die("too many monster assets");
 		list[n++] = MONSTER_SOUNDS[k].file;
+	}
+	for (size_t k = 0; k < sizeof SHARED_SOUNDS / sizeof SHARED_SOUNDS[0]; k++) {
+		if (!have[SHARED_SOUNDS[k].group] || have[stream_sound_group(SHARED_SOUNDS[k].file)])
+			continue;
+		if (n >= max)
+			die("too many monster assets");
+		list[n++] = SHARED_SOUNDS[k].file;
 	}
 	return n;
 }
