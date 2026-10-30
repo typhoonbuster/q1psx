@@ -14137,3 +14137,34 @@ snapshots 48 of 48 whole (50 % before), in play every sample of 8 whole;
 the robot's START route, with the Hard corridor's running jump over the
 water, passes at the first try (it fell short every time before).
 
+## §102 — The super shotgun's blue pixels: the skin's fill at its triangles' edges (2026-10-30)
+
+Seen in the robot's videos: a few blue pixels on the super shotgun's
+barrels in some frames, depending on the gun's bob, the turn and the
+view's pitch; the other guns showed none any more.
+
+### 102.1 The cause
+
+§53's gun atlases keep every texel a triangle overlaps at all (`skin_cover`
+with `edges`: the GPU's `floor(u)` takes the texels an edge crosses; the
+rocket launcher's muzzle rim needed it). Where a triangle's texture
+coordinates graze the skin's unused area, those texels are the fill, a
+flat blue in id's skins (palette 208): kept as shown, never replaced by
+their painted neighbours, and the GPU drew them when a pose put the
+triangle's edge on them. The super shotgun had 12 of them, the axe 13,
+the shotgun 3, the super nailgun 5; the guns whose fill is another colour
+had some too (the nailgun's black: 17, the rocket launcher's: 12).
+
+### 102.2 The fix
+
+`view_atlas` (tools/qcook/game.c): the skin's fill is the colour most
+texels outside every triangle have; a texel only an edge crosses (not
+inside a triangle by the centre rule) that has the fill's colour, with no
+texel inside a triangle of that colour next to it, is not shown: it takes
+its painted neighbours' colour as the unused texels do. The neighbour
+test keeps a fill-coloured part that is painted: the rocket launcher's
+black muzzle keeps its rim (§53). The cook prints, a gun, the texels
+taken and the fill's texels left next to a shown one: 0 for the super
+shotgun, the axe, the super nailgun, the grenade launcher and the
+lightning gun.
+

@@ -2387,3 +2387,9 @@ followed by R0-R4.
   button was pressed again. The time is read first now: every poll whole
   (the title 48 of 48, play 8 of 8 in each sample), 16 bytes of code
   less.
+- **The super shotgun's blue pixels** (§102, 2026-10-30). The guns' atlases keep every texel a triangle
+  overlaps (§53); where a triangle grazes a skin's unused area those
+  texels were its blue fill, drawn by the GPU at the barrels' edges in
+  some poses. An edge-only texel of the fill's colour, with no painted
+  texel of that colour beside it, now takes its neighbours' colour (12 on
+  the super shotgun; the rocket launcher's black muzzle keeps its rim).

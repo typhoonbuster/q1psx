@@ -1805,9 +1805,53 @@ static void view_atlas(model_src *ms)
 
 	/* the skin, Quake's and half, the texels shown and their spread */
 	uint8_t *cover = skin_cover(m, 1);
+	/* (a texel only a triangle's edge crosses keeps its colour, the GPU's
+	   floor(u) takes it, unless it is the skin's fill and no texel inside
+	   a triangle next to it has that colour: a triangle grazing the
+	   unused area took its blue, which the GPU drew at the barrels' edges
+	   in some poses of the gun; those take their neighbours'. The rocket
+	   launcher's black muzzle, the fill's colour too, keeps its rim) */
+	uint8_t *inner = skin_cover(m, 0);
+	int hist[256] = { 0 }, fill = 0, grazed = 0;
+	for (int i = 0; i < sw * sh; i++)
+		if (!cover[i])
+			hist[m->skin[i]]++;
+	for (int c = 1; c < 256; c++)
+		if (hist[c] > hist[fill])
+			fill = c;
+	for (int y = 0; y < sh; y++)
+		for (int x = 0; x < sw; x++) {
+			int i = y * sw + x, painted = 0;
+			if (!cover[i] || inner[i] || m->skin[i] != fill)
+				continue;
+			for (int dy = -1; dy <= 1; dy++)
+				for (int dx = -1; dx <= 1; dx++) {
+					int nx = x + dx, ny = y + dy;
+					if (nx >= 0 && ny >= 0 && nx < sw && ny < sh && inner[ny * sw + nx] &&
+					    m->skin[ny * sw + nx] == fill)
+						painted = 1;
+				}
+			if (!painted) {
+				cover[i] = 0;
+				grazed++;
+			}
+		}
+	free(inner);
 	uint8_t *full = xmalloc((size_t) sw * sh), *half = xmalloc((size_t) hw * hh);
 	skin_reduce(m, cover, 1, full);
 	skin_reduce(m, cover, 2, half);
+	int left = 0;                                /* (the fill a texel from a shown one: none) */
+	for (int y = 0; y < sh; y++)
+		for (int x = 0; x < sw; x++) {
+			int near = 0;
+			for (int dy = -1; dy <= 1; dy++)
+				for (int dx = -1; dx <= 1; dx++)
+					near |= x + dx >= 0 && y + dy >= 0 && x + dx < sw && y + dy < sh &&
+					        cover[(y + dy) * sw + x + dx];
+			left += near && !cover[y * sw + x] && full[y * sw + x] == fill;
+		}
+	printf("qcook: %s: %d edge texels of the skin's fill (%d) take their neighbours', %d of it next to a shown "
+	       "texel\n", sp->file, grazed, fill, left);
 	free(cover);
 
 	/* each triangle's resolution: Quake's where the screen spreads it */
