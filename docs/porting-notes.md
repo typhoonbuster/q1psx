@@ -14262,3 +14262,17 @@ frame's.
   +1.6 %; the triangles' test now lives in the water loop's copy only.
 - The C engine (`ENGINE_C=1`, `r_slow.c`): E2M2's views.
 
+## §104 — A telefrag wrapped a monster's 16-bit health (robot run, 2026-10-31)
+
+Found by the robot's black box on E2M1, Hard: four enforcers teleported
+into a trap's room at once (Quake's monsters take the teleporters) had
+15616 and 31152 health a tick later, all but immortal, and one blocked
+the corridor to the exit. `spawn_tdeath`'s trigger hits what stands at
+the destination for 50000 (`ent_damage`), and `ent_damage_x256` stored
+`health - take` in the edict's 16 bits: 80 - 50000 = -49920, +15616 once
+wrapped (and 15616 - 50000 = +31152 for a second hit). Quake's health is
+a float: the monster died there. The difference is now taken in 32 bits
+and kept at -32768 at least: the telefragged monster dies, its gib test
+(`health < -35` and the like) as Quake's. Shub-Niggurath's 30000 (§97,
+its 40000 in the 16 bits) still dies to a telefrag.
+

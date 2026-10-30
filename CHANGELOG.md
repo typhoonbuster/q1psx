@@ -2402,3 +2402,7 @@ followed by R0-R4.
   path before the near plane's (`sp_water`; `r_slow.c` the same). A body
   wading with its centre on the other side from the eye is seen by its
   feet's or top's leaf (id's maps were vis'd with the liquids opaque).
+- **A telefrag wrapped a monster's health** (§104, robot run, 2026-10-31). The telefrag's 50000 damage was taken from
+  the edict's 16-bit health: a monster teleported onto another (E2M1's
+  enforcer trap on Hard) kept 15616 or 31152 health instead of dying. The
+  difference is taken in 32 bits and kept at -32768 at least.

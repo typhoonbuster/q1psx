@@ -740,7 +740,10 @@ void ent_damage_x256(edict_t *targ, edict_t *inflictor, edict_t *attacker, int d
 		return;
 	}
 	int take = (damage + 255) >> 8;       /* ceil (no armour: only the player's) */
-	targ->health = (int16_t) (targ->health - take);
+	int32_t health = targ->health - take; /* (the edicts' 16 bits: a telefrag's 50000 took */
+	if (health < -32768)                  /*  a monster's 80 round to +15616, the 4 enforcers */
+		health = -32768;                  /*  teleported into E2M1's trap all but immortal) */
+	targ->health = (int16_t) health;
 	ELOG("ent: %s takes %d (health %d)\n", world_string(targ->classname), take, targ->health);
 	if (targ->health <= 0) {
 		killed(targ, attacker);
