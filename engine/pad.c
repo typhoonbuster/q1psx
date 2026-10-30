@@ -367,14 +367,22 @@ static void snap_to_pad(const volatile pad_snap *s, pad_t *p)
 
 static void poll_wait(void)
 {
-	while (pad_poll.busy && (uint16_t) ((uint16_t) TIMER_VALUE(2) - pad_poll.t) < POLL_WAIT)
-		;
-	if (pad_poll.busy) {
-		FastEnterCriticalSection();
-		if (pad_poll.busy)
-			poll_end();
-		FastExitCriticalSection();
+	for (;;) {
+		if (!pad_poll.busy)
+			return;
+		/* the last byte's time read before the timer: an answer taken
+		   between the two reads makes this wait a little longer. Read
+		   after the timer, a fresher time made the difference wrap to
+		   ~65535 and the poll was cut there, half of them on DuckStation
+		   (docs/porting-notes.md §101) */
+		uint16_t t = pad_poll.t;
+		if ((uint16_t) ((uint16_t) TIMER_VALUE(2) - t) >= POLL_WAIT)
+			break;
 	}
+	FastEnterCriticalSection();
+	if (pad_poll.busy)
+		poll_end();
+	FastExitCriticalSection();
 }
 #endif
 

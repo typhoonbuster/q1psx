@@ -14086,3 +14086,54 @@ fast forward:
 - The player's pain sounds cutting each other (Quake's channel rule: a
   sound on an entity's channel replaces the one playing there): a
   report, not looked at yet.
+
+## §101 — The pad's polls cut by their own wait: half of them lost on DuckStation (2026-10-30)
+
+Found while an external robot played the release in DuckStation (the
+emulator in use, its interpreter) for a video: the player ran at a third
+to a half of its speed and a jump held for ten ticks could be lost.
+
+### 101.1 What the game got
+
+- Read in DuckStation's RAM from outside: the ring of polls
+  (`engine/pad.c` ring, its snapshots' `connected`) alternated, 50 % of
+  the polls whole on the title, 30 to 60 % in play on START; a lost poll
+  is a pad not connected for its tick (no buttons, the sticks centred),
+  so a held button was pressed again at the next whole poll (the menu's
+  cursor jumped two rows) and the walk's speed fell with the friction of
+  the empty ticks.
+- `pad_poll` sampled every half millisecond: the lost polls stopped at
+  their 2nd or 3rd byte of 9. Counters in a diagnostic build (the polls'
+  ends by the handler, by the vblank, by the frame's wait): every lost
+  poll was cut by `poll_wait`, none during the boot (no frame loop yet:
+  no wait), with the interrupts enabled at the wait's entry.
+- A 16 times longer `POLL_WAIT` changed nothing; with the handler's
+  short way off (§81.4: every byte by the C handler) all the polls were
+  lost.
+
+### 101.2 The cause
+
+`poll_wait` (the frame's wait for a poll in flight, §81) tested
+`(uint16_t) (TIMER_VALUE(2) - pad_poll.t) < POLL_WAIT`, the timer loaded
+first, the last byte's time after. The wait spins while the poll's bytes
+come, an interrupt each: one landing between the two loads made `t`
+fresher than the timer read before it, the 16-bit difference wrapped to
+about 65 535 and the poll was cut there. Since §81 (the poll by
+interrupts) on every machine and emulator where the frame waits on a poll
+in flight; the headless checks poll no pad (the scripted pad bypasses the
+port), so none saw it.
+
+### 101.3 The fix
+
+`t` read first, then the timer: an answer taken between the two reads
+makes the wait a little longer, never a cut; a poll that really stops
+(no pad, a pad unplugged) is still cut 512 ticks (~120 us) after its last
+byte. 16 bytes of code less (the level arena 1 358 720 -> 1 358 736).
+
+### 101.4 Measured
+
+On DuckStation, the release built from the branch: the title's
+snapshots 48 of 48 whole (50 % before), in play every sample of 8 whole;
+the robot's START route, with the Hard corridor's running jump over the
+water, passes at the first try (it fell short every time before).
+

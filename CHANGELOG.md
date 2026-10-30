@@ -2378,3 +2378,12 @@ followed by R0-R4.
   the pools' mean 580 -> 593 KB (E4M7 329 -> 416, E4M5 433 -> 516, E4M6
   564 -> 633, E2M6 410 -> 461). `scripts/headless.sh` kills a PCSX-Redux
   that ignores the TERM.
+- **The pad's polls cut by their own wait** (§101, 2026-10-30). Since the poll by interrupts (§81) the
+  frame's wait for a poll in flight read timer 2 before the last byte's
+  time: an answer's interrupt between the two loads made the 16-bit
+  difference wrap and the poll was cut at its 2nd or 3rd byte. On
+  DuckStation half the polls were lost (30 to 60 % in play): the player
+  ran at a third to a half of its speed, a held jump could be lost, a held
+  button was pressed again. The time is read first now: every poll whole
+  (the title 48 of 48, play 8 of 8 in each sample), 16 bytes of code
+  less.
