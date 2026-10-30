@@ -2309,6 +2309,48 @@ static void player_water(void)
 	}
 }
 
+
+/* SV_CheckStuck: the player in a solid (the world's hull 1) is put back
+   where he was last tick, else nudged up to 17 units up and a unit aside,
+   the first open place; else left. A lift that set the player down left
+   him an eighth of a unit into E2M1's floor (its top at 24, his origin
+   at 23.875, every move a trace started in the solid: stuck for good,
+   §105); Quake runs it every frame before the move (sv_phys.c) */
+static int32_t pl_oldorigin[3];
+
+static void check_stuck(void)
+{
+	if (pl.pm.noclip)
+		return;
+	if (clip_contents(1, pl.pm.pos) != QW_CONTENTS_SOLID) {
+		pl_oldorigin[0] = pl.pm.pos[0];
+		pl_oldorigin[1] = pl.pm.pos[1];
+		pl_oldorigin[2] = pl.pm.pos[2];
+		return;
+	}
+	int32_t org[3] = { pl.pm.pos[0], pl.pm.pos[1], pl.pm.pos[2] };
+	int32_t d = 0;                                /* (last tick's place: this level's, near) */
+	for (int k = 0; k < 3; k++)
+		d += (org[k] - pl_oldorigin[k]) < 0 ? pl_oldorigin[k] - org[k] : org[k] - pl_oldorigin[k];
+	if (d < 64 * CLIP_SUB && clip_contents(1, pl_oldorigin) != QW_CONTENTS_SOLID) {
+		pl.pm.pos[0] = pl_oldorigin[0];
+		pl.pm.pos[1] = pl_oldorigin[1];
+		pl.pm.pos[2] = pl_oldorigin[2];
+		return;
+	}
+	for (int z = 0; z < 18; z++)
+		for (int i = -1; i <= 1; i++)
+			for (int j = -1; j <= 1; j++) {
+				int32_t p[3] = { org[0] + i * CLIP_SUB, org[1] + j * CLIP_SUB, org[2] + z * CLIP_SUB };
+				if (clip_contents(1, p) != QW_CONTENTS_SOLID) {
+					pl.pm.pos[0] = p[0];
+					pl.pm.pos[1] = p[1];
+					pl.pm.pos[2] = p[2];
+					return;
+				}
+			}
+}
+
 /* client.qc CheckWaterJump: at the surface, a wall 24 units ahead at the
    waist and nothing at the eyes is a ledge: the push away from the wall
    (movedir) and the jump out go through pmove_step this tick. 1.06's
@@ -2392,6 +2434,7 @@ void game_tick(const game_cmd_t *cmd)
 			w_set_current(w_best_weapon());
 		pl.jump_held = cmd->jump;
 		pl.jump_flag = pl.pm.vel[2];
+		check_stuck();
 		pmove_step(&pl.pm, &pc);
 		if (pl.pm.touched)                        /* SV_Impact: a brush model run into */
 			ents_impact(pl.pm.touched);

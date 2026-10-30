@@ -14276,3 +14276,18 @@ and kept at -32768 at least: the telefragged monster dies, its gib test
 (`health < -35` and the like) as Quake's. Shub-Niggurath's 30000 (§97,
 its 40000 in the 16 bits) still dies to a telefrag.
 
+## §105 — The player stuck in a floor for good: SV_CheckStuck (robot run, 2026-10-31)
+
+Found by the robot on E2M1, Hard, after the lift at (264, 1512) set the
+player down and he walked east along y 1512: his origin at z 23.875
+where the floor's top in hull 1 is 24.0, an eighth of a unit inside the
+solid. Every trace of the move then started in the solid: no move, no
+ground, no jump, for good (a softlock; the evidence is kept outside the
+repo: the DuckStation state, the black box, the capture). Quake runs
+`SV_CheckStuck` every frame before the player's move (sv_phys.c): in a
+solid, back to the last frame's place, else nudged 0 to 17 units up and
+a unit aside, the first open place. The port had none (pmove.c leaves
+out `SV_TryUnstick` too, a different remedy). `check_stuck` (game.c)
+does it before `pmove_step`, the world's hull 1 its test (one point's
+contents a tick), the last place only when this level's and near.
+

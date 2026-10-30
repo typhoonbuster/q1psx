@@ -2406,3 +2406,7 @@ followed by R0-R4.
   the edict's 16-bit health: a monster teleported onto another (E2M1's
   enforcer trap on Hard) kept 15616 or 31152 health instead of dying. The
   difference is taken in 32 bits and kept at -32768 at least.
+- **The player stuck in a floor for good** (§105, robot run, 2026-10-31). A lift set the player an eighth of a unit
+  into E2M1's floor and no move could start from there. Quake's
+  `SV_CheckStuck` is ported: in a solid, back to the last tick's place,
+  else nudged up to 17 units up and a unit aside.
