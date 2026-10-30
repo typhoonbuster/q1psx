@@ -3252,11 +3252,12 @@ typedef struct {
 
 static const anim_thin ANIM_THIN[] = {   /* (the hand cuts' bound: 3 units, Chthon's and
                                             Shub's 13: their vertices' grid four times
-                                            coarser) */
+                                            coarser; the hell knight's 8, the biggest
+                                            body of the merged kinds' RAM, §100) */
 	{ "progs/soldier.mdl",  3 }, { "progs/dog.mdl",      3 }, { "progs/ogre.mdl",     3 },
 	{ "progs/knight.mdl",   3 }, { "progs/zombie.mdl",   3 }, { "progs/wizard.mdl",   3 },
 	{ "progs/demon.mdl",    3 }, { "progs/shambler.mdl", 3 }, { "progs/boss.mdl",     13 },
-	{ "progs/enforcer.mdl", 3 }, { "progs/hknight.mdl",  3 }, { "progs/tarbaby.mdl",  3 },
+	{ "progs/enforcer.mdl", 3 }, { "progs/hknight.mdl",  8 }, { "progs/tarbaby.mdl",  3 },
 	{ "progs/shalrath.mdl", 3 }, { "progs/fish.mdl",     3 }, { "progs/oldone.mdl",   13 },
 };
 

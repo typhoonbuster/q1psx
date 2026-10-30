@@ -3429,9 +3429,9 @@ static void cap_cmd(game_cmd_t *cmd)
 			printf("capture: hurt %d (tick %d)\n", s->arg, (int) game_tick_count);
 			break;
 		case CS_ENDSOON: {                /* the running powerups end in arg hundredths */
-			int32_t t = (int32_t) game_tick_count + TICKS(s->arg);
-			int32_t *fin[4] = { &pl.invisible_finished, &pl.invincible_finished, &pl.super_damage_finished,
-			                    &pl.radsuit_finished };
+			int t = (int) game_tick_count + TICKS(s->arg);
+			int *fin[4] = { &pl.invisible_finished, &pl.invincible_finished, &pl.super_damage_finished,
+			                &pl.radsuit_finished };
 			for (int k = 0; k < 4; k++)
 				if (*fin[k] > t)
 					*fin[k] = t;

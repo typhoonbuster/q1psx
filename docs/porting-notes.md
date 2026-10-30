@@ -13909,3 +13909,180 @@ the levels' streamed files +1.7 MB on the disc. The energy kept stays
 - DuckStation: the four clips; in play, a ring of shadows
   picked up after a teleport (E4M7's *23), a pentagram hit early
   (E2M4, E2M6, E4M7), the fogs where monsters teleport in.
+
+## §100 — §97 merged with §98-§99: the stream's stalls and thrash, the merged kinds' sounds from the disc, the teleporters' hum, the hell knight at 8 units (2026-10-30)
+
+§97's and §99's branches were
+merged into master, then the RAM a level measured again. The merged
+build's walk of the 32 maps (`ZONES=2 MUSIC=1 CDMODEL=1`, at the
+release's arena by `LEVEL_CAP`), which §97's checks had not run, found
+frames of 16 to 41 M cycles on E2M4, E2M6 and E4M7 (half a second to more
+than one), the stream reading a model every 12 frames there (E2M6: 3
+reads in the walk's minute before the merge, 290 after) and E4M7's
+teleporters' hum missing for 105 to 191 frames. The levers §97.7 and the
+first look named were all built but one (100.6); measured in 100.7.
+
+### 100.1 What the merge did to the pools
+
+The stream's pool lost 22 to 28 KB on every map (the merged code, the
+game arena, the clip table: the release's level arena 1 382 864 →
+1 359 472 bytes) and more where the new kinds' sounds overflowed the
+SPU into the level's RAM block (§86): E4M7's 64 → 152 KB, E4M5 34 → 118,
+E4M6 0 → 90, E2M6 36 → 90; on normal E4M7's pool 450 → 329 KB, E4M6 691
+→ 564, E4M5 550 → 433, E2M6 490 → 410 (the mean 621 → 580; on hard 575).
+
+### 100.2 Where the frames went
+
+- The sampler (`SAMPLE=1 MAP=E2M6 ZONES=2`): `vram_place` 3.5 % of every
+  sample of the walk, as much as the renderer's dearest functions.
+- The drive's step timed in the walk's frames: a model's install 1.1 to
+  1.6 M cycles, the worst 10 M (the VRAM search again after each
+  eviction); with the search fixed (100.3), the compactions: 3 to 6.6 M
+  cycles each, the SDK's `memmove` going byte by byte.
+- The stream's log: the thrash was the PVS's lower tier (§50.5): the
+  kinds' heads, the gibs, the items out of view, read into each room a
+  pass made and dropped at the next want of a model in view (E2M6 in a
+  minute: `h_ogre` 37 reads, `h_zombie` 36, `h_demon` 34, `h_shams` 31,
+  `quaddama` 29; 351 model reads in all, 288 sound swaps).
+
+### 100.3 The VRAM search page by page
+
+engine/stream.c `vram_place`: in each region the candidates (the corner,
+the corners each image of its page leaves) were tested against every
+resident image (`vram_fits`), the images walked again for every region:
+up to 2 x 40 x 193 x 96 tests a search, 1 to 5 M cycles. The images are
+sorted by page once a search (`occ_by_page`, in res[]'s order), a region
+takes its page's alone, and a region whose fit cannot beat the best
+found is passed. The same candidates in the same order: the same places.
+`VRAMCHK=1` (scripts/bench.sh) runs the old search beside the new one
+and compares them: E2M6's walk, 600 searches and more, none differ.
+
+### 100.4 The stream's work a frame; the compaction by words
+
+- `WORK_FRAME` (engine/stream.c): a frame's evictions of models (1 each)
+  and compactions of the pool (4 each) stop at 8; past it a read's room
+  waits for the next frame (`reserve` → -2, the room made kept, the
+  asset not marked stuck) and a model's install too (`install_model` →
+  2: `installing`, the bytes read kept, its places made again from the
+  start). The map's preload is not held to it.
+- `block_down`: the pool's blocks slid down four words a turn (they are
+  16-aligned, 16 bytes a multiple), as bmfrag.c's `pages_down` does: the
+  SDK's `memmove` goes byte by byte.
+
+### 100.5 The thrash: the models out of view held off; a margin between wants
+
+- `ROOM_BACKOFF`: a model of the PVS's lower tier (score ≥
+  `STREAM_HIDDEN`: a head, a gib, an item out of view) dropped for room
+  is not read again for 24 passes (~3 s), or until it comes into view
+  (its score under `STREAM_HIDDEN` clears it). E2M6's walk: 290 → 128
+  reads.
+- `EVICT_MARGIN`: a model takes the room of what is wanted less than it
+  by 256 units at least (a pinned want and the sounds by nothing): two
+  kinds at about the same distance no longer push each other out as the
+  player walks between them.
+
+### 100.6 The sounds; the hell knight; the edicts
+
+- The teleporters' hum (`ambience/hum1.wav`) is an ambient (the split's
+  class 1, tools/qcook/sound.c): a `trigger_teleport` is a brush, no
+  origin, so the engine makes its static source (the brush's centre) and
+  the cook made none, and the hum came with the entities' sounds, after
+  the monsters', out of E4M7's SPU. Now in the SPU on E2M6, E4M5, E4M6
+  and E4M7.
+- The registered game's kinds' sounds (groups `G_ENFORCER` to
+  `G_OLDONE`) take the split's last class (5, after the fogs): the
+  first out of the SPU, read from the level's file when their kind is
+  wanted (`disc`, §98, with its model: `stream_want_group`), so the
+  sounds they had pushed out of the SPU into the RAM block (the other
+  kinds', the entities') are back in it. Marked `disc` alone, out of
+  the SPU only where they fell, they freed 44 KB over the 32 maps: they
+  kept their place in the SPU by their weight and the RAM block held
+  the others. Their rate stays 98 % as the others' (the lower rate the
+  lever also offered is not needed then; 98 was the choice for
+  the ears).
+- The hell knight's animations thinned at 8 units (`ANIM_THIN`): 31 of
+  162 stored frames rebuilt (16 at 3 units), the model 154 312 → 141 052
+  bytes (13 KB, under §97.6's estimate: never two neighbours left out).
+- Not built: the edicts in the stream's pool. The array cannot move (the
+  edicts point at each other: owner, enemy, goalentity, movetarget,
+  groundentity, the globals) nor grow into the pool (the brush models'
+  room, which depends on the spawned edicts, and the stream's buffers
+  lie between them; the load overlay holds the arena's top during the
+  load); what it would give is ENT_SPARE's 48 free slots, 15 to 18 KB a
+  map.
+
+### 100.7 Measured
+
+At the release's arena (1 358 720 bytes: the levers' 752 bytes of
+code), the zone tables `auto_1536_s3` and 3 slots, on PCSX-Redux in
+fast forward:
+
+- The walks of the 32 maps (`ZONES=2 MUSIC=1 CDMODEL=1`), the merged
+  build before the levers → after, normal | hard: frames over 5 M
+  cycles 3 → 0 | 3 → 0, the worst 37.0 → 2.9 M | 22.7 → 3.0 M (E2M6
+  37.0 → 1.5, E2M4 20.7 → 1.9, E4M7 16.6 → 1.7 on normal); sounds asked
+  and not in 191 → 0 | 105 → 0; the maps' mean frame 414 426 → 404 825
+  cycles (−2.3 %) | 442 782 → 431 279 (−2.6 %); the late frames 2814 →
+  2826 | 2445 → 2426; the stream's reads 865 → 1230 | 1036 → 1319, the
+  merged kinds' sounds now read with their kind (E4M5 32 → 197, E4M6 44
+  → 180, E2M7 25 → 144), E2M6's models 290 → 139.
+- The first form of 100.6 (the merged kinds' sounds `disc` only where
+  they fell out of the SPU): the RAM blocks 1052 → 1008 KB, the pools'
+  mean 580 → 581 KB, the reads 865 → 536.
+- `VRAMCHK=1` on E2M6's walk: 600 searches and more, no place differs.
+- Residency on hard (`BENCH_MAPS=1 VIEWS=0 RESIDENCY=1 SKILL=2`): the
+  spots with a monster in the PVS not in 3 → 2, after the stream's reads
+  2 → 1 (E1M7's one, there before the merge; E2M6's gone).
+- The stream's pool a level (`BENCH_MAPS=1 VIEWS=0`, `SKILL=2` for
+  hard), KB, with the RAM block of sounds; the pools' mean 621 before
+  the merge, 580 merged, 593 now (hard 575 → 588); the RAM blocks 580
+  KB before the merge, 1052 merged, 614 now:
+
+| map | the cut | RAM block | normal | hard |
+|---|---|---|---|---|
+| START | 7 zones | 0 | 670 | 670 |
+| E1M1 | whole | 0 | 603 | 598 |
+| E1M2 | 9 zones | 34 | 576 | 567 |
+| E1M3 | whole | 96 | 453 | 443 |
+| E1M4 | 7 zones | 6 | 571 | 564 |
+| E1M5 | whole | 50 | 565 | 550 |
+| E1M6 | whole | 0 | 663 | 663 |
+| E1M7 | whole | 0 | 1047 | 1048 |
+| E1M8 | whole | 0 | 837 | 834 |
+| E2M1 | 16 zones | 0 | 565 | 561 |
+| E2M2 | 9 zones | 0 | 563 | 562 |
+| E2M3 | 11 zones | 0 | 557 | 554 |
+| E2M4 | 11 zones | 80 | 440 | 435 |
+| E2M5 | 10 zones | 0 | 598 | 595 |
+| E2M6 | whole | 38 | 461 | 455 |
+| E2M7 | 8 zones | 62 | 453 | 447 |
+| E3M1 | 10 zones | 0 | 601 | 600 |
+| E3M2 | whole | 20 | 747 | 742 |
+| E3M3 | whole | 0 | 694 | 690 |
+| E3M4 | 5 zones | 14 | 436 | 434 |
+| E3M5 | 6 zones | 0 | 457 | 455 |
+| E3M6 | 12 zones | 0 | 484 | 477 |
+| E3M7 | whole | 0 | 625 | 625 |
+| E4M1 | 9 zones | 0 | 591 | 589 |
+| E4M2 | whole | 0 | 568 | 565 |
+| E4M3 | whole | 96 | 497 | 488 |
+| E4M4 | 16 zones | 0 | 558 | 551 |
+| E4M5 | 6 zones | 34 | 516 | 509 |
+| E4M6 | whole | 20 | 633 | 625 |
+| E4M7 | 10 zones | 64 | 416 | 408 |
+| E4M8 | whole | 0 | 565 | 559 |
+| END | whole | 0 | 963 | 963 |
+
+- PCSX-Redux hung twice in about fifteen fast-forward runs (once at
+  E2M6's walk's start, once in a residency run), ignoring the TERM:
+  scripts/headless.sh now kills it after two seconds (its `wait` held
+  the bench to its timeout); both runs passed again at once.
+
+### 100.8 Left
+
+- DuckStation: E2M4, E2M6 and E4M7 walked and fought (no
+  stall, the monsters and their sounds there), E4M7's teleporters'
+  hum, a gib's head and pieces after a close death on those maps.
+- The player's pain sounds cutting each other (Quake's channel rule: a
+  sound on an entity's channel replaces the one playing there): a
+  report, not looked at yet.

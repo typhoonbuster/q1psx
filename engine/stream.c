@@ -53,6 +53,8 @@ typedef struct {
 	uint8_t   state;           /* A_*                                           */
 	uint8_t   res;             /* its slot in res[] (A_READING, A_RES)          */
 	uint8_t   backoff;         /* passes before it is tried again (a read error) */
+	uint8_t   room_backoff;    /* passes before it is read again, out of the PVS's
+	                              tier: dropped for room (§100)                  */
 	uint8_t   stuck;           /* ST_*: no room for it, or not readable          */
 	uint8_t   absent;          /* not in the level's file (stream_level)         */
 	uint8_t   banked;          /* in the level's bank: never the stream's (§86)  */
@@ -135,6 +137,35 @@ static vrect_t  regions[MAX_REGIONS];
 static int      num_regions;
 
 static int      reading = -1;  /* the asset being read                           */
+static int      installing = -1;   /* a model read whose install waits for the next
+                                      frame's work (its places, its turned pixels) */
+
+/* The room the stream makes a frame (§100): evictions and compactions past
+   WORK_FRAME wait for the next frame, a read's room before the read and a
+   model's places after it (its install deferred, the bytes read kept); a
+   compaction moves the pool (~1 M cycles at most). The thrash of the merged
+   monsters (E2M6 reading a model every 12 frames) made frames of 10 to 40
+   M cycles of placements, evictions and compactions. Outside the frames
+   (the map's preload) no cap. */
+#define WORK_FRAME   8
+#define WORK_EVICT   1
+#define WORK_COMPACT 4
+static uint32_t work;            /* this frame's so far                          */
+static uint8_t  work_free = 1;   /* no cap: the load's preload                   */
+
+static int work_left(void)
+{
+	return work_free || work < WORK_FRAME;
+}
+
+/* A model out of the PVS's tier (a kind's head, the gibs, an item not in
+   view) dropped for a more wanted one is not read again for ROOM_BACKOFF
+   passes (~3 s), unless it comes into view first (§100): E2M6's walk read
+   the heads, the gibs and the items out of view back into each room made
+   and dropped them at the next want, 351 model reads in a minute, ~1 M
+   cycles an install. */
+#define ROOM_BACKOFF 24
+
 static uint32_t spu_lo, spu_hi;   /* the SPU pool: SPU RAM past the map's bank     */
 
 /* a sound's read: STAGE_SECTORS at a time from the disc into the staging
@@ -400,11 +431,30 @@ int stream_find_hash(uint32_t hh)
 
 typedef struct { uint8_t **p; uint32_t size; int pinned; } block_t;
 
+/* a block moved down (dst under src, both 16-aligned, bytes a multiple of
+   16: four words a turn in rising order, the source never overrun; the
+   SDK's memmove goes byte by byte, §100: 3 to 6.6 M cycles a compaction
+   of E2M6's pool) */
+__attribute__((optimize("no-tree-loop-distribute-patterns")))
+static void block_down(uint8_t *dst, const uint8_t *src, uint32_t bytes)
+{
+	uint32_t *d = (uint32_t *) dst;
+	const uint32_t *s = (const uint32_t *) src;
+	for (bytes >>= 4; bytes; bytes--, d += 4, s += 4) {
+		uint32_t a = s[0], b = s[1], c = s[2], e = s[3];
+		d[0] = a;
+		d[1] = b;
+		d[2] = c;
+		d[3] = e;
+	}
+}
+
 /* every block slid down against the previous one, but a block whose
    upload the GPU has yet to take (its slot's trim): the blocks after it
    slide down to its end. Not while a read is in flight. */
 static void ram_compact(void)
 {
+	work += WORK_COMPACT;
 	block_t b[2 * MAX_RES];
 	int n = 0;
 	for (int i = 0; i < MAX_RES; i++) {
@@ -429,7 +479,7 @@ static void ram_compact(void)
 			continue;
 		}
 		if (*b[i].p != at) {
-			memmove(at, *b[i].p, b[i].size);
+			block_down(at, *b[i].p, b[i].size);
 			*b[i].p = at;
 		}
 		at += b[i].size;
@@ -497,29 +547,45 @@ static void regions_build(void)
 	}
 }
 
-/* a w x h place at (u, v) of region rg overlapping no image */
-static int vram_fits(int u, int v, int w, int h, const vrect_t *rg)
+/* the resident images' rectangles by page, each page's in res[]'s order
+   (its slot, then its image): occ[first[p] .. first[p + 1]) */
+static void occ_by_page(vrect_t occ[2 * MAX_RES], uint8_t first[QTEX_PAGES + 1])
+{
+	uint8_t at[QTEX_PAGES];
+	memset(at, 0, sizeof at);
+	for (int r = 0; r < MAX_RES; r++)
+		if (res[r].asset >= 0)
+			for (int k = 0; k < res[r].nimg; k++)
+				at[res[r].img[k].page]++;
+	first[0] = 0;
+	for (int p = 0; p < QTEX_PAGES; p++) {
+		first[p + 1] = (uint8_t) (first[p] + at[p]);
+		at[p] = first[p];
+	}
+	for (int r = 0; r < MAX_RES; r++)
+		if (res[r].asset >= 0)
+			for (int k = 0; k < res[r].nimg; k++)
+				occ[at[res[r].img[k].page]++] = res[r].img[k];
+}
+
+/* a w x h place at (u, v) of region rg overlapping none of its page's
+   images [a, e) */
+static int vram_fits(int u, int v, int w, int h, const vrect_t *rg, const vrect_t *a, const vrect_t *e)
 {
 	if (u < rg->u || v < rg->v || u + w > rg->u + rg->w || v + h > rg->v + rg->h)
 		return 0;
-	for (int r = 0; r < MAX_RES; r++)
-		if (res[r].asset >= 0)
-			for (int k = 0; k < res[r].nimg; k++) {
-				const vrect_t *a = &res[r].img[k];
-				if (a->page == rg->page && u < a->u + a->w && a->u < u + w && v < a->v + a->h &&
-				    a->v < v + h)
-					return 0;
-			}
+	for (; a < e; a++)
+		if (u < a->u + a->w && a->u < u + w && v < a->v + a->h && a->v < v + h)
+			return 0;
 	return 1;
 }
 
-/* The place for a w x h image (or, transposed, h' x w with h' the even
-   width h makes), overlapping no other: in each region the corner and the
-   corners the images in its page leave (right of them, under them), the
-   best by the region's fit (its shorter side's leftover: a small image
-   goes to small room, the big room kept), then the lowest, the leftmost.
-   0 if none. */
-static int vram_place(int w, int h, vrect_t *out, int upright)
+#if defined(Q1PSX_BENCH) && Q1PSX_BENCH_VRAMCHK
+static uint32_t vramchk_n, vramchk_bad;
+
+/* the search before §100 (VRAMCHK=1): every resident image for every
+   candidate; the oracle of vram_place */
+static int vram_place_ref(int w, int h, vrect_t *out, int upright)
 {
 	uint32_t bkey = ~0u;
 	for (int t = 0; t < (upright ? 1 : 2); t++) {
@@ -542,9 +608,21 @@ static int vram_place(int w, int h, vrect_t *out, int upright)
 						cu[nc] = a->u > rg->u ? a->u : rg->u; cv[nc++] = a->v + a->h;
 					}
 			for (int c = 0; c < nc; c++) {
-				int u = (cu[c] + 1) & ~1, v = cv[c];
+				int u = (cu[c] + 1) & ~1, v = cv[c], ok = 1;
 				uint32_t key = fit << 18 | (uint32_t) v << 9 | (uint32_t) u;
-				if (key >= bkey || !vram_fits(u, v, pw, ph, rg))
+				if (key >= bkey)
+					continue;
+				if (u < rg->u || v < rg->v || u + pw > rg->u + rg->w || v + ph > rg->v + rg->h)
+					ok = 0;
+				for (int r = 0; ok && r < MAX_RES; r++)
+					if (res[r].asset >= 0)
+						for (int k = 0; k < res[r].nimg; k++) {
+							const vrect_t *a = &res[r].img[k];
+							if (a->page == rg->page && u < a->u + a->w && a->u < u + pw && v < a->v + a->h &&
+							    a->v < v + ph)
+								ok = 0;
+						}
+				if (!ok)
 					continue;
 				bkey = key;
 				out->page = rg->page;
@@ -556,6 +634,81 @@ static int vram_place(int w, int h, vrect_t *out, int upright)
 	}
 	return bkey != ~0u;
 }
+
+static int vram_place_new(int w, int h, vrect_t *out, int upright);
+
+static int vram_place(int w, int h, vrect_t *out, int upright)
+{
+	vrect_t a = { 0 }, b = { 0 };
+	int ra = vram_place_new(w, h, &a, upright), rb = vram_place_ref(w, h, &b, upright);
+	if (++vramchk_n % 100 == 0)
+		printf("stream: vramchk %u searches so far, %u places differ\n", (unsigned) vramchk_n,
+		       (unsigned) vramchk_bad);
+	if (ra != rb || (ra && memcmp(&a, &b, sizeof a))) {
+		if (vramchk_bad++ < 8)
+			printf("stream: vramchk %dx%d%s: page %d %d,%d %s against page %d %d,%d %s\n", w, h, upright ? " upright" : "",
+			       a.page, a.u, a.v, ra ? "placed" : "none", b.page, b.u, b.v, rb ? "placed" : "none");
+	}
+	*out = a;
+	return ra;
+}
+#define vram_place vram_place_new
+#endif
+
+/* The place for a w x h image (or, transposed, h' x w with h' the even
+   width h makes), overlapping no other: in each region the corner and the
+   corners the images in its page leave (right of them, under them), the
+   best by the region's fit (its shorter side's leftover: a small image
+   goes to small room, the big room kept), then the lowest, the leftmost.
+   0 if none. The images sorted by page once (§100: every candidate tested
+   against every resident image was up to 900 000 tests, 1-5 M cycles a
+   model's install, more with each eviction); a region whose fit cannot
+   beat the best found is passed. The same candidates in the same order:
+   the same places. */
+static int vram_place(int w, int h, vrect_t *out, int upright)
+{
+	vrect_t occ[2 * MAX_RES];
+	uint8_t first[QTEX_PAGES + 1];
+	occ_by_page(occ, first);
+	uint32_t bkey = ~0u;
+	for (int t = 0; t < (upright ? 1 : 2); t++) {
+		int pw = t ? (h + 1) & ~1 : w, ph = t ? w : h;
+		for (int g = 0; g < num_regions; g++) {
+			const vrect_t *rg = &regions[g];
+			if (pw > rg->w || ph > rg->h)
+				continue;
+			int ds = rg->w - pw, dl = rg->h - ph;
+			uint32_t fit = (uint32_t) (ds < dl ? ds : dl);
+			if (fit << 18 >= bkey)
+				continue;                     /* (every key here is at least that) */
+			const vrect_t *pa = occ + first[rg->page], *pe = occ + first[rg->page + 1];
+			int nc = 1 + 2 * (int) (pe - pa);
+			for (int c = 0; c < nc; c++) {
+				int u, v;
+				if (!c) {
+					u = rg->u; v = rg->v;
+				} else {
+					const vrect_t *a = &pa[(c - 1) >> 1];
+					if (c & 1) { u = a->u + a->w; v = a->v > rg->v ? a->v : rg->v; }
+					else       { u = a->u > rg->u ? a->u : rg->u; v = a->v + a->h; }
+				}
+				u = (u + 1) & ~1;
+				uint32_t key = fit << 18 | (uint32_t) v << 9 | (uint32_t) u;
+				if (key >= bkey || !vram_fits(u, v, pw, ph, rg, pa, pe))
+					continue;
+				bkey = key;
+				out->page = rg->page;
+				out->flags = (uint8_t) (t ? VR_T : 0);
+				out->u = (uint8_t) u; out->v = (uint8_t) v;
+				out->w = (uint16_t) pw; out->h = (uint16_t) ph;
+			}
+		}
+	}
+	return bkey != ~0u;
+}
+#if defined(Q1PSX_BENCH) && Q1PSX_BENCH_VRAMCHK
+#undef vram_place
+#endif
 
 static uint16_t page_tpage(int p)   /* 8bpp, no semi-transparency (game.c's) */
 {
@@ -592,12 +745,16 @@ static void evict(int a)
 	res_t *r = &res[as->res];
 	SLOG("stream: out %08x (%u B, last %u)\n", (unsigned) as->d.hash, (unsigned) r->ram_size,
 	     (unsigned) as->last);
-	if (r->sound)
+	if (r->sound) {
 		snd_forget(SND_STREAM + a);           /* (the voices playing it stopped) */
-	else if (r->trim)                         /* (its upload not taken yet) */
-		DrawSync(0);
-	if (!r->sound)
+	} else {
+		if (r->trim)                          /* (its upload not taken yet) */
+			DrawSync(0);
 		mdl_forget(a);
+		work += WORK_EVICT;
+		if (as->last >= STREAM_HIDDEN && as->last != ~0u)
+			as->room_backoff = ROOM_BACKOFF;  /* (a head, a gib, an item out of view) */
+	}
 	slot_free(r);
 	as->state = A_DISC;
 	stream_stats.evictions++;
@@ -678,6 +835,22 @@ static void held_upto(const held_t *held, int num_held, uint32_t score, uint32_t
 	*spu  = lo ? held[lo - 1].spu : 0;
 }
 
+/* A model takes the room of what is wanted less than it by EVICT_MARGIN at
+   least (§100): two kinds at about the same distance no longer push each
+   other out at every pass while the player walks between them (E2M6's walk
+   read a model every 12 frames after §97's kinds). Its own reach or the
+   tiers' gaps (STREAM_HIDDEN) are far wider; a pinned want and the sounds
+   (their swap room is small, a played one wanted at once) keep none. */
+#define EVICT_MARGIN 256u
+
+static uint32_t evict_bar(int a)
+{
+	const asset_t *as = &assets[a];
+	if (as->d.kind == QSTK_SOUND || as->last == STREAM_PIN || as->last >= STREAM_DEAD)
+		return as->last;                      /* (no margin; nor past every living want) */
+	return as->last + EVICT_MARGIN;
+}
+
 /* asset a found no room: not tried again until the assets wanted as much
    hold less */
 static void set_stuck(int a)
@@ -685,7 +858,7 @@ static void set_stuck(int a)
 	asset_t *as = &assets[a];
 	none_wanted = 0;
 	as->stuck = ST_ROOM;
-	held_by_more(as->last, &as->stuck_ram, &as->stuck_vram, &as->stuck_spu);
+	held_by_more(evict_bar(a), &as->stuck_ram, &as->stuck_vram, &as->stuck_spu);
 	SLOG("stream: no room for %08x (score %u; the assets wanted as much hold %u B, %u texels, %u B of SPU)\n",
 	     (unsigned) as->d.hash, (unsigned) as->last, (unsigned) as->stuck_ram, (unsigned) as->stuck_vram,
 	     (unsigned) as->stuck_spu);
@@ -745,16 +918,16 @@ static int slot_for(uint32_t score)
 
 /* the images of one resolution placed in VRAM (room made by dropping
    what is wanted less than `score`; `upright`: none turned): 1, or 0 with
-   none taken */
+   none taken (-1: the frame's work spent first) */
 static int place_images(res_t *r, const qst_image *img, int nimg, uint32_t score, vrect_t at[2], int upright)
 {
 	r->nimg = 0;
 	for (int k = 0; k < nimg; k++) {
 		while (!vram_place(img[k].w, img[k].h, &at[k], upright)) {
-			int v = least_wanted(score, NEED_VRAM);
+			int v = work_left() ? least_wanted(score, NEED_VRAM) : -2;
 			if (v < 0) {
 				r->nimg = 0;
-				return 0;
+				return v == -2 ? -1 : 0;      /* (-1: the frame's work spent) */
 			}
 			evict(v);
 		}
@@ -841,7 +1014,10 @@ static int install_model(int a)
 		half = tries >> 1;
 		int upright = tries & 1;
 		memcpy(img, half ? m->small : m->images, sizeof img);
-		if (!place_images(r, img, nimg, as->last, at, upright)) {
+		int p = place_images(r, img, nimg, evict_bar(a), at, upright);
+		if (p < 0)
+			return 2;                             /* (the next frame's work: from the start) */
+		if (!p) {
 			tries |= 1;                           /* (upright cannot fit either) */
 			continue;
 		}
@@ -853,7 +1029,11 @@ static int install_model(int a)
 		if (!tbytes)
 			break;
 		while (!(r->tmp = ram_alloc(tbytes))) {
-			int v = least_wanted(as->last, NEED_RAM);
+			if (!work_left()) {
+				r->nimg = 0;
+				return 2;
+			}
+			int v = least_wanted(evict_bar(a), NEED_RAM);
 			if (v < 0) {
 				r->nimg = 0;                  /* (its places given back) */
 				placed = 0;
@@ -1220,6 +1400,10 @@ static void model_in(int a, int ok)
 	asset_t *as = &assets[a];
 	int in = !ok ? 0 : as->d.kind == QSTK_MODEL ? install_model(a) : -1;
 	none_wanted = 0;
+	if (in == 2) {                            /* (the frame's work spent: the next frame's) */
+		installing = a;
+		return;
+	}
 	if (in > 0) {
 		as->state = A_RES;
 		stream_stats.reads++;
@@ -1246,17 +1430,21 @@ static void read_done(int a, int ok)
 }
 
 /* RAM for asset a's read (its sectors whole), room made by dropping what
-   is wanted less: its slot, or -1 */
+   is wanted less: its slot, or -1 (-2: the frame's work spent first, the
+   room made so far kept) */
 static int reserve(int a)
 {
 	asset_t *as = &assets[a];
-	int slot = slot_for(as->last);
+	uint32_t bar = evict_bar(a);
+	int slot = slot_for(bar);
 	if (slot < 0)
 		return -1;
 	uint32_t bytes = (as->d.size + QST_SECTOR - 1) / QST_SECTOR * QST_SECTOR;
 	uint8_t *dst;
 	while (!(dst = ram_alloc(bytes))) {
-		int v = least_wanted(as->last, NEED_RAM);
+		if (!work_left())
+			return -2;
+		int v = least_wanted(bar, NEED_RAM);
 		if (v < 0)
 			return -1;
 		evict(v);
@@ -1297,7 +1485,8 @@ static int next_wanted(int which)
 	held_t held[MAX_RES];
 	for (int a = 0; a < num_assets; a++) {
 		asset_t *as = &assets[a];
-		if (as->last >= STREAM_DEAD || as->state != A_DISC || as->backoff || as->stuck == ST_BROKEN)
+		if (as->last >= STREAM_DEAD || as->state != A_DISC || as->backoff || as->room_backoff ||
+		    as->stuck == ST_BROKEN)
 			continue;                         /* (the unwanted first: most of them) */
 		if (!(which & (swaps && as->ram_ofs != ~0u ? W_SWAP : W_DRIVE)))
 			continue;
@@ -1318,7 +1507,7 @@ static int next_wanted(int which)
 			uint32_t ram, vram, spu;
 			if (num_held < 0)
 				num_held = held_sort(held);
-			held_upto(held, num_held, as->last, &ram, &vram, &spu);
+			held_upto(held, num_held, evict_bar(a), &ram, &vram, &spu);
 			if (ram >= as->stuck_ram && vram >= as->stuck_vram && spu >= as->stuck_spu)
 				continue;                     /* (no more room than when it failed) */
 			as->stuck = ST_NONE;
@@ -1373,6 +1562,8 @@ static void pass(void)
 		as->last = as->score;
 		if (as->backoff)
 			as->backoff--;
+		if (as->room_backoff)
+			as->room_backoff = as->last < STREAM_HIDDEN ? 0 : (uint8_t) (as->room_backoff - 1);
 		resident += as->state == A_RES;
 		wanted   += (as->last & STREAM_DIST) <= STREAM_REACH && as->last < STREAM_DEAD;
 	}
@@ -1411,7 +1602,7 @@ void stream_abort(void)
 		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (no DMA left reading the stage, the block) */
 		sread.a = swap_a = -1;
 	}
-	waiting = -1;
+	waiting = installing = -1;
 	DrawSync(0);                              /* (no upload left reading the pool) */
 	pool = pool_top = pool_end = 0;           /* (the level arena is about to be reset) */
 	pool_end_load = 0;
@@ -1424,10 +1615,14 @@ void stream_abort(void)
 
 Q_COLD void stream_map_start(uint32_t keep)
 {
+#if defined(Q1PSX_BENCH) && Q1PSX_BENCH_VRAMCHK
+	printf("stream: vramchk %u searches, %u places differ\n", (unsigned) vramchk_n, (unsigned) vramchk_bad);
+	vramchk_n = vramchk_bad = 0;
+#endif
 	stream_abort();
 	for (int a = 0; a < num_assets; a++) {
 		assets[a].score   = assets[a].last = ~0u;
-		assets[a].backoff = 0;
+		assets[a].backoff = assets[a].room_backoff = 0;
 		assets[a].stuck   = ST_NONE;
 	}
 	memset(&stream_stats, 0, sizeof stream_stats);
@@ -1530,6 +1725,13 @@ static void swap_step(void)
 /* the drive's reads: the one in flight, the next */
 static void drive_step(void)
 {
+	if (installing >= 0) {                    /* a model read, its install held over */
+		int a = installing;
+		installing = -1;
+		model_in(a, 1);
+		if (installing >= 0)
+			return;
+	}
 	if (reading >= 0) {                       /* a model's read */
 		int left = cd_poll();                 /* (also runs CdReadRetry's retries) */
 		if (left > 0)
@@ -1544,7 +1746,10 @@ static void drive_step(void)
 		int a = next_wanted(W_DRIVE);
 		if (a < 0)
 			return;
-		if (assets[a].d.kind == QSTK_SOUND ? !sound_start(a) : reserve(a) < 0) {
+		int got = assets[a].d.kind == QSTK_SOUND ? (sound_start(a) ? 0 : -1) : reserve(a);
+		if (got == -2)
+			return;                           /* (the frame's work spent: the next frame) */
+		if (got < 0) {
 			set_stuck(a);
 			return;
 		}
@@ -1567,6 +1772,8 @@ void stream_frame(void)
 	if (!num_assets || !pool)
 		return;
 	frame_no++;
+	work = 0;
+	work_free = 0;
 	memcpy(stream_origin, pl.pm.pos, sizeof stream_origin);
 	trims();
 	int jump = 0;
@@ -1661,6 +1868,7 @@ void stream_preload_at(const int32_t org[3])
 
 Q_COLD void stream_preload(void)
 {
+	work_free = 1;                            /* (the load's: no cap; the next frame sets it) */
 	if (lend_state == L_ROOM &&               /* the lent block (the map's start gave it room) */
 	    read_sectors(lend_lba, (int) (lend_bytes / QST_SECTOR), lend_at, CDW_FILE, 0)) {
 		lend_state = L_IN;

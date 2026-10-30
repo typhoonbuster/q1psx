@@ -571,12 +571,16 @@ typedef struct {
 	bytes_t  adpcm;
 	double   snr;
 	int      cls;        /* the split's order: 0 the always set, 1 the ambients, 2 the
-	                        monsters', 3 the entities' (docs/porting-notes.md §86) */
+	                        monsters', 3 the entities' (docs/porting-notes.md §86), 4
+	                        the teleporters' fog (§87.5), 5 the registered game's
+	                        kinds' (§100: the first out of the SPU, from the disc) */
 	int      weight;     /* within a class: the entities bringing it (more first) */
 	int      ram;        /* put in main RAM, not the bank                        */
 	int      disc;       /* put out of the SPU, read from the level's file when
 	                        wanted, not kept in RAM (a fog, a powerup's sound:
 	                        docs/porting-notes.md §98)                          */
+	int      late_kind;  /* a sound of the registered game's kinds (G_ENFORCER ..
+	                        G_OLDONE): out of the SPU, the disc's (§100)         */
 } bank_sound;
 
 static bank_sound sounds[QS_MAX_SOUNDS];
@@ -946,6 +950,18 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 				sounds[i].weight++;
 				break;
 			}
+	/* the teleporters' hum is an ambient too: their brush has no origin, so
+	   the engine makes its source (the brush's centre) and the cook none;
+	   without this it came with the entities' sounds, after the monsters',
+	   and left the SPU on E4M7 (§100: 105-191 frames of the walk without it) */
+	for (int i = 0; i < ents.num; i++)
+		if (!strcmp(ents.ents[i].classname, "trigger_teleport") &&
+		    !((int) ent_float(&ents, &ents.ents[i], "spawnflags", 0) & 1)) {   /* (not SILENT) */
+			int s = sound_add("ambience/hum1.wav", SG_CORE, pak, pak_len, pak0, pak0_len);
+			if (sounds[s].cls < 1)
+				sounds[s].cls = 1;
+			sounds[s].weight++;
+		}
 	{                                            /* the monsters' kinds' sounds: by the kind's count */
 		int kind_count[G_WORLD + 1] = { 0 };
 		for (int i = 0; i < ents.num; i++) {
@@ -959,12 +975,15 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			size_t ln = strlen(names[k]);
 			if (ln < 4 || strcmp(names[k] + ln - 4, ".wav"))
 				continue;                         /* (a model) */
-			int g = stream_sound_group(names[k]);
+			int g = stream_sound_group(names[k]), late = g >= G_ENFORCER && g <= G_OLDONE;
 			int i = sound_add(names[k], SG_CORE, pak, pak_len, pak0, pak0_len);
 			if (!sounds[i].weight) {
-				sounds[i].cls = 2;
+				sounds[i].cls = late ? 5 : 2;     /* (the merged kinds' last: the ones they
+				                                     pushed out of the SPU into the RAM block
+				                                     back in, theirs read from the disc) */
 				sounds[i].weight = g >= 0 && g <= G_WORLD ? kind_count[g] : 1;
 			}
+			sounds[i].late_kind = late;
 		}
 	}
 	{                                            /* the entities' sounds: by the entities bringing them */
@@ -1031,7 +1050,9 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 	/* The fogs and the powerups' sounds put out of the SPU are read from
 	   the level's file when wanted, not kept in RAM (§98): a fog is played
 	   among the ones in (engine/snd.c snd_tele_fog), a powerup's sounds are
-	   wanted from the artifact's approach on (engine/items.c);
+	   wanted from the artifact's approach on (engine/items.c); so are the
+	   registered game's kinds' (§100: their kind wanted with its model, by
+	   its nearest member's distance, engine/monsters.c);
 	   QCOOK_NO_DISC_SOUNDS=1: in RAM as before. */
 	int disc_ok = !getenv("QCOOK_NO_DISC_SOUNDS");
 	size_t swap = 32 * 1024, spu_budget = 0, in_spu = 0, in_ram = 0, in_disc = 0;
@@ -1045,7 +1066,7 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			bank_sound *sn = &sounds[order[k]];
 			size_t bytes = sound_bytes(sn);
 			int out = sn->cls > 0 && in_spu + bytes > spu_budget;   /* (the always set never leaves the SPU) */
-			sn->disc = out && disc_ok && (sn->cls == 4 || powerup_sound(sn->name));
+			sn->disc = out && disc_ok && (sn->cls == 4 || powerup_sound(sn->name) || sn->late_kind);
 			sn->ram = out && !sn->disc;
 			if (!out) {
 				in_spu += bytes;

@@ -2354,3 +2354,27 @@ followed by R0-R4.
   (E4M7) to 1071 KB (E1M7), 621 on average. At 99 % of the sounds'
   energy the RAM blocks would take 1 MB more over the 32 maps (the
   pools 0 to 68 KB smaller a map): the energy kept stays 98 %.
+- **§97 merged with §98-§99: the stream's stalls and thrash, the merged
+  kinds' sounds from the disc, the teleporters' hum, the hell knight at
+  8 units** (§100, 2026-10-30). The
+  merge of §97 left the stream's pool 22-28 KB smaller
+  everywhere and up to 127 KB where the new kinds' sounds pushed others
+  out of the SPU into the RAM block, and its walk of the 32 maps found
+  frames of 16 to 41 M cycles on E2M4, E2M6 and E4M7 (the VRAM search
+  tested every candidate against every resident image, the pool's
+  compaction moved bytes one by one, the heads, gibs and items out of
+  view were read into each room made and dropped again) and E4M7's
+  teleporters' hum missing. The VRAM search goes page by page (the same
+  places: `VRAMCHK=1`), the compaction moves words, the stream's
+  evictions and compactions are capped a frame (the rest the next
+  frame's, a read's bytes kept), a model out of view dropped for room
+  waits ~3 s, a model takes only what is wanted 256 units less, the hum
+  is an ambient again, the merged kinds' sounds leave the SPU first and
+  are read from the disc with their kind, the hell knight's animations
+  are thinned at 8 units (13 KB); the edicts in the stream's pool were
+  not built (the array can neither move nor grow there). The walks: no
+  frame over 3 M cycles, no sound asked and not in, on normal and hard;
+  the RAM blocks 1052 -> 614 KB over the 32 maps (580 before the merge),
+  the pools' mean 580 -> 593 KB (E4M7 329 -> 416, E4M5 433 -> 516, E4M6
+  564 -> 633, E2M6 410 -> 461). `scripts/headless.sh` kills a PCSX-Redux
+  that ignores the TERM.

@@ -75,7 +75,9 @@ for _ in $(seq 1 "$SECS"); do
 done
 
 kill "$PID" 2>/dev/null
-wait "$PID" 2>/dev/null
+for _ in 1 2 3 4; do kill -0 "$PID" 2>/dev/null || break; sleep 0.5; done
+kill -KILL "$PID" 2>/dev/null                 # (a PCSX-Redux hung in fast forward ignores the
+wait "$PID" 2>/dev/null                       #  TERM: the wait held the bench to its timeout)
 grep -qE "$CRASH" "$LOG" && status=1
 
 tail -n 30 "$LOG"

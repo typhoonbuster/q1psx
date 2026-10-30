@@ -259,6 +259,7 @@ set(Q1PSX_BENCH_USE "" CACHE STRING "With TICKS: the entities of this targetname
 set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the stream loads around the player at the map's items")
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 set(Q1PSX_BENCH_WARPDYN 0 CACHE STRING "1: the views with the game's dynamic warp control (T its floor), the T each ends at printed")
+set(Q1PSX_BENCH_VRAMCHK 0 CACHE STRING "1: each streamed image's VRAM place also searched the way before §100 (every resident image for every candidate), the two compared (stream: vramchk lines)")
 set(Q1PSX_BENCH_SEQCHK 0 CACHE STRING "1: each view drawn by the cooked walk is drawn again by the tree walk, the leaves' and faces' stamps and the records drawn compared (seqchk lines)")
 set(Q1PSX_BENCH_IRQTIME 0 CACHE STRING "1: the interrupts' handler times itself: the bench lines' irq= (cycles a frame, entries x 100)")
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,IRQTIME=$<AND:$<BOOL:${Q1PSX_BENCH}>,$<BOOL:${Q1PSX_BENCH_IRQTIME}>>>)
@@ -294,7 +295,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_CAPTURE=${Q1PSX_BENCH_CAPTURE}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ} Q1PSX_BENCH_RES=${Q1PSX_BENCH_RES}
 		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN}
-		Q1PSX_BENCH_SEQCHK=${Q1PSX_BENCH_SEQCHK})
+		Q1PSX_BENCH_SEQCHK=${Q1PSX_BENCH_SEQCHK} Q1PSX_BENCH_VRAMCHK=${Q1PSX_BENCH_VRAMCHK})
 	if(Q1PSX_BENCH_VIEW)
 		# groups of five numbers, one definition with no spaces (a quoted string
 		# with spaces does not survive the generator's command line)
