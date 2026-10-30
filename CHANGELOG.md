@@ -2393,3 +2393,12 @@ followed by R0-R4.
   some poses. An edge-only texel of the fill's colour, with no painted
   texel of that colour beside it, now takes its neighbours' colour (12 on
   the super shotgun; the rocket launcher's black muzzle keeps its rim).
+- **The monsters through a liquid's surface** (§103, 2026-10-30). A monster in water was drawn whole, its
+  legs over the surface; Quake's liquids are opaque. A body wholly on the
+  side of a surface the eye is not on is no longer drawn (no frame, no
+  matrix, no packet), one through a surface is cut by it: its corners on
+  the hidden side marked in the sorted loop (`ds_water`), its triangles
+  all marked left out, the others cut by the surface's plane in the slow
+  path before the near plane's (`sp_water`; `r_slow.c` the same). A body
+  wading with its centre on the other side from the eye is seen by its
+  feet's or top's leaf (id's maps were vis'd with the liquids opaque).

@@ -14168,3 +14168,97 @@ taken and the fill's texels left next to a shown one: 0 for the super
 shotgun, the axe, the super nailgun, the grenade launcher and the
 lightning gun.
 
+## §103 — The monsters through a liquid's surface: cut by it, past it not drawn (2026-10-30)
+
+Seen in the robot's videos: a monster standing in water was drawn whole,
+its legs over the water's surface. Quake's liquids are opaque (the
+software renderer's `r_wateralpha` 1, the GL ports' default): its depth
+buffer hides what lies on the far side of a surface, the part of a body
+under it seen from above, the part above it seen from under it. Here
+the body's triangles are sorted among themselves and placed among the
+leaf's faces (§63), with no depth to hide them by; drawing the surface
+after them would hide them but still pay for them, the triangles under
+the surface transformed and sent for nothing.
+
+### 103.1 Which side
+
+`monsters_render` (engine/monsters.c), a body at a time (`monster_draw`):
+
+- the eye in a liquid or not: the view's leaf, the last frame's (the
+  world's walk finds it after the entities), as the view's tint takes it;
+- a body whose leaf is near a liquid (Quake's water ambient level for the
+  leaf, vis's: the liquids its PVS sees within ~1000 units; 0 for most
+  leaves), or any body when the eye is in a liquid: its feet and top (its
+  box's bottom and top, a unit inside) in a liquid or not, kept in the
+  edict's spare byte with a hash of the place they were taken at
+  (`body_wet`: taken again only when the body has moved). The monster's
+  own water level does not tell: Quake's `SV_CheckWaterTransition` keeps
+  the contents at its origin, 1 or the empty's -1, and nothing until it
+  first moves;
+- both on the side the eye is not on: not drawn at all (no frame
+  expanded, no matrix, no packet: E2M6's zombies under its water, seen
+  from above);
+- through the surface: its height found by halves between the feet and
+  the top (to half a unit), and the model cut there (`rl_water`,
+  engine/rlist.c): the surface in the model's own z (its matrix's z row
+  is the world's when it has no pitch nor roll, a monster's), and the
+  side shown, in the entity (`water_z`, `water_m`: the words a brush
+  model's camera takes, free for a monster), `RE_WATER` set.
+
+### 103.2 The cut
+
+- `dm_sort` (engine/r_world.s) puts the word in `SP_WATER` (a free word
+  of the slow path's saves), 0 for every other model; `dm_exit_1` clears
+  it for what follows.
+- `ds_records`, at a record's triangles, with a word: each slot of the
+  record whose vertex's z is on the hidden side gets its light word's top
+  bit (`ds_water`: the pool's z against the surface, the side's sign
+  folded in). A front triangle with a marked corner (the three light
+  words ORed, beside the NCLIP) goes to `ds_tri_water`: all three
+  marked, left out; else to the slow path, as a triangle too near, by its
+  own entry (`slow_wpoly`: the world's polygons pay nothing).
+- `slow_wpoly` (engine/r_slow.s): a marked corner takes its mark off the
+  colour and sends the triangle to the clip path (`WCORNER`); there the
+  surface's plane comes before the near plane's (`sp_water`): each
+  corner's height over the surface from its pool entry, a
+  Sutherland-Hodgman against it, the crossings interpolated from the
+  hidden end (`sp_lerp`: view x, y, z, u, v, light) so two triangles on
+  one edge make the same point, then the near plane's clip and the
+  subdivision as before. Eight view entries (a triangle, two crossings at
+  the surface, two at the near plane), +64 bytes.
+- `r_slow.c` (the C engine's) does the same in the same order.
+
+### 103.3 Seen from the other side
+
+Quake links an entity into every leaf its box touches (the client's
+efrags, the server's leafnums) and draws it when the PVS sees any of
+them. The port takes the leaf of its centre (§72). id's maps were vis'd
+with the liquids opaque: the leaves on one side of a surface are not in
+the PVS of the other side's, so a body through a surface whose centre is
+on the other side from the eye was never drawn (the fiend wading in
+E2M2's pit, its centre above the water: from under it, nothing of its
+legs). With the eye in a liquid, a body near one whose feet are in one
+and whose centre's leaf is not seen is now seen by its feet's leaf (a
+second pass over the streamed bodies, only while the eye is in a
+liquid). The other way (a body's centre under a surface and its top
+above it, seen from above) is left: rare, and the scan would be every
+frame's.
+
+### 103.4 Measured
+
+- `BENCH_MAPS=1 MAP=E2M2 VIEW=...` (pktview): the fiend in the end's pit
+  from 19 units above the water shows its back alone (its idle frame's z
+  4..99, the surface at 84: 6 units of it out of the water), the build
+  with the cut off the whole body, legs over the surface; with
+  `TICKS=40` from under the water, its legs to the surface (nothing of
+  it before §103.3); the zombie wading at (168, -8) from under the water,
+  its head and shoulders gone over the surface.
+- The cost, `BENCH_MAPS=1 HASHONLY=1 PROFILE=0` on START's and episode
+  1's 36 views against the base built beside: +0.11 % (-0.01 to +0.6 % a
+  view, views without a monster too: the hot code's addresses moved by
+  the two words `ds_records` and `dm_sort` gained, the I-cache's order
+  made for the old ones). A first version that tested every monster
+  triangle's marks in the loop and every body's water each frame cost
+  +1.6 %; the triangles' test now lives in the water loop's copy only.
+- The C engine (`ENGINE_C=1`, `r_slow.c`): E2M2's views.
+

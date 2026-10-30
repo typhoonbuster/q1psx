@@ -741,6 +741,9 @@ void r_frame(void)
 
 	if (r_res)                                     /* (the target's packets: before the view's) */
 		vid_res_frame(r_res_w, r_res_h, r_res_table[r_res].seam);
+	*(volatile uint32_t *) 0x1f80035cu = 0;        /* SP_WATER (r_defs.inc): no liquid's surface
+	                                                  but a monster's, set and cleared by
+	                                                  draw_model (r_world.s dm_wsort, dm_exit_1) */
 	r_state.ot_world     = (uint32_t) &vid_frame.ot[OT_WORLD];
 	r_state.pkt          = (uint32_t) vid_frame.pkt;
 	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 48 - r_ui_room);  /* see r_world.s */

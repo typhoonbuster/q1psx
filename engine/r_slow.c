@@ -67,6 +67,9 @@
 #define SP_SZ       0x1a8     /* SZ per record vertex                       */
 #define SP_COL      0x250     /* light per record vertex, 0x00cccccc        */
 #define SP_FULL     0x33c     /* non-zero once the packet arena is full     */
+#define SP_WATER    0x35c     /* a monster through a liquid's surface: its z
+                                 in the model's | the side shown << 16 (1
+                                 above, -1 below), 0 none (r_world.s)       */
 #define SP_OFY      0x3a8     /* the viewport's vertical centre             */
 #define SP_SZCLIP   0x3b0     /* SZ_CLIP, or the view model's               */
 #define SP_ZNEAR    0x3b4     /* ZNEAR, or the view model's                 */
@@ -85,6 +88,8 @@ typedef struct {
 	                             others' grey c                              */
 	int32_t  sx, sy;          /* projected, 16 bits (the asm's pool's)       */
 	int32_t  cached;          /* sx, sy, z are the cache's (do not project)  */
+	int32_t  w;               /* a corner's height over a liquid's surface,
+	                             the side shown positive (SP_WATER)          */
 } sv_t;
 
 typedef struct { sv_t v[3]; int depth; } tri_t;
@@ -152,6 +157,25 @@ static int clip_near(const sv_t *in, int n, sv_t *out)
 				lerp(a, b, da, da - db, &out[m++]);
 			else
 				lerp(b, a, db, db - da, &out[m++]);
+		}
+	}
+	return m;
+}
+
+/* Sutherland-Hodgman against a liquid's surface, height w >= 0 (the asm's
+   sp_water): crossings from the hidden end, as the near plane's */
+static int clip_water(const sv_t *in, int n, sv_t *out)
+{
+	int m = 0;
+	for (int i = 0; i < n; i++) {
+		const sv_t *a = &in[i], *b = &in[(i + 1) % n];
+		if (a->w >= 0)
+			out[m++] = *a;
+		if ((a->w ^ b->w) < 0) {
+			if (a->w < 0)
+				lerp(a, b, a->w, a->w - b->w, &out[m++]);
+			else
+				lerp(b, a, b->w, b->w - a->w, &out[m++]);
 		}
 	}
 	return m;
@@ -319,12 +343,18 @@ int r_tess(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv);   /* 
 
 void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 {
-	if (r_tess(s, rec, poly, nv))                      /* the regular subdivision first (§92) */
+	const uint32_t *c_col = (const uint32_t *) (SPAD + SP_COL);
+	/* a monster's triangle with a corner past a liquid's surface (its light
+	   word's top bit, r_world.s ds_water): the clip path, that plane first */
+	uint32_t water = SPW(SP_WATER), wmask = 0;
+	if (water)
+		for (int j = 0; j < nv; j++)
+			wmask |= (c_col[poly[j] >> 2] >> 31) << j;
+	if (!wmask && r_tess(s, rec, poly, nv))            /* the regular subdivision first (§92) */
 		return;
 	const uint16_t *uvs   = (const uint16_t *) (poly + 4);
 	const uint32_t *c_sxy = (const uint32_t *) (SPAD + SP_SXY);
 	const uint32_t *c_sz  = (const uint32_t *) (SPAD + SP_SZ);
-	const uint32_t *c_col = (const uint32_t *) (SPAD + SP_COL);
 	int32_t szclip = (int32_t) SPW(SP_SZCLIP);
 
 	clut16  = SPW(SP_CLUT16);
@@ -348,9 +378,10 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		o->z  = (int32_t) (c_sz[slot] & 0xffff);
 		o->u  = (int32_t) (uvs[j] & 0xff) << 8;
 		o->v  = (int32_t) (uvs[j] & 0xff00);
-		o->gc = c_col[slot];
+		o->gc = c_col[slot] & 0x7fffffffu;            /* (ds_water's mark off) */
 		o->c  = (int32_t) (o->gc & 0xff);
-		o->cached = !(o->z < szclip || o->sx <= -1024 || o->sx >= 1023 || o->sy <= -1024 || o->sy >= 1023);
+		o->cached = !(o->z < szclip || o->sx <= -1024 || o->sx >= 1023 || o->sy <= -1024 || o->sy >= 1023 ||
+		              (wmask >> j & 1));
 		clip |= !o->cached;
 	}
 
@@ -381,20 +412,34 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		o->y = mac[1];
 		if (!o->cached)
 			o->z = mac[2];
+		/* its height over the liquid's surface, the side shown positive */
+		int32_t w = pool[vidx[poly[j] >> 2]].z - (int16_t) water;
+		o->w = (int32_t) water < 0 ? -w : w;
+	}
+
+	/* the liquid's surface first (a monster's triangle through it) */
+	sv_t wbuf[4 + 1];
+	const sv_t *src = in;
+	int n = nv;
+	if (wmask) {
+		n = clip_water(in, nv, wbuf);
+		if (n < 3)
+			return;
+		src = wbuf;
 	}
 
 	/* clip against the near plane (when a vertex is behind it) */
-	sv_t buf[2][4 + 1];
-	int n = nv, behind = 0;
-	for (int k = 0; k < nv; k++) {
-		buf[0][k] = in[k];
-		behind += in[k].z < znear;
+	sv_t buf[2][5 + 1];
+	int behind = 0;
+	for (int k = 0; k < n; k++) {
+		buf[0][k] = src[k];
+		behind += src[k].z < znear;
 	}
-	if (behind == nv)
+	if (behind == n)
 		return;
 	sv_t *out = buf[0];
 	if (behind) {
-		n = clip_near(buf[0], nv, buf[1]);
+		n = clip_near(buf[0], n, buf[1]);
 		out = buf[1];
 	}
 	for (int i = 0; i < n; i++) {

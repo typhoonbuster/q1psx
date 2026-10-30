@@ -71,9 +71,17 @@ typedef struct {
 	union {
 		int32_t  cam[3];     /* +60 RE_BMODEL: the camera in the model's space,
 		                             vertex units (the walk's plane tests)         */
-		uint32_t lod_band;   /* +60 RE_SORT: the level of detail's band x 2 (its
-		                             entry in each record's table, formats/qstream.h
-		                             QST_LOD_REC_BYTES; 0: the whole model)        */
+		struct {
+			uint32_t lod_band;   /* +60 RE_SORT: the level of detail's band x 2 (its
+			                         entry in each record's table, formats/qstream.h
+			                         QST_LOD_REC_BYTES; 0: the whole model)        */
+			int16_t  water_z;    /* +64 RE_WATER: the liquid's surface in the
+			                         model's own z (its vertex pool's): the corners
+			                         on the side of it the eye is not on hidden    */
+			int16_t  water_m;    /* +66 RE_WATER: 1 the part above it shown (the
+			                         eye out of the liquid), -1 the part below (so
+			                         the word is never 0: SP_WATER's "none")       */
+		};
 	};
 	uint32_t zsf;        /* +72 RE_SORT: the GTE's ZSF3 for its triangles'
 	                             buckets (AVSZ3's OTZ / 4: its depth range on
@@ -90,10 +98,15 @@ typedef struct {
                             through its own ordering table (r_world.s draw_model) */
 #define R_SORT_N  16     /* that table's buckets (r_defs.inc R_SORT_N): a power of two,
                             4 or more (dm_sort sets the ring four nodes a round) */
+#define RE_WATER  8      /* a monster through a liquid's surface (RE_SORT too): its
+                            triangles on the side the eye is not on left out, those
+                            through the surface cut by it (water_z, water_m;
+                            r_world.s ds_water, the slow path's clip) */
 
 _Static_assert(sizeof(r_item_t) == 16, "r_defs.inc RI_*");
 _Static_assert(sizeof(r_ent_t) == 80 && __builtin_offsetof(r_ent_t, cam) == 60 &&
-               __builtin_offsetof(r_ent_t, lod_band) == 60 && __builtin_offsetof(r_ent_t, zsf) == 72,
+               __builtin_offsetof(r_ent_t, lod_band) == 60 && __builtin_offsetof(r_ent_t, water_z) == 64 &&
+               __builtin_offsetof(r_ent_t, water_m) == 66 && __builtin_offsetof(r_ent_t, zsf) == 72,
                "r_defs.inc RE_*");
 
 extern r_item_t r_items[RL_MAX_ITEMS];
@@ -118,6 +131,11 @@ r_ent_t *rl_model(const qg_model *m, int frame, const int32_t org[3], int yaw, i
 /* a streamed model's frame (engine/stream.h: asset a, resident), the same
    way; NULL when it is not resident or the pool is full */
 r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pitch, int roll, int light);
+
+/* a monster's (rl_model_stream's, RE_SORT, no pitch nor roll) through a
+   liquid's surface at height h (1/R_POS_SUB units): cut by it, the part on
+   the eye's side shown (above: the eye out of the liquid) */
+void rl_water(r_ent_t *e, int a, const int32_t org[3], int32_t h, int above);
 
 /* the view model (QGF_VIEW) at frame `frame`, the gun's angles (rl_model's
    yaw and pitch), its origin `rel` from the camera's (world axes, vertex

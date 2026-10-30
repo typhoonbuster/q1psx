@@ -281,6 +281,27 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 	return e;
 }
 
+/* A monster through a liquid's surface at z = h (1/R_POS_SUB units),
+   its origin org, the eye above it (below: 0): the surface in the model's
+   own z, the side shown (RE_WATER: r_world.s ds_water, the slow path's
+   clip). Its matrix's z row is the world's (no pitch, no roll: the
+   caller's), so a vertex's height is the model's origin's plus its z
+   step times the z scale, the expanded 0's place added
+   (rl_model_stream's). */
+void rl_water(r_ent_t *e, int a, const int32_t org[3], int32_t h, int above)
+{
+	const qst_model *m = stream_model(a);
+	int32_t dz = (h - org[2]) * QW_VSCALE * 16 / R_POS_SUB - m->origin[2];   /* vertex units x 16 */
+	if (dz < -65535) dz = -65535;                 /* (a body's height is far less: no */
+	if (dz > 65535) dz = 65535;                   /*  overflow below) */
+	int32_t z = dz * 4096 / m->scale[2];
+	if (z < -32768) z = -32768;
+	if (z > 32767) z = 32767;
+	e->water_z = (int16_t) z;
+	e->water_m = (int16_t) (above ? 1 : -1);
+	e->flags |= RE_WATER;
+}
+
 r_ent_t *rl_bmodel(const qw_bmodel *bm, const int32_t org[3])
 {
 	if (n_ents >= RL_MAX_ENTS)

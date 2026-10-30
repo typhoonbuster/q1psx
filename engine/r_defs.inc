@@ -86,10 +86,13 @@
 .set RE_CAM,     60     # RE_BMODEL: the camera in the model's space, vertex units
 .set RE_LODBAND, 60     # RE_SORT: the level of detail's band x 2: the entry in each
                         #   record's table (rlist.h lod_band; 0 the whole model)
+.set RE_WATERZ,  64     # RE_WATER: the liquid's surface in the model's z (halfword), and at
+                        # +66 1 (the part above shown) or -1 (below): one word, SP_WATER's
 .set RE_ZSF,     72     # RE_SORT: ZSF3 for its triangles' buckets (rlist.c ent_sort)
 .set RE_ZNEAR,   76     # RE_SORT: its nearest bucket x 4
 .set RE_VIEW,    1
 .set RE_SORT,    4
+.set RE_WATER,   8      # (RE_SORT too) a monster through a liquid's surface (rlist.h)
 .set R_SORT_N,   16     # a sorted model's table: its buckets (rlist.h R_SORT_N)
 
 # ---- qw_node (36 B) ----------------------------------------------------------
@@ -163,6 +166,9 @@
 .set SP_T0,       0x338
 .set SP_FULL,     0x33c   # non-zero once the packet arena is full
 .set SP_SAVE,     0x340   # 10 words: registers kept across the slow path + its start time
+                          #   (its word 7 free of it: SP_WATER)
+.set SP_WATER,    0x35c   # draw_model: the monster's RE_WATERZ word, 0 when it has none
+                          #   (ds_records' hidden corners, the slow path's clip)
 .set SP_PLA,      0x368   # slow path: polygon index list A (12 bytes)
 .set SP_PLB,      0x374   # slow path: polygon index list B (12 bytes)
 .set SP_SV,       0x380   # slow path: s0-s5 kept across it (6 words)

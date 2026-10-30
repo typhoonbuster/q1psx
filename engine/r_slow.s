@@ -85,7 +85,10 @@ r_slow_pool:
 	.set    ents_moved_from, bmf_pending + 3648  # 256 x 12 B
 	.set    ents_moved, ents_moved_from + 3072   # 256 x 4 B, to 17568 of 17600
 r_slow_view:                             # clip path: view x, y, z of pool entries
-	.space  6 * 32                       # 0..5, at VIEW_OFS from each (32 B apart)
+	.space  8 * 32                       # 0..7, at VIEW_OFS from each (32 B apart):
+	                                     # a quad and its 2 near crossings, or a
+	                                     # triangle, 2 at a liquid's surface, 2 near;
+	                                     # +12: a corner's height over that surface
 r_slow_hash:                             # (HASH_OFS from the pool: v1-relative)
 	.space  HASH_N * 2
 
@@ -251,6 +254,51 @@ sp_ctab:                                 # children by split mask (1..7)
 # (indices), found through the table or made by sm_new (the table slot is
 # written in the call's delay slot; sm_new's first instruction is done
 # here, in the table load's slot). Clobbers at, v0, t0-t7, t9, a0-a2.
+# WCORNER k: CORNER k for a monster through a liquid's surface (SP_WATER
+# set): the light word's top bit is ds_water's mark (r_world.s: the corner
+# past the surface), taken off the colour into s1 bit 8 + k, and the clip
+# path for it (sp_water cuts the polygon there). Clobbers t0-t5.
+.macro WCORNER k
+	lbu     $t1, \k($a1)                 # slot x 4
+	lhu     $t3, (4 + 2 * \k)($a1)       # uv
+	addu    $t1, $t1, $t8
+	lw      $t5, SP_SZ($t1)
+	lw      $t4, SP_SXY($t1)
+	lw      $t1, SP_COL($t1)             # grey colour, light in its low byte, the mark
+	mult    $t5, $t7                     # z T2
+	sw      $t5, (32 * \k + PV_Z)($v1)
+	sw      $t4, (32 * \k + PV_SXY)($v1)
+	sll     $t2, $t1, 1                  # (the mark off)
+	srl     $t2, $t2, 1
+	sw      $t2, (32 * \k + PV_GC)($v1)
+	andi    $t0, $t3, 0xff
+	sll     $t0, $t0, 8                  # u x 256
+	andi    $t2, $t3, 0xff00             # v x 256
+	sw      $t0, (32 * \k + PV_U)($v1)
+	sw      $t2, (32 * \k + PV_V)($v1)
+	sw      $t3, (32 * \k + PV_UVW)($v1)
+	srl     $t3, $t1, 31                 # 1: past the surface
+	sll     $t0, $t4, 16
+	sra     $t0, $t0, 16                 # x
+	addiu   $t0, $t0, 1023
+	sltu    $t0, $t9, $t0                # 1: x off range
+	sra     $t1, $t4, 16                 # y
+	addiu   $t1, $t1, 1023
+	sltu    $t1, $t9, $t1                # 1: y off range
+	or      $t0, $t0, $t1
+	slt     $t2, $t5, $s2                # 1: too near (SP_SZCLIP)
+	or      $t2, $t2, $t0
+	or      $t2, $t2, $t3                # (past the surface: the clip path)
+	sll     $t3, $t3, 8 + \k
+	or      $s1, $s1, $t3
+.if \k
+	sll     $t2, $t2, \k
+.endif
+	or      $s1, $s1, $t2
+	mflo    $t0
+	sw      $t0, (32 * \k + PV_ZT)($v1)
+.endm
+
 .macro MIDLOOK dst
 	sltu    $at, $t0, $t1                # key: lower << 9 | higher
 	bnez    $at, 91f
@@ -323,6 +371,90 @@ slow_poly:
 	b       sp_sub
 	addiu   $a3, $a3, 8
 	.size slow_poly, . - slow_poly
+	# slow_wpoly: slow_poly for a monster through a liquid's surface (SP_WATER
+	# set; r_world.s ds_tri_skip): a triangle (a sorted model has no quads),
+	# its corners' marks taken (WCORNER) and cut at the surface (sp_water).
+	# Its own entry: the world's polygons pay nothing for it.
+	ICSEC   slow_wpoly
+	.global slow_wpoly
+	.type   slow_wpoly, @function
+slow_wpoly:
+	sw      $ra, SP_SPRA($t8)
+	sw      $s0, SP_SV+0($t8)
+	sw      $s1, SP_SV+4($t8)
+	sw      $s2, SP_SV+8($t8)
+	sw      $s3, SP_SV+12($t8)
+	sw      $s4, SP_SV+16($t8)
+	sw      $s5, SP_SV+20($t8)
+	lw      $t7, SP_T2($t8)              # T2
+	lw      $s2, SP_SZCLIP($t8)          # (WCORNER's near bound)
+	lui     $v1, %hi(r_slow_pool)
+	addiu   $v1, $v1, %lo(r_slow_pool)   # v1 = pool
+	STAT    0, $t0, $t1                  # (polygons)
+	move    $s1, $zero
+	li      $t9, 2045
+	WCORNER 0
+	WCORNER 1
+	WCORNER 2
+	srl     $t0, $s1, 8                  # a corner past the surface: its clip
+	lui     $a3, %hi(r_slow_stack + 4)
+	beqz    $t0, sp_tri0                 # none: slow_poly's way
+	li      $s4, 3
+	b       sp_wclip
+	addiu   $a3, $a3, %lo(r_slow_stack + 4)
+	.size slow_wpoly, . - slow_wpoly
+	# slow_wpoly's clip path: sp_clip's corners in view space and ring, then
+	# the liquid's surface first (sp_water: a0 the record still)
+	ICSEC   sp_wclip
+sp_wclip:
+	STAT    1, $t0, $t1
+	lw      $t9, SP_VERTPOOL($t8)
+	lw      $s0, SP_ZNEAR($t8)           # (s0 = the near plane through the clip)
+	move    $t2, $v1                     # pool[j]
+	move    $t6, $zero                   # j: corner (PS1 order)
+	move    $s3, $zero                   # behind count
+	lbu     $t0, 0($a1)                  # corner 0's slot x 4
+1:	srlv    $t1, $s1, $t6
+	srl     $t0, $t0, 1                  # slot x 2: its pool-index offset
+	addu    $t0, $t0, $a0
+	lhu     $t0, R_VERTS($t0)            # pool index
+	andi    $t1, $t1, 1                  # 1: not from the cache
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t9
+	lwc2    C2_VXY0, 0($t0)
+	lwc2    C2_VZ0,  4($t0)
+	addiu   $t6, $t6, 1
+	lw      $t5, PV_Z($t2)               # (a cached corner's z: its SZ)
+	MVMVA   1, 0, 0, 0, 0                # MAC = rot v + TR (>> 12)
+	addu    $t0, $a1, $t6
+	lbu     $t0, 0($t0)                  # (the next corner's slot; after the
+	addiu   $t2, $t2, 32                 #  last: harmless)
+	mfc2    $t3, C2_MAC1
+	mfc2    $t4, C2_MAC2
+	beqz    $t1, 2f                      # from the cache: z = its SZ
+	sw      $t3, VIEW_OFS-32+0($t2)      # view x
+	mfc2    $t5, C2_MAC3                 # else the view z
+2:	sw      $t4, VIEW_OFS-32+4($t2)      # view y
+	sw      $t5, VIEW_OFS-32+8($t2)      # view z
+	slt     $t3, $t5, $s0
+	bne     $t6, $a2, 1b
+	addu    $s3, $s3, $t3
+	beq     $s3, $a2, sp_done            # all behind the near plane
+	li      $t0, 0x0100                  # (ring: 0, 1)
+
+	# the ring (pool indices) in SP_PLA, n in s2; ring[n] = ring[0] = 0
+	li      $t1, 4
+	beq     $a2, $t1, 3f
+	lui     $t1, 0x0203                  # quad ring: 0, 1, 3, 2
+	lui     $t1, 0x0002                  # triangle ring: 0, 1, 2 (then 0)
+3:	or      $t0, $t0, $t1
+	sw      $t0, SP_PLA($t8)
+	sw      $zero, SP_PLA+4($t8)         # (the quad's ring[4])
+	move    $s2, $a2
+	b       sp_water
+	nop
+
+
 	ICSEC   sp_tri0
 sp_tri0:                                 # a triangle: (0, 1, 2)
 	addiu   $a3, $a3, %lo(r_slow_stack + 4)
@@ -388,6 +520,7 @@ sp_clip:
 
 	# Sutherland-Hodgman against z >= SP_ZNEAR (s0): SP_PLA -> SP_PLB, crossings
 	# appended to the pool (sc_cross)
+sp_near:
 	addiu   $a1, $t8, SP_PLB             # output cursor
 	lbu     $t2, 0($a0)                  # a = ring[0]
 	addu    $t6, $a0, $s2                # the ring's end
@@ -752,6 +885,111 @@ sc_cross:
 	sll     $at, $at, 14                 # (sp_lerp's first)
 	sb      $v0, 0($a1)
 	b       sc_next
+	addiu   $a1, $a1, 1
+
+	# The liquid's surface (SP_WATER: its z in the model's, the side shown
+	# by the sign of the halfword above): each corner's height over it from
+	# its pool entry (the shown side positive, at VIEW_OFS+12), then
+	# Sutherland-Hodgman against height >= 0, SP_PLA -> SP_PLB, crossings
+	# interpolated from the hidden end (sp_lerp: view x, y, z, u, v,
+	# light), as the near plane's; the list back in SP_PLA and its corners
+	# behind the near plane counted again, for sp_near
+	ICSEC   sp_water
+sp_water:
+	lw      $t9, SP_WATER($t8)
+	lw      $t3, SP_VERTPOOL($t8)
+	sll     $t4, $t9, 16
+	sra     $t4, $t4, 16                 # the surface
+	sra     $t9, $t9, 31                 # 0: the part above shows, -1: below
+	move    $t6, $zero                   # corner j
+	move    $t2, $v1                     # pool[j]
+1:	addu    $t0, $a1, $t6
+	lbu     $t0, 0($t0)                  # its slot x 4
+	addiu   $t6, $t6, 1
+	srl     $t0, $t0, 1                  # slot x 2: its pool index's offset
+	addu    $t0, $t0, $a0
+	lhu     $t0, R_VERTS($t0)            # pool index
+	addiu   $t2, $t2, 32
+	sll     $t0, $t0, 3
+	addu    $t0, $t0, $t3
+	lh      $t0, 4($t0)                  # its z
+	nop
+	subu    $t0, $t0, $t4
+	xor     $t0, $t0, $t9
+	subu    $t0, $t0, $t9                # its height, the shown side positive
+	bne     $t6, $a2, 1b
+	sw      $t0, VIEW_OFS-32+12($t2)
+	addiu   $a0, $t8, SP_PLA             # the ring
+	addiu   $a1, $t8, SP_PLB             # output cursor
+	lbu     $t2, 0($a0)                  # a = ring[0]
+	addu    $t6, $a0, $s2                # the ring's end
+	sll     $t4, $t2, 5
+	addu    $t4, $t4, $v1                # pool[a]
+	lw      $t0, VIEW_OFS+12($t4)        # wa
+	move    $s5, $a0                     # cursor
+wc_edge:                                 # a: t2 index, t4 entry, t0 wa
+	lbu     $t3, 1($s5)                  # b
+	addiu   $s5, $s5, 1
+	sll     $t5, $t3, 5
+	addu    $t5, $t5, $v1                # pool[b]
+	lw      $t1, VIEW_OFS+12($t5)        # wb
+	bltz    $t0, 5f                      # a hidden: dropped
+	sb      $t2, 0($a1)                  # (else kept)
+	addiu   $a1, $a1, 1
+5:	xor     $at, $t0, $t1
+	bltz    $at, wc_cross                # the ends on both sides: a crossing
+	move    $t7, $t4                     # (from a, if a is hidden)
+wc_next:
+	move    $t2, $t3                     # b: the next edge's a
+	move    $t4, $t5
+	bne     $s5, $t6, wc_edge
+	move    $t0, $t1
+	addiu   $a0, $t8, SP_PLB
+	subu    $s2, $a1, $a0                # n
+	slti    $t1, $s2, 3
+	bnez    $t1, sp_done                 # nothing on the shown side
+	lw      $s0, SP_ZNEAR($t8)           # (sp_lerp took s0)
+	lw      $t1, SP_PLB($t8)             # the list back in SP_PLA, ring[n] =
+	lw      $t2, SP_PLB+4($t8)           # ring[0]
+	addiu   $a0, $t8, SP_PLA
+	sw      $t1, SP_PLA($t8)
+	sw      $t2, SP_PLA+4($t8)
+	addu    $t6, $a0, $s2
+	sb      $t1, 0($t6)                  # (t1's low byte: ring[0])
+	move    $s3, $zero                   # behind the near plane, again
+	move    $t3, $a0
+8:	lbu     $t1, 0($t3)
+	addiu   $t3, $t3, 1
+	sll     $t1, $t1, 5
+	addu    $t1, $t1, $v1
+	lw      $t1, VIEW_OFS+8($t1)         # view z
+	nop
+	slt     $t1, $t1, $s0
+	bne     $t3, $t6, 8b
+	addu    $s3, $s3, $t1
+	beq     $s3, $s2, sp_done            # all behind it
+	nop
+	bnez    $s3, sp_near                 # some: its clip
+	nop
+	b       sp_project
+	nop
+
+	# a crossing at the surface (wc_edge), from its hidden end: two
+	# polygons sharing the edge make the same point
+	ICSEC   wc_cross
+wc_cross:
+	move    $t9, $t5                     # to b
+	move    $at, $t0                     # num: wa
+	bltz    $t0, 7f                      # a hidden: t = wa / (wa - wb)
+	subu    $v0, $t0, $t1
+	move    $t7, $t5                     # else from b: t = wb / (wb - wa)
+	move    $t9, $t4
+	move    $at, $t1
+	subu    $v0, $zero, $v0
+7:	jal     sp_lerp_1
+	sll     $at, $at, 14                 # (sp_lerp's first)
+	sb      $v0, 0($a1)
+	b       wc_next
 	addiu   $a1, $a1, 1
 
 	ICSEC   sp_full

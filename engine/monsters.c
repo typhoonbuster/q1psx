@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "clip.h"
 #include "dlight.h"
 #include "game.h"
 #include "hud.h"
@@ -585,41 +586,136 @@ void monsters_stream_wants(void)
 int monsters_drawn;
 #endif
 
+static int liquid(int c)
+{
+	return c <= QW_CONTENTS_WATER && c >= QW_CONTENTS_LAVA;
+}
+
+/* A liquid's surface between z0 (in it, or not: `wet0`) and z1 above, at
+   (x, y): its height to the unit (1/R_POS_SUB units), by halves */
+static int32_t surface(int32_t x, int32_t y, int32_t z0, int32_t z1, int wet0)
+{
+	int32_t p[3] = { x, y, 0 };
+	while (z1 - z0 > R_POS_SUB / 2) {
+		p[2] = (z0 + z1) >> 1;
+		if (liquid(clip_contents(0, p)) == wet0)
+			z0 = p[2];
+		else
+			z1 = p[2];
+	}
+	return (z0 + z1) >> 1;
+}
+
+/* A leaf near a liquid: Quake's water ambient level for it (vis's: the
+   liquid leaves its PVS sees within ~1000 units), 0 for most */
+static int near_liquid(const qw_leaf *leaf)
+{
+	if (!world.ambient)
+		return 1;
+	uint32_t i = (((uint32_t) leaf | 0x80000000u) - ((uint32_t) world.leaves | 0x80000000u)) / sizeof(qw_leaf);
+	return world.ambient[i * 2] != 0;
+}
+
+/* A body's feet and top in a liquid or not (bits 1 and 2 of its mpad; bit
+   0 set once taken, bits 3-7 a hash of the place they were taken at):
+   taken again when it has moved */
+static unsigned body_wet(edict_t *e, const int32_t org[3])
+{
+	unsigned key = (unsigned) ((org[0] ^ org[1] * 3 ^ org[2] * 5) >> 2 & 0x1f) << 3 | 1;
+	if ((e->mpad & 0xf9) == key)
+		return e->mpad;
+	int32_t p[3] = { org[0], org[1], org[2] + e->mins[2] + R_POS_SUB };
+	unsigned w = key | (unsigned) liquid(clip_contents(0, p)) << 1;
+	p[2] = org[2] + e->maxs[2] - R_POS_SUB;
+	w |= (unsigned) liquid(clip_contents(0, p)) << 2;
+	e->mpad = (uint8_t) w;
+	return w;
+}
+
+/* One body drawn: its frame, lit by `leaf` (the one its centre is in, or
+   a leaf of its box the PVS sees); through a liquid's surface, cut by it,
+   wholly past it, not drawn (eye_wet: the eye in a liquid) */
+static void monster_draw(edict_t *e, const qw_leaf *leaf, int eye_wet)
+{
+	const qst_model *m = stream_model(e->masset);
+	int32_t tmp[3];
+	uint16_t ang[3];
+	const int32_t *org = ents_draw_pose(e, tmp, ang);
+	if (!m || !ent_in_view(org, m->radius))
+		return;
+#ifdef Q1PSX_BENCH
+	monsters_drawn++;
+#endif
+	/* an item's flame: an animated group, 10 a second, its phase; lit
+	   by itself (fullbright) */
+	int frame = e->frame, flame = !e->mdef && e->cnt && e->class != QE_MISC_TELEPORTTRAIN;
+	if (flame)
+		frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
+	int light = (m->flags & QSTM_FLAT) && flame ? 128
+	          : leaf->light + DL_GAIN(dl_add_at(org, game_tick_count));
+	if (e->mdef && e->health <= 0) {          /* a body's last second: darkened */
+		int32_t left = e->pain_finished - game_tick_count;
+		if (left < CORPSE_FADE)
+			light = left > 0 ? light * left / CORPSE_FADE : 0;
+	}
+	int yaw = QSTM_EF(m->flags) & QSTM_EF_ROTATE ? (game_tick_count % 216) * ANG_TURN / 216   /* 100 a second */
+	                                             : ang[1] >> 4;
+	/* a monster's (or body's) feet and top in a liquid or not, looked at
+	   when the eye is in one or its leaf is near one (body_wet: again only
+	   when it has moved) */
+	int wet0 = eye_wet, wet1 = eye_wet;
+	if (e->mdef && (eye_wet || near_liquid(leaf))) {
+		unsigned w = body_wet(e, e->origin);     /* (its own place: the cache's key) */
+		wet0 = w >> 1 & 1;
+		wet1 = w >> 2 & 1;
+		if (wet0 == wet1 && wet0 != eye_wet)
+			return;                           /* wholly past a liquid's surface */
+	}
+	r_ent_t *re = rl_model_stream(e->masset, frame, org, yaw, ang[0] >> 4, ang[2] >> 4, light);
+	if (re && wet0 != wet1 && (re->flags & RE_SORT) && !(ang[0] >> 4) && !(ang[2] >> 4))
+		rl_water(re, e->masset, org, surface(org[0], org[1], org[2] + e->mins[2] + R_POS_SUB,
+		                                     org[2] + e->maxs[2] - R_POS_SUB, wet0), !eye_wet);
+	rl_add_model(leaf, re, org, e->mins);
+}
+
 void monsters_render(void)
 {
 	uint16_t vis = (uint16_t) r_state.visframe;
 #ifdef Q1PSX_BENCH
 	monsters_drawn = 0;
 #endif
+	/* Quake's liquids are opaque (its z-buffer hides what lies past their
+	   surface): a body wholly on the side of the surface the eye is not on
+	   is left out, one through the surface cut by it (rlist.c rl_water).
+	   The eye's leaf: the last frame's (the world's walk finds it after the
+	   entities), as the view's tint takes it */
+	int eye_wet = r_state.view_leaf &&
+	              liquid(((const qw_leaf *) (r_state.view_leaf | 0x80000000u))->contents);
 	int n = ents_num_streamed;
 	for (int i = ents_seen_streamed(ents_streamed_list, n, 0, vis); i < n;
 	     i = ents_seen_streamed(ents_streamed_list, n, i + 1, vis)) {
 		edict_t *e = &edicts[ents_streamed_list[i]];   /* (in use, its model, its leaf */
-		const qw_leaf *leaf = e->leaves[0];             /*  in the PVS: e_seen.s) */
-		const qst_model *m = stream_model(e->masset);
-		int32_t tmp[3];
-		uint16_t ang[3];
-		const int32_t *org = ents_draw_pose(e, tmp, ang);
-		if (!m || !ent_in_view(org, m->radius))
-			continue;
-#ifdef Q1PSX_BENCH
-		monsters_drawn++;
-#endif
-		/* an item's flame: an animated group, 10 a second, its phase; lit
-		   by itself (fullbright) */
-		int frame = e->frame, flame = !e->mdef && e->cnt && e->class != QE_MISC_TELEPORTTRAIN;
-		if (flame)
-			frame = e->frame + (int) ((game_tick_count / 6 + (e - edicts)) % e->cnt);
-		int light = (m->flags & QSTM_FLAT) && flame ? 128
-		          : leaf->light + DL_GAIN(dl_add_at(org, game_tick_count));
-		if (e->mdef && e->health <= 0) {          /* a body's last second: darkened */
-			int32_t left = e->pain_finished - game_tick_count;
-			if (left < CORPSE_FADE)
-				light = left > 0 ? light * left / CORPSE_FADE : 0;
-		}
-		int yaw = QSTM_EF(m->flags) & QSTM_EF_ROTATE ? (game_tick_count % 216) * ANG_TURN / 216   /* 100 a second */
-		                                             : ang[1] >> 4;
-		rl_add_model(leaf, rl_model_stream(e->masset, frame, org, yaw, ang[0] >> 4, ang[2] >> 4, light), org,
-		             e->mins);
+		monster_draw(e, e->leaves[0], eye_wet);         /*  in the PVS: e_seen.s) */
+	}
+	/* Quake links an entity into every leaf its box touches (the client's
+	   efrags, the server's leafnums) and draws it when the PVS sees any;
+	   here its centre's leaf stands for them. id's maps were vis'd with the
+	   liquids opaque: the leaves on one side of a surface are not in the
+	   PVS of the other's, so a body through one, its centre on the other
+	   side from the eye, was never drawn (the legs of a fiend wading in
+	   E2M2's pit, from under the water). With the eye in a liquid, a body
+	   near one whose feet are in one is seen by its feet's leaf too (the
+	   other way, a body's centre under the surface and its top above it,
+	   seen from above, is left: rare, and the scan would be every frame's) */
+	for (int i = 0; eye_wet && i < n; i++) {
+		edict_t *e = &edicts[ents_streamed_list[i]];
+		if (!e->inuse || !e->mdef || e->masset < 0 || !e->leaves[0] || e->leaves[0]->visframe == vis ||
+		    !near_liquid(e->leaves[0]) || !(body_wet(e, e->origin) & 2))
+			continue;                             /* (drawn above, or dry) */
+		int32_t c[3] = { e->origin[0] / CLIP_SUB, e->origin[1] / CLIP_SUB,
+		                 (e->origin[2] + e->mins[2]) / CLIP_SUB + 1 };
+		const qw_leaf *l = world_point_leaf(c);
+		if (l->visframe == vis)
+			monster_draw(e, l, eye_wet);
 	}
 }
