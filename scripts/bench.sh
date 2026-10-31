@@ -11,9 +11,8 @@
 #         EFFECTS the effects' level (1 medium, the default, 2 high;
 #         formats/qlevels.h; docs/porting-notes.md §52).
 #         T is the affine-warp threshold, fixed (default 4 px: the game's
-#         dynamic control's floor).
-#         FLAT=0 (none), 1 (far, the default: the game's) or 2 (all) the
-#         flat shading. WEAPON=2d builds the 2D gun (3d by default).
+#         dynamic control's floor). WEAPON=2d builds the 2D gun (3d by
+#         default).
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the
 #         world's BSP (engine/bmfrag.c): an A / B. NOBMFCULL=1 cuts a moved
 #         brush model again even when none of it is in view (an A / B: the
@@ -181,9 +180,6 @@
 #         SEQCHK=1: a view drawn by a zone's cooked walk (docs/porting-notes.md
 #         §91) is drawn again by the tree walk and the two compared: the
 #         leaves' and the faces' stamps, the records drawn ("seqchk" lines).
-#         TESS=<maps>: the maps whose near polygons take the regular subdivision
-#         before the slow path (engine/r_tess.s, §92): names separated by commas,
-#         all, or none (default all, the game's since §108)
 #         TESSK=<0..3>: the grid's finest level, 2^k cells along an axis (0: the
 #         unsplit polygons alone go out as one packet, every split one to the
 #         slow path; default 3)
@@ -217,7 +213,6 @@ SECS=${1:-$([ "$BENCH_GAME" = 1 ] && echo 420 || echo 60)}
 TEXTURES=${TEXTURES:-high}
 EFFECTS=${EFFECTS:-1}
 T=${T:-4}
-FLAT=${FLAT:-1}
 WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
 NOBMFCULL=${NOBMFCULL:-0}
@@ -259,7 +254,6 @@ WARPDYN=${WARPDYN:-0}
 TMAX=${TMAX:-32}
 SEQCHK=${SEQCHK:-0}
 VRAMCHK=${VRAMCHK:-0}
-TESS=${TESS:-all}
 TESSK=${TESSK:-3}
 TESSC=${TESSC:-4}
 LOD=${LOD:-1}
@@ -277,13 +271,13 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
-      -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
+      -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_BENCH_BMFARENA="$BMFARENA" -DQ1PSX_BENCH_BMFTRACE="$BMFTRACE" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_DLIGHT_MINLIGHT="$DLIGHT_MINLIGHT" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_SKILL="${SKILL:-1}" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \

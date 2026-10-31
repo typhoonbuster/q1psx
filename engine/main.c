@@ -74,9 +74,6 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #define Q1PSX_BENCH_T    SETTINGS_WARP_FLOOR   /* the warp threshold the bench renders with,
                                                   fixed, px (T= scripts/bench.sh) */
 #endif
-#ifndef Q1PSX_BENCH_FLAT
-#define Q1PSX_BENCH_FLAT R_FLAT_FAR            /* the flat shading (FLAT= scripts/bench.sh) */
-#endif
 #ifndef Q1PSX_BENCH_EFFECTS
 #define Q1PSX_BENCH_EFFECTS QL_MEDIUM          /* the effects (EFFECTS= scripts/bench.sh) */
 #endif
@@ -102,7 +99,6 @@ static void apply_settings(void)
 	vid_set_dither(1);
 	settings.level[QL_EFFECTS] = Q1PSX_BENCH_EFFECTS;
 	game_set_effects(Q1PSX_BENCH_EFFECTS);
-	r_set_flat(Q1PSX_BENCH_FLAT);
 	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
 #else

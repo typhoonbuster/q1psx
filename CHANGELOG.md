@@ -2571,3 +2571,12 @@ followed by R0-R4.
   same (START's 12 views, the 128 spawn views, `FLAT=0`; the game bench
   but the Graphics pages, one row shorter), the views 0.04 to 0.5 %
   faster; the release's level arena +14000 B.
+- **The clean-up's unused leftovers** (§119.2, provisional number, 
+  2026-10-31). Removed:
+  the frustum's never-built 192-row variant (`R_YSLOPE` 5);
+  the bench's flat shading (`FLAT=`: its copy of the world's record loop,
+  4988 B of every build's code, and `r_set_flat`'s patches; the game's
+  flat shading past 512 units is the loop as built); the ordering table's
+  four empty buckets (8 → 4, the same order); the grid's per-map choice
+  (`Q1PSX_TESS_MAPS`, `TESS=`: on every map, the call assembled); a
+  missing `<stdio.h>`. The display lists are the same; the release's level arena +5488 B (+19488 B with §119.1).

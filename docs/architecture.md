@@ -333,9 +333,7 @@ scratchpad for the duration of `r_frame`. Its GTE matrices:
    §37, §119): built into the record loops (RECLOOP: `dr`, the world's,
    flat-shaded past 512 units; `de`, the models') and the PVS marking
    (`mark_pvs`), their thresholds `slti` immediates (1536 units: the fog
-   from three quarters of it, black at it). The bench's other flat
-   shadings (none, everywhere) patch the world loop (`r_set_flat`: its
-   copy `drn`, its threshold), then flush the instruction cache.
+   from three quarters of it, black at it). Nothing patches them.
 
 ABI with C: asm entry points follow the MIPS o32 convention. They preserve
 `$s0-$s8`, `$gp`, `$sp`, and use the stack slots PSn00bSDK requires when they

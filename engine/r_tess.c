@@ -9,8 +9,7 @@
  *
  * r_slow (engine/r_slow.c) calls r_tess first: 1 when the polygon was
  * drawn (or given up, the arena full), 0 when it is the slow path's (a
- * corner too near or off the GTE's range, a level past KMAX, or a map
- * that does not take the subdivision: render.c r_tess_on).
+ * corner too near or off the GTE's range, a level past KMAX).
  */
 
 #include <stdint.h>
@@ -128,8 +127,6 @@ int r_tess(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	const uint32_t *c_col = (const uint32_t *) (SPAD + SP_COL);
 	int32_t szclip = (int32_t) SPW(SP_SZCLIP);
 	int slot[4];
-	if (!r_tess_on)
-		return 0;
 	for (int j = 0; j < 4; j++)
 		slot[j] = poly[j] >> 2;
 	if (nv == 3)

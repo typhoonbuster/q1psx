@@ -134,10 +134,6 @@ add_custom_command(TARGET q1psx POST_BUILD
 # Renderer counters and stage timers (debug overlay, bench breakdown). Off in
 # the "release" preset: the asm renderer then skips their per-node, per-record
 # and per-polygon upkeep (R_PROFILE in engine/r_defs.inc).
-set(Q1PSX_TESS_MAPS "all" CACHE STRING "The maps whose near polygons are cut on a regular grid before the slow path (engine/r_tess.s, docs/porting-notes.md §92, §108): names separated by commas, all, or nothing")
-if(Q1PSX_TESS_MAPS STREQUAL "START,E1M1")    # (the default before §108, kept by a build folder's cache)
-	set(Q1PSX_TESS_MAPS "all" CACHE STRING "The maps whose near polygons are cut on a regular grid before the slow path (engine/r_tess.s, docs/porting-notes.md §92, §108): names separated by commas, all, or nothing" FORCE)
-endif()
 set(Q1PSX_TESS_KMAX 3 CACHE STRING "The regular grid's finest level, 2^KMAX cells along an axis (0: the unsplit polygons alone, every split one to the slow path)")
 set(Q1PSX_TESS_CAP 4 CACHE STRING "The regular grid's cap: a polygon whose two levels sum past it (more than 2^CAP cells) goes to the slow path, whose splits follow the near corner alone")
 option(Q1PSX_PROFILE "Renderer counters and stage timers" ON)
@@ -224,7 +220,7 @@ else()
 	set(_slow_c 0)
 	set(_zone_c 0)
 endif()
-target_compile_definitions(q1psx PRIVATE Q1PSX_TESS_MAPS="${Q1PSX_TESS_MAPS}" Q1PSX_TESS_KMAX=${Q1PSX_TESS_KMAX} Q1PSX_TESS_CAP=${Q1PSX_TESS_CAP})
+target_compile_definitions(q1psx PRIVATE Q1PSX_TESS_KMAX=${Q1PSX_TESS_KMAX} Q1PSX_TESS_CAP=${Q1PSX_TESS_CAP})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,TESS_KMAX=${Q1PSX_TESS_KMAX},--defsym,TESS_CAP=${Q1PSX_TESS_CAP}>)
 target_compile_definitions(q1psx PRIVATE Q1PSX_ENGINE_C=$<BOOL:${Q1PSX_ENGINE_C}>
 	Q1PSX_BMF_C=${_bmf_c} Q1PSX_ORDER_C=${_order_c} Q1PSX_DLIGHT_C=${_dlight_c})
@@ -258,7 +254,6 @@ set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics 
 set(Q1PSX_BENCH_MAPS 0 CACHE STRING "1: bench every map on the disc (spawn views) instead")
 set(Q1PSX_BENCH_GAME 0 CACHE STRING "1: bench the game instead: every weapon fired, both HUDs")
 set(Q1PSX_BENCH_T 4 CACHE STRING "Affine-warp threshold the bench renders with, fixed (px; the game's floor: 4)")
-set(Q1PSX_BENCH_FLAT 1 CACHE STRING "The flat shading the bench renders with: 0 off, 1 far (the game's), 2 all")
 set(Q1PSX_BENCH_BMF 1 CACHE STRING "0: the brush models drawn whole, not cut by the world's BSP (an A / B)")
 set(Q1PSX_BENCH_BMFCULL 1 CACHE STRING "0: a moved brush model is cut again out of view too (an A / B)")
 set(Q1PSX_BENCH_BMFCHK 0 CACHE STRING "1: every mover cut at 33 places along its ways in its room (bmfchk lines)")
@@ -301,7 +296,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_SLOWSTAT=${Q1PSX_BENCH_SLOWSTAT}
 		Q1PSX_BENCH_VIEWS=${Q1PSX_BENCH_VIEWS} Q1PSX_BENCH_MAPS=${Q1PSX_BENCH_MAPS}
 		Q1PSX_BENCH_GAME=${Q1PSX_BENCH_GAME}
-		Q1PSX_BENCH_T=${Q1PSX_BENCH_T} Q1PSX_BENCH_FLAT=${Q1PSX_BENCH_FLAT}
+		Q1PSX_BENCH_T=${Q1PSX_BENCH_T}
 		Q1PSX_BENCH_BMF=${Q1PSX_BENCH_BMF}
 		Q1PSX_BENCH_BMFCULL=${Q1PSX_BENCH_BMFCULL}
 		Q1PSX_BENCH_BMFCHK=${Q1PSX_BENCH_BMFCHK} Q1PSX_BENCH_BMFARENA=${Q1PSX_BENCH_BMFARENA} Q1PSX_BENCH_BMFTRACE=${Q1PSX_BENCH_BMFTRACE}

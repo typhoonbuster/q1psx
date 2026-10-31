@@ -25,10 +25,10 @@
 /* Ordering table buckets: the highest index is drawn first. The world's
    bucket holds the whole scene in the painter's order the BSP walk gives
    (models and particles included, engine/rlist.h). */
-#define VID_OT_LEN     8
-#define OT_SKY         7     /* (VRAM transfers: the animated textures, the gun's) */
-#define OT_WORLD       4
-#define OT_WEAPON      2     /* the 2D gun: after the world, under the overlay */
+#define VID_OT_LEN     4
+#define OT_SKY         3     /* (VRAM transfers: the animated textures, the gun's) */
+#define OT_WORLD       2
+#define OT_WEAPON      1     /* the 2D gun: after the world, under the overlay */
 #define OT_OVERLAY     0
 
 /* A buffer's packet arena: 80 KB (docs/porting-notes.md §90.1; 96 until

@@ -12,7 +12,8 @@
  *   the models     low (the guns rebuilt by hand: tools/qcook)
  *   the gun        Q1PSX_WEAPON, 3d or 2d (Q1PSX_WEAPON_2D)
  * and fixed: the 3D view at 320 x 240, the draw distance 1536 world units
- * (render.h R_DRAW_DIST), the walls past 512 units flat-shaded (R_FLAT_FAR).
+ * (render.h R_DRAW_DIST), the walls past 512 units flat-shaded
+ * (R_FLAT_FAR_UNITS).
  */
 
 #ifndef Q1PSX_SETTINGS_H

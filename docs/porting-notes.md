@@ -15659,13 +15659,18 @@ BSPs, the textures and the renders stay out.
 - **Left:** the other worktrees' `local.env` files still name the
   analysis' folder, which wins over the default until those lines go.
 
-## §119 — The draw distance and the 3D view's resolution fixed (2026-10-31)
+## §119 — The code's clean-up (2026-10-31)
 
-The code's clean-up (2026-10-31) starts with two settings
-fixed for good: the draw distance stays at 1536 world units, the
-release's since §37, and the 3D view at 320×240. The internal resolution
-of §78 goes: the GPU never limited a frame (§78 measured 62 % of it at
-most), so its lower targets bought nothing worth their code.
+What goes is named explicitly; what looks unused besides is listed
+first, never removed unasked.
+
+### 119.1 The draw distance and the 3D view's resolution fixed
+
+The clean-up starts with two settings fixed for good: the draw
+distance stays at 1536 world units, the release's since §37, and the 3D
+view at 320×240. The internal resolution of §78 goes: the GPU never
+limited a frame (§78 measured 62 % of it at most), so its lower targets
+bought nothing worth their code.
 
 - **The draw distance, built in** (`engine/render.h` `R_DRAW_DIST`,
   `R_DRAW_Z`, `R_FOG_Z`, `R_PART_Z`; `engine/r_defs.inc` `R_DRAW_Z`,
@@ -15735,6 +15740,48 @@ most), so its lower targets bought nothing worth their code.
     predates this change.
   - The release: the level arena 1348112 → 1362112 B (+14000: `.text`
     −13196, `.rodata` −692, the data −112); the default preset builds.
-- **Left:** `FLAT=2` and the dynamic lights inside `drn` were not run;
-  the C engine's drift from the asm is not looked into; the Graphics page
-  on DuckStation is left to check.
+- **Left:** the C engine's drift from the asm is not looked into; the
+  Graphics page on DuckStation is left to check.
+
+### 119.2 What 119.1 left unused
+
+Found while doing 119.1 and removed (the bench's
+`GPUTIME=1` and the C engine stay):
+
+- **The frustum's 192-row variant** (`R_YSLOPE` 5, the vertical planes
+  3z -+ 5y for the viewport over the status bar): nothing ever built it.
+  Its blocks in FRUSTUM, RECLOOP and the sorted models' loop are gone; the
+  240 rows' planes serve both viewports, as they always did.
+- **The bench's flat shading** (`FLAT=`, `Q1PSX_BENCH_FLAT`): the game's
+  has been fixed since §52 (the walls past 512 units). The bench's none
+  (the copy `drn`, 4988 B of every build's code) and everywhere (the
+  threshold patched into li 0) are gone, with `r_set_flat` and its patched
+  words (the loop's first word, the dynamic lights' three ways back, the
+  threshold). RECLOOP has no option left: the world's loop is
+  flat-shaded, the models' is not. Nothing in the record loops is patched
+  any more but the cooked walk's exits; the camera-leaf call still is,
+  for the zones.
+- **The ordering table's empty buckets**: 8 buckets, 4 used (the sky's
+  VRAM transfers, the world, the 2D gun, the overlay): `VID_OT_LEN` 4, the
+  same order. A dump skips an empty bucket, so the display lists are the
+  same; the GPU's DMA walks 4 links less a frame.
+- **The grid on every map** (`Q1PSX_TESS_MAPS`, the bench's `TESS=`):
+  "all" since §108. POLYS calls `tess_poly` as built for the world's
+  Gouraud polygons (the flat ones and the models' call `slow_poly`, as
+  the patch left them); `r_tess_select`, its patch and `r_tess_on` are
+  gone (the C engine's `r_tess` no longer tests it).
+- **A warning**: `engine/m_shambler.c`'s bench print had no
+  `<stdio.h>`.
+- **Measured** (TESTING 11.99), against master 8274a70's references:
+  - START's 12 views: identical, −0.28 % (each view −0.11 to −0.38 %).
+  - The 128 spawn views: identical, −0.22 % (every view faster, −0.08 to
+    −0.52 %; 15 past a vblank before and after; 1269 cycles less than
+    119.1 over the 128).
+  - The game bench, the menus' warp control fixed in both trees for the
+    test: 22 of its 29 dumps identical, the 7 Graphics pages differing by
+    their row, as in 119.1.
+  - The C engine: master's C engine's frames, byte for byte (its drift
+    from the asm, 119.1, unchanged).
+  - The release: the level arena 1362112 → 1367600 B (+5488: `.text`
+    −5400, the data −88), +19488 B against master; the default preset
+    builds, no warning left.

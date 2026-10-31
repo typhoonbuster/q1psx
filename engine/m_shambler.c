@@ -5,6 +5,8 @@
  * fight.qc's ShamCheckAttack. See engine/monsters.h.
  */
 
+#include <stdio.h>
+
 #include "game.h"
 #include "level.h"
 #include "monsters.h"

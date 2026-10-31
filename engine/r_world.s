@@ -54,9 +54,6 @@
 	sll     $v0, $t1, 2                  # 4y
 	MVMVA   1, 1, 1, 3, 0                # IR = |rot| * half extents
 	sll     $a1, $t2, 1
-.if R_YSLOPE == 5
-	addu    $v0, $v0, $t1                # 5y (a 192-row viewport: R_YSLOPE)
-.endif
 	addu    $a1, $a1, $t2                # 3z
 	\s2a
 	\s2b
@@ -66,9 +63,6 @@
 	sll     $t7, $t4, 2                  # 4 ry
 	addu    $t6, $t5, $t3                # rz + rx: radius for left/right
 	sll     $t9, $t5, 1
-.if R_YSLOPE == 5
-	addu    $t7, $t7, $t4                # 5 ry
-.endif
 	addu    $t9, $t9, $t5
 	addu    $t7, $t7, $t9                # 3 rz + 4 ry: radius for top/bottom
 	beqz    $at, 1f
@@ -862,10 +856,12 @@
 	lw      $fp, RS_OT_HEAD($t9)
 .else
 	move    $a1, $a3                     # polygon
-	.globl  \q\()_ts
-\q\()_ts:                                 # (render.c r_tess_select: tess_poly or slow_poly)
-	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3: the slow path,
-	move    $a2, $t0                     #  or the regular subdivision (engine/r_tess.s) first
+.if \var + \flat
+	jal     slow_poly                    # a0 = record, a1 = polygon, a2 = 4 / 3: the slow path
+.else
+	jal     tess_poly                    # (the world's Gouraud polygons: the regular
+.endif                                   #  subdivision first, engine/r_tess.s)
+	move    $a2, $t0
 .endif
 .if R_PROFILE
 	lhu     $t0, TIMER2($t8)
@@ -896,23 +892,20 @@
 
 .endm
 
-# RECLOOP p, exit, var [, flat, wx]: the record loop, labels prefixed by p,
-# a chain of its own (entered by a jump), leaving for `exit` when the block
+# RECLOOP p, exit, var [, wx]: the record loop, labels prefixed by p, a
+# chain of its own (entered by a jump), leaving for `exit` when the block
 # is done or the arena is full. Instantiated for the world's face blocks
 # (dr, back to the walk; var = 0: the careful test's near bound is 96) and
 # for a model's records (de, draw_model; var = 1: the bound is SP_SZCLIP,
 # the view model's 124). The comment above describes it. The draw
 # distance (render.h R_DRAW_DIST): a record wholly beyond it is culled
 # (R_DRAW_Z), one reaching into the fog (R_FOG_Z) goes through the fogged
-# transform (XFORM fog). flat = 1, the world's flat shading: a record
-# wholly beyond its start (R_FLAT_Z), its block without a dynamic light, is
-# drawn in one colour, its average light (times the fog's factor at its
-# centre): its vertices without their lights (their colour words that
-# colour, for the slow path), its polygons POLY_FT4 / POLY_FT3 (POLYS
-# flat). The bench's other flat shadings: everywhere, \p\()_o_flatz
-# patched into li 0; none, the copy drn entered instead (render.c
-# r_set_flat).
-.macro RECLOOP p, exit, var, flat=0, wx=0
+# transform (XFORM fog). The world's flat shading: a record wholly beyond
+# its start (R_FLAT_Z), its block without a dynamic light, is drawn in one
+# colour, its average light (times the fog's factor at its centre): its
+# vertices without their lights (their colour words that colour, for the
+# slow path), its polygons POLY_FT4 / POLY_FT3 (POLYS flat).
+.macro RECLOOP p, exit, var, wx=0
 	ICSEC   \p\()_records
 	.globl  \p\()_records
 \p\()_records:
@@ -989,10 +982,6 @@
 	sll     $t6, $t4, 1
 	addu    $t6, $t6, $t4                # 3z
 	sll     $t0, $t1, 2                  # 4y
-.if R_YSLOPE == 5
-	addu    $t5, $t5, $t3                # 9 r: |n| = sqrt(34) x 1.5 = 8.75
-	addu    $t0, $t0, $t1                # 5y (a 192-row viewport: R_YSLOPE)
-.endif
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, \p\()_cull
@@ -1005,7 +994,7 @@
 	addu    $t3, $t4, $t7                # farthest depth z + rho (the fog's
 	slti    $t0, $t6, R_DRAW_Z           #  test, below; t4 = z kept there)
 	beqz    $t0, \p\()_cull              # wholly beyond the draw distance: black, culled
-.if \flat
+.if !\var
 	move    $t1, $t6                     # (the flat shading's test, below)
 .endif
 	lw      $t7, SP_SZFAST($t8)
@@ -1024,7 +1013,6 @@
 	or      $a2, $a2, $t9
 .if !\var
 	bnez    $gp, dr_light_rec            # dynamic lights reach the block: the
-	.globl  \p\()_lit_back
 \p\()_lit_back:                           # record, in view, is lit first
 .endif
 	lbu     $t2, R_NVERTS($a0)
@@ -1053,7 +1041,7 @@
 	sw      $v1, SP_TPAGE16($t8)
 \p\()_tex_done:
 .if R_PROFILE
-.if \flat
+.if !\var
 	lw      $t9, SP_RECORDS($t8)         # (t1 kept)
 	nop
 	addiu   $t9, $t9, 1
@@ -1071,9 +1059,7 @@
 	sw      $t9, SP_VERTS($t8)
 .endif
 .endif
-.if \flat
-	.globl  \p\()_o_flatz
-\p\()_o_flatz:
+.if !\var
 	slti    $t5, $t1, R_FLAT_Z           # nearest depth (the join's) beyond the
 	beqz    $t5, \p\()_o_flat            #  flat shading's start: flat (a dynamic
 \p\()_o_gouraud:                          #  light on the block: back here)
@@ -1085,7 +1071,7 @@
 	subu    $at, $t0, $t1
 	slti    $t0, $t3, R_FOG_Z            # farthest depth (the join's) before the fog?
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
-.if !\flat
+.if \var
 	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
 .endif
 	beqz    $t0, \p\()_o_fog             # reaching into the fog: the fogged
@@ -1116,11 +1102,9 @@
 	lhu     $t0, R_POLYS($a0)            # (\p\()_polys's first)
 
 .if !\var
-	# the dynamic lights' way back here (dr_light_rec's returns; render.c
-	# points them at drn's while the bench runs that copy): t3, the far
-	# depth, is lost: the fog's test passed
+	# the dynamic lights' way back here (dr_light_rec's three returns): t3,
+	# the far depth, is lost: the fog's test passed
 	ICSEC   \p\()_lit_ret
-	.globl  \p\()_lit_ret
 \p\()_lit_ret:
 	b       \p\()_lit_back
 	li      $t3, 0x7fff
@@ -1159,14 +1143,12 @@
 	# times the fog's factor at its centre (t4, the join's z): in
 	# SP_FT4COL / SP_FT3COL with the codes for POLYS, in every vertex's
 	# colour word for the slow path (XFORM light 2, at = the colour)
-.if \flat
 	ICSEC   \p\()_o_flat
 \p\()_o_flat:                              # (the flat shading's)
 	bnez    $gp, \p\()_o_gouraud
 	lbu     $t1, R_FLAGS($a0)            # (t0, the polygons' offset, kept for there)
 	b       \p\()_o_flat_2
 	sra     $t3, $t4, 31
-.endif
 	ICSEC   \p\()_o_fflat
 \p\()_o_fflat:                             # (the fog's: the centre in it)
 	bnez    $gp, \p\()_o_fogv
@@ -1819,7 +1801,7 @@ pop_1:                                   # (t0 loaded; draw_ents, wl_ents come h
 	j       dr_records
 	move    $gp, $t2
 
-	RECLOOP dr, walk, 0, 1, 1
+	RECLOOP dr, walk, 0, 1
 
 # dr_light_rec: the stamped record a0 of a block a dynamic light reaches
 # (gp = the node), in view (past the frustum test, so no light is spent on
@@ -1840,9 +1822,7 @@ dr_light_rec:
 	lbu     $t0, R_FLAGS($a0)
 	lw      $t1, SP_RSTATE($t8)
 	andi    $t0, $t0, 3                  # sky | liquid
-	.globl  dlr_ret0                     # (the three ways back: render.c
-dlr_ret0:                                #  points them at drn_lit_ret while
-	bnez    $t0, dr_lit_ret              #  the bench runs that copy)
+	bnez    $t0, dr_lit_ret              # (unlit: back into the loop)
 	lh      $t3, R_SC+0($a0)             # the record's sphere
 	lw      $a3, RS_LIGHTS($t1)
 	lw      $t2, RS_NLIGHTS($t1)
@@ -1881,8 +1861,6 @@ dlr_test:
 	bne     $a3, $t2, dlr_test
 	lw      $t0, DL_O+0($a3)             # (one past the last: harmless)
 	lhu     $a3, R_TEX($a0)              # no light reaches it: the loop's a3, at
-	.globl  dlr_ret1
-dlr_ret1:
 	j       dr_lit_ret
 	lw      $at, SP_LASTTEX($t8)
 
@@ -2224,8 +2202,6 @@ dlr_back:
 	lw      $v1, DLR_V1($sp)
 	lhu     $a3, R_TEX($a0)              # the loop's a3, at again
 	lw      $at, SP_LASTTEX($t8)
-	.globl  dlr_ret2
-dlr_ret2:
 	j       dr_lit_ret
 	addiu   $sp, $sp, DLR_SIZE
 
@@ -2758,10 +2734,6 @@ ds_rec:
 	sll     $t6, $t4, 1
 	addu    $t6, $t6, $t4                # 3z
 	sll     $t0, $t1, 2                  # 4y
-.if R_YSLOPE == 5
-	addu    $t5, $t5, $t3                # 9 r
-	addu    $t0, $t0, $t1                # 5y
-.endif
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, ds_cull
@@ -3891,12 +3863,6 @@ r_seq_stat:                              # the frame's: leaf tests, node tests, 
 	.space  16
 seq_keep:                                # s1, s2, s0 across a leaf's render list
 	.space  16
-
-# -----------------------------------------------------------------------------
-# The world's record loop without the flat shading (the bench's FLAT=0):
-# entered from the first word of dr_records, patched into a jump here
-# while it runs (render.c r_set_flat); it leaves as dr does.
-	RECLOOP drn, walk, 0, 0, 1
 
 # -----------------------------------------------------------------------------
 # mark_pvs: a0 = new camera leaf. visframe++, then the leaf's PVS row

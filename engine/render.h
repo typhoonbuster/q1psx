@@ -172,13 +172,10 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share);   /* 
 #define R_PART_Z    ((R_FOG_Z + R_DRAW_Z) / 2)   /* particles deeper are not drawn:
                                                     where the fog passes half */
 
-/* The flat shading: a world record wholly beyond R_FLAT_FAR_UNITS (or any,
-   R_FLAT_ALL) drawn in one colour, its average light. The game's is
-   R_FLAT_FAR, the record loop as built (r_world.s dr); the bench's FLAT=
-   takes the others (r_set_flat patches the loop: none, its copy drn). */
-enum { R_FLAT_OFF, R_FLAT_FAR, R_FLAT_ALL, R_FLAT_MODES };
-#define R_FLAT_FAR_UNITS 512       /* R_FLAT_FAR: records wholly beyond this depth */
-void r_set_flat(int flat);
+/* The flat shading: a world record wholly beyond this depth, world units,
+   is drawn in one colour, its average light (r_world.s dr; r_defs.inc
+   R_FLAT_Z is it in the view's units) */
+#define R_FLAT_FAR_UNITS 512
 
 /* a point's depth in the view's units (its position in 1/R_POS_SUB world
    units) */
@@ -194,11 +191,6 @@ void r_render(r_state_t *s);
    words patched, the cache flushed, on a change only). */
 void r_seq_set(uint32_t seq);
 
-/* the near polygons' regular subdivision (engine/r_tess.s, §92) on the
-   maps CMake Q1PSX_TESS_MAPS names: chosen when a world is bound (the
-   record loops' slow calls patched; the C engine reads r_tess_on) */
-extern int r_tess_on;
-void r_tess_select(const char *map);
 #ifdef Q1PSX_BENCH
 extern volatile uint32_t r_seq_stat[4];   /* the frame's: leaf tests, node tests, side tests (PROFILE) */
 extern volatile uint32_t r_tess_stat[6];  /* the frame's: polygons cut by the regular subdivision, cells

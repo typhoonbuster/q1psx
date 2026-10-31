@@ -1,7 +1,7 @@
 # q1psx — the near polygons' regular subdivision, hand-written MIPS assembly
 # (docs/porting-notes.md §92). Where the record loop sends a polygon to the
-# slow path (engine/r_world.s POLYS: CAREFUL's exits), it comes here first
-# on the maps that take it (render.c r_tess_select patches the call):
+# slow path (engine/r_world.s POLYS: CAREFUL's exits), the world's Gouraud
+# polygons come here first (on every map since §108):
 #
 #   tess_poly(a0 = face record, a1 = quad / tri, a2 = 4 or 3)
 #

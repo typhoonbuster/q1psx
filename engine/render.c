@@ -268,29 +268,25 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 
 /* ------------------------------------------------------- the cooked walk -- */
 
-/* the world's record loops' three ways out to the tree walk (r_world.s
-   RECLOOP wx: dr and the bench's copy drn) and draw_ents' way back, PC-
-   relative branches, pointed at seq_next while a cooked walk runs */
-extern uint32_t dr_xa[], dr_xb[], dr_xc[], drn_xa[], drn_xb[], drn_xc[], ei_x[], seq_next[], seq_ents_back[];
-static uint32_t *const seq_site[] = { dr_xa, dr_xb, dr_xc, drn_xa, drn_xb, drn_xc, ei_x };
+/* the world's record loop's three ways out to the tree walk (r_world.s
+   RECLOOP wx: dr) and draw_ents' way back, PC-relative branches, pointed
+   at seq_next while a cooked walk runs */
+extern uint32_t dr_xa[], dr_xb[], dr_xc[], ei_x[], seq_next[], seq_ents_back[];
+static uint32_t *const seq_site[] = { dr_xa, dr_xb, dr_xc, ei_x };
 #define SEQ_SITES (int) (sizeof seq_site / sizeof seq_site[0])
 static uint32_t seq_orig[SEQ_SITES];
 #define SEQ_IMM16(w, v)  (((w) & 0xffff0000u) | ((uint32_t) (v) & 0xffffu))
 static int      seq_mode = -1;           /* -1 as built (the tree's), 0 the tree, 1 the cooked walk */
 
-/* the sites as the mode wants them (no cache flush here). A site holding
-   a `j` is the flat shading's (r_set_flat puts one in dr's first word,
-   which is dr_xa's in a build without the profile): left as it is, the
-   copy it jumps to has its own sites. draw_ents' way back goes to
-   seq_ents_back (the registers a leaf's list clobbers taken back). */
+/* the sites as the mode wants them (no cache flush here). draw_ents' way
+   back goes to seq_ents_back (the registers a leaf's list clobbers taken
+   back). */
 static void seq_apply(void)
 {
 	if (seq_mode < 0)
 		return;
 	for (int i = 0; i < SEQ_SITES; i++) {
 		uint32_t w = seq_orig[i];
-		if (*seq_site[i] >> 26 == 2)
-			continue;
 		if (seq_mode) {
 			uint32_t *to = seq_site[i] == ei_x ? seq_ents_back : seq_next;
 			int32_t off = ((int32_t) (uintptr_t) to - ((int32_t) (uintptr_t) seq_site[i] + 4)) >> 2;
@@ -321,52 +317,7 @@ void r_seq_set(uint32_t seq)
 	FlushCache();
 }
 
-/* ------------------------------------------------- the near polygons' grid -- */
-
-/* the maps that take the regular subdivision (engine/r_tess.s, §92): a
-   build setting, CMake Q1PSX_TESS_MAPS: names separated by commas, "all",
-   or nothing. The world record loops' calls to the slow path (r_world.s
-   RECLOOP: dr's and drn's, `jal`) go to tess_poly on those, to slow_poly
-   on the others, whose frames stay the tree walk's. */
-#ifndef Q1PSX_TESS_MAPS
-#define Q1PSX_TESS_MAPS ""
-#endif
-int r_tess_on;
-#if !Q1PSX_ENGINE_C
-extern uint32_t dr_ts[], drn_ts[];
-extern void tess_poly(void), slow_poly(void);
-#endif
-
-static int tess_wanted(const char *map)
-{
-	const char *l = Q1PSX_TESS_MAPS;
-	if (!map || !*map)
-		return 0;
-	while (*l) {
-		const char *e = l;
-		while (*e && *e != ',')
-			e++;
-		size_t n = (size_t) (e - l);
-		if ((n == 3 && !strncmp(l, "all", 3)) || (n == strlen(map) && !strncmp(l, map, n)))
-			return 1;
-		l = *e ? e + 1 : e;
-	}
-	return 0;
-}
-
-void r_tess_select(const char *map)
-{
-	r_tess_on = tess_wanted(map);
-#if !Q1PSX_ENGINE_C
-	uint32_t *const site[] = { dr_ts, drn_ts };
-	uint32_t to = (uint32_t) (uintptr_t) (r_tess_on ? tess_poly : slow_poly);
-	for (int i = 0; i < 2; i++)
-		*site[i] = (3u << 26) | ((to >> 2) & 0x03ffffffu);   /* jal to */
-	FlushCache();
-#endif
-}
-
-/* --------------------------------------------------------------- options -- */
+/* ----------------------------------------------------- the draw distance -- */
 
 /* the fogged transform's table (r_world.s XFORM fog): by SZ / 64, a
    vertex's light factor x 128, from 128 at the fog's start (R_FOG_Z) down
@@ -376,62 +327,23 @@ uint8_t r_vis_row[256];     /* the camera leaf's PVS row expanded (r_world.s vis
                                marking reads it byte by byte; formats/qworld.h qw_leaf vis,
                                docs/porting-notes.md §90.9); the cook keeps rows under 256 */
 
-static int opt_flat = R_FLAT_FAR;            /* the record loop's (r_set_flat) */
 static int32_t mark_cam[3];                  /* the camera at the last marking */
 static uint32_t mark_visframe;
 #define R_MARK_MOVE 64                       /* world units the camera moves before
                                                 mark_pvs's marks are redone (its reach's
                                                 margin: r_defs.inc R_MARK_R) */
 
-/* the patched words (r_world.s): the world record loop's entry (the
-   bench's copy without the flat shading: drn), the dynamic lights' three
-   ways back into it, its flat shading's threshold, the camera-leaf call */
-extern uint32_t dr_records[], drn_records[], dlr_ret0[], dlr_ret1[], dlr_ret2[], mark_call[];
-extern uint32_t drn_lit_ret[], dr_o_flatz[];
-
-enum { S_DR, S_RET0, S_RET1, S_RET2, S_FLATZ, S_MARK, S_ENTRIES };
-static uint32_t *const entry[S_ENTRIES] = { dr_records, dlr_ret0, dlr_ret1, dlr_ret2, dr_o_flatz, mark_call };
-static uint32_t orig[S_ENTRIES];             /* their words as built */
-
-#define J_TO(op, a)   ((op) | (((uint32_t) (a) >> 2) & 0x03ffffffu))
-#define LI(w, v)      (0x24000000u | ((w) & 0x001f0000u) | (uint32_t) (v))   /* addiu rt, $zero, v */
-
-/* the patched words as built, once */
-static void keep_orig(void)
-{
-	if (orig[S_DR])
-		return;
-	for (int i = 0; i < S_ENTRIES; i++)
-		orig[i] = *entry[i];
-}
-
-/* The camera-leaf call (r_world.s mark_call): mark_pvs, through the zones'
-   hook while a zoned map is loaded (engine/zone.s zone_mark: the leaf's
-   zone made current before the walk, then on to mark_pvs). */
-extern uint32_t zone_mark[];
+/* The camera-leaf call (r_world.s mark_call): mark_pvs as built, through
+   the zones' hook while a zoned map is loaded (engine/zone.s zone_mark:
+   the leaf's zone made current before the walk, then on to mark_pvs). */
+extern uint32_t mark_call[], zone_mark[];
+static uint32_t mark_orig;                   /* its word as built */
 
 static void mark_patch(void)
 {
-	keep_orig();
-	*entry[S_MARK] = zone_on() ? J_TO(0x0c000000u, zone_mark) : orig[S_MARK];
-	FlushCache();
-}
-
-void r_set_flat(int flat)
-{
-	keep_orig();
-	opt_flat = flat;
-	int off = flat == R_FLAT_OFF;                /* drn, its lights' way back its own */
-	uint32_t ret0 = (orig[S_RET0] & 0xffff0000u) |
-	                ((((uint32_t) drn_lit_ret - ((uint32_t) dlr_ret0 + 4)) >> 2) & 0xffffu);
-	*entry[S_DR]    = off ? J_TO(0x08000000u, drn_records) : orig[S_DR];
-	*entry[S_RET0]  = off ? ret0 : orig[S_RET0];
-	*entry[S_RET1]  = off ? J_TO(0x08000000u, drn_lit_ret) : orig[S_RET1];
-	*entry[S_RET2]  = off ? J_TO(0x08000000u, drn_lit_ret) : orig[S_RET2];
-	*entry[S_FLATZ] = flat == R_FLAT_ALL ? LI(orig[S_FLATZ], 0) : orig[S_FLATZ];   /* everywhere: li 0
-	                                                                                  (never nearer) */
-	seq_apply();                                 /* (dr's first word back from FLAT=0: the
-	                                                cooked walk's way out again if one runs) */
+	if (!mark_orig)
+		mark_orig = *mark_call;
+	*mark_call = zone_on() ? 0x0c000000u | (((uint32_t) zone_mark >> 2) & 0x03ffffffu) : mark_orig;   /* jal */
 	FlushCache();
 }
 
@@ -499,7 +411,6 @@ void r_bind_world(void)
 	r_state.force_mark    = 1;
 	bound = 1;
 	r_seq_set(0);                                /* (the tree walk until a zone's chunk says otherwise) */
-	r_tess_select(world.map_name);               /* (the near polygons' grid on the maps that take it) */
 	mark_patch();                                /* (through the zones' hook or not) */
 }
 
@@ -607,13 +518,13 @@ void r_frame(void)
 	}
 
 #if !Q1PSX_RELEASE
-	/* the debug overlay's triangles: fast-path quads are 26 bytes per
-	   triangle (POLY_GT4, 52 B; the flat shading's POLY_FT4, 40 B: 20),
-	   the slow path's are POLY_GT3 (40 B); the few window commands go
-	   uncounted */
+	/* the debug overlay's triangles: fast-path quads taken as the flat
+	   shading's, 20 bytes per triangle (POLY_FT4, 40 B; a Gouraud one,
+	   POLY_GT4, is 52 B), the slow path's are POLY_GT3 (40 B); the few
+	   window commands go uncounted */
 	uint32_t bytes = r_state.pkt - (uint32_t) vid_frame.pkt;
 	uint32_t slowb = r_state.slow_bytes <= bytes ? r_state.slow_bytes : bytes;
-	r_warp.tris = (bytes - slowb) / (opt_flat ? 20 : 26) + slowb / 40;
+	r_warp.tris = (bytes - slowb) / 20 + slowb / 40;
 #endif
 	r_warp.used   = r_state.pkt - (uint32_t) vid_frame.pkt;      /* (warp_room_floor's) */
 	r_warp.avail  = r_state.pkt_end - (uint32_t) vid_frame.pkt;

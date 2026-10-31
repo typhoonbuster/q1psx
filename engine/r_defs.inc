@@ -228,9 +228,6 @@
 .set R_MARK_R,    10144   # mark_pvs's reach, vertex units: (1536 x 1.61, a
                           # frustum corner's distance over its depth for the
                           # 240 rows, + render.c R_MARK_MOVE 64) x 4
-.ifndef R_YSLOPE          # the frustum's vertical slope x4: 4 (240 rows: y <= 3z/4)
-.set R_YSLOPE,    4       # or 5 (the 192-row viewport over the status bar: y <= 3z/5)
-.endif
 .ifndef R_DLIGHT_C        # the dynamic lights' record hook: 0 the asm, 1 the C
 .set R_DLIGHT_C,  0       # reference (engine/dlight.c dl_light_record), 2 the asm
 .endif                    # checked record by record by the C (CMake Q1PSX_DLIGHT_C)
