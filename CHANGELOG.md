@@ -2456,3 +2456,38 @@ followed by R0-R4.
   their distance to the surface after the collapse), the accumulated error
   dropped: every band within 2.8 px; the triangles at bands 1-15 +6.4 %,
   E2M7's fight -0.5 %.
+- **The vblank's wait given back** (§111, 2026-10-31). A frame already late waited for the next
+  vblank before its buffer was shown and the next frame begun (16 % of
+  E2M7's fight). The vblank's interrupt now shows a buffer once the GPU
+  has drawn it and the cap's share has passed, and starts the list built
+  meanwhile; `vid_flip` starts a late frame's list at once and the next
+  frame begins at once, a frame on time waiting for its vblank as before
+  (the caps' pacing kept). E2M7's fight 3.53 -> 3.02 vblanks a frame
+  (17.0 -> 19.9 fps; with §114-§115, 3.50 -> 2.95: 20.3 fps), the guns'
+  views 2.00 -> 1.56-1.68, frames of 1.3
+  vblanks shown at 46 fps where they ran at 30 (unevenly, as at the 45
+  fps cap); the display lists identical; +360 bytes. The warp's control
+  takes the frame's vblanks as it would have waited for them
+  (`vid_stats.vbl_whole`). The bench's fight lines give each window's
+  vblanks a frame; the game bench ends with the caps' pacing (`bench
+  pace`).
+- **The monsters' shared detail budget** (§114, provisional number, 
+  2026-10-31). The bodies drawn share 600
+  expanded vertices a frame. A level common to them raises each body's
+  band toward it, by one band a frame; it goes down only once a lower
+  level fits within 7/8 of the budget. A body never goes past 1.5 times
+  its depth's band (its error on screen within 1.5 times today's) nor
+  past band 16. Chosen on the shared-budget page (outside the repo),
+  which showed the plain shared level unreadable near the eye. E2M7's
+  fight: the drawing -3.6 % (-3.6 to -8.1 % in the 7 windows where the
+  budget works); the models left out for the packets' room 203 -> 1.
+- **The monsters lit as Quake lights them** (§115, provisional number,
+  2026-10-31). The maps' 1.66 gain is
+  every map's, but the monsters fell behind the walls. A leaf's light
+  was the average of its faces, where Quake lights a model with the
+  floor under it (R_LightPoint, 1.04-1.27 times brighter). The port's
+  light table also spans 1 to 1.5 times the light where Quake goes up
+  to twice. The cook now ports R_LightPoint for each leaf (over the
+  points of a 3 x 3 x 3 grid in the leaf), and the streamed models'
+  light is multiplied by 4/3: the monsters in the dark corners stand
+  out.

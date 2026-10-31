@@ -644,7 +644,7 @@ static void run_frame(int interactive, int dump)
 	PLAY_STEP("flip");
 	uint32_t share = (uint32_t) vid_frame_vbl();
 	vid_flip();
-	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl, share);
+	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl_whole, share);
 #if Q1PSX_BENCH_PLAY
 	if (play_trace > 0) { printf("play step done\n"); play_trace--; }
 #endif
@@ -2543,6 +2543,35 @@ static void bench_walk(void)
 	game_active = 0;
 }
 
+/* The frame rate caps' pacing (docs/porting-notes.md §111): under each cap
+   (60, 45, 30), 60 frames whose work fits in their share of vblanks (0.8
+   of it) and 60 that miss it (1.3 of it), nothing drawn: the vblanks the
+   60 took, the vblanks each frame was shown for (vid.c's count) */
+#define BENCH_VBL (33868800 / 60)
+
+static void bench_pace(void)
+{
+	for (int c = 0; c < num_fps_caps; c++)
+		for (int miss = 0; miss < 2; miss++) {
+			vid_set_fps_cap(fps_caps[c]);
+			for (int i = 0; i < 4; i++)
+				vid_flip();
+			memset(vid_shown_for, 0, sizeof vid_shown_for);
+			uint32_t v0 = (uint32_t) VSync(-1);
+			for (int i = 0; i < 60; i++) {
+				uint32_t work = (uint32_t) vid_frame_vbl() * (miss ? 13 : 8) * (BENCH_VBL / 10), t0 = prof_now();
+				while (prof_cycles(t0, prof_now()) < work)
+					;
+				vid_flip();
+			}
+			printf("bench pace %d fps, frames %s their share: 60 in %u vblanks, shown for 1 vbl %u, 2 vbl %u, "
+			       "3 vbl %u, 4+ vbl %u\n", fps_caps[c], miss ? "missing" : "within", (unsigned) ((uint32_t) VSync(-1) - v0),
+			       (unsigned) vid_shown_for[0], (unsigned) vid_shown_for[1], (unsigned) vid_shown_for[2],
+			       (unsigned) vid_shown_for[3]);
+		}
+	vid_set_fps_cap(fps_caps[settings.fps_cap]);
+}
+
 static void bench_game(void)
 {
 	snd_log = 1;                                      /* every sound start, for the diff */
@@ -2672,6 +2701,7 @@ static void bench_game(void)
 	bench_tick_cost();                                /* (last: they move the player) */
 	bench_tick_rates();
 	bench_walk();
+	bench_pace();
 	printf("bench frame cache: %u expansions, %u refused (every frame of the game bench)\n",
 	       (unsigned) (mdl_stat_expanded - expanded), (unsigned) mdl_refused_since());
 	game_active = 0;
@@ -3008,7 +3038,10 @@ static void bench_monsters(void)
 		                                                least room a model found) */
 		int32_t room_min = 0x7fffffff;
 		uint32_t skipped0 = r_model_skipped, full = 0;
+		uint32_t lsum = 0, lraised = 0;              /* (the bodies' shared level, those raised) */
+		int lmax = 0;
 		mdl_refused_since();
+		uint32_t vbl0 = (uint32_t) VSync(-1);        /* (the window's vblanks: its frame rate) */
 		prof_sample_start();                         /* (SAMPLE=1: the fight's profile) */
 		for (int t = 0; t < 3600; t++) {
 			pl.health = 100;
@@ -3038,6 +3071,10 @@ static void bench_monsters(void)
 			run_frame(0, 0);
 			fsum += prof_stage[PROF_FRAME];
 			fdrawn += (uint32_t) monsters_drawn;
+			lsum += (uint32_t) rl_lod_level;
+			lraised += (uint32_t) rl_lod_raised;
+			if (rl_lod_level > lmax)
+				lmax = rl_lod_level;
 			if (vid_stats.pkt_bytes > pkt_max)
 				pkt_max = vid_stats.pkt_bytes;
 			if (r_model_room_min < room_min)
@@ -3055,22 +3092,30 @@ static void bench_monsters(void)
 			if (used > peak)
 				peak = used;
 			if (t % 300 == 299) {
+				uint32_t vbls = (uint32_t) VSync(-1) - vbl0;
 				int alive = 0;
 				for (int i = 2; i < num_edicts; i++)
 					alive += edicts[i].inuse && edicts[i].mdef && edicts[i].health > 0;
 				static uint32_t exp0, lerp0, st0, sl0, rp0, ct0, ms0;
 				printf("mon fight t %d: %d alive, edicts %d (peak %d) of %d, stack %u never reached, "
-				       "level arena %u KB, items %d, vbl %u; frame %u cycles, %u.%u streamed models drawn, "
+				       "level arena %u KB, items %d, %u.%02u vblanks a frame; frame %u cycles, %u.%u streamed models drawn, "
 				       "the frame cache refused %u, packets %u bytes at most, a model's room %d at least, "
 				       "%u models left out, %u full frames, %u expansions (%u rebuilt)\n",
 				       t + 1, alive, used, peak, max, (unsigned) stack_untouched(),
-				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) vid_stats.vbl,
+				       (unsigned) (mem_level_used() / 1024), rl_num_items(), (unsigned) (vbls / 300),
+				       (unsigned) (vbls * 100 / 300 % 100),
 				       (unsigned) (fsum / 300), (unsigned) (fdrawn / 300), (unsigned) (fdrawn * 10 / 300 % 10),
 				       (unsigned) mdl_refused_since(), pkt_max, room_min == 0x7fffffff ? -1 : (int) room_min,
 				       (unsigned) (r_model_skipped - skipped0), full, (unsigned) (mdl_stat_expanded - exp0),
 				       (unsigned) (mdl_stat_lerped - lerp0));
 				exp0  = mdl_stat_expanded;
 				lerp0 = mdl_stat_lerped;
+				printf("mon lod t %d: the bodies' level %u.%u a frame (%d at most), %u.%u bodies raised a frame; "
+				       "budget %d vertices, floor %d, cap %d/256\n", t + 1, (unsigned) (lsum / 300),
+				       (unsigned) (lsum * 10 / 300 % 10), lmax, (unsigned) (lraised / 300),
+				       (unsigned) (lraised * 10 / 300 % 10), Q1PSX_LOD_BUDGET, Q1PSX_LOD_FLOOR, Q1PSX_LOD_CAP);
+				lsum = lraised = 0;
+				lmax = 0;
 				printf("mon sounds t %d: %u started, %u cut by another (the dynamic channels full), %u by their "
 				       "own channel, %u stopped (their samples swapped out), %u unheard (not in SPU RAM)\n", t + 1,
 				       (unsigned) (snd_stat_started - st0), (unsigned) (snd_stat_stolen - sl0),
@@ -3081,6 +3126,7 @@ static void bench_monsters(void)
 				fsum = fdrawn = pkt_max = full = 0;
 				room_min = 0x7fffffff;
 				skipped0 = r_model_skipped;
+				vbl0 = (uint32_t) VSync(-1);         /* (the lines' own time left out) */
 			}
 		}
 		cmd.fire = 0;
