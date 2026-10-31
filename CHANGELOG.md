@@ -2466,3 +2466,13 @@ followed by R0-R4.
   which showed the plain shared level unreadable near the eye. E2M7's
   fight: the drawing -3.6 % (-3.6 to -8.1 % in the 7 windows where the
   budget works); the models left out for the packets' room 203 -> 1.
+- **The monsters lit as Quake lights them** (§115, provisional number,
+  2026-10-31). The maps' 1.66 gain is
+  every map's, but the monsters fell behind the walls. A leaf's light
+  was the average of its faces, where Quake lights a model with the
+  floor under it (R_LightPoint, 1.04-1.27 times brighter). The port's
+  light table also spans 1 to 1.5 times the light where Quake goes up
+  to twice. The cook now ports R_LightPoint for each leaf (over the
+  points of a 3 x 3 x 3 grid in the leaf), and the streamed models'
+  light is multiplied by 4/3: the monsters in the dark corners stand
+  out.

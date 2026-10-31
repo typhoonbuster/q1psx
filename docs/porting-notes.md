@@ -14736,3 +14736,57 @@ merged.)
   seen in play on DuckStation: a big fight's near and mid-range
   monsters, no part lost, the bodies' detail changing one band at a
   time.
+
+## §115 — The monsters lit as Quake lights them (2026-10-31)
+
+(The number is provisional, like §114's.)
+
+- **The report**: the maps were brightened to 1.66 (the cook's
+  `LIGHT_GAIN`, §79), but the monsters seemed left as they were. Very
+  dark, they could not be seen in places; E4M2 is the darkest.
+- **The gain is every map's**: `scripts/cook.sh` passes `--light-gain`
+  to every map's cook. The monsters' light (a leaf's, `qw_leaf.light`)
+  was made from the faces' gained vertex lights.
+- **Why the monsters fell behind the walls** (a scratch tool on the
+  paks; for every monster's spawn point, before the gain):
+  - **The light's source.** Quake lights a model with R_LightPoint
+    (r_light.c): the lightmap where a line straight down from its origin
+    first meets a lit face, the floor under it. The cook took the
+    average of the leaf's faces, the walls and ceilings in it. Quake's
+    is 1.04-1.27 times brighter (median per map):
+
+    | map | Quake's light, median | the leaf average, median | Quake / port, median |
+    |---|---|---|---|
+    | E1M1 | 81 | 72 | 1.24 |
+    | E2M7 | 49 | 42 | 1.18 |
+    | E4M2 | 38 | 34 | 1.24 |
+    | E4M3 | 45 | 36 | 1.19 |
+
+  - **The shading.** Quake shades an alias model from its light up to
+    twice it on the side the light comes from (r_alias.c: ambient +
+    shade x cos, both the model's light below 96). The port's light
+    table (`gdata.dots`, tools/qcook/game.c) spans 1 to 1.5 times.
+  - Against the walls at 1.66 times Quake's, the bodies came out about
+    30 % darker than Quake drew them beside the same walls.
+- **The fix**:
+  - The cook (tools/qcook/world.c):
+    - a leaf's light is now Quake's R_LightPoint, ported
+      (`light_point_rec`: the front side first, the node's faces at the
+      crossing within Quake's CalcSurfaceExtents, then the back side;
+      sky and liquids skipped);
+    - it is averaged over the points of a 3 x 3 x 3 grid in the leaf's
+      box that lie in the leaf, at the cook's gain;
+    - a leaf no line reaches keeps the faces' average.
+    - The monsters' leaves are covered at 95-100 %. Their light (median
+      before the gain) comes out at Quake's own: E1M1 80 (Quake 81),
+      E4M2 42 (38), E4M3 45 (45). The cook's log prints a line a map.
+  - The engine (engine/rlist.c `rl_model_stream`):
+    - the streamed models' light (the monsters, their heads, the items'
+      models; not the flat ones) is multiplied by 4/3 before its bound,
+      which puts the lit side at Quake's twice;
+    - the game's models and the gun keep the table's span, because the
+      2D gun's pictures are cooked at it.
+- **Checked**: E1M1's monsters' frames (`MONSTERS=1 MAP=E1M1`), before
+  and after, side by side. The grunt and the dog in the dark corners,
+  nearly black before, now stand out; the grunt near has Quake's lit
+  side. The cycles are unchanged (the light is a value a body).
