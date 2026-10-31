@@ -644,7 +644,7 @@ static void run_frame(int interactive, int dump)
 	PLAY_STEP("flip");
 	uint32_t share = (uint32_t) vid_frame_vbl();
 	vid_flip();
-	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl, share);
+	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl_whole, share);
 #if Q1PSX_BENCH_PLAY
 	if (play_trace > 0) { printf("play step done\n"); play_trace--; }
 #endif

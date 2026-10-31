@@ -3,8 +3,10 @@
 #include <string.h>
 #include <psxapi.h>
 #include <psxgpu.h>
+#include <hwregs_c.h>
 
 #include "mem.h"
+#include "pad.h"
 #include "prof.h"
 #include "gdata.h"
 #include "ui.h"
@@ -19,11 +21,20 @@ typedef struct {
 
 static vid_buffer_t buf[2];
 static int          back;          /* buffer the CPU is building into */
-static uint32_t     last_vbl;
 static uint8_t      cap_vbl[3] = { 1, 1, 1 };   /* vblanks a frame, in turn */
 static int          cap_len = 1, cap_pos;
 static int          viewport_rows = VID_H;
 static uint32_t    *ovl_head, *ovl_tail;   /* this frame's overlay chain */
+
+/* the flip at the vblank (vid_vblank, docs/porting-notes.md §111) */
+static volatile uint32_t      vbl_count;   /* vblanks since vid_init                */
+static volatile uint32_t      last_show;   /* vbl_count at the last buffer shown    */
+static volatile uint32_t      show_gap;    /* the vblanks between the last two shown */
+static vid_buffer_t *volatile ahead;       /* the buffer started last, not shown yet */
+static vid_buffer_t *volatile waiting;     /* a buffer built, started once the other
+                                              is shown (vid_flip waits for it)      */
+static uint32_t               ret_vbl, ret_t;   /* vbl_count, prof_now() as vid_flip returned */
+#define VBL_CYCLES (33868800 / 60)
 
 vid_frame_t vid_frame;
 vid_stats_t vid_stats;
@@ -274,6 +285,46 @@ void *vid_hud_block(int previous)
 	return buf[back ^ previous].arena + VID_ARENA_BYTES - VID_HUD_BYTES;
 }
 
+/* the GPU started on a buffer's list (its clear: none under the internal
+   resolution's stretch, for this frame only) */
+static void start(vid_buffer_t *b)
+{
+	DrawOTagEnv(&b->ot[VID_OT_LEN - 1], &b->draw);
+	b->draw.isbg = 1;
+}
+
+/* The vblank's interrupt (VSyncCallback, after the SDK's count): the pad's
+   poll begun, then the flip (docs/porting-notes.md §111). The buffer
+   started last is shown once the GPU is done with it (the queue empty and
+   the GPU idle: DrawSync's test) and the cap's share of vblanks has passed
+   since the last one shown; a buffer built meanwhile (vid_flip waiting for
+   it) is started then, into the buffer just hidden. A buffer is shown at
+   a vblank only, and drawn only while the other one is on display. The
+   display's start alone changes (GP1(05h): PutDispEnv's first word; its
+   ranges and mode set once, vid_init's) */
+static void vid_vblank(void)
+{
+	vbl_count++;
+	pad_vblank();
+	uint32_t n = vbl_count;
+	vid_buffer_t *a = ahead;
+	if (!a || n - last_show < cap_vbl[cap_pos] || DrawSync(1) || !(GPU_GP1 & (1 << 26)))
+		return;
+	GPU_GP1 = 0x05000000u | (uint32_t) a->disp.disp.y << 10;   /* (x 0) */
+	uint32_t gap = n - last_show;
+	show_gap  = gap;
+	last_show = n;
+#ifdef Q1PSX_BENCH
+	vid_shown_for[gap < 4 ? gap - 1 : 3]++;    /* (how long the buffer hidden was shown) */
+#endif
+	vid_buffer_t *w = waiting;
+	ahead = w;
+	if (w) {
+		start(w);
+		waiting = 0;
+	}
+}
+
 Q_COLD void vid_init(void)
 {
 	ResetGraph(0);
@@ -293,9 +344,10 @@ Q_COLD void vid_init(void)
 
 	back = 0;
 	begin_buffer(back);
-	last_vbl = (uint32_t) VSync(-1);
+	PutDispEnv(&buf[1].disp);            /* the other on display: the first frame starts at once */
 	memset(&vid_stats, 0, sizeof vid_stats);
-	vid_stats.vbl = 1;
+	vid_stats.vbl = vid_stats.vbl_whole = 1;
+	VSyncCallback(vid_vblank);
 
 	SetDispMask(1);
 }
@@ -378,29 +430,37 @@ void vid_flip(void)
 
 	uint32_t t0 = prof_now();
 	vid_stats.gpu_busy = DrawSync(1) != 0;
-	DrawSync(0);                     /* the previous frame is fully drawn */
+	DrawSync(0);                     /* the previous frame is fully drawn: its arena is the next one's */
 	uint32_t t1 = prof_now();
-	VSync(0);
-	while ((uint32_t) VSync(-1) - last_vbl < cap_vbl[cap_pos])
-		VSync(0);                    /* the cap: this frame's share of vblanks */
-	cap_pos = cap_pos + 1 < cap_len ? cap_pos + 1 : 0;
+	/* The previous frame on display already (vid_vblank showed it, its
+	   share passed): this one late, its buffer free, started now, shown by
+	   vid_vblank once drawn; the next frame begins at once. Else this one
+	   waits for that show and starts then, the next frame beginning at
+	   that vblank: the cap's pacing */
+	FastEnterCriticalSection();
+	int late = !ahead;
+	if (late) {
+		start(drawn);
+		ahead = drawn;
+		cap_pos = cap_pos + 1 < cap_len ? cap_pos + 1 : 0;
+	} else {
+		waiting = drawn;
+	}
+	FastExitCriticalSection();
+	if (!late) {
+		while (waiting)
+			;
+		cap_pos = cap_pos + 1 < cap_len ? cap_pos + 1 : 0;
+	}
 	uint32_t t2 = prof_now();
 	vid_stats.sync_cycles  = prof_cycles(t0, t1);
 	vid_stats.vsync_cycles = prof_cycles(t1, t2);
 
-	uint32_t now = (uint32_t) VSync(-1);
-	vid_stats.vbl = now - last_vbl;
-	last_vbl = now;
-#ifdef Q1PSX_BENCH
-	vid_shown_for[vid_stats.vbl < 4 ? vid_stats.vbl - 1 : 3]++;   /* (the buffer shown below's predecessor) */
-#endif
-
-	/* show what the GPU just finished, start drawing what the CPU built
-	   (its clear: none under the internal resolution's stretch, for this
-	   frame only) */
-	PutDispEnv(&buf[back ^ 1].disp);
-	DrawOTagEnv(&drawn->ot[VID_OT_LEN - 1], &drawn->draw);
-	drawn->draw.isbg = 1;
+	uint32_t now = vbl_count;
+	vid_stats.vbl = now - ret_vbl;
+	vid_stats.vbl_whole = late ? (prof_cycles(ret_t, t2) + VBL_CYCLES - 1) / VBL_CYCLES : show_gap;
+	ret_vbl = now;
+	ret_t   = t2;
 #if defined(Q1PSX_BENCH) && Q1PSX_BENCH_GPUTIME
 	uint32_t g0 = prof_now();              /* (the GPU's time: on an emulator that
 	                                          counts it, DuckStation) */

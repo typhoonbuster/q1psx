@@ -3,8 +3,11 @@
  *
  * 320x240 NTSC, two framebuffers at (0,0) and (0,240). Each buffer owns an
  * ordering table and an 80 KB packet arena. The CPU builds frame N+1 into one
- * buffer while the GPU DMA draws frame N from the other; vid_flip() waits for
- * the GPU + vblank, shows the finished frame and kicks the next DMA.
+ * buffer while the GPU DMA draws frame N from the other. The vblank's
+ * interrupt shows a frame once drawn (and its cap's share passed); vid_flip()
+ * waits for the GPU, starts the frame just built when the other buffer is on
+ * display already (a frame late: the next one begins at once), else waits
+ * for the vblank that shows it (docs/porting-notes.md §111).
  *
  * The renderer (asm) writes packets straight through `vid_frame`: it reads
  * `pkt` / `end`, writes packets, links them into `ot[...]` and stores the
@@ -51,7 +54,12 @@ typedef struct {
 } vid_frame_t;
 
 typedef struct {
-	uint32_t vbl;          /* vblanks the last frame took (1 = 60 fps)    */
+	uint32_t vbl;          /* vblanks the last frame took (1 = 60 fps): from
+	                          the frame before's start to the next one's (the
+	                          polls the next one takes)                   */
+	uint32_t vbl_whole;    /* the same in whole vblanks, as a frame took them
+	                          waiting for the vblank: its share when on time,
+	                          else its time rounded up (the warp control's) */
 	uint32_t sync_cycles;  /* CPU cycles spent waiting for the GPU        */
 	uint32_t vsync_cycles; /* CPU cycles spent waiting for the vblank     */
 	uint32_t pkt_bytes;    /* arena bytes the last frame used             */
@@ -113,7 +121,9 @@ void  vid_flip(void);                          /* (the stack's guard checked: me
 void  vid_fatal(void);                         /* a red screen, the game stopped */
 /* the frame rate cap: 60 (none), 45, 30 or 15 frames a second. A frame is
    shown no sooner than its share of vblanks after the last (45: 1, 1, 2 in
-   turn); vid_frame_vbl() is that share for the frame being built */
+   turn); vid_frame_vbl() is that share for the frame being built. A frame
+   on time begins at a vblank, a frame's share after the last; one that
+   missed it is shown at the first vblank after it is drawn */
 void  vid_set_fps_cap(int fps);
 int   vid_frame_vbl(void);
 int   vid_back(void);                          /* the framebuffer this frame is drawn into (0, 1) */
