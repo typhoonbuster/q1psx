@@ -97,7 +97,9 @@
 #         §48).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
-#         by record by the C ("dlchk" lines). BMF_C=1 builds the brush
+#         by record by the C ("dlchk" lines). DLIGHT_MINLIGHT=<world
+#         units>: the world's lights' least minlight (CMake
+#         Q1PSX_DLIGHT_MINLIGHT, 32 by default; 0: Quake's own, §113). BMF_C=1 builds the brush
 #         models' cut in C (engine/bmfrag.c) instead of the asm
 #         (engine/bmfrag.s), BMF_C=2 the asm checked cut by cut by the C
 #         ("bmfasm" lines: the cuts checked, any mismatch); that build
@@ -226,6 +228,7 @@ BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
 HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
+DLIGHT_MINLIGHT=${DLIGHT_MINLIGHT:-32}
 BMF_C=${BMF_C:-0}
 ORDER_C=${ORDER_C:-0}
 ENGINE_C=${ENGINE_C:-0}
@@ -270,7 +273,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_FLAT="$FLAT" -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_BENCH_BMFARENA="$BMFARENA" -DQ1PSX_BENCH_BMFTRACE="$BMFTRACE" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
-      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_DLIGHT_MINLIGHT="$DLIGHT_MINLIGHT" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_SKILL="${SKILL:-1}" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \

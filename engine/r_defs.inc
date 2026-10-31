@@ -238,10 +238,11 @@
 .set BM_STACK,    16      # the model walk's stack: the empty word, then
                           # QW_MAX_BM_DEPTH entries
 .set BM_SIZE,     BM_STACK + 4 + 4 * QW_MAX_BM_DEPTH
-.set DL_PRUNE,    64      # dynamic lights: a plane farther than radius + this
-                          # (vertex units) has none of the light's vertices on
-                          # its far side (dl_sqrt's and the roundings' error
-                          # stay under it): that side is not descended
+.set DL_PRUNE,    64      # dynamic lights: a plane farther than the reach
+                          # (radius - minlight) + this (vertex units) has none
+                          # of the light's vertices on its far side (dl_sqrt's
+                          # and the roundings' error stay under it): that side
+                          # is not descended
 .set DSN_STACK,   4 * QW_MAX_DEPTH + 16   # r_render's dynamic-light descent:
                           # its stack of pending front children, on sp
 

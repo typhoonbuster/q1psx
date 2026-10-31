@@ -195,6 +195,13 @@ endif()
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.
 set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference, 2 the asm checked by the C")
+# The world's dynamic lights' least minlight (world units, engine/dlight.h;
+# docs/porting-notes.md §113): Quake's minlight, which only its muzzle
+# flash sets (32), for every light on the world's faces, whose faintest
+# edge is then left unlit and whose reach is shorter; 0 each light's own
+# (Quake's look)
+set(Q1PSX_DLIGHT_MINLIGHT 32 CACHE STRING "The world's dynamic lights' least minlight, world units (0: Quake's own)")
+target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_MINLIGHT=${Q1PSX_DLIGHT_MINLIGHT})
 # The brush models' cut by the world's BSP: the asm (engine/bmfrag.s) or its
 # C specification (engine/bmfrag.c cut_model_c); 2 runs both on every cut
 # and compares them ("bmfasm" lines).

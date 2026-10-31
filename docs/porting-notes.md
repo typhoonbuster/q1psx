@@ -14762,3 +14762,85 @@ so a cell of a big floor held two to four pieces of different faces.
   grid with the merge (the disc carries the low geometry alone: not
   cooked); the zones' tables are best made again on the merged cook by
   the scan (§93) the next time they are.
+
+### 113.2 Lighter dynamic lights (`Q1PSX_DLIGHT_MINLIGHT`)
+
+§106's profile gave the dynamic lights on the world 4.0 % of E2M7's
+fight's samples. The sampler's 64-byte blocks spread a small function's
+samples over its neighbours (`dl_restore_asm` kept 5 300 of them in a
+build where it returned at once), so the cost was measured by turning
+parts off (temporary builds, not kept; the fight of §106, its drawing
+over the 12 windows, 13 215 468 cycles with §113.1):
+
+| off | the fight's drawing |
+|---|---|
+| every dynamic light (none pushed, none on the models) | −10.38 % |
+| the world's lights (the models keep theirs) | −9.11 % |
+| the models' lights alone (`dl_add_at`) | −1.17 % |
+| the world's but the walk's gate (the nodes stamped, never matched) | −6.15 % |
+| the world's lighting (stamped, the records tested, none lit) | −4.73 % |
+
+So on the world: the nodes' stamping about 3.0 %, the blocks' gate, the
+records' tests and the Gouraud path the stamped blocks take about 1.4 %,
+the lit records (the save, the planes' terms, the vertices, the restore)
+about 4.7 %. Counted in the C reference: 1.54 lights live a frame (none
+in 224 frames of 3 600, one in 1 791, two in 1 113, three or more in
+472: rockets of 200 units, explosions of 350 decaying, the muzzle flash),
+144 nodes visited a light for 31 records lit. A cap on the lights' count
+would rarely act; the cost is each light's reach.
+
+- **No loss** (`engine/r_world.s` dsn_*, its C reference `mark_nodes`):
+  the stamping's descent bounds a light by its reach, radius − minlight,
+  not its radius. A lit vertex lies within radius − minlight of the light
+  (R_AddDynamicLights lights a point of a plane at |d| only within
+  radius − |d| − minlight of the impact point), so a box or a plane
+  farther holds none: the frames are the same (the game bench's 23
+  `H` lines, the floor at 0). A light whose radius is not over its
+  minlight is not pushed for the world. The muzzle flash (minlight 32)
+  gains: the shotgun's, the nailguns' views −0.04 to −0.28 %. The
+  models' light (`dl_add_at`) takes its root from the world's table
+  (`dl_sqrt`, then exact: isqrt32's value, a few compares where the bit
+  loop took its 16 steps).
+- **The floor** (`Q1PSX_DLIGHT_MINLIGHT`, CMake, 32 by default; the
+  bench's `DLIGHT_MINLIGHT=`): every light on the world's faces takes at
+  least that minlight, Quake's own way to end a light's faint edge, the
+  value it gives its muzzle flash (32). Quake adds `rad − dist` to a
+  luxel down to `rad − dist = minlight` (R_AddDynamicLights), so a
+  light's add stays Quake's wherever it reaches; its last 32 units of
+  light (13 of the 255 vertex light levels at the cook's gain) are not
+  drawn, and its reach is 32 units shorter (an explosion's 350 → 318, a
+  rocket's 200 → 168): fewer nodes stamped, records tested and vertices
+  lit. The models keep Quake's light (`dl_add_at`: no minlight in
+  R_DrawAliasModel). 0 is each light's own minlight, Quake's look.
+- **Measured**:
+
+  | floor | the fight's drawing | the rocket launcher's view | ghud1 / ghud2 |
+  |---|---|---|---|
+  | 0 (no loss) | −0.37 % | −0.07 % | −0.14 / −0.19 % |
+  | **32 (the default)** | **−1.73 %** | **−4.05 %** | **−3.43 / −3.43 %** |
+  | 48 | −2.49 % | −8.54 % | −5.65 / −5.63 % |
+  | 64 | −3.24 % | −10.54 % | −8.52 / −8.49 % |
+
+  (the fight against §113.1's, the same models drawn in every window;
+  the game bench's views, `BENCH_GAME=1 HASHONLY=1 PROFILE=0`, against
+  §113.1's: 1 282 794 cycles for the rocket launcher's, still three
+  vblanks.) The C reference (`DLIGHT_C=1`) and the asm checked by it
+  (`DLIGHT_C=2`, no `dlchk` line) draw the asm's frames; under the
+  interpreter the game bench's frames are the dynarec's but the last
+  menu page's (`mgraphics_fx`), which differs there on §113.1 as well.
+- **The pictures** (pktview's boards, before | after | difference x4, in
+  the side-session notes, `boards-113b/`): eight frames of the fight with
+  an explosion within 250 units of the player (a dump the bench took for
+  this measure, not kept) and the game bench's rocket views, each at 32
+  and 64 against 0. At 32 the frames differ by 0.04 to 0.35 levels on
+  average (the glow's outer ring); at 64 by 0.26 to 1.83 (the farthest
+  walls an explosion lights stay darker: E2M7's arch beside the player,
+  the luminance 26.8 → 25.0).
+- **Left**: an eye on DuckStation (an explosion against a near
+  wall, the rockets in a dark corridor, the muzzle flash) and the floor's
+  value (48 and 64 measured, not chosen). Not done: the stamping cut by
+  the view's frustum (the walk draws no block outside it; how many of a
+  light's 144 nodes lie outside was not measured; the descent would
+  carry the frustum's planes as the walk does: a larger asm change), and
+  the lit records' save and restore (their share of the 4.7 % not
+  measured apart).

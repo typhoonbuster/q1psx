@@ -2468,3 +2468,14 @@ followed by R0-R4.
   maps, the 128 views −0.55 % (16 → 15 views past a vblank), E2M7's
   fight's drawing −1.2 %, the stream's pool +7 KB a map on average;
   every map's display lists change. `QCOOK_MERGE=0` cooks as before.
+- **Lighter dynamic lights** (§113.2, provisional number, 
+  2026-10-31). Measured by turning
+  parts off, the dynamic lights took 10.4 % of E2M7's fight's drawing (the
+  world's 9.1 %: the nodes' stamping 3.0 %, the records' tests 1.4 %, the
+  lit records 4.7 %). With no loss, the stamping bounds a light by its
+  reach (radius − minlight) and the models' light takes its root from the
+  world's table: the fight −0.37 %, the frames the same. Then every light
+  on the world's faces takes at least Quake's muzzle-flash minlight, 32
+  (`Q1PSX_DLIGHT_MINLIGHT`, 0: Quake's look): its faintest edge is not
+  drawn, its reach 32 units shorter; the fight −1.73 %, the rocket
+  launcher's view −4.05 % (48: −2.49 / −8.54 %, 64: −3.24 / −10.54 %).
