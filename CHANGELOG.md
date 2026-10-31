@@ -2456,6 +2456,21 @@ followed by R0-R4.
   their distance to the surface after the collapse), the accumulated error
   dropped: every band within 2.8 px; the triangles at bands 1-15 +6.4 %,
   E2M7's fight -0.5 %.
+- **The vblank's wait given back** (§111, 2026-10-31). A frame already late waited for the next
+  vblank before its buffer was shown and the next frame begun (16 % of
+  E2M7's fight). The vblank's interrupt now shows a buffer once the GPU
+  has drawn it and the cap's share has passed, and starts the list built
+  meanwhile; `vid_flip` starts a late frame's list at once and the next
+  frame begins at once, a frame on time waiting for its vblank as before
+  (the caps' pacing kept). E2M7's fight 3.53 -> 3.02 vblanks a frame
+  (17.0 -> 19.9 fps; with §114-§115, 3.50 -> 2.95: 20.3 fps), the guns'
+  views 2.00 -> 1.56-1.68, frames of 1.3
+  vblanks shown at 46 fps where they ran at 30 (unevenly, as at the 45
+  fps cap); the display lists identical; +360 bytes. The warp's control
+  takes the frame's vblanks as it would have waited for them
+  (`vid_stats.vbl_whole`). The bench's fight lines give each window's
+  vblanks a frame; the game bench ends with the caps' pacing (`bench
+  pace`).
 - **The monsters' shared detail budget** (§114, provisional number, 
   2026-10-31). The bodies drawn share 600
   expanded vertices a frame. A level common to them raises each body's

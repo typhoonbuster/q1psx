@@ -33,6 +33,7 @@ typedef struct {
 extern pad_t pad;           /* the last frame's: held now, pressed since the read before */
 
 void pad_init(void);
+void pad_vblank(void);      /* the vblank's poll begun (engine/vid.c's interrupt calls it) */
 
 /* the polls since the last call, oldest first, one per vblank: at most
    `max` (older ones dropped, their presses kept in the first); `pad` set

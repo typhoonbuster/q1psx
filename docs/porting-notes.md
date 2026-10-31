@@ -14650,6 +14650,175 @@ stream's cook takes 3.2 s (2.8 before).
   monster): a `scripts/dlcheck.sh` reference saved before must be saved
   again.
 
+## §111 — The vblank's wait given back: a late frame no longer waits for the next vblank (2026-10-31)
+
+- **The question**: §106's fight spent 16 % of its samples in the SDK's
+  wait for the vblank (`_default_vsync_halt`). `vid_flip` waited for the
+  previous frame's drawing (`DrawSync(0)`), then always for the next
+  vblank (`VSync(0)`, then the cap's share), and only then showed the
+  buffer the GPU had finished (`PutDispEnv`) and started the GPU on the
+  list just built (`DrawOTagEnv`): a frame already late still waited for
+  the next vblank, half a vblank on average in a fight of 3 to 4 vblanks
+  a frame. The CPU should begin the next frame at once and the flip
+  happen at the vblank without it, with no tearing, no arena written
+  while the GPU has yet to read it, the caps' pacing kept, the warp's
+  control fed as before, the pad's interrupt poll and the per-vblank
+  tick ring as they are.
+
+### 111.1 The flip at the vblank
+
+- **The vblank's interrupt** (`vid_vblank`, the SDK's `VSyncCallback`,
+  after its own count; the pad's poll begun first, `pad_vblank`, §81.2,
+  no longer the callback itself): the buffer started last is shown once
+  the GPU is done with it (the SDK's queue empty and the GPU idle:
+  `DrawSync`'s test, without its wait) and the cap's share of vblanks has
+  passed since the last buffer shown; a buffer built meanwhile, waiting
+  for it, is started there, into the buffer just hidden. Only GP1(05h),
+  the display's start, is written (the first of `PutDispEnv`'s four
+  words: the display's ranges and mode, the same for both buffers, are
+  set once, `vid_init`'s `PutDispEnv` of buffer 1, the first frame's
+  buffer 0 then started at once).
+- **`vid_flip`**, the frame built: `DrawSync(0)` as before (the previous
+  frame's list read: its arena is the next frame's, and every upload the
+  frame queued, the stream's `LoadImage`s, done), then
+  - the previous frame on display already (the interrupt showed it: this
+    frame missed its share), this frame's buffer is free: its list starts
+    at once, the interrupt shows it once drawn, and the next frame begins
+    at once, no vblank waited for;
+  - else (on time) this frame waits for the vblank that shows the
+    previous one, the interrupt starting its list there, and the next
+    frame begins at that vblank: the cap's pacing, as before.
+- **What holds**: a frame's list starts before `vid_flip` returns, so
+  whatever the next frame queues (the stream's uploads) comes after it
+  in the SDK's queue, as before, and the arena the next frame writes is
+  the one the previous frame's list was read from; the static chains a
+  frame links (the 2D gun's frames and CLUT, §45) are relinked two
+  frames later at the soonest, after a `DrawSync(0)`, as before; a
+  buffer is shown at a vblank only, and its list starts only while the
+  other buffer is on display (late: the previous frame shown already;
+  on time: in the interrupt, right after the show): no tearing.
+- **The interrupt's work**: the show (one GP1 word) and, on time, the
+  list's start: `DrawOTagEnv` with the SDK's queue empty starts the DMA
+  at once (`EnqueueDrawOp` masks the interrupts by IRQ_MASK and gives
+  the mask back: the CPU's own interrupt bit stays off in the handler,
+  no nesting); the DMA's end runs the queue as before (the SPU's DMAs,
+  the CD's, untouched). The interrupts' stack: 524 bytes never reached,
+  as before. `vid_flip`'s critical section (IRQ_MASK cleared) covers the
+  test and the start or the wait's setting: the interrupt cannot show
+  the previous frame between them.
+- **A frame shown sooner**: a late frame is shown at the first vblank
+  after it is drawn (§106's wait: about half a vblank sooner, with the
+  frame after it begun at once); a frame on time is shown at the same
+  vblank as before.
+
+### 111.2 The pacing and the game's time
+
+- Frames within their share are paced as before: each begins at a
+  vblank, a share after the last, and shown a share after the last (60:
+  every vblank; 45: 1, 1, 2 in turn; 30: every second one).
+- A frame that misses its share is shown for an uneven number of
+  vblanks (a frame of 1.3 vblanks: 1 or 2 in turn, 46 fps where it ran
+  at 30), as with the 45 fps cap; the 30 fps cap stays for a steady
+  pacing while the frames fit in two vblanks.
+- The game's time is §30's: a frame takes the polls since the last
+  frame's start, one tick each (the ring unchanged); a late frame's next
+  one begins between two vblanks and takes the polls that came, so the
+  ticks a frame shows and the vblanks it is shown for differ by one now
+  and then where the frames are late (the 45 fps cap's unevenness).
+
+### 111.3 The stats; the warp's control
+
+- `vid_stats.vbl`: the vblanks from a frame's start to the next one's
+  (the polls the next one takes): the overlay's fps, the benches' `vbl=`,
+  the walk's polls.
+- `vid_stats.vbl_whole`: the warp's control's input (`r_warp_feedback`,
+  §79.2): the frame's vblanks as it took them waiting for the vblank,
+  its share when on time, else its time (from the last frame's start)
+  rounded up to vblanks. The control raises, lowers and gives up (its
+  `more`: aim at a vblank more from the floor) for the same frames as
+  before. Giving up now costs frames a second where it cost none (a frame
+  just over a vblank at 32 px, shown at ~57 fps, drawn at the floor in
+  about 1.5 vblanks: ~40 fps), and the control keeps the warp's look
+  first, as before (§79.2; the warp must not distract).
+
+### 111.4 Measured
+
+PCSX-Redux in fast forward, the base master d7de758 with the bench's
+measures (the fight's vblanks a frame over each window of 300 frames;
+`bench pace`), against the branch:
+
+- **§106's fight** (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0 SKILL=2
+  VIEW=1780,1803,-304,204,0`): 3.53 -> 3.02 vblanks a frame on average
+  (17.0 -> 19.9 fps, +17 %), each window -11 to -18 % (4.32 -> 3.84 in
+  the first, 3.16 -> 2.66 in the last); the same game in each window
+  (the monsters alive, the streamed models drawn; the frames' own cycles
+  within 0.03 %); the samples 384 726 -> 323 316 (-16.0 %: the minute of
+  fight played in 16 % less time), the SDK's wait (16.0 %) gone, the
+  waits left 0.4 % (as before).
+- **The same on master 6ff9264** (§114's shared budget and §115's light
+  merged in; master's vid.c, vid.h, pad.c and pad.h with the bench's
+  measures against the merged branch): 3.50 -> 2.95 vblanks a frame (17.1
+  -> 20.3 fps, -15.6 %), each window -11 to -18 %, the same game in each
+  (the frames' cycles within 0.05 %); the samples 380 993 -> 315 540
+  (-17.2 %; the SDK's wait 17.1 % there). §114's lighter frames (the
+  drawing -3.6 %) moved master's fight by 1 % alone (3.53 -> 3.50 vblanks
+  a frame: what they saved was mostly waited away at the vblank); with
+  the flip they show. The 128 views identical to master's (a `m373`
+  reference); the release's arena 1 351 984 bytes.
+- **The game bench** (`BENCH_GAME=1`): the guns' views 2.00 -> 1.56-1.68
+  vblanks a frame (their frames 0.88-0.93 M cycles), the rocket
+  launcher's 3.00 -> 2.31, the lightning gun's 2.00 -> 1.87, the HUDs'
+  2.00 -> 1.81; the walk at 60 Hz 1.72 -> 1.33 vblanks a frame (frames
+  at one vblank 140 -> 254 of 300, at two 156 -> 45), at 30 Hz 1.50 ->
+  1.15 (153 -> 257 at one); its 23 dumps (the guns, the HUDs, the menus,
+  the water) identical.
+- **The pacing** (`bench pace`, 60 frames, nothing drawn): within their
+  share 60, 80 and 120 vblanks at 60, 45 and 30 fps, each buffer shown
+  for its share, as before; missing it (1.3 shares) 120 -> 78 vblanks at
+  60 (shown for 1 or 2: 43 / 17), 140 -> 104 at 45, 180 -> 156 at 30
+  (2 or 3: 26 / 34).
+- **The 128 views** (`BENCH_MAPS=1 HASHONLY=1`, `scripts/dlcheck.sh`
+  saved on the base): the display lists identical; their cycles +0.04 %
+  (86 views slower, 40 faster, -1 320 to +2 060 cycles: the pad's
+  interrupts land elsewhere in a frame begun sooner after its vblank).
+- **The game's own path** (`BENCH_MAPS=1 PLAY=1 MAP=E1M1`): the loading
+  screens, then 30 frames as in play (the pad's polls, the ticks, the
+  HUD, the sound, the music): through; E1M1's views past a vblank at
+  1.37 to 1.81 vblanks a frame (their work between one and two vblanks:
+  2 with the old flip).
+- **The RAM** (the release's objects): vid.c +344 bytes of code, +28 of
+  BSS; pad.c -12.
+
+### 111.5 The bench's measures
+
+- The fight's lines (`MONSTERS=3`) give each window's vblanks a frame
+  (`VSync`'s count over its 300 frames, the lines' own time left out),
+  where they gave the last frame's alone.
+- The game bench ends with `bench pace` lines: under each cap, 60 frames
+  whose work fits in their share (0.8 of it) and 60 that miss it (1.3),
+  nothing drawn: the vblanks they took and how long each buffer was
+  shown (`vid_shown_for`, counted where a buffer is shown, bench builds
+  only).
+
+### 111.6 Left
+
+- DuckStation (TESTING 11.90): no tearing in a fight and in
+  quick turns, the caps' pacing (45 and 30 within their share), the pad
+  (a press, the walk's speed, the menu's cursor), the sound and the
+  music, the streaming (the monsters' skins in at a fight, a level's
+  zones), the loading screens. The branch was tested on DuckStation
+  before its merge into master (2026-10-31).
+- PCSX-Redux draws at once: the GPU's own time (DuckStation's, a
+  console's) shows a late frame later, at the first vblank after its
+  drawing; a frame whose previous one is drawn after its vblank (the GPU
+  the slower: §78 measured it the faster) still waits for the next one.
+- A real console: GP1(05h) written at the vblank's start (the interrupt)
+  rather than after `VSync` returned; the same register, earlier in the
+  blanking.
+- The warp's `more` (111.3) trades frames a second for the floor's look
+  now: a call left open, whether a frame just over a vblank should keep
+  the 32 px warp instead.
+
 ## §114 — The monsters' shared detail budget (2026-10-31)
 
 (The number is provisional: §111-§113 are the levers' branches, not
