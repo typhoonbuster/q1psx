@@ -2511,3 +2511,14 @@ followed by R0-R4.
   the console's. The map's and the game's CLUTs are kept as cooked and
   sent again through the new table at each step. Nothing changes in a
   frame's work.
+- **The Graphics page's Anti-warping** (§117, provisional number, 
+  2026-10-31). A row choosing the dynamic
+  warp control's floor and cap: low 16 / 48 px, default 4 / 32 (the
+  control as it was), high 4 / 8, ultra 1 / 4; the menu shows the level
+  and what it gains and costs, no figures. The records' bound table runs
+  to 48 px. Under 4 px (ultra) a guard keeps T where the last frame's
+  packets say a far model keeps its room (at a fixed 1 px the heaviest
+  views filled the packet arena or left far models out; at 4 px none);
+  the levels at 4 px and above run the control as it was. Ultra's floor
+  costs +93 % of the views' cycles at a fixed 1 px. The release's level
+  arena -704 B.

@@ -170,8 +170,11 @@
 #         waiting, and adds its time to the lines (gpu=avg/max, CPU
 #         cycles): run the disc on DuckStation, which counts the GPU's time
 #         (PCSX-Redux draws at once: 0). WARPDYN=1 renders the views with
-#         the game's dynamic warp control (T= its floor) and prints the T
-#         each view ends at ("warp <view> T <px> more <vblanks>").
+#         the game's dynamic warp control (T= its floor, TMAX= its cap,
+#         default 32: the anti-warping's levels are 16/48 low, 4/32
+#         default, 4/8 high, 1/4 ultra, docs/porting-notes.md §117) and
+#         prints the T each view ends at ("warp <view> T <px> more
+#         <vblanks>").
 #         IRQTIME=1: the interrupts' handler (engine/irq.s) times itself, the
 #         lines' irq=<cycles a frame>/<interrupts a frame x 100> (all of
 #         them, those that land in the wait for the vblank too).
@@ -257,6 +260,7 @@ GPUTIME=${GPUTIME:-0}
 IRQTIME=${IRQTIME:-0}
 SLOWSTAT=${SLOWSTAT:-0}
 WARPDYN=${WARPDYN:-0}
+TMAX=${TMAX:-32}
 SEQCHK=${SEQCHK:-0}
 VRAMCHK=${VRAMCHK:-0}
 TESS=${TESS:-all}
@@ -283,7 +287,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_SKILL="${SKILL:-1}" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \

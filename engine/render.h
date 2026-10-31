@@ -131,19 +131,23 @@ void r_bind_world(void);
    decision stays the same on both sides whatever T a frame gets: no crack.
      R_WARP_FIXED    T as chosen (the bench's);
      R_WARP_DYNAMIC  T rises for the next frames when a frame overruns its
-                     NTSC frame (CPU time or a missed vblank), and falls back
-                     to the chosen T, its floor, once frames have room again
-                     (the game's, from 4 px: engine/settings.h). A view the
-                     largest T cannot fit in the frame rate cap's vblanks
-                     takes one more instead, at the floor (no warp spent for
-                     nothing), until it is lighter by what that T lacked
+                     NTSC frame (CPU time or a missed vblank), up to its cap,
+                     and falls back to the chosen T, its floor, once frames
+                     have room again (the game's: the Anti-warping row's
+                     floor and cap, engine/settings.c, §117). A view the cap
+                     cannot fit in the frame rate cap's vblanks takes one
+                     more instead, at the floor (no warp spent for nothing),
+                     until it is lighter by what the cap lacked
                      (docs/porting-notes.md §79.2). */
 enum { R_WARP_FIXED, R_WARP_DYNAMIC, R_WARP_MODES };
-#define R_WARP_T_MAX 32       /* px: the dynamic mode stops raising T there */
+#define R_WARP_T_MAX 48       /* px: the largest cap (render.c's record bounds) */
 
 typedef struct {
 	int      mode;           /* R_WARP_*                                    */
-	int      t;              /* the chosen threshold, px                    */
+	int      t;              /* the chosen threshold, px (the floor)        */
+	int      t_max;          /* the dynamic mode's cap, px                  */
+	uint32_t used, avail;    /* the last frame's packet bytes, and the room
+	                            the walk had (render.c warp_room_floor)     */
 	int      t_eff;          /* the threshold the next frame renders with   */
 	uint32_t tris;           /* the last frame's world triangles (estimate:
 	                            the debug overlay's)                        */
@@ -160,7 +164,7 @@ typedef struct {
 
 extern r_warp_t r_warp;
 
-void r_set_warp(int mode, int t_px);
+void r_set_warp(int mode, int t_px, int t_max);
 
 /* the last frame's walk ran out of packet arena (its farthest records,
    emitted last by the front-to-back walk, were not drawn) */

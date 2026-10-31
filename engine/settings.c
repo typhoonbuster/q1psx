@@ -19,6 +19,16 @@ const int num_fps_caps    = (int) sizeof fps_caps;
 const uint8_t tick_rates[] = { 60, 30 };
 const int num_tick_rates   = (int) sizeof tick_rates;
 
+/* The anti-warping's levels (docs/porting-notes.md §117): the dynamic warp
+   control's floor and cap, px (engine/render.h r_set_warp); default is the
+   control as it was (§79.2). Low lets the textures warp more for speed,
+   high and ultra less at a cost. */
+enum { WARP_LOW, WARP_DEFAULT, WARP_HIGH, WARP_ULTRA, WARP_LEVELS };
+static const uint8_t warp_levels[WARP_LEVELS][2] = {
+	{ 16, 48 }, { SETTINGS_WARP_FLOOR, 32 }, { 4, 8 }, { 1, 4 },
+};
+static const char *const warp_name[WARP_LEVELS] = { "low", "default", "high", "ultra" };
+
 settings_t settings;
 int settings_level_mask[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK, QL_EFFECT_MASK };
 
@@ -35,19 +45,21 @@ void settings_defaults(void)
 	settings.music   = 10;
 	settings.fps_cap = 0;                       /* 60: no cap */
 	settings.tick    = 1;                       /* the world at 30 ticks a second */
+	settings.warp    = WARP_DEFAULT;
 	settings.brightness = 0;                    /* Quake's v_gamma 1 */
 }
 
 void settings_apply(void)
 {
 #if Q1PSX_PADSCRIPT
-	printf("settings: effects %d dither %d hud %d res %d dlights %d vol %d music %d fps %d tick %d\n",
-	       settings.level[QL_EFFECTS], settings.dither, settings.hud, r_res_table[settings.res].w, settings.dlights,
-	       settings.volume, settings.music, fps_caps[settings.fps_cap], tick_rates[settings.tick]);
+	printf("settings: effects %d dither %d hud %d res %d warp %s dlights %d vol %d music %d fps %d tick %d\n",
+	       settings.level[QL_EFFECTS], settings.dither, settings.hud, r_res_table[settings.res].w,
+	       warp_name[settings.warp], settings.dlights, settings.volume, settings.music, fps_caps[settings.fps_cap],
+	       tick_rates[settings.tick]);
 #endif
 	game_set_effects(settings.level[QL_EFFECTS]);
 	r_set_res(settings.res);                    /* (before the warp's: its bound follows) */
-	r_set_warp(R_WARP_DYNAMIC, SETTINGS_WARP_FLOOR);
+	r_set_warp(R_WARP_DYNAMIC, warp_levels[settings.warp][0], warp_levels[settings.warp][1]);
 	vid_set_dither(settings.dither);
 	hud_set_style(settings.hud);
 	dl_enabled = settings.dlights;
@@ -86,6 +98,7 @@ void settings_step(int row, int d)
 	case SET_DITHER:   settings.dither ^= 1; break;
 	case SET_HUD:      settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
 	case SET_RES:      settings.res = wrap(settings.res, d, R_RES_COUNT); break;
+	case SET_WARP:     settings.warp = wrap(settings.warp, d, WARP_LEVELS); break;
 	case SET_DLIGHTS:  settings.dlights ^= 1; break;
 	case SET_FPS:      settings.fps_cap = wrap(settings.fps_cap, d, num_fps_caps); break;
 	default:           settings.tick = wrap(settings.tick, d, num_tick_rates); break;
@@ -99,6 +112,7 @@ void settings_value(int row, char *buf, int size)
 	case SET_DITHER:   q_snprintf(buf, size, "%s", settings.dither ? "on" : "off"); break;
 	case SET_HUD:      q_snprintf(buf, size, "%s", hud_style_name[settings.hud]); break;
 	case SET_RES:      q_snprintf(buf, size, "%dx%d", r_res_table[settings.res].w, r_res_table[settings.res].h); break;
+	case SET_WARP:     q_snprintf(buf, size, "%s", warp_name[settings.warp]); break;
 	case SET_DLIGHTS:  q_snprintf(buf, size, "%s", settings.dlights ? "on" : "off"); break;
 	case SET_FPS:      q_snprintf(buf, size, "%d fps", fps_caps[settings.fps_cap]); break;
 	default:           q_snprintf(buf, size, "%d Hz", tick_rates[settings.tick]); break;
@@ -134,6 +148,17 @@ void settings_hint(int row, const char *line[2])
 		};
 		a = rh[settings.res][0];
 		b = rh[settings.res][1];
+		break;
+	}
+	case SET_WARP: {                            /* (the effects alone, no pixel figures: §117) */
+		static const char *const wh[WARP_LEVELS][2] = {
+			{ "+ faster: fewer polygons split",       "- more texture warping up close" },
+			{ "The port's balance of speed and warp", "low: faster; higher: less warping" },
+			{ "- slower: more polygons split",        "+ less texture warping up close" },
+			{ "- slowest: the most polygons split",   "+ the least texture warping" },
+		};
+		a = wh[settings.warp][0];
+		b = wh[settings.warp][1];
 		break;
 	}
 	case SET_DLIGHTS:

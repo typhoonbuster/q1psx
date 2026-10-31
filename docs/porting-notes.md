@@ -15295,3 +15295,81 @@ merged.)
   - The release builds with it.
   - The colours on screen are to be judged on DuckStation:
     PCSX-Redux runs without a GPU here.
+
+## §117 — The Graphics page's Anti-warping (2026-10-31)
+
+(Provisional number: §113 is another branch's.)
+
+- **The request**: a Graphics row choosing how much the textures may
+  warp: the dynamic warp control's floor and cap set by a level, low,
+  default, high or ultra, the default being the control as it is; the
+  menu shows the level and what it does, never the figures.
+- **The control as it was** (§19.4, §79.2, engine/render.c): T, the
+  affine error the near polygons are split by (the slow path, §92's
+  grid, the records' bound), one value a frame; from a floor of 4 px
+  (`SETTINGS_WARP_FLOOR`) it rises by a quarter when a frame overruns
+  its vblanks, up to 32 px (then `R_WARP_T_MAX`), and comes down 1 px
+  every 4 frames with room; a view the cap cannot fit takes a vblank
+  more at the floor.
+- **The levels** (engine/settings.c `warp_levels`, the floor / the cap,
+  px): low 16 / 48, default 4 / 32 (the control as it was), high 4 / 8,
+  ultra 1 / 4. Low lets the textures warp more for speed (a floor four
+  times the default's, a cap half again); high keeps the floor and stops
+  at 8 px (a view that needs more takes a vblank more); ultra splits
+  down to 1 px and stops at 4, the default's floor.
+- **The engine**: `r_set_warp` takes the cap (`r_warp.t_max`);
+  `R_WARP_T_MAX` is 48, the records' bound table (`k16 = round(16
+  sqrt(560 / T))`) 16 entries longer, its first 33 unchanged;
+  `r_warp_feedback` raises T up to the level's cap and judges there that
+  the largest T missed the vblanks. The products the walk, the grid and
+  the slow path make of T (T2 (za + zb), 2 T2 zmin, z T2) stay within 32
+  bits at 48 px (z under 16 bits).
+- **The menu**: the row Anti-warping after 3D resolution (the release's
+  Graphics page; `antiwarp` in the debug map menu), its values low,
+  default, high and ultra, default at boot and after Reset to defaults;
+  the hints, the speed then the picture:
+  - low: "+ faster: fewer polygons split", "- more texture warping up
+    close";
+  - default: "The port's balance of speed and warp", "low: faster;
+    higher: less warping";
+  - high: "- slower: more polygons split", "+ less texture warping up
+    close";
+  - ultra: "- slowest: the most polygons split", "+ the least texture
+    warping".
+- **Ultra's guard**: under the default's 4 px the near polygons' packets
+  grow as T shrinks (a polygon's pieces as 1 / T, the error falling by 4
+  a split level); at a fixed 1 px the heaviest views filled the packet
+  arena or left far models out (below). In the dynamic control, a level
+  whose floor is under 4 px (ultra alone) gets a floor of its own each
+  frame (render.c `warp_room_floor`): the least T at which the last
+  frame's packets, every one scaled by T / T' (a bound: the fast path's
+  do not grow), would still leave a far model its room (`R_MODEL_ROOM`,
+  24 KB; `WARP_ROOM` in C), 4 px at once after a frame that filled the
+  arena (what it left unwritten is unknown), never above 4 px: the levels
+  at 4 px and above (default, high, low) run the control exactly as it
+  was. The vblank-more step's drop goes to that floor, not to 1 px.
+  `r_frame` keeps the frame's packet bytes and the walk's room for it
+  (`r_warp.used`, `r_warp.avail`).
+- **The bench**: `TMAX=` the cap with `WARPDYN=1` (32 by default), `T=`
+  the floor or the fixed threshold as before; the game bench's walk
+  through the release menu (`BENCH_GAME=1`) goes to the row, dumps the
+  page at default, high and low and prints each level's floor and cap.
+- **RAM**: the release's level arena 1 349 008 -> 1 348 304 B (-704): the
+  code 296 B (the feedback's guard 144, `r_frame`'s two stores 28, the
+  rows' cases, the cap), the hints' and the row's strings about 300 B,
+  the tables 84 B (the bound table's 16 entries 32 B, the levels', the
+  names', the hints' pointers), `r_warp`'s and `settings`' new fields 16
+  B, the levels 8 B.
+- **Measured** (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`, a fixed T, the
+  views' 16 frames each):
+  - 1 px against 4 px, the 84 views the 1 px run reached (it stopped
+    after E3M5, the console silent 30 s while E3M6 loaded at 1 px:
+    `STALL`; E3M6 alone at 1 px runs through, 3.6 minutes): the cycles
+    26.80 M -> 51.65 M (+92.7 %; E2M1.v1 +188 %, E2M1.v3 +143 %, E1M2.v3
+    +140 %), the views at 60 fps 73 -> 41, past a vblank 11 -> 44;
+  - at 1 px two views filled the arena (E1M8.v0, E3M4.v0: `FULL`, the
+    farthest records lost) and eight left far models out (`mskip`:
+    E1M8.v0 228 over the 16 frames, E1M8.v1, E2M7.v0, E3M3.v3, E3M4.v0,
+    E3M6.v3, v5, v7); at 4 px none (the 128 views);
+  - ultra's control (`WARPDYN=1 T=1 TMAX=4`) over the 128 views and the
+    game bench's walk: follow in the next commit.

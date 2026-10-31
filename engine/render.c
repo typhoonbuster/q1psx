@@ -147,7 +147,9 @@ r_warp_t r_warp;
    ~10 % margin for the integer screen coordinates. */
 static const uint16_t warp_k16[R_WARP_T_MAX + 1] = {
 	0, 379, 268, 219, 189, 169, 155, 143, 134, 126, 120, 114, 109, 105, 101, 98,
-	95, 92, 89, 87, 85, 83, 81, 79, 77, 76, 74, 73, 72, 70, 69, 68, 67,
+	95, 92, 89, 87, 85, 83, 81, 79, 77, 76, 74, 73, 72, 70, 69, 68,
+	67, 66, 65, 64, 63, 62, 61, 61, 60, 59, 58, 58, 57, 56, 56, 55,
+	55,
 };
 
 static int32_t yb_num = 1, yb_den = 1;   /* the view's y row x num / den: the rows'
@@ -170,10 +172,11 @@ Q_COLD static void warp_apply(int t)
 	r_state.warp_k16 = r_res ? (q_isqrt32(448u * 4u * w2 / (uint32_t) t) + 1) / 2 : warp_k16[t];
 }
 
-void r_set_warp(int mode, int t_px)
+void r_set_warp(int mode, int t_px, int t_max)
 {
-	r_warp.mode = mode;
-	r_warp.t    = t_px;
+	r_warp.mode  = mode;
+	r_warp.t     = t_px;
+	r_warp.t_max = t_max < t_px ? t_px : t_max > R_WARP_T_MAX ? R_WARP_T_MAX : t_max;
 	r_warp.calm  = 0;
 	r_warp.more  = 0;
 	r_warp.ref   = 0;
@@ -186,25 +189,51 @@ void r_set_warp(int mode, int t_px)
    past a vblank) T rises by a quarter at once; it comes down one pixel at a
    time after WARP_CALM frames below WARP_LOW, so it does not oscillate.
    The marks are for the vblanks aimed at: the cap's share, and `more` when
-   a frame at R_WARP_T_MAX missed them all the same (the view then drawn at
-   the floor with a vblank more, as it would take that vblank anyway); back
-   to the share once a frame at the floor is lighter than the first one
-   there by what R_WARP_T_MAX lacked. */
+   a frame at the warp's cap (r_warp.t_max) missed them all the same (the
+   view then drawn at the floor with a vblank more, as it would take that
+   vblank anyway); back to the share once a frame at the floor is lighter
+   than the first one there by what the cap lacked. */
 #define WARP_FRAME  (33868800 / 60)
 #define WARP_HIGH   (WARP_FRAME * 7 / 8)
 #define WARP_LOW    (WARP_FRAME * 3 / 4)
 #define WARP_CALM   4
-#define WARP_STUCK  30       /* frames in a row at R_WARP_T_MAX missing the vblanks
+#define WARP_STUCK  30       /* frames in a row at the cap missing the vblanks
                                 aimed at before a vblank more: a view that cannot
                                 make them (a load's or a view's first frames miss
                                 them for a while) */
+
+/* Under the default's floor (ultra's 1 px) the near polygons' packets grow
+   as T shrinks (a polygon's pieces as 1 / T): at 1 px the heaviest of the
+   128 views filled the arena or left far models out (docs/porting-notes.md
+   §117). T then goes no lower than what the last frame's packets, every
+   one scaled by T / T' (a bound: the fast path's do not grow), say would
+   still leave a far model its room (r_defs.inc R_MODEL_ROOM; an arena
+   filled says nothing of what was left unwritten: WARP_GUARD at once), and
+   never above WARP_GUARD for it: the levels whose floor is there or higher
+   run the control as it was. */
+#define WARP_GUARD  4
+#define WARP_ROOM   24576
+
+static int warp_room_floor(int t)
+{
+	if (r_warp.t >= WARP_GUARD)
+		return r_warp.t;
+	if (r_arena_full)
+		return WARP_GUARD;
+	uint32_t avail = r_warp.avail > WARP_ROOM ? r_warp.avail - WARP_ROOM : 1;
+	uint32_t need  = (r_warp.used * (uint32_t) t + avail - 1) / avail;
+	if (need > WARP_GUARD)
+		need = WARP_GUARD;
+	return need > (uint32_t) r_warp.t ? (int) need : r_warp.t;
+}
 
 void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 {
 	if (r_warp.mode != R_WARP_DYNAMIC)
 		return;
-	int t = r_warp.t_eff;
-	if (r_warp.more && t <= r_warp.t) {           /* (at the floor: like for like) */
+	int t  = r_warp.t_eff;
+	int lo = warp_room_floor(t);                  /* (the floor, ultra's arena allowing) */
+	if (r_warp.more && t <= lo) {                 /* (at the floor: like for like) */
 		if (!r_warp.ref) {
 			r_warp.ref   = frame_cycles;
 			r_warp.probe = 0;
@@ -222,7 +251,7 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 	uint32_t aim = share + (uint32_t) r_warp.more;
 	int over = vbl > aim || frame_cycles > WARP_HIGH * aim;   /* (against the vblanks */
 	int room = vbl <= aim && frame_cycles < WARP_LOW * aim;   /*  aimed at) */
-	if (vbl > aim && t >= R_WARP_T_MAX) {         /* the largest T missed them too */
+	if (vbl > aim && t >= r_warp.t_max) {         /* the largest T missed them too */
 		uint32_t s = frame_cycles > WARP_FRAME * aim ? frame_cycles - WARP_FRAME * aim : WARP_FRAME / 16;
 		if (!r_warp.stuck || s < r_warp.shortfall)
 			r_warp.shortfall = s;                 /* (the least, over the frames) */
@@ -231,7 +260,7 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 			r_warp.ref   = 0;
 			r_warp.calm  = 0;
 			r_warp.stuck = 0;
-			warp_apply(r_warp.t);
+			warp_apply(lo);
 			return;
 		}
 	} else {
@@ -240,7 +269,7 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 	if (over) {
 		t += t >= 4 ? t / 4 : 1;
 		r_warp.calm = 0;
-	} else if (room && t > r_warp.t) {
+	} else if (room && t > lo) {
 		if (++r_warp.calm >= WARP_CALM) {
 			t--;
 			r_warp.calm = 0;
@@ -248,7 +277,7 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 	} else {
 		r_warp.calm = 0;
 	}
-	warp_apply(t < r_warp.t ? r_warp.t : t);
+	warp_apply(t < lo ? lo : t > r_warp.t_max ? r_warp.t_max : t);
 }
 
 /* ------------------------------------------------------- the cooked walk -- */
@@ -795,6 +824,8 @@ void r_frame(void)
 	uint32_t slowb = r_state.slow_bytes <= bytes ? r_state.slow_bytes : bytes;
 	r_warp.tris = (bytes - slowb) / (opt_flat ? 20 : 26) + slowb / 40;
 #endif
+	r_warp.used   = r_state.pkt - (uint32_t) vid_frame.pkt;      /* (warp_room_floor's) */
+	r_warp.avail  = r_state.pkt_end - (uint32_t) vid_frame.pkt;
 	vid_frame.pkt = (uint8_t *) r_state.pkt;
 	r_arena_full  = r_state.pkt >= r_state.pkt_end;   /* the walk stopped short: the farthest records lost */
 

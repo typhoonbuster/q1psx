@@ -95,6 +95,10 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #define Q1PSX_BENCH_WARPDYN 0                  /* 1: the game's dynamic warp control, T
                                                   its floor (WARPDYN= scripts/bench.sh) */
 #endif
+#ifndef Q1PSX_BENCH_TMAX
+#define Q1PSX_BENCH_TMAX 32                    /* its cap, px (TMAX= scripts/bench.sh; the
+                                                  default anti-warping's, engine/settings.c) */
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
@@ -102,7 +106,7 @@ static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
 	r_set_res(Q1PSX_BENCH_RES);
-	r_set_warp(Q1PSX_BENCH_WARPDYN ? R_WARP_DYNAMIC : R_WARP_FIXED, Q1PSX_BENCH_T);
+	r_set_warp(Q1PSX_BENCH_WARPDYN ? R_WARP_DYNAMIC : R_WARP_FIXED, Q1PSX_BENCH_T, Q1PSX_BENCH_TMAX);
 	vid_set_dither(1);
 	settings.level[QL_EFFECTS] = Q1PSX_BENCH_EFFECTS;
 	game_set_effects(Q1PSX_BENCH_EFFECTS);
@@ -695,7 +699,8 @@ static void opt_step(int d)
 
 static void opt_draw(void)
 {
-	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "3d res", "dlights", "fps cap", "tick rate" };
+	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "3d res", "antiwarp", "dlights", "fps cap",
+	                                             "tick rate" };
 	char line[48], val[16];
 	for (int o = 0; o < SET_ROWS; o++) {
 		settings_value(o, val, sizeof val);
@@ -2397,6 +2402,17 @@ static void bench_menu(void)
 	bench_menu_key(PAD_CROSS, "mgraphics");
 	bench_menu_key(PAD_RIGHT, "mgraphics_fx");        /* the effects high: their hint */
 	bench_menu_key(PAD_LEFT, 0);                      /* (medium again) */
+	for (int i = 0; i < SET_WARP; i++)
+		bench_menu_key(PAD_DOWN, 0);                  /* (to Anti-warping) */
+	bench_menu_key(0, "mgraphics_warp");              /* default: its hint */
+	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
+	bench_menu_key(PAD_RIGHT, "mgraphics_warp_high");
+	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
+	bench_menu_key(PAD_RIGHT, 0);
+	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
+	bench_menu_key(PAD_RIGHT, "mgraphics_warp_low");  /* (ultra, then round to low) */
+	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
+	bench_menu_key(PAD_RIGHT, 0);                     /* (default again) */
 	bench_menu_key(PAD_START, 0);                     /* out: options, main, the game */
 	bench_menu_key(PAD_START, 0);
 	bench_menu_key(PAD_START, 0);
