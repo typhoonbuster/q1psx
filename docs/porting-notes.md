@@ -15077,7 +15077,8 @@ indices.
   eye as before (nothing should move a pixel); the near-clipped polygons
   (a wall right in front, a floor under the feet, looking down a
   stair); a monster through a liquid's surface (`slow_wpoly`); the heavy
-  views' frame rate.
+  views' frame rate. The branch's release was tested on DuckStation
+  before its merge into master (2026-10-31).
 - The C engine's lists against the asm's (START.v0 and 29 of the 128
   views, master's): to trace, as §92.7 left START's.
 - The instruction cache's order (`engine/icache.ld`, §81.5) is not made
