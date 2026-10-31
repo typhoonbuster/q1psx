@@ -2456,3 +2456,15 @@ followed by R0-R4.
   their distance to the surface after the collapse), the accumulated error
   dropped: every band within 2.8 px; the triangles at bands 1-15 +6.4 %,
   E2M7's fight -0.5 %.
+- **The coplanar faces merged in the cook** (§113.1, provisional number,
+  2026-10-31). A node's faces
+  with one texture mapping, marked by the same leaves and connected, are
+  cut on one cell grid and their pieces in a cell merged while convex;
+  every vertex then lying on a straight run of each piece holding it is
+  dropped from all of them (no new crack). The light stays within 16 of
+  255 of what the faces' own cuts gave at each of Quake's luxels
+  (`QCOOK_MERGE_ERR`), and the zones' tables are translated to the new
+  records through their Quake faces. The polygons −2.3 % over the 32
+  maps, the 128 views −0.55 % (16 → 15 views past a vblank), E2M7's
+  fight's drawing −1.2 %, the stream's pool +7 KB a map on average;
+  every map's display lists change. `QCOOK_MERGE=0` cooks as before.

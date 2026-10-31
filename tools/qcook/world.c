@@ -507,6 +507,7 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 /* ---------------------------------------------------------------- light -- */
 
 double light_gain = 1.66;
+const char *world_fmap;
 
 /* A face's lightmap as Quake lays it out (CalcSurfaceExtents): one luxel
    per 16 texels, from texturemins = floor(min / 16) * 16, up to 4 styles. */
@@ -667,6 +668,9 @@ typedef struct {
 	int    fixed;           /* T-junction vertices inserted               */
 	double s_off, t_off;    /* the cell's corner, Quake texels            */
 	poly_t pl;
+	int    dead;            /* merged into another piece (QCOOK_MERGE)    */
+	long   sub[2];          /* its sub-cell on the light grid (0 0: none) */
+	int    mfirst, mn;      /* merged: its faces in pc_mem (mn 0: `face`) */
 } piece_t;
 
 static piece_t *pc_list;
@@ -678,40 +682,70 @@ static uint32_t tj_inserted, tj_pieces;
 static int light_grid;                   /* the ultra level's extra cuts, texels (0: none) */
 static int bm_grid_faces;                /* the brush models' faces cut on their light grid (§96) */
 
-static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
-{
-	pc_first[f] = pc_num;
-	pc_count[f] = 0;
-	const bsp_face *bf = &b->faces[f];
-	if (bf->numedges < 3 || bf->texinfo < 0 || bf->texinfo >= b->num_texinfo)
-		return;
-	const bsp_texinfo *ti = &b->texinfo[bf->texinfo];
-	if (ti->miptex < 0 || ti->miptex >= b->num_miptex)
-		return;
-	const tex_slot   *s = face_slot(ts, ti->miptex);
-	const bsp_miptex *m = &b->miptex[ti->miptex];
-	if (!s->present)                    /* sky or missing: not drawn (yet) */
-		return;
+/* the coplanar faces merged (QCOOK_MERGE, docs/porting-notes.md §113) */
+static int     merge_on;
+static int    *face_cl;                  /* [num_faces]: the face's cluster, -1 none (its own cells) */
+static double *face_s0, *face_t0;        /* a cluster's cell origin, Quake texels */
+static int    *pc_mem;                   /* the merged pieces' faces */
+static int     pc_nmem, pc_memcap;
+static uint32_t mg_pieces, mg_into, mg_dropped, mg_dead;
 
-	poly_t pl;
-	pl.n = 0;
-	for (int e = 0; e < bf->numedges && pl.n < MAXPV; e++) {
+/* a face's polygon, its texture coordinates (Quake texels) at each vertex */
+static void face_poly(const bsp_t *b, int f, poly_t *pl)
+{
+	const bsp_face    *bf = &b->faces[f];
+	const bsp_texinfo *ti = &b->texinfo[bf->texinfo];
+	pl->n = 0;
+	for (int e = 0; e < bf->numedges && pl->n < MAXPV; e++) {
 		int se = b->surfedges[bf->firstedge + e];
 		int vi = se >= 0 ? b->edges[se * 2] : b->edges[-se * 2 + 1];
-		pvert *v = &pl.v[pl.n++];
+		pvert *v = &pl->v[pl->n++];
 		for (int k = 0; k < 3; k++)
 			v->p[k] = b->verts[vi * 3 + k];
 		v->s = v->p[0] * ti->vecs[0][0] + v->p[1] * ti->vecs[0][1] + v->p[2] * ti->vecs[0][2] + ti->vecs[0][3];
 		v->t = v->p[0] * ti->vecs[1][0] + v->p[1] * ti->vecs[1][1] + v->p[2] * ti->vecs[1][2] + ti->vecs[1][3];
 	}
+}
 
-	double smin = 1e30, smax = -1e30, tmin = 1e30, tmax = -1e30;
-	for (int i = 0; i < pl.n; i++) {
-		if (pl.v[i].s < smin) smin = pl.v[i].s;
-		if (pl.v[i].s > smax) smax = pl.v[i].s;
-		if (pl.v[i].t < tmin) tmin = pl.v[i].t;
-		if (pl.v[i].t > tmax) tmax = pl.v[i].t;
+static void poly_st_box(const poly_t *pl, double *smin, double *smax, double *tmin, double *tmax)
+{
+	*smin = 1e30; *smax = -1e30; *tmin = 1e30; *tmax = -1e30;
+	for (int i = 0; i < pl->n; i++) {
+		if (pl->v[i].s < *smin) *smin = pl->v[i].s;
+		if (pl->v[i].s > *smax) *smax = pl->v[i].s;
+		if (pl->v[i].t < *tmin) *tmin = pl->v[i].t;
+		if (pl->v[i].t > *tmax) *tmax = pl->v[i].t;
 	}
+}
+
+/* the slot a drawn face takes, or NULL (no texture, sky, missing) */
+static const tex_slot *face_drawn_slot(const bsp_t *b, const tex_set *ts, int f)
+{
+	const bsp_face *bf = &b->faces[f];
+	if (bf->numedges < 3 || bf->texinfo < 0 || bf->texinfo >= b->num_texinfo)
+		return NULL;
+	const bsp_texinfo *ti = &b->texinfo[bf->texinfo];
+	if (ti->miptex < 0 || ti->miptex >= b->num_miptex)
+		return NULL;
+	const tex_slot *s = face_slot(ts, ti->miptex);
+	return s->present ? s : NULL;           /* (sky or missing: not drawn) */
+}
+
+static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
+{
+	pc_first[f] = pc_num;
+	pc_count[f] = 0;
+	const tex_slot *s = face_drawn_slot(b, ts, f);
+	if (!s)
+		return;
+	const bsp_texinfo *ti = &b->texinfo[b->faces[f].texinfo];
+	const bsp_miptex  *m  = &b->miptex[ti->miptex];
+
+	poly_t pl;
+	face_poly(b, f, &pl);
+
+	double smin, smax, tmin, tmax;
+	poly_st_box(&pl, &smin, &smax, &tmin, &tmax);
 	int bm_grid = face_model[f] && bm_face_needs_grid(b, f, &pl, smin, smax, tmin, tmax);
 	if (bm_grid)
 		bm_grid_faces++;
@@ -724,11 +758,17 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 	   cells again every QL_LIGHT_GRID texels from their corner (luxel
 	   boundaries: a texture's size is a multiple of 16), the UVs still
 	   from the cell's corner, so the vertex light follows the lightmap
-	   closer. (On the global grid instead: start +52 % polygons, not +37.) */
+	   closer. (On the global grid instead: start +52 % polygons, not +37.)
+	   A face of a merged cluster (QCOOK_MERGE) takes the cluster's origin,
+	   so that its faces' pieces in a cell can be merged. */
 	const double W  = s->win_x ? 256.0 * m->w / s->rep_w : (double) m->w;
 	const double H  = s->win_y ? 256.0 * m->h / s->rep_h : (double) m->h;
-	const double s0 = s->win_x ? floor(smin / m->w) * m->w : 0;
-	const double t0 = s->win_y ? floor(tmin / m->h) * m->h : 0;
+	double s0 = s->win_x ? floor(smin / m->w) * m->w : 0;
+	double t0 = s->win_y ? floor(tmin / m->h) * m->h : 0;
+	if (face_cl && face_cl[f] >= 0) {
+		s0 = face_s0[f];
+		t0 = face_t0[f];
+	}
 	long i0 = (long) floor((smin - s0) / W), i1 = (long) floor((smax - 1e-4 - s0) / W);
 	long j0 = (long) floor((tmin - t0) / H), j1 = (long) floor((tmax - 1e-4 - t0) / H);
 
@@ -777,6 +817,10 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 					p->s_off = cs0;
 					p->t_off = ct0;
 					p->pl    = pc;
+					p->dead  = 0;
+					p->sub[0] = G < 1e29 ? lround((gs - cs0) / G) : 0;
+					p->sub[1] = G < 1e29 ? lround((gt - ct0) / G) : 0;
+					p->mfirst = p->mn = 0;
 					pc_count[f]++;
 				}
 		}
@@ -841,7 +885,7 @@ static void tj_repair(const bsp_t *b)
 	for (int i = 0; i < TJ_HSIZE; i++)
 		tj_head[i] = -1;
 	for (int i = 0; i < pc_num; i++)
-		for (int k = 0; k < pc_list[i].pl.n; k++)
+		for (int k = 0; k < pc_list[i].pl.n && !pc_list[i].dead; k++)
 			tj_add(pc_list[i].pl.v[k].p, pc_list[i].model);
 
 	int *stamp = xmalloc((size_t) tj_nv * sizeof *stamp);
@@ -851,6 +895,8 @@ static void tj_repair(const bsp_t *b)
 
 	for (int pi = 0; pi < pc_num; pi++) {
 		piece_t *pc = &pc_list[pi];
+		if (pc->dead)
+			continue;
 		const bsp_texinfo *ti = &b->texinfo[b->faces[pc->face].texinfo];
 		poly_t out;
 		out.n = 0;
@@ -925,12 +971,826 @@ static void tj_repair(const bsp_t *b)
 	free(tj_head);
 }
 
+/* ------------------------------------------------- coplanar faces merged -- */
+
+/* QCOOK_MERGE (1 by default; 0 the cook as before; docs/porting-notes.md
+   §113). The faces of a node's side with one texture mapping, marked by the
+   same leaves (always drawn together: the records' own rule) and connected
+   form a cluster, cut on one cell grid (its origin where the cluster covers
+   the fewest cells), and its faces' pieces in a cell are merged while their
+   union stays convex (qbsp cut them for its lightmaps, 240 texels, which
+   the PS1 does not use). Then every vertex lying on a straight run of each
+   piece that holds it is dropped from all of them: the inner edges' ends a
+   merge left on the outline, and the vertices qbsp put into the walls'
+   edges for them. A vertex that any piece keeps as a corner stays in every
+   piece, so no edge loses a vertex its neighbour keeps (no new crack).
+   The cost is the light: the vertex lights were sampled at the dropped
+   points, and the common grid moves the cuts. QCOOK_MERGE_ERR (MG_ERR, 16
+   by default) bounds it at each of Quake's luxels: a merge, a dropped
+   vertex or a cluster's grid that would light one worse by more than that
+   is not made (merge_check, merge_drop). A brush model's face cut on its
+   light grid (§96) keeps its own cells. */
+#define MG_TOL   (1.0 / 16)              /* world units: on a line, the same point */
+#define MG_MAXV  32                      /* a merged piece's vertices at most */
+#define MG_AREA  0.25                    /* square units: a union's hull no bigger than its pieces */
+
+static int merge_face_ok(const bsp_t *b, const tex_set *ts, int f)
+{
+	if (face_model[f] < 0 || !face_drawn_slot(b, ts, f))
+		return 0;
+	if (face_model[f] > 0) {
+		poly_t pl;
+		double smin, smax, tmin, tmax;
+		face_poly(b, f, &pl);
+		poly_st_box(&pl, &smin, &smax, &tmin, &tmax);
+		if (bm_face_needs_grid(b, f, &pl, smin, smax, tmin, tmax))
+			return 0;
+	}
+	return 1;
+}
+
+/* one plane, one side, one texture mapping */
+static int same_mapping(const bsp_t *b, int f, int g)
+{
+	const bsp_face *a = &b->faces[f], *c = &b->faces[g];
+	if (a->side != c->side || a->planenum != c->planenum)
+		return 0;
+	if (a->texinfo == c->texinfo)
+		return 1;
+	const bsp_texinfo *x = &b->texinfo[a->texinfo], *y = &b->texinfo[c->texinfo];
+	return x->miptex == y->miptex && x->flags == y->flags && !memcmp(x->vecs, y->vecs, sizeof x->vecs);
+}
+
+static int cmp_long2(const void *x, const void *y)
+{
+	const long *a = x, *c = y;
+	return a[0] != c[0] ? (a[0] < c[0] ? -1 : 1) : a[1] != c[1] ? (a[1] < c[1] ? -1 : 1) : 0;
+}
+
+/* the clusters (face_cl: the cluster's first face; a face alone: -1) and
+   their cell origins (face_s0, face_t0), before the faces are cut */
+static void merge_clusters(const bsp_t *b, const tex_set *ts, const int *mfirst, const int *mleaf)
+{
+	face_cl = xmalloc((size_t) b->num_faces * sizeof *face_cl);
+	face_s0 = xmalloc((size_t) b->num_faces * sizeof *face_s0);
+	face_t0 = xmalloc((size_t) b->num_faces * sizeof *face_t0);
+	int     *up = xmalloc((size_t) b->num_faces * sizeof *up);
+	uint8_t *ok = xcalloc((size_t) b->num_faces, 1);
+	int     *edge_face = xmalloc((size_t) b->num_edges * sizeof *edge_face);
+	for (int f = 0; f < b->num_faces; f++) {
+		face_cl[f] = -1;
+		up[f] = f;
+		ok[f] = (uint8_t) merge_face_ok(b, ts, f);
+	}
+	for (int e = 0; e < b->num_edges; e++)
+		edge_face[e] = -1;
+	for (int n = 0; n < b->num_nodes; n++) {
+		int f0 = b->nodes[n].firstface, f1 = f0 + b->nodes[n].numfaces;
+		for (int f = f0; f < f1; f++) {
+			if (!ok[f])
+				continue;
+			for (int e = 0; e < b->faces[f].numedges; e++) {
+				int se = b->surfedges[b->faces[f].firstedge + e];
+				int ed = se >= 0 ? se : -se, g = edge_face[ed];
+				if (g >= f0 && g < f && same_mapping(b, g, f) && same_marks(mfirst, mleaf, g, f))
+					up[uf_find(up, f)] = uf_find(up, g);
+				edge_face[ed] = f;
+			}
+		}
+	}
+
+	/* each cluster's cells: on a wrapped axis, every origin on a
+	   repetition within one cell's reach of its lowest face's, the one
+	   whose cells the faces' boxes reach fewest of (the lowest on a tie) */
+	int *memb = xmalloc((size_t) b->num_faces * sizeof *memb), clusters = 0, faces = 0;
+	long (*cells)[2] = NULL;
+	size_t ccap = 0;
+	for (int f = 0; f < b->num_faces; f++) {
+		if (ok[f] != 1)
+			continue;                                  /* (not merged, or in a cluster already) */
+		int root = uf_find(up, f), nm = 0;
+		for (int g = f; g < b->num_faces; g++)        /* (f its first face: the cluster's id) */
+			if (ok[g] == 1 && uf_find(up, g) == root) {
+				memb[nm++] = g;
+				ok[g] = 2;
+			}
+		if (nm < 2)
+			continue;
+		const tex_slot   *s = face_drawn_slot(b, ts, f);
+		const bsp_miptex *m = &b->miptex[b->texinfo[b->faces[f].texinfo].miptex];
+		const double W = s->win_x ? 256.0 * m->w / s->rep_w : (double) m->w;
+		const double H = s->win_y ? 256.0 * m->h / s->rep_h : (double) m->h;
+		double (*box)[4] = xmalloc((size_t) nm * sizeof *box), smin = 1e30, tmin = 1e30;
+		for (int k = 0; k < nm; k++) {
+			poly_t pl;
+			face_poly(b, memb[k], &pl);
+			poly_st_box(&pl, &box[k][0], &box[k][1], &box[k][2], &box[k][3]);
+			if (box[k][0] < smin) smin = box[k][0];
+			if (box[k][2] < tmin) tmin = box[k][2];
+		}
+		double bs = s->win_x ? floor(smin / m->w) * m->w : 0, bt = s->win_y ? floor(tmin / m->h) * m->h : 0;
+		int ns = s->win_x ? (int) lround(W / m->w) : 1, nt = s->win_y ? (int) lround(H / m->h) : 1;
+		double best_s = bs, best_t = bt;
+		size_t best = (size_t) -1;
+		for (int ks = 0; ks < ns; ks++)
+			for (int kt = 0; kt < nt; kt++) {
+				double s0 = bs - ks * m->w, t0 = bt - kt * m->h;
+				size_t nc = 0;
+				for (int k = 0; k < nm; k++) {
+					long i0 = (long) floor((box[k][0] - s0) / W), i1 = (long) floor((box[k][1] - 1e-4 - s0) / W);
+					long j0 = (long) floor((box[k][2] - t0) / H), j1 = (long) floor((box[k][3] - 1e-4 - t0) / H);
+					for (long i = i0; i <= i1; i++)
+						for (long j = j0; j <= j1; j++) {
+							if (nc == ccap) {
+								ccap = ccap ? 2 * ccap : 1024;
+								cells = realloc(cells, ccap * sizeof *cells);
+								if (!cells)
+									die("out of memory (merge)");
+							}
+							cells[nc][0] = i;
+							cells[nc][1] = j;
+							nc++;
+						}
+				}
+				qsort(cells, nc, sizeof *cells, cmp_long2);
+				size_t u = nc ? 1 : 0;
+				for (size_t c = 1; c < nc; c++)
+					u += cmp_long2(cells[c], cells[c - 1]) != 0;
+				if (u < best) {
+					best = u;
+					best_s = s0;
+					best_t = t0;
+				}
+			}
+		for (int k = 0; k < nm; k++) {
+			face_cl[memb[k]] = f;
+			face_s0[memb[k]] = best_s;
+			face_t0[memb[k]] = best_t;
+		}
+		free(box);
+		clusters++;
+		faces += nm;
+	}
+	printf("qcook:   merge: %d clusters of %d faces on one cell grid each\n", clusters, faces);
+	free(cells); free(memb); free(edge_face); free(ok); free(up);
+}
+
+/* 2D: the plane's two axes other than its normal's largest */
+typedef struct { double x, y; } pt2;
+
+static pt2 to2(const double p[3], int ax)
+{
+	pt2 r = { p[ax == 0 ? 1 : 0], p[ax == 2 ? 1 : 2] };
+	return r;
+}
+
+static double cross3(pt2 o, pt2 a, pt2 c)
+{
+	return (a.x - o.x) * (c.y - o.y) - (a.y - o.y) * (c.x - o.x);
+}
+
+static double area2(const poly_t *pl, int ax)        /* signed, twice */
+{
+	double a = 0;
+	for (int i = 0; i < pl->n; i++) {
+		pt2 p = to2(pl->v[i].p, ax), q = to2(pl->v[(i + 1) % pl->n].p, ax);
+		a += p.x * q.y - p.y * q.x;
+	}
+	return a;
+}
+
+static int same_point(const pvert *a, const pvert *c)
+{
+	for (int k = 0; k < 3; k++)
+		if (tj_quant(a->p[k]) != tj_quant(c->p[k]))
+			return 0;
+	return 1;
+}
+
+/* The light a set of faces gives a point: the lightmap of the face that
+   holds it (the deepest inside, in texture space: one mapping for all).
+   The merge keeps Quake's light within QCOOK_MERGE_ERR (MG_ERR, 0..255 at
+   the cook's gain; negative: no limit) of what the vertex lights spread
+   by the GPU's Gouraud give there: a merge whose dropped points the merged
+   piece's corners light worse is not made, a vertex whose neighbours on
+   its run light it worse is kept. */
+#define MG_MAXF 64
+#define MG_ERR  16
+static double mg_err = MG_ERR;
+
+typedef struct {
+	const bsp_t *b;
+	int       nf, liquid;
+	int       face[MG_MAXF];
+	poly_t    st[MG_MAXF];
+	facelight fl[MG_MAXF];
+	double    sign[MG_MAXF];
+} mg_light;
+
+static int mg_light_set(mg_light *L, const bsp_t *b, const tex_set *ts, const int *faces, int nf)
+{
+	if (nf > MG_MAXF)
+		return 0;
+	L->b = b;
+	L->nf = nf;
+	L->liquid = (face_slot(ts, b->texinfo[b->faces[faces[0]].texinfo].miptex)->flags & QWF_LIQUID) != 0;
+	for (int k = 0; k < nf; k++) {
+		L->face[k] = faces[k];
+		face_poly(b, faces[k], &L->st[k]);
+		face_light_setup(b, faces[k], &L->st[k], &L->fl[k]);
+		double a = 0;
+		const poly_t *pl = &L->st[k];
+		for (int i = 0; i < pl->n; i++)
+			a += pl->v[i].s * pl->v[(i + 1) % pl->n].t - pl->v[i].t * pl->v[(i + 1) % pl->n].s;
+		L->sign[k] = a < 0 ? -1 : 1;
+	}
+	return 1;
+}
+
+static uint8_t mg_light_at(const mg_light *L, const pvert *v, int *src)
+{
+	double best = -1e30;
+	int    at = 0;
+	for (int k = 0; k < L->nf && L->nf > 1; k++) {
+		const poly_t *pl = &L->st[k];
+		double in = 1e30;
+		for (int i = 0; i < pl->n; i++) {
+			const pvert *e0 = &pl->v[i], *e1 = &pl->v[(i + 1) % pl->n];
+			double ds = e1->s - e0->s, dt = e1->t - e0->t, len = sqrt(ds * ds + dt * dt);
+			if (len < 1e-6)
+				continue;
+			double c = L->sign[k] * (ds * (v->t - e0->t) - dt * (v->s - e0->s)) / len;
+			if (c < in)
+				in = c;
+		}
+		if (in > best) {
+			best = in;
+			at = k;
+		}
+	}
+	if (src)
+		*src = L->face[at];
+	return face_light_at(&L->fl[at], v->s, v->t);
+}
+
+/* the light the GPU gives point q of convex polygon u, its corners lit ul:
+   Gouraud over the fan from corner 0 (rec_add_piece's), in the triangle q
+   is the deepest in */
+static double fan_light(const poly_t *u, const double *ul, int ax, pt2 q)
+{
+	double best = -1e30, val = ul[0];
+	pt2 p0 = to2(u->v[0].p, ax);
+	for (int i = 1; i + 1 < u->n; i++) {
+		pt2 p1 = to2(u->v[i].p, ax), p2 = to2(u->v[i + 1].p, ax);
+		double d = cross3(p0, p1, p2);
+		if (fabs(d) < 1e-9)
+			continue;
+		double l1 = cross3(q, p1, p2) / d, l2 = cross3(p0, q, p2) / d, l3 = 1 - l1 - l2;
+		double m = l1 < l2 ? (l1 < l3 ? l1 : l3) : (l2 < l3 ? l2 : l3);
+		if (m > best) {
+			best = m;
+			val = l1 * ul[0] + l2 * ul[i] + l3 * ul[i + 1];
+		}
+	}
+	return val;
+}
+
+static int    g_ax;
+static pvert *g_pts;
+static int cmp_pt(const void *x, const void *y)
+{
+	pt2 a = to2(g_pts[*(const int *) x].p, g_ax), c = to2(g_pts[*(const int *) y].p, g_ax);
+	return a.x != c.x ? (a.x < c.x ? -1 : 1) : a.y != c.y ? (a.y < c.y ? -1 : 1) : 0;
+}
+
+/* a and c merged into u if their union is convex (its hull's area theirs):
+   the hull's corners, and every vertex of either on the hull's outline, in
+   a's winding */
+static int try_union(const poly_t *a, const poly_t *c, int ax, const mg_light *L, poly_t *u)
+{
+	static pvert pts[2 * MAXPV];
+	int n = 0;
+	for (int i = 0; i < a->n + c->n; i++) {
+		const pvert *v = i < a->n ? &a->v[i] : &c->v[i - a->n];
+		int seen = 0;
+		for (int j = 0; j < n && !seen; j++)
+			seen = same_point(&pts[j], v);
+		if (!seen)
+			pts[n++] = *v;
+	}
+	int idx[2 * MAXPV], hull[4 * MAXPV], nh = 0;
+	for (int i = 0; i < n; i++)
+		idx[i] = i;
+	g_ax = ax;
+	g_pts = pts;
+	qsort(idx, (size_t) n, sizeof *idx, cmp_pt);
+	for (int i = 0; i < n; i++) {                      /* Andrew's monotone chain, CCW */
+		while (nh >= 2 && cross3(to2(pts[hull[nh - 2]].p, ax), to2(pts[hull[nh - 1]].p, ax), to2(pts[idx[i]].p, ax)) <= 1e-9)
+			nh--;
+		hull[nh++] = idx[i];
+	}
+	for (int i = n - 2, lo = nh + 1; i >= 0; i--) {
+		while (nh >= lo && cross3(to2(pts[hull[nh - 2]].p, ax), to2(pts[hull[nh - 1]].p, ax), to2(pts[idx[i]].p, ax)) <= 1e-9)
+			nh--;
+		hull[nh++] = idx[i];
+	}
+	nh--;                                              /* (the first again) */
+	if (nh < 3)
+		return 0;
+	double ha = 0;
+	for (int i = 0; i < nh; i++) {
+		pt2 p = to2(pts[hull[i]].p, ax), q = to2(pts[hull[(i + 1) % nh]].p, ax);
+		ha += p.x * q.y - p.y * q.x;
+	}
+	if (fabs(ha / 2 - (fabs(area2(a, ax)) + fabs(area2(c, ax))) / 2) > MG_AREA)
+		return 0;                                      /* not convex (or apart) */
+	u->n = 0;
+	for (int i = 0; i < nh; i++) {
+		const pvert *h0 = &pts[hull[i]], *h1 = &pts[hull[(i + 1) % nh]];
+		if (u->n >= MG_MAXV)
+			return 0;
+		u->v[u->n++] = *h0;
+		pt2 p = to2(h0->p, ax), q = to2(h1->p, ax);
+		double dx = q.x - p.x, dy = q.y - p.y, L2 = dx * dx + dy * dy, L = sqrt(L2);
+		struct { double t; int k; } on[2 * MAXPV];
+		int non = 0;
+		for (int k = 0; k < n; k++) {                  /* the vertices on this edge, in order */
+			pt2 r = to2(pts[k].p, ax);
+			double t = ((r.x - p.x) * dx + (r.y - p.y) * dy) / L2;
+			if (t * L < MG_TOL || (1 - t) * L < MG_TOL || fabs(cross3(p, q, r)) / L > MG_TOL)
+				continue;
+			int at = non++;
+			for (; at > 0 && on[at - 1].t > t; at--)
+				on[at] = on[at - 1];
+			on[at].t = t;
+			on[at].k = k;
+		}
+		for (int k = 0; k < non; k++) {
+			if (u->n >= MG_MAXV)
+				return 0;
+			u->v[u->n++] = pts[on[k].k];
+		}
+	}
+	if ((area2(a, ax) < 0) != (area2(u, ax) < 0))      /* a's winding */
+		for (int i = 0, j = u->n - 1; i < j; i++, j--) {
+			pvert t = u->v[i];
+			u->v[i] = u->v[j];
+			u->v[j] = t;
+		}
+	if (mg_err >= 0 && !L->liquid) {                   /* the points it drops: lit as before? */
+		double ul[MAXPV];
+		for (int i = 0; i < u->n; i++)
+			ul[i] = mg_light_at(L, &u->v[i], NULL);
+		for (int k = 0; k < n; k++) {
+			int kept = 0;
+			for (int i = 0; i < u->n && !kept; i++)
+				kept = same_point(&u->v[i], &pts[k]);
+			if (!kept && fabs(fan_light(u, ul, ax, to2(pts[k].p, ax)) - mg_light_at(L, &pts[k], NULL)) > mg_err)
+				return 0;
+		}
+	}
+	return 1;
+}
+
+static int cmp_cell(const void *x, const void *y)
+{
+	const piece_t *a = &pc_list[*(const int *) x], *c = &pc_list[*(const int *) y];
+	if (face_cl[a->face] != face_cl[c->face])
+		return face_cl[a->face] < face_cl[c->face] ? -1 : 1;
+	if (a->s_off != c->s_off)
+		return a->s_off < c->s_off ? -1 : 1;
+	if (a->t_off != c->t_off)
+		return a->t_off < c->t_off ? -1 : 1;
+	for (int k = 0; k < 2; k++)
+		if (a->sub[k] != c->sub[k])
+			return a->sub[k] < c->sub[k] ? -1 : 1;
+	return *(const int *) x < *(const int *) y ? -1 : 1;
+}
+
+/* a cluster's pieces in one cell merged while their union is convex: the
+   merged piece in its first piece's place, the others dead */
+static void merge_pieces(const bsp_t *b, const tex_set *ts)
+{
+	static mg_light L;
+	int *ids = xmalloc((size_t) (pc_num + 1) * sizeof *ids), n = 0;
+	for (int i = 0; i < pc_num; i++)
+		if (face_cl[pc_list[i].face] >= 0)
+			ids[n++] = i;
+	qsort(ids, (size_t) n, sizeof *ids, cmp_cell);
+	poly_t *cur = NULL;
+	int    *owner = NULL, cap = 0;
+	for (int r0 = 0, r1; r0 < n; r0 = r1) {
+		for (r1 = r0 + 1; r1 < n; r1++) {
+			const piece_t *a = &pc_list[ids[r0]], *c = &pc_list[ids[r1]];
+			if (face_cl[a->face] != face_cl[c->face] || a->s_off != c->s_off || a->t_off != c->t_off ||
+			    a->sub[0] != c->sub[0] || a->sub[1] != c->sub[1])
+				break;
+		}
+		int k = r1 - r0;
+		if (k < 2)
+			continue;
+		if (k > cap) {
+			cap   = k;
+			cur   = realloc(cur, (size_t) cap * sizeof *cur);
+			owner = realloc(owner, (size_t) cap * sizeof *owner);
+			if (!cur || !owner)
+				die("out of memory (merge)");
+		}
+		const float *nrm = b->planes[b->faces[pc_list[ids[r0]].face].planenum].n;
+		int ax = fabs(nrm[0]) >= fabs(nrm[1]) && fabs(nrm[0]) >= fabs(nrm[2]) ? 0 : fabs(nrm[1]) >= fabs(nrm[2]) ? 1 : 2;
+		int rf[MG_MAXF + 1];
+		if (k > MG_MAXF)
+			continue;                                  /* (too many faces in one cell) */
+		for (int x = 0; x < k; x++)
+			rf[x] = pc_list[ids[r0 + x]].face;
+		mg_light_set(&L, b, ts, rf, k);
+		for (int x = 0; x < k; x++) {
+			cur[x]   = pc_list[ids[r0 + x]].pl;
+			owner[x] = x;                              /* (merged into owner[x]) */
+		}
+		for (int changed = 1; changed; ) {
+			changed = 0;
+			for (int x = 0; x < k; x++)
+				for (int y = x + 1; y < k && owner[x] == x; y++) {
+					poly_t u;
+					if (owner[y] != y || !try_union(&cur[x], &cur[y], ax, &L, &u))
+						continue;
+					cur[x] = u;
+					for (int z = 0; z < k; z++)
+						if (owner[z] == y)
+							owner[z] = x;
+					changed = 1;
+				}
+		}
+		for (int x = 0; x < k; x++) {
+			if (owner[x] != x)
+				continue;
+			int nf = 0;
+			for (int z = 0; z < k; z++)
+				nf += owner[z] == x;
+			if (nf < 2)
+				continue;
+			piece_t *lead = &pc_list[ids[r0 + x]];
+			lead->pl = cur[x];
+			lead->mfirst = pc_nmem;
+			lead->mn = nf;
+			for (int z = 0; z < k; z++) {
+				if (owner[z] != x)
+					continue;
+				if (pc_nmem == pc_memcap) {
+					pc_memcap = pc_memcap ? 2 * pc_memcap : 1024;
+					pc_mem = realloc(pc_mem, (size_t) pc_memcap * sizeof *pc_mem);
+					if (!pc_mem)
+						die("out of memory (merge)");
+				}
+				pc_mem[pc_nmem++] = pc_list[ids[r0 + z]].face;
+				if (z != x)
+					pc_list[ids[r0 + z]].dead = 1;
+			}
+		}
+	}
+	free(cur); free(owner); free(ids);
+}
+
+/* is vertex k of pl on the straight line between its neighbours? */
+static int on_run(const poly_t *pl, int k)
+{
+	const double *p = pl->v[(k + pl->n - 1) % pl->n].p, *v = pl->v[k].p, *q = pl->v[(k + 1) % pl->n].p;
+	double d[3] = { q[0] - p[0], q[1] - p[1], q[2] - p[2] }, w[3] = { v[0] - p[0], v[1] - p[1], v[2] - p[2] };
+	double L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+	if (L2 < MG_TOL * MG_TOL)
+		return 0;
+	double t = (w[0] * d[0] + w[1] * d[1] + w[2] * d[2]) / L2, L = sqrt(L2);
+	double cx = w[1] * d[2] - w[2] * d[1], cy = w[2] * d[0] - w[0] * d[2], cz = w[0] * d[1] - w[1] * d[0];
+	return t * L >= MG_TOL && (1 - t) * L >= MG_TOL && (cx * cx + cy * cy + cz * cz) / L2 <= MG_TOL * MG_TOL;
+}
+
+/* A set of pieces' light at (s, t), as the GPU spreads their vertex lights:
+   the piece holding the point (the deepest inside, in texture space), the
+   fan from its corner 0 */
+typedef struct { const poly_t *pl; double l[MAXPV]; double sign; } mg_lit;
+
+static double lit_at(const mg_lit *ps, int n, double s, double t)
+{
+	double best = -1e30;
+	int    at = -1;
+	for (int i = 0; i < n; i++) {
+		const poly_t *pl = ps[i].pl;
+		double in = 1e30;
+		for (int k = 0; k < pl->n; k++) {
+			const pvert *e0 = &pl->v[k], *e1 = &pl->v[(k + 1) % pl->n];
+			double ds = e1->s - e0->s, dt = e1->t - e0->t, len = sqrt(ds * ds + dt * dt);
+			if (len < 1e-6)
+				continue;
+			double c = ps[i].sign * (ds * (t - e0->t) - dt * (s - e0->s)) / len;
+			if (c < in)
+				in = c;
+		}
+		if (in > best) {
+			best = in;
+			at = i;
+		}
+	}
+	if (at < 0)
+		return 0;
+	const poly_t *pl = ps[at].pl;
+	const double *l = ps[at].l;
+	double bv = -1e30, val = l[0];
+	for (int i = 1; i + 1 < pl->n; i++) {
+		const pvert *p0 = &pl->v[0], *p1 = &pl->v[i], *p2 = &pl->v[i + 1];
+		double d = (p1->s - p0->s) * (p2->t - p0->t) - (p1->t - p0->t) * (p2->s - p0->s);
+		if (fabs(d) < 1e-9)
+			continue;
+		double l1 = ((p1->s - s) * (p2->t - t) - (p1->t - t) * (p2->s - s)) / d;
+		double l2 = ((s - p0->s) * (p2->t - p0->t) - (t - p0->t) * (p2->s - p0->s)) / d;
+		double l3 = 1 - l1 - l2, m = l1 < l2 ? (l1 < l3 ? l1 : l3) : (l2 < l3 ? l2 : l3);
+		if (m > bv) {
+			bv = m;
+			val = l1 * l[0] + l2 * l[i] + l3 * l[i + 1];
+		}
+	}
+	return val;
+}
+
+static void lit_set(mg_lit *x, const bsp_t *b, const tex_set *ts, const piece_t *p)
+{
+	static mg_light L;
+	mg_light_set(&L, b, ts, p->mn ? &pc_mem[p->mfirst] : &p->face, p->mn ? p->mn : 1);
+	x->pl = &p->pl;
+	double a = 0;
+	for (int k = 0; k < p->pl.n; k++) {
+		x->l[k] = mg_light_at(&L, &p->pl.v[k], NULL);
+		a += p->pl.v[k].s * p->pl.v[(k + 1) % p->pl.n].t - p->pl.v[k].t * p->pl.v[(k + 1) % p->pl.n].s;
+	}
+	x->sign = a < 0 ? -1 : 1;
+}
+
+/* A cluster whose cut on its common grid lights a luxel of Quake's
+   lightmap worse by more than MG_ERR than its faces' own cuts did (the cut
+   lines moved: the vertex lights sampled elsewhere, merges or not) takes
+   its faces' own cuts back, unmerged. Before merge_drop (each dropped
+   vertex is checked there). */
+static void merge_check(const bsp_t *b, const tex_set *ts)
+{
+	if (mg_err < 0)
+		return;
+	int *memb = xmalloc((size_t) b->num_faces * sizeof *memb), back = 0, kept = 0;
+	mg_lit *now = NULL, *was = NULL;
+	int ncap = 0, wcap = 0;
+	piece_t *own = NULL;
+	int ocap = 0;
+	for (int c = 0; c < b->num_faces; c++) {
+		if (face_cl[c] != c)
+			continue;
+		int nm = 0;
+		for (int f = c; f < b->num_faces; f++)
+			if (face_cl[f] == c)
+				memb[nm++] = f;
+		/* the faces' own cuts (face_pieces with no cluster: appended, then
+		   taken out of the list) */
+		int base = pc_num, no = 0;
+		for (int k = 0; k < nm; k++) {
+			int f = memb[k], f0 = pc_first[f], fn = pc_count[f];
+			face_cl[f] = -1;
+			face_pieces(b, ts, f);
+			face_cl[f] = c;
+			pc_first[f] = f0;
+			pc_count[f] = fn;
+		}
+		no = pc_num - base;
+		if (no > ocap) {
+			ocap = no;
+			own = realloc(own, (size_t) ocap * sizeof *own);
+			if (!own) die("out of memory (merge)");
+		}
+		memcpy(own, &pc_list[base], (size_t) no * sizeof *own);
+		pc_num = base;
+		if (no > wcap) {
+			wcap = no;
+			was = realloc(was, (size_t) wcap * sizeof *was);
+			if (!was) die("out of memory (merge)");
+		}
+		/* the pieces now (their faces' ranges hold the merged ones; after
+		   the own cuts, whose appending may move the list) */
+		int nn = 0;
+		for (int k = 0; k < nm; k++)
+			for (int i = 0; i < pc_count[memb[k]]; i++) {
+				const piece_t *p = &pc_list[pc_first[memb[k]] + i];
+				if (p->dead)
+					continue;
+				if (nn == ncap) {
+					ncap = ncap ? 2 * ncap : 64;
+					now = realloc(now, (size_t) ncap * sizeof *now);
+					if (!now) die("out of memory (merge)");
+				}
+				lit_set(&now[nn++], b, ts, p);
+			}
+		for (int i = 0; i < no; i++)
+			lit_set(&was[i], b, ts, &own[i]);
+		/* every luxel of every face: no worse by more than MG_ERR */
+		int worse = 0;
+		for (int k = 0; k < nm && !worse; k++) {
+			poly_t pl;
+			facelight fl;
+			face_poly(b, memb[k], &pl);
+			face_light_setup(b, memb[k], &pl, &fl);
+			if (!fl.nmaps)
+				continue;
+			mg_lit self;
+			piece_t fp = { 0 };
+			fp.face = memb[k];
+			fp.pl = pl;
+			lit_set(&self, b, ts, &fp);              /* (its polygon: the inside test) */
+			for (int j = 0; j < fl.h && !worse; j++)
+				for (int i = 0; i < fl.w && !worse; i++) {
+					double sl = fl.smin + 16 * i, tl = fl.tmin + 16 * j, in = 1e30;
+					for (int e = 0; e < pl.n; e++) {
+						const pvert *e0 = &pl.v[e], *e1 = &pl.v[(e + 1) % pl.n];
+						double ds = e1->s - e0->s, dt = e1->t - e0->t, len = sqrt(ds * ds + dt * dt);
+						if (len >= 1e-6) {
+							double cc = self.sign * (ds * (tl - e0->t) - dt * (sl - e0->s)) / len;
+							if (cc < in) in = cc;
+						}
+					}
+					if (in < 0)
+						continue;                    /* (a luxel outside the face) */
+					double truth = face_light_at(&fl, sl, tl);
+					double e_now = fabs(lit_at(now, nn, sl, tl) - truth);
+					double e_was = fabs(lit_at(was, no, sl, tl) - truth);
+					worse = e_now > e_was + mg_err;
+				}
+		}
+		if (!worse) {
+			kept++;
+			continue;
+		}
+		back++;                                      /* the faces' own cuts back */
+		for (int k = 0; k < nm; k++) {
+			int f = memb[k];
+			for (int i = 0; i < pc_count[f]; i++)
+				pc_list[pc_first[f] + i].dead = 1;
+			pc_first[f] = pc_num;
+			pc_count[f] = 0;
+		}
+		for (int i = 0; i < no; i++) {
+			if (pc_num == pc_cap) {
+				pc_cap = pc_cap ? 2 * pc_cap : 4096;
+				pc_list = realloc(pc_list, (size_t) pc_cap * sizeof *pc_list);
+				if (!pc_list) die("out of memory (pieces)");
+			}
+			int f = own[i].face;
+			if (!pc_count[f])
+				pc_first[f] = pc_num;
+			pc_list[pc_num++] = own[i];
+			pc_count[f]++;
+		}
+		for (int k = 0; k < nm; k++)
+			face_cl[memb[k]] = -1;
+	}
+	printf("qcook:   merge: %d clusters on their grid, %d back to their faces' own cuts (the light)\n", kept, back);
+	free(memb); free(now); free(was); free(own);
+}
+
+/* every vertex on a straight run of every live piece holding it (within its
+   model) dropped from all of them, unless the light along the run would
+   miss Quake's there by more than MG_ERR in one of them */
+typedef struct { int32_t q[3]; int model, users, runs, keep; } mg_vert;
+
+static mg_vert *mg_find(mg_vert *h, uint32_t mask, const pvert *v, int model)
+{
+	int32_t q[3] = { tj_quant(v->p[0]), tj_quant(v->p[1]), tj_quant(v->p[2]) };
+	uint32_t at = ((uint32_t) q[0] * 73856093u ^ (uint32_t) q[1] * 19349663u ^ (uint32_t) q[2] * 83492791u ^
+	               (uint32_t) model * 2654435761u) & mask;
+	for (;; at = (at + 1) & mask) {
+		mg_vert *e = &h[at];
+		if (!e->users) {
+			memcpy(e->q, q, sizeof q);
+			e->model = model;
+			return e;
+		}
+		if (e->model == model && !memcmp(e->q, q, sizeof q))
+			return e;
+	}
+}
+
+static void merge_drop(const bsp_t *b, const tex_set *ts)
+{
+	static mg_light L;
+	size_t nv = 0;
+	for (int i = 0; i < pc_num; i++)
+		if (!pc_list[i].dead)
+			nv += (size_t) pc_list[i].pl.n;
+	uint32_t size = 1024;
+	while (size < 2 * nv)
+		size *= 2;
+	mg_vert **key = xmalloc((nv + 1) * sizeof *key);    /* each live piece's vertices' */
+	double   *lit = xmalloc((nv + 1) * sizeof *lit);    /* ... and Quake's light there */
+	int      *off = xmalloc((size_t) (pc_num + 1) * sizeof *off);
+	mg_vert  *h = xcalloc(size, sizeof *h);
+	size_t at = 0;
+	for (int i = 0; i < pc_num; i++) {
+		const piece_t *p = &pc_list[i];
+		off[i] = (int) at;
+		if (p->dead)
+			continue;
+		mg_light_set(&L, b, ts, p->mn ? &pc_mem[p->mfirst] : &p->face, p->mn ? p->mn : 1);
+		for (int k = 0; k < p->pl.n; k++, at++) {
+			key[at] = mg_find(h, size - 1, &p->pl.v[k], p->model);
+			key[at]->users++;
+			key[at]->runs += on_run(&p->pl, k);
+			lit[at] = L.liquid ? 0 : mg_light_at(&L, &p->pl.v[k], NULL);
+		}
+	}
+#define DROPS(e) ((e)->runs == (e)->users && !(e)->keep)
+	for (int round = 0, vetoes = 1; vetoes && mg_err >= 0 && round < 16; round++) {
+		vetoes = 0;                                 /* (a kept vertex shortens its neighbours' runs) */
+		for (int i = 0; i < pc_num; i++) {
+			const piece_t *p = &pc_list[i];
+			int n = p->pl.n;
+			for (int k = 0; k < n && !p->dead; k++) {
+				mg_vert **K = &key[off[i]];
+				if (!DROPS(K[k]))
+					continue;
+				int a = k, c = k;
+				do a = (a + n - 1) % n; while (a != k && DROPS(K[a]));
+				do c = (c + 1) % n; while (c != k && DROPS(K[c]));
+				if (a == k || c == k)
+					continue;
+				const double *A = p->pl.v[a].p, *C = p->pl.v[c].p, *V = p->pl.v[k].p;
+				double d[3] = { C[0] - A[0], C[1] - A[1], C[2] - A[2] };
+				double L2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+				double t = L2 > 0 ? ((V[0] - A[0]) * d[0] + (V[1] - A[1]) * d[1] + (V[2] - A[2]) * d[2]) / L2 : 0;
+				const double *l = &lit[off[i]];
+				if (fabs(l[a] + t * (l[c] - l[a]) - l[k]) > mg_err) {
+					K[k]->keep = 1;
+					vetoes++;
+				}
+			}
+		}
+	}
+	for (int i = 0; i < pc_num; i++) {
+		piece_t *p = &pc_list[i];
+		if (p->dead)
+			continue;
+		poly_t out;
+		out.n = 0;
+		for (int k = 0; k < p->pl.n; k++) {
+			if (DROPS(key[off[i] + k]))
+				mg_dropped++;
+			else
+				out.v[out.n++] = p->pl.v[k];
+		}
+		if (out.n < 3) {                           /* (a sliver: no pixel) */
+			p->dead = 1;
+			mg_dead++;
+		} else {
+			p->pl = out;
+		}
+	}
+#undef DROPS
+	free(h); free(off); free(lit); free(key);
+}
+
+/* a merged piece's vertex light: from the lightmap of its face that holds
+   the point */
+static uint8_t merged_light_at(const bsp_t *b, const tex_set *ts, const piece_t *p, const pvert *v, int *src)
+{
+	static mg_light L;
+	static const piece_t *last;
+	if (p != last) {
+		mg_light_set(&L, b, ts, &pc_mem[p->mfirst], p->mn);
+		last = p;
+	}
+	return mg_light_at(&L, v, src);
+}
+
+/* the box of a face's live pieces (what it emits, merged pieces whole):
+   their count */
+static int pieces_bbox(int f, double mn[3], double mx[3])
+{
+	int n = 0;
+	for (int k = 0; k < 3; k++) { mn[k] = 1e30; mx[k] = -1e30; }
+	for (int i = 0; i < pc_count[f]; i++) {
+		const piece_t *p = &pc_list[pc_first[f] + i];
+		if (p->dead)
+			continue;
+		n++;
+		for (int v = 0; v < p->pl.n; v++)
+			for (int k = 0; k < 3; k++) {
+				if (p->pl.v[v].p[k] < mn[k]) mn[k] = p->pl.v[v].p[k];
+				if (p->pl.v[v].p[k] > mx[k]) mx[k] = p->pl.v[v].p[k];
+			}
+	}
+	return n;
+}
+
 /* each face's vertex light, summed over its cooked vertices (the leaf light) */
 static uint32_t *face_lsum;
 static uint32_t *face_lcnt;
 
 /* Add a face's (repaired) pieces to record r (flushed whenever it fills
-   up): UVs from the cell's corner, light from the face's lightmap. */
+   up): UVs from the cell's corner, light from the face's lightmap (a
+   merged piece's: each vertex from its face's, QCOOK_MERGE). */
 static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t *r)
 {
 	if (!pc_count[f])
@@ -941,16 +1801,7 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 	const bsp_miptex  *m  = &b->miptex[ti->miptex];
 
 	poly_t pl;                          /* the whole face, for its lightmap */
-	pl.n = 0;
-	for (int e = 0; e < bf->numedges && pl.n < MAXPV; e++) {
-		int se = b->surfedges[bf->firstedge + e];
-		int vi = se >= 0 ? b->edges[se * 2] : b->edges[-se * 2 + 1];
-		pvert *v = &pl.v[pl.n++];
-		for (int k = 0; k < 3; k++)
-			v->p[k] = b->verts[vi * 3 + k];
-		v->s = v->p[0] * ti->vecs[0][0] + v->p[1] * ti->vecs[0][1] + v->p[2] * ti->vecs[0][2] + ti->vecs[0][3];
-		v->t = v->p[0] * ti->vecs[1][0] + v->p[1] * ti->vecs[1][1] + v->p[2] * ti->vecs[1][2] + ti->vecs[1][3];
-	}
+	face_poly(b, f, &pl);
 	facelight fl;
 	face_light_setup(b, f, &pl, &fl);
 	if (pc_count[f] > 1)
@@ -958,6 +1809,8 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 
 	for (int i = 0; i < pc_count[f]; i++) {
 		const piece_t *p = &pc_list[pc_first[f] + i];
+		if (p->dead)
+			continue;
 		double  uv[MAXPV][2];            /* cooked texels from the cell's corner */
 		uint8_t light[MAXPV];
 		for (int k = 0; k < p->pl.n; k++) {
@@ -973,11 +1826,23 @@ static void emit_face(out_t *o, const bsp_t *b, const tex_set *ts, int f, rec_t 
 				light[k] = (uint8_t) (l > 255 ? 255 : l);
 				continue;
 			}
-			light[k] = face_light_at(&fl, p->pl.v[k].s, p->pl.v[k].t);
-			face_lsum[f] += light[k];
-			face_lcnt[f]++;
+			int src = f;
+			light[k] = p->mn ? merged_light_at(b, ts, p, &p->pl.v[k], &src)
+			                 : face_light_at(&fl, p->pl.v[k].s, p->pl.v[k].t);
+			face_lsum[src] += light[k];
+			face_lcnt[src]++;
 		}
 		rec_add_piece(o, r, &p->pl, (const double (*)[2]) uv, light, s, f);
+		for (int k = 0; k < p->mn; k++) {      /* (the record draws its other faces too) */
+			int g = pc_mem[p->mfirst + k], known = 0;
+			for (int j = 0; j < r->nfaces && !known; j++)
+				known = r->faces[j] == g;
+			if (!known) {
+				if (r->nfaces >= 256)
+					die("a record of more than 256 faces");
+				r->faces[r->nfaces++] = g;
+			}
+		}
 	}
 }
 
@@ -1301,10 +2166,44 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 			printf("qcook: %d buried faces of still brush models left out\n", buried);
 		free(still);
 	}
+	/* per face, the sorted list of leaves that mark it */
+	int *face_mfirst = xcalloc((size_t) b->num_faces + 1, sizeof *face_mfirst);
+	int *face_mleaf  = xmalloc((size_t) b->num_marks * sizeof *face_mleaf + 4);
+	for (int i = 0; i < b->num_leaves; i++)
+		for (int k = 0; k < b->leaves[i].nummarks; k++) {
+			int mk = b->leaves[i].firstmark + k;
+			if (mk >= 0 && mk < b->num_marks && b->marks[mk] < b->num_faces)
+				face_mfirst[b->marks[mk] + 1]++;
+		}
+	for (int f = 0; f < b->num_faces; f++)
+		face_mfirst[f + 1] += face_mfirst[f];
+	{
+		int *fill = xmalloc((size_t) b->num_faces * sizeof *fill);
+		memcpy(fill, face_mfirst, (size_t) b->num_faces * sizeof *fill);
+		for (int i = 0; i < b->num_leaves; i++)          /* leaves ascending: lists sorted */
+			for (int k = 0; k < b->leaves[i].nummarks; k++) {
+				int mk = b->leaves[i].firstmark + k;
+				if (mk >= 0 && mk < b->num_marks && b->marks[mk] < b->num_faces)
+					face_mleaf[fill[b->marks[mk]]++] = i;
+			}
+		free(fill);
+	}
+	/* the coplanar faces merged (QCOOK_MERGE, 1 by default): their clusters'
+	   cells before the cut, their pieces after */
+	const char *mg = getenv("QCOOK_MERGE"), *me = getenv("QCOOK_MERGE_ERR");
+	merge_on = !(mg && *mg && !atoi(mg));
+	mg_err = me && *me ? atof(me) : MG_ERR;
+	if (merge_on)
+		merge_clusters(b, ts, face_mfirst, face_mleaf);
 	for (int f = 0; f < b->num_faces; f++) {
 		pc_count[f] = 0;
 		if (face_model[f] >= 0)
 			face_pieces(b, ts, f);
+	}
+	if (merge_on) {
+		merge_pieces(b, ts);
+		merge_check(b, ts);
+		merge_drop(b, ts);
 	}
 	if (geo_level != QL_LOW)                 /* (low: fewer polygons, a crack may show) */
 		tj_repair(b);
@@ -1339,28 +2238,6 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	int *face_group = xmalloc((size_t) b->num_faces * sizeof *face_group);
 	for (int f = 0; f < b->num_faces; f++)
 		face_group[f] = -1;
-	/* per face, the sorted list of leaves that mark it */
-	int *face_mfirst = xcalloc((size_t) b->num_faces + 1, sizeof *face_mfirst);
-	int *face_mleaf  = xmalloc((size_t) b->num_marks * sizeof *face_mleaf + 4);
-	for (int i = 0; i < b->num_leaves; i++)
-		for (int k = 0; k < b->leaves[i].nummarks; k++) {
-			int mk = b->leaves[i].firstmark + k;
-			if (mk >= 0 && mk < b->num_marks && b->marks[mk] < b->num_faces)
-				face_mfirst[b->marks[mk] + 1]++;
-		}
-	for (int f = 0; f < b->num_faces; f++)
-		face_mfirst[f + 1] += face_mfirst[f];
-	{
-		int *fill = xmalloc((size_t) b->num_faces * sizeof *fill);
-		memcpy(fill, face_mfirst, (size_t) b->num_faces * sizeof *fill);
-		for (int i = 0; i < b->num_leaves; i++)          /* leaves ascending: lists sorted */
-			for (int k = 0; k < b->leaves[i].nummarks; k++) {
-				int mk = b->leaves[i].firstmark + k;
-				if (mk >= 0 && mk < b->num_marks && b->marks[mk] < b->num_faces)
-					face_mleaf[fill[b->marks[mk]]++] = i;
-			}
-		free(fill);
-	}
 	int *memb  = xmalloc((size_t) b->num_faces * sizeof *memb);    /* a group's faces */
 	int *order = xmalloc((size_t) b->num_faces * sizeof *order);   /* ... breadth first */
 
@@ -1436,7 +2313,10 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 						/* keep the record compact: flush before a face that
 						   would grow it past REC_MAX_RADIUS */
 						double fmn[3], fmx[3], h2 = 0;
-						face_bbox(b, order[q], fmn, fmx);
+						if (!merge_on)
+							face_bbox(b, order[q], fmn, fmx);
+						else if (!pieces_bbox(order[q], fmn, fmx))
+							continue;            /* (its pieces merged into others') */
 						for (int k = 0; k < 3; k++) {
 							double lo = fmn[k] < r->mn[k] ? fmn[k] : r->mn[k];
 							double hi = fmx[k] > r->mx[k] ? fmx[k] : r->mx[k];
@@ -1461,6 +2341,15 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	/* marksurfaces: faces -> the records drawing them, deduplicated per
 	   leaf; records are the visibility ids */
 	int *pair_first = xmalloc((size_t) b->num_faces * sizeof *pair_first);
+	if (world_fmap) {                          /* (the zones' tables' records -> these, zones.c) */
+		FILE *fp = fopen(world_fmap, "w");
+		if (!fp)
+			die("cannot write %s", world_fmap);
+		fprintf(fp, "fmap %u %d\n", o.wrecords, o.npairs);
+		for (int p = 0; p < o.npairs; p++)
+			fprintf(fp, "%d %d\n", o.pair_rec[p], o.pair_face[p]);
+		fclose(fp);
+	}
 	int *pair_next  = xmalloc((size_t) (o.npairs + 1) * sizeof *pair_next);
 	for (int f = 0; f < b->num_faces; f++)
 		pair_first[f] = -1;
@@ -1962,6 +2851,16 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	       h.max_depth, nviews);
 	printf("qcook:   T-junctions: %u vertices inserted into %u pieces; %u pieces ear-clipped%s\n",
 	       tj_inserted, tj_pieces, o.pieces_eared, geo_level == QL_LOW ? " (not repaired: low)" : "");
+	if (merge_on) {
+		mg_pieces = mg_into = 0;
+		for (int i = 0; i < pc_num; i++)
+			if (!pc_list[i].dead && pc_list[i].mn) {
+				mg_into++;
+				mg_pieces += (uint32_t) pc_list[i].mn;
+			}
+		printf("qcook:   merge: %u pieces merged into %u; %u vertices dropped from the straight runs, "
+		       "%u slivers left out\n", mg_pieces, mg_into, mg_dropped, mg_dead);
+	}
 	if (light_grid)
 		printf("qcook:   light grid: cut every %d texels\n", light_grid);
 	if (bm_grid_faces)

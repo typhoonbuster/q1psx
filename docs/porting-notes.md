@@ -14649,3 +14649,116 @@ stream's cook takes 3.2 s (2.8 before).
 - The display lists of a body drawn past band 0 change (most views with a
   monster): a `scripts/dlcheck.sh` reference saved before must be saved
   again.
+
+## §113 — Two small CPU levers: the coplanar faces merged in the cook, lighter dynamic lights (2026-10-31)
+
+The fourth lever after §106's profile (the vblank wait and the slow
+path went to their own branches, §111 and §112; the section numbers are
+provisional): two small ones, a slight loss allowed for a real gain, each
+in its own commit and behind an option that can be turned off.
+
+### 113.1 The coplanar faces merged in the cook (`QCOOK_MERGE`)
+
+§79.3 measured it without building it: a node's faces with one texture,
+side and cell, merged while their union stays convex, −2.5 to −5.7 % of
+the polygons. qbsp cuts a surface every 240 texels for its lightmaps,
+which the PS1 does not use; the cook then cuts each face on its own cells
+(§39.1: a wrapped axis every 256 cooked texels from the face's own origin),
+so a cell of a big floor held two to four pieces of different faces.
+
+- **The cook** (`tools/qcook/world.c`, before the T-junctions' repair and
+  the records):
+  - a *cluster*: the faces of a node's side with one texture mapping
+    (texinfo), marked by the same leaves (always drawn together: the
+    records' own rule, §14.6) and connected by their edges; a brush
+    model's face cut on its light grid (§96) stays out;
+  - the cluster is cut on one cell grid: on a wrapped axis, of the origins
+    on a repetition within a cell of its lowest face's, the one whose
+    cells its faces' boxes reach fewest of (a face alone keeps its own
+    origin, as before);
+  - in each cell its pieces are merged while their union is convex (the
+    hull's area within 0.25 square units of theirs), at most 32 vertices
+    a piece: the hull's corners and every vertex of either on the hull's
+    outline;
+  - then every vertex lying on a straight run of each piece holding it
+    (within 1/16 unit) is dropped from all of them: the inner edges' ends
+    the merges left on the outlines, and the vertices qbsp put into the
+    walls' edges for them. A vertex that any piece keeps as a corner stays
+    in every piece holding it, so no edge loses a vertex its neighbour
+    keeps: no new crack (the low geometry repairs no T-junction, §39.2;
+    the others' repair runs after);
+  - a merged piece's vertex takes its light from the lightmap of its face
+    that holds it; the record draws its faces' pieces as one (their pairs
+    with the record: the leaves' marks unchanged).
+- **The light** (`QCOOK_MERGE_ERR`, 16 of 255 at the cook's gain by
+  default; negative: no bound). Three checks against Quake's lightmap:
+  a merge whose dropped points the merged piece's corners light worse by
+  more than that (the fan from its corner 0, as the record draws it) is
+  not made; a vertex whose run's ends would light it worse by more is kept
+  (in every piece: the crack rule); and a cluster whose cut on the common
+  grid lights one of its faces' luxels worse by more than that than the
+  faces' own cuts did takes its own cuts back, unmerged (the grid moves
+  the cuts, so the points where the light is sampled: without that check
+  E4M7.v7's floor lost its pool of light, the luminance 19.9 → 17.8, its
+  frame +13 %).
+- **The zones' tables** (`tools/qcook/zones.c`, `scripts/cook.sh`): they
+  name the records of a cook without the merge (§93's scan), so the merged
+  worlds no longer matched them and the 17 zoned maps stayed whole (the
+  frames +0.47 %, measured without the merge; the pools down to −74 KB:
+  E4M7 442 → 368 KB). With the
+  merge and a table, `cook.sh` also cooks the map without it, `qcook map
+  --fmap` writes each world record's Quake faces for both, and `qcook
+  zones --fmap` gives a zone every record holding a face of one of its
+  records: the same 17 maps zoned, every chunk a superset by faces.
+- **The options**: `QCOOK_MERGE=0` cooks as before (the 83 world, skeleton
+  and chunk files byte for byte master's); `QCOOK_MERGE_ERR=<0..255>`. Both
+  are in `cooked/settings.txt`'s line: a build re-cooks when they change.
+- **Measured** (PCSX-Redux, master d7de758's cook against the branch's):
+  - the cook, the 32 maps: the polygons 264 270 → 258 223 (−2.29 %), the
+    records 141 054 → 139 650 (−1.0 %), the world files −179 KB;
+  - the 128 views (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`, zoned): 40 228 823
+    → 40 007 841 cycles (−0.55 %), 73 faster, 53 slower; the views past a
+    vblank 16 → 15 (E3M3.v1 575 883 → 483 397, −16.1 %, two vblanks to
+    one; E4M8.v2 −14.2 %; the worst E3M7.v2 +8.2 %, its pixels the same:
+    its near polygons cut otherwise by the grid and the slow path); with
+    the profile: the records' stage −1.35 %, the slow path −0.28 %, the
+    polygons drawn −1.24 %, the vertices −1.35 %;
+  - E2M7's fight of §106 (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0
+    SKILL=2 VIEW=1780,1803,-304,204,0`): the drawing 13 376 539 →
+    13 215 610 cycles over its 12 windows (−1.20 %; each −1.9 to +0.15 %),
+    the same streamed models drawn in each;
+  - the stream's pool: +1 to +21 KB a map (E3M5 +21, E2M7 +14, the mean
+    619.6 → 626.6 KB).
+- **On the way** (the 128 views, with the profile, against the base):
+
+  | variant | polygons (cook) | frames | records' stage | slow path |
+  |---|---|---|---|---|
+  | no light bound | −6.00 % | −0.24 % | −3.22 % | +1.32 % |
+  | bound 32, no cluster check | −5.00 % | −0.29 % | −2.72 % | +0.96 % |
+  | bound 16, no cluster check | −3.41 % | +0.05 % | −1.99 % | +1.20 % |
+  | bound 32, the cluster check | −4.06 % | −0.56 % | −2.13 % | +0.13 % |
+  | **bound 16, the cluster check** | **−2.29 %** | **−0.54 %** | **−1.35 %** | **−0.28 %** |
+
+  A bigger piece near the eye goes whole to the slow path (its corner
+  under the near clip, or the grid's levels past their cap) where the
+  grid took the pieces it replaced: unbound, the slow path took back most
+  of what the records saved. The merges without the drop give +2.1 %
+  polygons (the merged pieces keep their straight runs and are cut into
+  ears), the drop without the merges −0.05 %. Caps on a merge's growth
+  (its union within 1.25 or 1.5 times its larger piece: −2.9 and −4.5 %
+  polygons) or extent (128, 192 units: +1.4 and +0.3 %, the common grid
+  adding pieces the merges no longer take back), and leaving the floors
+  out (−4.5 %): their frames, measured while the zoned maps still loaded
+  whole, were no better than the unbound merge's.
+- **The pictures**: pktview's boards (before | after | difference x4) of
+  START's, E1M1's, E3M3's, E3M7's, E4M7's and E2M7's 12 views each, in the
+  side-session notes (`boards-113a/`): the largest mean change E2M7.v0's
+  2.7 levels (the floor's light dithered otherwise), then E3M3.v1 1.95 and
+  E4M7.v10 1.8; a texture moves by a texel where a near polygon is now cut
+  otherwise (E1M1.v5's pillar).
+- **The display lists** of every map change: a `scripts/dlcheck.sh`
+  reference saved before must be saved again.
+- **Left**: a look on DuckStation; the ultra geometry's light
+  grid with the merge (the disc carries the low geometry alone: not
+  cooked); the zones' tables are best made again on the merged cook by
+  the scan (§93) the next time they are.

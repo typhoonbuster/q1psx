@@ -353,6 +353,7 @@ static int cmd_map(int argc, char **argv)
 	const char *out_snd  = arg(argc, argv, "--sounds", NULL);
 	const char *out_sset = arg(argc, argv, "--sndset", NULL);   /* (with --sounds: the level's sound set, §86) */
 	light_gain           = atof(arg(argc, argv, "--light-gain", "1.66"));
+	world_fmap           = arg(argc, argv, "--fmap", NULL);
 	if (!pak_path || !map || (!out_tex && !out_tex4 && !out_wld && !out_mdl))
 		die("usage: qcook map --pak <pak> --map <name> [--textures l [--tex <out>] [--tex4 <out>]]"
 		    " [--geometry l --world <out>] [--models l --mdl <out>] [--palette-pak <pak0>]");

@@ -340,6 +340,8 @@ int decimate(const dmesh *m, int (*tri)[4], int n, double keep, double max_err);
 /* ---------------------------------------------------------------- world -- */
 
 extern double light_gain;   /* vertex light scale (qcook --light-gain), 1 = Quake */
+extern const char *world_fmap;   /* qcook map --fmap: each world record's Quake faces written
+                                    there (the zones' tables translated, QCOOK_MERGE) */
 void world_build(const bsp_t *b, const tex_set *canon, int geo_level, const char *out_path);
 
 /* `qcook check`: reload a QWV2 file and verify every invariant. */

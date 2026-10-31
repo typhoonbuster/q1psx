@@ -44,6 +44,9 @@
 # QCOOK_SEQ_ZERO, tools/qcook/seq.c, §91; QCOOK_ANIM_TOL: every body's
 # animations thinned to that many units (a frame its neighbours' average
 # makes well enough left out, tools/qcook/game.c ANIM_THIN, §97; 0 none);
+# QCOOK_MERGE: a node's coplanar faces merged (1 by default, 0 the cook as
+# before) and QCOOK_MERGE_ERR, the light it may lose at a luxel (16 of 255
+# by default, negative no bound; tools/qcook/world.c, §113);
 # QCOOK_MUSIC_RING_KB: the
 # SPU RAM the music's ring takes, 48 by default: the bank fills the rest
 # beside a swap room, §86). `cook.sh --stale <file>`, the
@@ -127,7 +130,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-}"
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-} QCOOK_MERGE=${QCOOK_MERGE:-} QCOOK_MERGE_ERR=${QCOOK_MERGE_ERR:-}"
 	echo "qcook walk: QCOOK_SEQ=${QCOOK_SEQ-none} QCOOK_SEQ_FAST=${QCOOK_SEQ_FAST:-} QCOOK_SEQ_TEST=${QCOOK_SEQ_TEST:-} QCOOK_SEQ_PRUNE=${QCOOK_SEQ_PRUNE:-} QCOOK_SEQ_ZERO=${QCOOK_SEQ_ZERO:-}"
 }
 if [ "${1:-}" = --stale ]; then
@@ -176,15 +179,31 @@ cook_one() {   # map axis level (t / g / m, 0..2)
 	name=$(echo low medium high ultra | cut -d' ' -f$(($3 + 1)))
 	case $2 in
 	t) what="--textures $name --tex4 $out.tx4" ;;
-	g) what="--geometry $name --world $out.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset" ;;
+	g) what="--geometry $name --world $out.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset"
+	   if [ "$FMAP" = 1 ] && [ -f "$Q1PSX_ZONE_TABLES/$1.zones" ]; then   # (the zones' tables name the
+		                                 #  records of a cook without the merge: each record's faces,
+		                                 #  to translate them, below)
+		what="$what --fmap $LOGS/$1_$2$3.fmap"
+		QCOOK_MERGE=0 tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
+		              --geometry $name --world "$LOGS/$1_$2$3.unmerged.wld" --fmap "$LOGS/$1_$2$3.unmerged.fmap" \
+		              --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1_$2$3.unmerged.log" 2>&1 \
+		|| { echo "cook FAILED: $1 $2$3 (unmerged)"; cat "$LOGS/$1_$2$3.unmerged.log"; return 1; }
+	   fi ;;
 	m) what="--models $name --mdl $out.mdl" ;;
 	esac
 	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" $what \
 	                      --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1_$2$3.log" 2>&1 \
 	|| { echo "cook FAILED: $1 $2$3"; cat "$LOGS/$1_$2$3.log"; return 1; }
 }
+# the coplanar faces merged (QCOOK_MERGE, 1 by default; docs/porting-notes.md
+# §113) renumber the world's records: the zones' tables, made on a cook
+# without it, are translated through each record's Quake faces
+FMAP=0
+if [ "${QCOOK_MERGE:-1}" != 0 ] && [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
+	FMAP=1
+fi
 export -f cook_one
-export QUAKE_PAK0 QUAKE_PAK1 LOGS LIGHT_GAIN
+export QUAKE_PAK0 QUAKE_PAK1 LOGS LIGHT_GAIN FMAP Q1PSX_ZONE_TABLES
 
 for m in $MAPS; do
 	for n in 1 2; do echo "$m t $n"; done         # textures: medium, high (the build takes one)
@@ -220,7 +239,8 @@ if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 	export Q1PSX_ZONE_SLOTS=${Q1PSX_ZONE_SLOTS:-3}
 	for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c \
 	    't="$Q1PSX_ZONE_TABLES/{}.zones"; [ -f "$t" ] || exit 0
-	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}_g0.wld --tables "$t" --skeleton cooked/id1/{}_g0.skl \
+	     fm=""; [ "$FMAP" = 1 ] && fm="--fmap $LOGS/{}_g0.unmerged.fmap $LOGS/{}_g0.fmap"   # (QCOOK_MERGE)
+	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}_g0.wld --tables "$t" $fm --skeleton cooked/id1/{}_g0.skl \
 	         --tex4 cooked/id1/{}_t1.tx4 --chunks cooked/id1/{}_z1.zon \
 	         --tex4 cooked/id1/{}_t2.tx4 --chunks cooked/id1/{}_z2.zon > "$LOGS/{}_z.log" 2>&1 \
 	     || { echo "cook FAILED: zones {}"; cat "$LOGS/{}_z.log"; exit 1; }'
