@@ -7,6 +7,7 @@
 #include "mem.h"
 #include "q_fmt.h"
 #include "qtex.h"
+#include "gamma.h"
 #include "world.h"
 #include "zone.h"
 
@@ -143,6 +144,10 @@ static uint32_t          num_slots;
    bytes each) goes up from a zero-padded copy (GP0 NOPs after the data). */
 void vram_upload(const uint8_t *data, const qtex_rect *r)
 {
+	if (gamma_level() && r->y >= 480 && r->y + r->h <= 505 && r->x + r->w <= 320) {
+		gamma_upload(data, r->x, r->y, r->w, r->h);  /* (a CLUT row: the Options' Brightness) */
+		return;
+	}
 	RECT rc = { (int16_t) r->x, (int16_t) r->y, (int16_t) r->w, (int16_t) r->h };
 	uint32_t len = (uint32_t) r->w * r->h * 2;
 	if (len & 63) {
@@ -185,6 +190,7 @@ static void note_rects(const qtex_rect *r, uint32_t n)
    tables, moved to its start: the arena's bottom (the arena was reset). */
 static int load_textures(const char *name)
 {
+	gamma_keep_map(NULL, NULL, 0);
 	uint32_t mark = mem_level_mark(), size;
 	uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
 	uint32_t ofs_slots = 0, ofs_anims = 0, nanims = 0;
@@ -208,13 +214,44 @@ static int load_textures(const char *name)
 		mem_level_release(mark);
 		return 0;
 	}
+	/* the CLUT rows as cooked (VRAM rows 480-504), kept after the tables for
+	   the Options' Brightness (engine/gamma.c): their rectangles (data_ofs
+	   from the copy), then their halfwords; above the file until the tables
+	   have moved */
+	const qtex_rect *rr = (const qtex_rect *) (f + sizeof(qtex4_header));
+	uint32_t nr = ((const qtex4_header *) f)->num_rects, ncl = 0, clen = 0;
+	for (uint32_t i = 0; i < nr; i++)
+		if (rr[i].y >= 480 && rr[i].y + rr[i].h <= 505) {
+			ncl++;
+			clen += (uint32_t) rr[i].w * rr[i].h * 2;
+		}
+	uint32_t klen = ncl * (uint32_t) sizeof(qtex_rect) + clen;
+	uint8_t *keep = klen ? mem_level_alloc(klen) : NULL;
+	if (keep) {
+		qtex_rect *kr = (qtex_rect *) keep;
+		uint32_t at = ncl * (uint32_t) sizeof(qtex_rect), k = 0;
+		for (uint32_t i = 0; i < nr; i++)
+			if (rr[i].y >= 480 && rr[i].y + rr[i].h <= 505) {
+				uint32_t n = (uint32_t) rr[i].w * rr[i].h * 2;
+				kr[k] = rr[i];
+				kr[k].data_ofs = at;
+				memcpy(keep + at, f + rr[i].data_ofs, n);
+				at += n;
+				k++;
+			}
+	}
 	memmove(f, f + ofs_slots, len);
 	world.textures  = (const qw_tex *) f;
 	world.num_tex   = num_slots;
 	uvmap           = (const qtex_uvmap *) (f + num_slots * sizeof(qw_tex));
 	world.anims     = (const qw_anim *) (f + tables);
 	world.num_anims = nanims;
-	mem_level_release(mark + ((len + 15) & ~15u));   /* (the arena's 16-byte steps) */
+	uint32_t keep_at = (len + 15) & ~15u;            /* (the arena's 16-byte steps) */
+	if (keep) {
+		memmove(f + keep_at, keep, klen);
+		gamma_keep_map((const qtex_rect *) (f + keep_at), f + keep_at, ncl);
+	}
+	mem_level_release(mark + keep_at + (keep ? ((klen + 15) & ~15u) : 0));
 	return 1;
 }
 

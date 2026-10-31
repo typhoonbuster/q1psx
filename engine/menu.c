@@ -34,7 +34,7 @@ static const uint8_t main_rows[]  = { 0, 1 };
 static const uint8_t sp_rows[]    = { 0 };
 #define MAIN_ITEMS         (int) sizeof main_rows
 #define SINGLEPLAYER_ITEMS (int) sizeof sp_rows
-enum { O_RESET, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
+enum { O_RESET, O_BRIGHTNESS, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
 #define SLIDER_RANGE       10
 #define GREY               56          /* a greyed entry's shade (128: as it is) */
 #define HINT_SHADE         88          /* the graphics page's hint: under the rows' 128 */
@@ -149,11 +149,12 @@ static void newgame_draw(void)
 static void options_draw(void)
 {
 	static const char *const label[OPTIONS_ITEMS] = {
-		"     Reset to defaults", "       CD Music Volume", "          Sound Volume",
-		"              Graphics" };
+		"     Reset to defaults", "            Brightness", "       CD Music Volume",
+		"          Sound Volume", "              Graphics" };
 	draw_header(QGA_P_OPTION);
 	for (int i = 0; i < OPTIONS_ITEMS; i++)
 		m_print(16, 32 + i * 8, label[i], 128);
+	draw_slider(220, 32 + O_BRIGHTNESS * 8, settings.brightness);   /* ((1 - v_gamma) / 0.5) */
 	draw_slider(220, 32 + O_MUSIC * 8, settings.music);
 	draw_slider(220, 32 + O_SOUND * 8, settings.volume);
 	draw_cursor(32 + options_cursor * 8);
@@ -287,11 +288,13 @@ static void newgame_key(int k)
 		m_state = M_SINGLEPLAYER;
 }
 
-/* M_AdjustSliders: the volumes, a tenth a step */
+/* M_AdjustSliders: the brightness (v_gamma a twentieth a step) and the
+   volumes, a tenth a step */
 static void options_adjust(int dir)
 {
 	local_sound(S_MENU3);
-	int *v = options_cursor == O_MUSIC ? &settings.music : options_cursor == O_SOUND ? &settings.volume : 0;
+	int *v = options_cursor == O_MUSIC ? &settings.music : options_cursor == O_SOUND ? &settings.volume
+	       : options_cursor == O_BRIGHTNESS ? &settings.brightness : 0;
 	if (!v)
 		return;
 	*v += dir;

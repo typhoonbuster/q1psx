@@ -2491,3 +2491,11 @@ followed by R0-R4.
   points of a 3 x 3 x 3 grid in the leaf), and the streamed models'
   light is multiplied by 4/3: the monsters in the dark corners stand
   out.
+- **The Options menu's Brightness** (§116, provisional number, 
+  2026-10-31). Quake's row, between Reset to
+  defaults and the volumes: `v_gamma` from 1 down to 0.5 in ten steps,
+  `BuildGammaTable` on the CLUTs. It covers the map's textures, the
+  game's palette (the monsters, the items, the gun, the status bar) and
+  the console's. The map's and the game's CLUTs are kept as cooked and
+  sent again through the new table at each step. Nothing changes in a
+  frame's work.
