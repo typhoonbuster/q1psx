@@ -2773,14 +2773,27 @@ static void bench_monsters(void)
 		return;
 	}
 	map_index = m;
-	stream_log = 1;
-	snd_log = 1;
+	stream_log = !Q1PSX_BENCH_SAMPLE;             /* (a sampled run: the game's cycles, no console's) */
+	snd_log = !Q1PSX_BENCH_SAMPLE;
 	game_active = 1;
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
 	cmd.weapon_group = -1;
 	game_spawn();
 	ents_ticks(60, &cmd);                         /* the monsters' delayed starts */
+#if Q1PSX_BENCH_VIEW_SET
+	if (Q1PSX_BENCH_MONSTERS >= 2) {              /* VIEW=x,y,z,yaw,pitch: the crowd's player there (its eye) */
+		static const int16_t xv[] = { Q1PSX_BENCH_VIEWS_XY };
+		pl.pm.pos[0] = xv[0] * CLIP_SUB;
+		pl.pm.pos[1] = xv[1] * CLIP_SUB;
+		pl.pm.pos[2] = (xv[2] - 22) * CLIP_SUB;
+		pl.pm.yaw    = xv[3] * ANG_TURN / 360;
+		pl.pm.pitch  = xv[4] * ANG_TURN / 360;
+		memset(pl.pm.vel, 0, sizeof pl.pm.vel);
+		stream_preload_at(pl.pm.pos);
+		printf("mon crowd: the player at %d %d %d\n", xv[0], xv[1], xv[2] - 22);
+	}
+#endif
 	for (int k = 0; k < (Q1PSX_BENCH_MONSTERS >= 2 ? 0 : MK_COUNT); k++) {   /* (2, 3: the crowd only) */
 		/* a monster of the kind with a free spot in its sight: 450 .. 100
 		   units off (its ranged attack's reach first), its facing first,
@@ -3001,6 +3014,7 @@ static void bench_monsters(void)
 			pl.health = 100;
 			pl.dead = 0;
 			pl.ammo[AMMO_ROCKETS] = 100;
+			prof_sample_pause(1);                /* (the bench's aim: its sight lines not the game's) */
 			edict_t *aim = 0;                    /* the nearest living monster it sees */
 			int32_t best = 0;
 			for (int i = 2; i < num_edicts; i++) {
@@ -3018,6 +3032,7 @@ static void bench_monsters(void)
 				ents_look_at(aim->origin);
 			else
 				pl.pm.yaw += ANG_TURN / 240;     /* none: a turn in 4 s */
+			prof_sample_pause(0);
 			game_tick(&cmd);
 			game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
 			run_frame(0, 0);
@@ -3029,9 +3044,12 @@ static void bench_monsters(void)
 				room_min = r_model_room_min;
 			full += r_arena_full != 0;
 #if !Q1PSX_ENGINE_C
-			if (!(t & 15))
-				ents_seen_check();                /* (e_seen.s against its C, untimed; a
-				                                     frame in 16: the samples' profile) */
+			if (!(t & 15)) {
+				prof_sample_pause(1);             /* (e_seen.s against its C, untimed and
+				                                     unsampled; a frame in 16) */
+				ents_seen_check();
+				prof_sample_pause(0);
+			}
 #endif
 			int max, used = ents_in_use(&max);
 			if (used > peak)

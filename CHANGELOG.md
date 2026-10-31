@@ -2410,3 +2410,8 @@ followed by R0-R4.
   into E2M1's floor and no move could start from there. Quake's
   `SV_CheckStuck` is ported: in a solid, back to the last tick's place,
   else nudged up to 17 units up and a unit aside.
+- **A fight's frame measured where it happened** (§106, 2026-10-31). The bench's crowd and fight can put the
+  player where a fight happened in play (`VIEW=`); a sampled run prints no
+  log and its sampler covers the whole code. E2M7's 78 monsters awake on
+  Hard: the drawing 57 % of a fight's frame (the models 24 %), the
+  collision 15.5 %, the logic 9 %, the vblank's waits 16 %.

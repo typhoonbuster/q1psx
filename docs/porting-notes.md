@@ -14291,3 +14291,61 @@ out `SV_TryUnstick` too, a different remedy). `check_stuck` (game.c)
 does it before `pmove_step`, the world's hull 1 its test (one point's
 contents a tick), the last place only when this level's and near.
 
+
+## §106 — A fight's frame measured where it happened: E2M7's (2026-10-31)
+
+- **The question**: the robot's run of episode 2 on Hard (its DuckStation
+  captures, the frames repeated counted while the view moves) played at
+  26-44 fps on average a level, a third to a half of the time at 30, and
+  12-13 fps in E2M7's biggest fight (16 to 21 monsters within 700 units,
+  15 missiles in the air); the frame rate follows the monsters near and
+  the fight (E2M7: 47 fps with none near, 23 with six or more). Where
+  does a fight's frame go?
+- **The measure**: `MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0 SKILL=2
+  VIEW=1780,1803,-304,204,0`, the player where the robot fought: the
+  crowd (the level's 78 monsters on Hard, all awake), then the minute of
+  fight (the player's rockets, a frame drawn each tick), PCSX-Redux's
+  cycles:
+  - the fight: 3.25 vblanks a frame on average (~18 fps); the drawing's
+    own cycles 1.48 M with 8 streamed models drawn (its first 300 ticks),
+    0.95 M with 9 (its last);
+  - the crowd alone (nothing drawn): `ents_tick` 351 k cycles a tick
+    (0.62 vblank), 1.45 M at most; its traces half of it (178 k): the
+    walk's 40 %, the flight's 16 %, `CheckBottom`'s 12 %, the corners'
+    10 %, the sight lines' 8 %, the touches' 7 %, the attacks' 5 %; its
+    samples the collision's 60 %, the game's logic 24 %;
+  - the fight's samples, the game's work alone (the bench's aim left
+    out):
+
+    | part | share |
+    |---|---|
+    | the models drawn (the sorted monsters' triangles, the records' vertex light) | 23.8 % |
+    | the wait for the vblank (`_default_vsync_halt`) | 16.0 % |
+    | the collision (clip.s, w_leaf.s: the monsters' traces, contents, leaves) | 15.5 % |
+    | the slow path (r_slow.s: the near polygons) | 11.7 % |
+    | the world's walk and faces (r_world.s) | 11.0 % |
+    | the game's logic (ai.c, ents.c, e_*.s, game.c) | 9.0 % |
+    | the render's setup (rlist.c, render.c, the frame cache, the HUD) | 5.9 % |
+    | the dynamic lights on the faces (the rockets') | 4.0 % |
+    | the stream, the sound, the BIOS | 2.0 % |
+
+    The hottest functions: `ds_tri` 7.1 %, `world_point_leaf_from`
+    3.0 %, `sp_o_bounds` 2.9 %, `lrl_v` 2.8 %, `ds_o_dcull` 2.3 %,
+    `deo1_tri` 2.1 %, `ct_root` 2.0 %.
+- **What it says**: in a fight drawn, the drawing outweighs the
+  simulation (the models 24 %, the world with its slow path and lights
+  27 %, against the collision's 15.5 % and the logic's 9 %); without the
+  drawing the crowd's cost is the collision's, as §70 found. The waits
+  are the double buffer's, a frame taking 3 to 4 vblanks.
+- **The bench's tools** (no change to the game):
+  - with `MONSTERS=2` or `3`, `VIEW=` puts the crowd's player there (the
+    view's eye, the origin 22 units under it) and preloads the stream
+    there;
+  - a sampled run (`SAMPLE=1`) prints no sound, stream or missile log
+    (`snd_log`, `stream_log`, `game_monster_missile`'s line): they took
+    15 % of the first sampled fight;
+  - the sampler counts 64-byte blocks: its 8192 entries cover 512 KB, the
+    whole text (311 KB; past 256 KB lay the SDK's vblank wait, stream.c,
+    zone.c, the triggers), the block's size on the `sample` line;
+  - `prof_sample_pause`: the fight's aim (a sight line to every monster
+    each tick, 9.6 % of the samples) and the `e_seen` check are left out.

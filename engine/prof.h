@@ -57,11 +57,13 @@ uint32_t prof_now(void);          /* ticks (x8 = CPU cycles) */
 void     prof_frame_reset(void);
 
 /* the bench's PC sampler (Q1PSX_BENCH_SAMPLE): root counter 1 interrupts 2000
-   times a second and counts the interrupted address, by 32-byte block of
-   the code; prof_sample_print lists the blocks hit ("sample" / "samples" lines,
-   tools: the scratchpad's symbolizer, addr2line) */
+   times a second and counts the interrupted address, by 64-byte block of
+   the code (512 KB: the whole text, its waits at the end too); prof_sample_print
+   lists the blocks hit ("sample" / "samples" lines, the block's size on the
+   first; tools: the scratchpad's symbolizer, addr2line) */
 void     prof_sample_start(void);
 void     prof_sample_stop(void);
+void     prof_sample_pause(int paused);   /* 1: the interrupts counted nowhere (the bench's own work) */
 void     prof_sample_print(const char *name);
 
 static inline uint32_t prof_cycles(uint32_t t0, uint32_t t1)

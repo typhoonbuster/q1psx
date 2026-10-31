@@ -1434,7 +1434,7 @@ static proj_t *monster_missile(int kind, edict_t *owner, const int32_t org[3], c
 	p->masset = (int16_t) masset;
 	p->s1     = (int16_t) s1;
 	p->s2     = (int16_t) s2;
-#ifdef Q1PSX_BENCH
+#if defined(Q1PSX_BENCH) && !Q1PSX_BENCH_SAMPLE         /* (a sampled run: the game's cycles, no console's) */
 	printf("proj: kind %d from edict %d at %d %d %d\n", kind, (int) (owner - edicts), (int) vel[0], (int) vel[1],
 	       (int) vel[2]);
 #endif

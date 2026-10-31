@@ -65,11 +65,15 @@
 #         entities' cost a second); MONSTERS=2 the crowd alone (SAMPLE=1:
 #         its PC samples, "samples crowd"; ZONES=1's walk and MOVERS=1's
 #         movers take SAMPLE=1 too, a "samples <map>" / "samples mv.<map>.<model>"
-#         histogram each); MONSTERS=3 the crowd, then a
-#         minute of fight drawn (the player fires rockets turning round):
-#         "mon fight" lines (the stack's high-water mark, the edicts, the
-#         frames' cycles, the streamed models drawn and the frame cache's
-#         refusals); MONSTERS=4 the map cleared
+#         histogram each, in 64-byte blocks of the code; a sampled run
+#         prints no sound or stream log and leaves the bench's own aim and
+#         checks out of the samples: the game's cycles alone); MONSTERS=3
+#         the crowd, then a minute of fight drawn (the player fires rockets
+#         turning round): "mon fight" lines (the stack's high-water mark,
+#         the edicts, the frames' cycles, the streamed models drawn and the
+#         frame cache's refusals); with MONSTERS=2 or 3, VIEW=x,y,z,yaw,pitch
+#         puts the crowd's player there (its eye, as a view's: a fight
+#         where it happened in play); MONSTERS=4 the map cleared
 #         (MAP=, default E1M3: each monster in turn, the player on a spot
 #         in its sight, rockets, frames drawn): "clear" lines; MONSTERS=5
 #         from MAP (E1M1) each map cleared, then its exit taken to the next
