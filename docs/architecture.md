@@ -107,7 +107,7 @@ Hardware facts the design relies on (psx-spx / PSn00bSDK docs):
 | Packet arenas | 2 × 80 KB | double-buffered; ~2400 `POLY_FT4` per frame; the last 1.5 KB of each holds the HUD's cached sprites (`vid_hud_block`, rebuilt only when what they show changes); an alias model is left out when under 24 KB of room is left (`R_MODEL_ROOM`), and the menu keeps 12 KB while it is up (`R_MENU_ROOM`, porting-notes §43); 96 KB each until §90.1 (the frames measured: 54-64 KB in the views, the game and the fights, 78 KB in E3M4's crowd and through walls) |
 | Ordering table | < 1 KB | a few buckets: world, sky, HUD, overlay |
 | Level arena | 1243 KB | world render data + clip hulls + PVS: a whole map's world, or a zoned map's skeleton (nodes, leaves, PVS, clip hulls, brush models, entities: 244-334 KB, §58, §59) and three chunk slots, each its biggest zone's chunk (82-114 KB; porting-notes §57; the world's load in all at most 729 KB, it may take 1136 KB while it loads, `MEM_LEVEL_WORLD`) + the brush models' pieces (§41: 12-112 KB, the room the cook measured, §44, §46) + the streamed assets' RAM pool (the rest: 249-916 KB, §58, §59) and, with the 2D gun, its packets (78 KB at the pool's end, §45, §47); 1152 KB until 2026-10-19, then 1136 (§42, §43), 1242 (§45), 1237 (§48, §50), 1249 (§52: the code the clean-up removed), 1243 (§57: the zones' code, the stack's room kept) |
-| Game arena | 90 KB | the game data every map needs (`GAME_0.DAT`, the one model level: the guns, rebuilt by hand from Quake's own, §52, their frames Quake's own vertex words and a pool the drawn frame is expanded into, §53, the projectiles' models, the HUD's pictures; in a 2D build the 2D gun's tables, its packets lent by the stream at each map's start, §45), filled at boot (85 KB: `mem: game arena` in the boot log; 112 KB before §53, 97 KB before §54), plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (24 KB); 224 KB until §45, 115 KB until §53, 100 KB until §54 |
+| Game arena | 90 KB | the game data every map needs (`GAME.DAT`, the one model level: the guns, rebuilt by hand from Quake's own, §52, their frames Quake's own vertex words and a pool the drawn frame is expanded into, §53, the projectiles' models, the HUD's pictures), filled at boot (85 KB: `mem: game arena` in the boot log; 112 KB before §53, 97 KB before §54), plus the sound bank's directory slots (7 KB: the static sources rewritten in place at map start as 12-byte entries with their voice, reach and attenuation multiplier) and the dynamic lights' save buffer (24 KB); 224 KB until §45, 115 KB until §53, 100 KB until §54 |
 | QuakeC arena | (Phase 7) | progs.dat (must be slimmed at cook time) + edicts; takes part of the level arena's size |
 
 The level arena is a bump allocator that is reset on map load. There is no
@@ -164,10 +164,9 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 - The game's images (pages 6..9) are packed by MaxRects with a 2-texel
   border of replicated edge texels around every skin and sprite sheet:
   the GPU's texture coordinates stray a texel past a triangle's edge.
-- 4-bit textures (menu option, `<MAP>_T<N>.TX4`, `docs/porting-notes.md`
-  §20): the same tiles at the same texel positions, pages at x = 320 + 64 p
-  on the first half (y = 0), and one 16-entry CLUT per texture from
-  (0, 481), 20 per row.
+- 4-bit textures (`<MAP>.TX4`, `docs/porting-notes.md` §20; the disc's
+  only set since §52): pages at x = 320 + 64 p on the first half (y = 0),
+  and one 16-entry CLUT per texture from (0, 481), 20 per row.
 
 ## 5. Frame structure
 
@@ -187,11 +186,10 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 
 ## 6. World format (cooked by `qcook`)
 
-One file per map (`<MAP>_G0.WLD`; the quality levels of `docs/porting-notes.md`
-§39, gone since §119, left their digits in the disc's names). The texture set
-(`<MAP>_T2.TX4`, §7) and the map's own models (`<MAP>_M0.MDL`) come beside
-it. Every section is 4-byte aligned and laid out in the order the walker
-reads it.
+One file per map (`<MAP>.WLD`; the quality levels of `docs/porting-notes.md`
+§39 are gone since §119). The texture set (`<MAP>.TX4`, §7) and the map's
+own models (`<MAP>.MDL`) come beside it. Every section is 4-byte aligned
+and laid out in the order the walker reads it.
 
 - **Nodes** (32 B each): plane (`int16 n[3]`, `uint8 type`, `int32 dist`),
   `int16 child[2]`, `int16 bbox[6]`, and offsets to the node's **two face
@@ -240,18 +238,18 @@ reads it.
      lightmap closer (until §119 the ultra geometry level cut every face so,
      +37 % polygons on start).
 
-  The UVs on the disc are the finest layout's, tile-relative; the loader
-  maps them once onto the texture set's tiles (`qtex_uvmap`: an offset and
-  a scale per texture slot). The T-junctions are left unrepaired (-2.3 %
-  polygons, cracks possible). The affine warp itself is
-  the renderer's subdivision threshold (a menu setting, §8).
+  The cook then maps the UVs onto the texture set's tiles (`tex_uvmaps`:
+  an offset and a scale per texture slot; the loader did it until §119),
+  so the disc carries them as the renderer reads them. The T-junctions are
+  left unrepaired (-2.3 % polygons, cracks possible). The affine warp
+  itself is the renderer's subdivision threshold (a menu setting, §8).
 - **Zoned worlds** (porting-notes §57): with the level-chunks analysis'
   tables, `qcook zones` splits a map's world into its skeleton ("QWZF",
-  shipped as `<MAP>_G0.WLD`: the sections above, the face stream and the
+  shipped as `<MAP>.WLD`: the sections above, the face stream and the
   vertex pool holding the brush models' records only, then the zone
-  tables) and a chunk per zone (`<MAP>_Z<t>.ZON`, "QZN1", per texture
-  level: the world records any of the zone's camera leaves may draw,
-  laid out per node block in node order, their UVs on that set's tiles,
+  tables) and a chunk per zone (`<MAP>.ZON`, "QZN2": the world records
+  any of the zone's camera leaves may draw, laid out per node block in
+  node order, their UVs on the texture set's tiles,
   their own vertex pool, a patch list). The engine makes the camera
   leaf's zone current by writing its chunk's block pointers into the
   world's nodes (the skeleton puts those nodes first, then an end node no
@@ -267,18 +265,19 @@ reads it.
 
 ## 7. Textures
 
-- 8bpp, Quake's global palette, one CLUT.
-- **Native size up to 256 per tile**: removing the texture window removes the
-  64 px cap and the power-of-two snapping. `ultra` becomes real (native
-  textures).
-- The texture level scales textures down by a factor (`high` = native ≤
-  128, `medium` ½, `low` ¼, `ultra` native ≤ 256). The split boundaries
-  follow the original texel grid, so tiling stays correct at any scale.
-- Packed per map and texture level by `qcook` (first fit on an 8-texel
-  grid). The set (`<MAP>_T<n>.TEX`, QTX6) carries the map's texture table:
-  each slot's `clut`/`tpage`/texture-window words, its UV map from the
-  world's finest-level UVs, the animated textures' tiles; the loader
-  writes the mapped UVs into the world's pre-packed polygons.
+- 4bpp, a 16-colour CLUT per texture (§52; the first design's 8bpp sets,
+  Quake's global palette, one CLUT, left the disc then).
+- **Native size up to 256 per tile** in the layout the world is cut for:
+  removing the texture window removes the 64 px cap and the power-of-two
+  snapping. The disc's set keeps a side up to 128 texels (a larger one
+  halved; the quality levels' other scales went in §52 and §119). The
+  split boundaries follow the original texel grid, so tiling stays
+  correct at any scale.
+- Packed per map by `qcook` (first fit on an 8-texel grid). The set
+  (`<MAP>.TX4`, QTX8) carries the map's texture table: each slot's
+  `clut`/`tpage`/texture-window words, the animated textures' tiles. The
+  cook writes the world's and the map's models' UVs mapped onto its tiles
+  (the loader did it until §119).
 
 ## 8. Renderer pipeline (asm)
 

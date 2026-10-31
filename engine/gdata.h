@@ -1,6 +1,6 @@
 /*
  * q1psx — the game data (formats/qgame.h): weapon and projectile models, the
- * explosion sprite, the HUD pictures. Loaded at boot from GAME_0.DAT: its
+ * explosion sprite, the HUD pictures. Loaded at boot from GAME.DAT: its
  * images go to VRAM (the pages above the map's, its own CLUT), its tables
  * and geometry to the game arena.
  */
@@ -31,7 +31,7 @@ typedef struct {
 
 extern gdata_t gdata;
 
-/* Load GAME_0.DAT (before any map: it uses the level arena as a staging
+/* Load GAME.DAT (before any map: it uses the level arena as a staging
    area). 1 on success. */
 int gdata_load(void);
 

@@ -16,8 +16,8 @@
  * others are flagged QSTF_RAM and lie first, together, for the engine to
  * read them in one go at the map's start and play them from main RAM.
  *
- *   qcook section --pak <pak0.pak> [--pak1 <pak1.pak>] --stream <stream_0.dat>
- *                 --map maps/<m>.bsp --out <m>_s0.dat [--sndset <m>.sndset]
+ *   qcook section --pak <pak0.pak> [--pak1 <pak1.pak>] --stream <stream.dat>
+ *                 --map maps/<m>.bsp --out <m>_s.dat [--sndset <m>.sndset]
  */
 
 #include <math.h>
@@ -68,8 +68,8 @@ int cmd_section(int argc, char **argv)
 		if (!strcmp(argv[i], "--sndset")) sndset_path = argv[i + 1];
 	}
 	if (!pak_path || !stream_path || !map || !out_path)
-		die("usage: qcook section --pak <pak0.pak> [--pak1 <pak1.pak>] --stream <stream_0.dat> --map maps/<m>.bsp "
-		    "--out <m>_s0.dat");
+		die("usage: qcook section --pak <pak0.pak> [--pak1 <pak1.pak>] --stream <stream.dat> --map maps/<m>.bsp "
+		    "--out <m>_s.dat");
 
 	long pak_len, pak1_len = 0, pool_len;
 	uint8_t *pak = read_file(pak_path, &pak_len), *pak1 = pak1_path ? read_file(pak1_path, &pak1_len) : NULL;

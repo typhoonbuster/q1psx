@@ -1,6 +1,6 @@
 /*
  * q1psx — cooked game data "QGMB": the models, sprites and HUD pictures the
- * engine needs on every map. Written by `qcook game`, GAME_0.DAT on the
+ * engine needs on every map. Written by `qcook game`, GAME.DAT on the
  * disc, loaded at boot by engine/gdata.c.
  *
  * Models
@@ -99,9 +99,8 @@ typedef struct {
    records as GAME.DAT's, offsets in the file's geometry block) and the
    entries of the map's texture table its records' tex 0 .. num_tex - 1
    stand for (a skin among the map's textures, or a BSP item's few). Only
-   the models the map's entities use are cooked. Their UVs are the world
-   file's kind (formats/qtex.h qtex_uvmap: the finest layout's,
-   tile-relative), mapped at load like the world's. */
+   the models the map's entities use are cooked. Their UVs are on the
+   map's texture set's tiles, as the world file's. */
 enum {
 	QIM_G_SHOT, QIM_G_NAIL, QIM_G_NAIL2, QIM_G_ROCK, QIM_G_ROCK2, QIM_G_LIGHT,
 	QIM_ARMOR1, QIM_ARMOR2, QIM_ARMOR3,             /* armor.mdl's three skins */
@@ -122,8 +121,9 @@ typedef struct {
 	qg_model m;
 } qw_model;                      /* 48 bytes */
 
-/* "QMM1": a map's own models (<MAP>_M0.MDL) */
-#define QMAPMDL_MAGIC "QMM1"
+/* "QMM2": a map's own models (<MAP>.MDL) */
+#define QMAPMDL_MAGIC "QMM2"   /* (QMM1 until §119: the finest layout's UVs, which
+                                  the loader mapped) */
 typedef struct {
 	char     magic[4];
 	uint32_t num_models, ofs_models;   /* qw_model[num_models]                  */

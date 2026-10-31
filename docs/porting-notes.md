@@ -15986,3 +15986,46 @@ Removed (2026-10-31): the four leftovers 119.6 listed:
   boot reads one directory fewer. The release's level arena 1371072 →
   1371872 B (+800: `.text` −704, the data −100; the load overlay −340);
   the default preset builds.
+
+### 119.8 The disc's names without digits, the UVs mapped by the cook
+
+Removed (2026-10-31): the two leftovers 119.7 listed:
+
+- **The names** lose the levels' digits, on the disc and in `cooked/id1`:
+  `<MAP>.TX4`, `<MAP>.WLD` (a zoned map's skeleton too, cooked as
+  `<map>.skl`), `<MAP>.MDL`, `<MAP>.ZON`, `<MAP>_S.DAT`, GAME.DAT,
+  STREAM.DAT; `qcook game` and `qcook stream` write the file `--out`
+  names. The cook's default list of maps (the maps already cooked) now
+  comes from their sound sets (`<map>.sndset`), which the old and the new
+  names share: the first build after this cooks the same maps again.
+- **The UVs mapped by the cook.** The world (a skeleton too) and the map's
+  models are still cut for the finest layout, Quake's own texels; their
+  UVs then go onto the disc's set's tiles in the cook
+  (`tools/qcook/tex.c` `tex_uvmaps`, `tex_map_uvs`: the load's
+  `map_uvs` as it was), before they are written. So `qcook map` builds a
+  map's texture set, world, models and sound bank in one run
+  (`scripts/cook.sh`: one job a map, the unmerged world of the zones'
+  tables aside), and `qcook zones` takes the world's records as they are
+  (no `--tex4`). The engine's load no longer walks every record, and the
+  UV maps' table (8 bytes a texture slot: 184 B on END to 792 B on E2M1)
+  no longer sits in the level arena for the level's length. The formats: the texture set loses the
+  table (QTX7 → QTX8); the world, its skeleton and the models file keep
+  their layout, their UVs now the set's (QWVH → QWVI, QWZI → QWZJ,
+  QMM1 → QMM2).
+- **Outside the repository**, the tools that read the cooked files by
+  their old names need the new ones: in `quakespasm-q1psx`,
+  `analysis/analyse.py`, `cutcurve.py` and `check.py` and
+  `Quake/chunkscan.c` (`<map>_g0.wld`), the LOD page `lodpoc/budget`
+  (`stream_0.dat`, `game_0.dat`), the `mobs/` tools' usage lines.
+- **Checked** (TESTING 11.105): the cook's 230 files of 119.7 against
+  the new ones, by a script outside the repository: every old world (32),
+  skeleton (17) and models file (32), put through the load's old
+  `map_uvs` with its texture set's old maps, is the new file byte for
+  byte but its magic; every texture set (32) the same but the maps'
+  table; the zones' chunk files (17) and the 100 other files the same.
+  Against 119.6's display lists (119.7's are the same): START's 12 views,
+  the 128 spawn views, the game bench's 28 dumps (the menus' warp fixed
+  for the test) the same, the C engine's START frames 119.7's C engine's;
+  the boot reads GAME.DAT, STREAM.DAT and START.TX4. The release's level
+  arena 1371872 → 1372256 B (+384: `.text` −384; the load overlay −56);
+  the default preset builds.

@@ -6,7 +6,7 @@
  * The bench build prints, for one frame per scenario, "D <name>" (the views'
  * names are "view <n>"), "V <rows>" (the 3D viewport's height) and the
  * frame's packets in GPU draw order ("P <hex words>"), then "E". pktview
- * rebuilds VRAM from the map's 4-bit texture set (QTX7: CLUTs + pages), and from
+ * rebuilds VRAM from the map's 4-bit texture set (QTX8: CLUTs + pages), and from
  * the game data's images (GAME.DAT: models' skins, the HUD) when given, and
  * rasterises the packets the way the PS1 GPU does — affine texture mapping
  * in screen space, no depth buffer, painter's order — into

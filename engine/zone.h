@@ -1,7 +1,7 @@
 /*
  * q1psx — the world's zones (formats/qworld.h "zones", docs/porting-notes.md
  * §57): a zoned map keeps its skeleton in the level arena and streams its
- * zone chunks from <MAP>_Z2.ZON into three slots while the player moves.
+ * zone chunks from <MAP>.ZON into three slots while the player moves.
  *
  *   - the camera leaf's zone is the one drawn: when the renderer finds the
  *     camera in a leaf of another set (engine/zone.s zone_mark, on the
@@ -50,7 +50,7 @@ typedef struct {
 extern zone_stats_t zone_stats;
 
 /* world_load, a QWZF skeleton just read and linked: its zone tables, the
-   slots allocated, the .ZON file found (<MAP>_Z2.ZON). 0 on failure (the
+   slots allocated, the .ZON file found (<MAP>.ZON). 0 on failure (the
    map then fails to load). */
 int  zone_map_start(const uint8_t *skeleton, const char *map);
 

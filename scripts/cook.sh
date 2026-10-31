@@ -54,29 +54,29 @@
 # local.env or on the command line, or a cook another build directory made
 # with other settings (they share cooked/).
 #
-# Output, per map (the names' digits: the quality levels' of §39, 0 low,
-# 2 high, until §119):
-#   cooked/id1/<map>_t2.tx4     QTX7 4-bit textures, high         -> disc <MAP>_T2.TX4
-#   cooked/id1/<map>_g0.wld     QWVH world, low geometry          -> disc <MAP>_G0.WLD
-#   cooked/id1/<map>_m0.mdl     QMM1 its own models, low          -> disc <MAP>_M0.MDL
+# Output, per map (one `qcook map` run: the world's and the models' UVs on
+# the tiles of the texture set it builds):
+#   cooked/id1/<map>.tx4        QTX8 its 4-bit textures           -> disc <MAP>.TX4
+#   cooked/id1/<map>.wld        QWVI its world                    -> disc <MAP>.WLD
+#   cooked/id1/<map>.mdl        QMM2 its own models               -> disc <MAP>.MDL
 #   cooked/id1/<map>.snd        QSB2 its sound bank               -> disc <MAP>.SND
 #   cooked/id1/<map>.sndset     the level's sound set: `spu`/`ram`/`disc` a sound (qcook section reads it)
 # and with Q1PSX_ZONE_TABLES, a map split into zones (formats/qworld.h):
-#   cooked/id1/<map>_g0.skl     QWZI its skeleton                 -> disc <MAP>_G0.WLD
-#   cooked/id1/<map>_z2.zon     QZN2 its chunks                   -> disc <MAP>_Z2.ZON
+#   cooked/id1/<map>.skl        QWZJ its skeleton                 -> disc <MAP>.WLD
+#   cooked/id1/<map>.zon        QZN2 its chunks                   -> disc <MAP>.ZON
 # the game data (the guns, the projectiles, the HUD; formats/qgame.h):
-#   cooked/id1/game_0.dat       QGMB                              -> disc GAME_0.DAT
+#   cooked/id1/game.dat         QGMB                              -> disc GAME.DAT
 # the release menu's (formats/qsound.h, formats/qmenu.h):
 #   cooked/id1/menu.snd         QSB2, the clicks and CD track 2   -> disc MAPS/MENU.SND
 #   cooked/id1/conback.dat      QCB1, the console's background    -> disc CONBACK.DAT
 # the streamed assets (the monsters, the items' models, the positional
 # sounds; formats/qstream.h; the models low: tools/qcook/game.c
 # stream_reduce):
-#   cooked/id1/stream_0.dat     QST1                              -> disc STREAM_0.DAT
+#   cooked/id1/stream.dat       QST1                              -> disc STREAM.DAT
 # and, per map, its own file of them (docs/porting-notes.md §84: the pool's
 # directory with the sectors of the assets the map's entities bring, the
 # nearest to the player's start first):
-#   cooked/id1/<map>_s0.dat     QST1                              -> disc <MAP>/<MAP>_S0.DAT
+#   cooked/id1/<map>_s.dat      QST1                              -> disc <MAP>/<MAP>_S.DAT
 # and the music the SPU streams (formats/qspu.h): 22.05 kHz, the menu's
 # theme (track 2) 32 kHz:
 #   cooked/spu/spu_NN.dat       QSP1                              -> disc MUSIC/SPU_NN.DAT
@@ -106,7 +106,7 @@ EP1="start e1m1 e1m2 e1m3 e1m4 e1m5 e1m6 e1m7 e1m8"
 RETAIL="e2m1 e2m2 e2m3 e2m4 e2m5 e2m6 e2m7 e3m1 e3m2 e3m3 e3m4 e3m5 e3m6 e3m7
         e4m1 e4m2 e4m3 e4m4 e4m5 e4m6 e4m7 e4m8 end"
 if [ -z "${COOK_MAPS:-}" ]; then
-	COOK_MAPS=$( (ls cooked/id1/*_g0.wld 2>/dev/null || true) | sed 's|.*/||; s|_g0\.wld$||' | sort -u | tr '\n' ' ')
+	COOK_MAPS=$( (ls cooked/id1/*.sndset 2>/dev/null || true) | sed 's|.*/||; s|\.sndset$||' | sort -u | tr '\n' ' ')
 	COOK_MAPS=${COOK_MAPS:-ep1}
 fi
 case "$COOK_MAPS" in
@@ -160,13 +160,12 @@ make -s -C tools/qcook
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
 rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
-      cooked/id1/*.skl cooked/id1/*.zon cooked/id1/*_s0.dat cooked/id1/*.sndset \
-      cooked/id1/game*.dat cooked/id1/stream*.dat cooked/id1/conback.dat \
+      cooked/id1/*.skl cooked/id1/*.zon cooked/id1/*.sndset cooked/id1/*.dat \
       cooked/settings.txt           # (written last: a cook cut short is cooked again)
 rm -rf cooked/xa                    # (the XA streams and their carousels: none since §52)
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
-tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game > "$LOGS/game.log" 2>&1 \
+tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game.dat > "$LOGS/game.log" 2>&1 \
 	|| { echo "cook FAILED: game data"; cat "$LOGS/game.log"; exit 1; }
 # the release menu's: its sound bank (the clicks, the theme's CD track) and
 # the console's background, shown before any map is loaded
@@ -174,31 +173,28 @@ tools/qcook/qcook menu --pak "$QUAKE_PAK0" --sounds cooked/id1/menu.snd --conbac
 	> "$LOGS/menu.log" 2>&1 || { echo "cook FAILED: menu"; cat "$LOGS/menu.log"; exit 1; }
 # the streamed assets (formats/qstream.h): the monsters, the items' models,
 # the positional sounds
-tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --out cooked/id1/stream \
+tools/qcook/qcook stream --pak "$QUAKE_PAK0" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --out cooked/id1/stream.dat \
                          > "$LOGS/stream.log" 2>&1 \
 	|| { echo "cook FAILED: streamed assets"; cat "$LOGS/stream.log"; exit 1; }
 
-cook_one() {   # map, then t (its textures), g (its world) or m (its own models)
+cook_one() {   # map: its textures, world, own models and sound bank, one run
 	local pak=$QUAKE_PAK0
 	case $1 in e2*|e3*|e4*|end) pak=${QUAKE_PAK1:?$1 needs QUAKE_PAK1} ;; esac
-	local job what
-	case $2 in
-	t) job=$1_t2; what="--tex4 cooked/id1/$job.tx4" ;;
-	g) job=$1_g0; what="--world cooked/id1/$job.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset"
-	   if [ "$FMAP" = 1 ] && [ -f "$Q1PSX_ZONE_TABLES/$1.zones" ]; then   # (the zones' tables name the
+	local fm=""
+	if [ "$FMAP" = 1 ] && [ -f "$Q1PSX_ZONE_TABLES/$1.zones" ]; then   # (the zones' tables name the
 		                                 #  records of a cook without the merge: each record's faces,
 		                                 #  to translate them, below)
-		what="$what --fmap $LOGS/$job.fmap"
+		fm="--fmap $LOGS/$1.fmap"
 		QCOOK_MERGE=0 tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
-		              --world "$LOGS/$job.unmerged.wld" --fmap "$LOGS/$job.unmerged.fmap" \
-		              --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$job.unmerged.log" 2>&1 \
-		|| { echo "cook FAILED: $job (unmerged)"; cat "$LOGS/$job.unmerged.log"; return 1; }
-	   fi ;;
-	m) job=$1_m0; what="--mdl cooked/id1/$job.mdl" ;;
-	esac
-	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" $what \
-	                      --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$job.log" 2>&1 \
-	|| { echo "cook FAILED: $job"; cat "$LOGS/$job.log"; return 1; }
+		              --world "$LOGS/$1.unmerged.wld" --fmap "$LOGS/$1.unmerged.fmap" \
+		              --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1.unmerged.log" 2>&1 \
+		|| { echo "cook FAILED: $1 (unmerged)"; cat "$LOGS/$1.unmerged.log"; return 1; }
+	fi
+	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
+	                      --tex4 "cooked/id1/$1.tx4" --world "cooked/id1/$1.wld" --mdl "cooked/id1/$1.mdl" \
+	                      --sounds "cooked/id1/$1.snd" --sndset "cooked/id1/$1.sndset" $fm \
+	                      --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1.log" 2>&1 \
+	|| { echo "cook FAILED: $1"; cat "$LOGS/$1.log"; return 1; }
 }
 # the coplanar faces merged (QCOOK_MERGE, 1 by default; docs/porting-notes.md
 # §113) renumber the world's records: the zones' tables, made on a cook
@@ -210,11 +206,7 @@ fi
 export -f cook_one
 export QUAKE_PAK0 QUAKE_PAK1 LOGS LIGHT_GAIN FMAP Q1PSX_ZONE_TABLES
 
-for m in $MAPS; do
-	echo "$m t"
-	echo "$m g"
-	echo "$m m"
-done | xargs -P "$(nproc)" -n 2 bash -c 'cook_one "$0" "$1"'
+for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c 'cook_one {}'
 
 echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures high, the geometry and the models low -> $ROOT/cooked/"
 
@@ -224,8 +216,8 @@ echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures high, the geometry a
 section_one() {   # map
 	local pak=$QUAKE_PAK0
 	case $1 in e2*|e3*|e4*|end) pak=${QUAKE_PAK1:?$1 needs QUAKE_PAK1} ;; esac
-	tools/qcook/qcook section --pak "$pak" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --stream cooked/id1/stream_0.dat \
-	                          --map "maps/$1.bsp" --out "cooked/id1/$1_s0.dat" --sndset "cooked/id1/$1.sndset" \
+	tools/qcook/qcook section --pak "$pak" ${QUAKE_PAK1:+--pak1 "$QUAKE_PAK1"} --stream cooked/id1/stream.dat \
+	                          --map "maps/$1.bsp" --out "cooked/id1/$1_s.dat" --sndset "cooked/id1/$1.sndset" \
 	                          > "$LOGS/$1_s.log" 2>&1 \
 	|| { echo "cook FAILED: $1 section"; cat "$LOGS/$1_s.log"; return 1; }
 }
@@ -234,8 +226,8 @@ for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c 'section_o
 cat "$LOGS"/*_s.log | grep '^qcook: ' | sed 's|^qcook: .*/|section: |' || true
 
 # the world's zones (docs/porting-notes.md §57): each map with a table split
-# into its skeleton and its chunks (their UVs on the texture set's tiles:
-# after the textures' jobs), or left whole where that saves no
+# into its skeleton and its chunks (the world's records as they are, their
+# UVs on the texture set's tiles), or left whole where that saves no
 # RAM (the cook says which); Q1PSX_ZONE_SLOTS the chunks resident at once
 # (3: the camera's zone and its two nearest; 4: its three nearest; 5: and the
 # last one left, kept)
@@ -244,11 +236,11 @@ if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 	export Q1PSX_ZONE_SLOTS
 	for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c \
 	    't="$Q1PSX_ZONE_TABLES/{}.zones"; [ -f "$t" ] || exit 0
-	     fm=""; [ "$FMAP" = 1 ] && fm="--fmap $LOGS/{}_g0.unmerged.fmap $LOGS/{}_g0.fmap"   # (QCOOK_MERGE)
-	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}_g0.wld --tables "$t" $fm --skeleton cooked/id1/{}_g0.skl \
-	         --tex4 cooked/id1/{}_t2.tx4 --chunks cooked/id1/{}_z2.zon > "$LOGS/{}_z.log" 2>&1 \
+	     fm=""; [ "$FMAP" = 1 ] && fm="--fmap $LOGS/{}.unmerged.fmap $LOGS/{}.fmap"   # (QCOOK_MERGE)
+	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}.wld --tables "$t" $fm --skeleton cooked/id1/{}.skl \
+	         --chunks cooked/id1/{}.zon > "$LOGS/{}_z.log" 2>&1 \
 	     || { echo "cook FAILED: zones {}"; cat "$LOGS/{}_z.log"; exit 1; }'
-	echo "zones: $(ls cooked/id1/*_g0.skl 2>/dev/null | wc -l) of $(echo $MAPS | wc -w) maps split ($Q1PSX_ZONE_TABLES)"
+	echo "zones: $(ls cooked/id1/*.skl 2>/dev/null | wc -l) of $(echo $MAPS | wc -w) maps split ($Q1PSX_ZONE_TABLES)"
 else
 	echo "zones: none, every map whole (Q1PSX_ZONE_TABLES=none; zones/auto_1536_s3 by default)"
 fi

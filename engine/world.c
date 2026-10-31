@@ -93,12 +93,6 @@ static void load_step(uint32_t base)
 		load_poll(0);
 }
 
-/* The texture set's tables, kept at the bottom of the level arena: the
-   texture words the renderer reads, the UV maps (the world's and the
-   models' UVs onto this set's tiles), the animated textures. */
-static const qtex_uvmap *uvmap;
-static uint32_t          num_slots;
-
 /* LoadImage sends the rectangle's w x h halfwords by DMA in units of 16
    words, rounding a shorter last unit up: up to 60 bytes past the data go
    to the GPU too, as commands. A stray word made DuckStation's GPU (and
@@ -149,15 +143,16 @@ static void note_rects(const qtex_rect *r, uint32_t n)
 	}
 }
 
-/* The map's texture set into VRAM: QTX7 (4bpp, 16 colours per texture;
-   the 8-bit sets left the disc, §52). The file is transient but for its
-   tables, moved to its start: the arena's bottom (the arena was reset). */
+/* The map's texture set into VRAM: QTX8 (4bpp, 16 colours per texture).
+   The file is transient but for its tables (the texture words the
+   renderer reads, the animated textures), moved to its start: the arena's
+   bottom (the arena was reset). */
 static int load_textures(const char *name)
 {
 	gamma_keep_map(NULL, NULL, 0);
 	uint32_t mark = mem_level_mark(), size;
 	uint8_t *f = cd_load(name, &size, load_progress ? load_poll : NULL);
-	uint32_t ofs_slots = 0, ofs_anims = 0, nanims = 0;
+	uint32_t num_slots = 0, ofs_slots = 0, ofs_anims = 0, nanims = 0;
 	if (f && size >= sizeof(qtex4_header) && !memcmp(f, QTEX4_MAGIC, 4)) {
 		const qtex4_header *h = (const qtex4_header *) f;
 		upload_rects(f, (const qtex_rect *) (f + sizeof *h), h->num_rects);
@@ -171,7 +166,7 @@ static int load_textures(const char *name)
 		return 0;
 	}
 	DrawSync(0);                     /* pixels live in VRAM now */
-	uint32_t tables = num_slots * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
+	uint32_t tables = num_slots * (uint32_t) sizeof(qw_tex);
 	uint32_t len    = ofs_anims + nanims * (uint32_t) sizeof(qw_anim) - ofs_slots;
 	if (ofs_anims != ofs_slots + tables || ofs_slots + len > size) {
 		printf("world: bad texture tables in %s\n", name);
@@ -207,7 +202,6 @@ static int load_textures(const char *name)
 	memmove(f, f + ofs_slots, len);
 	world.textures  = (const qw_tex *) f;
 	world.num_tex   = num_slots;
-	uvmap           = (const qtex_uvmap *) (f + num_slots * sizeof(qw_tex));
 	world.anims     = (const qw_anim *) (f + tables);
 	world.num_anims = nanims;
 	uint32_t keep_at = (len + 15) & ~15u;            /* (the arena's 16-byte steps) */
@@ -219,41 +213,8 @@ static int load_textures(const char *name)
 	return 1;
 }
 
-/* The UVs of a record stream onto the loaded set's tiles (formats/qtex.h
-   qtex_uvmap): u' = u0 + ((u * su + rnd) >> 15). `slot_of` maps a
-   record's tex to its texture slot (a map's model: its own table), NULL
-   for the world's records. */
-static void map_uvs(uint8_t *r, const uint8_t *end, const uint16_t *slot_of, uint32_t nslot_of)
-{
-	while (r < end) {
-		qw_record *rec = (qw_record *) r;
-		if (!rec->size)
-			break;
-		uint32_t slot = rec->tex;
-		if (slot_of)
-			slot = slot < nslot_of ? slot_of[slot] : 0;
-		const qtex_uvmap *m = &uvmap[slot < num_slots ? slot : 0];
-		uint32_t su = m->su, sv = m->sv, u0 = m->u0, v0 = m->v0, rnd = m->rnd;
-		uint16_t *uv = (uint16_t *) (r + rec->polys + 4);    /* qw_quad / qw_tri: uv at +4 */
-		for (uint32_t q = 0; q < rec->num_quads; q++, uv += 6)
-			for (int k = 0; k < 4; k++) {
-				uint32_t w = uv[k];
-				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) |
-				                    (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
-			}
-		for (uint32_t t = 0; t < rec->num_tris; t++, uv += 6)
-			for (int k = 0; k < 3; k++) {
-				uint32_t w = uv[k];
-				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) |
-				                    (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
-			}
-		r += rec->size;
-	}
-}
-
 /* The map's own models (formats/qgame.h qmm_header): their tables, a
-   texture table each from the set's (an alias model's skin does not wrap),
-   their UVs mapped. */
+   texture table each from the set's (an alias model's skin does not wrap). */
 static int load_models(const char *name)
 {
 	uint32_t size;
@@ -285,8 +246,6 @@ static int load_models(const char *name)
 		world.model_tex[i]  = t;
 		if (qm[i].qim < QIM_COUNT)
 			world.model_of[qm[i].qim] = (int16_t) i;
-		map_uvs(world.mgeo + qm[i].m.ofs_records, world.mgeo + qm[i].m.ofs_records + qm[i].m.len_records,
-		        qm[i].tex, qm[i].num_tex);
 	}
 	return 1;
 }
@@ -305,9 +264,9 @@ Q_COLD int world_load(int map, world_progress_fn progress)
 
 	char name[32], tex_name[32], mdl_name[32];
 	uint32_t tex_size = 0, wld_size = 0, mdl_size = 0;
-	q_snprintf(tex_name, sizeof tex_name, "\\LVL\\%s\\%s_T2.TX4;1", disc_maps[map], disc_maps[map]);
-	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_G0.WLD;1", disc_maps[map], disc_maps[map]);
-	q_snprintf(mdl_name, sizeof mdl_name, "\\LVL\\%s\\%s_M0.MDL;1", disc_maps[map], disc_maps[map]);
+	q_snprintf(tex_name, sizeof tex_name, "\\LVL\\%s\\%s.TX4;1", disc_maps[map], disc_maps[map]);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s.WLD;1", disc_maps[map], disc_maps[map]);
+	q_snprintf(mdl_name, sizeof mdl_name, "\\LVL\\%s\\%s.MDL;1", disc_maps[map], disc_maps[map]);
 	load_progress = progress;
 	if (progress) {
 		cd_exists(tex_name, &tex_size);
@@ -342,7 +301,6 @@ Q_COLD int world_load(int map, world_progress_fn progress)
 		                                    face_visframe (faces < 32768) */
 	world.faces       = f + h->ofs_faces;
 	world.views       = (const qw_view *) (f + h->ofs_views);
-	map_uvs((uint8_t *) world.faces, world.faces + h->len_faces, NULL, 0);   /* onto the set's tiles */
 	world.verts       = (const qw_vert *) (f + h->ofs_verts);
 	world.num_verts   = h->num_verts;
 	world.ambient     = f + h->ofs_ambient;

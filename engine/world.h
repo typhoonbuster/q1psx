@@ -1,10 +1,10 @@
 /*
  * q1psx — loaded world (formats/qworld.h + qtex.h + qgame.h).
  *
- * world_load() uploads the map's texture pages to VRAM (the QTX7 file
- * is transient but for its tables: the texture words, the UV maps, the
- * animated textures), then loads the QWVF world and the map's own models
- * (QMM1) into the level arena, maps their UVs onto the loaded set's tiles
+ * world_load() uploads the map's texture pages to VRAM (the QTX8 file
+ * is transient but for its tables: the texture words, the animated
+ * textures), then loads the QWVI world and the map's own models (QMM2,
+ * their UVs on the set's tiles already: the cook's) into the level arena
  * and rewrites the world's link fields into absolute pointers for the asm
  * renderer: the nodes' children and face blocks, the leaves' marks and PVS
  * rows, the brush models' roots.
@@ -80,8 +80,8 @@ _Static_assert(__builtin_offsetof(world_t, hull2_root) == 88, "p_defs.inc W_HULL
 extern world_t world;
 
 /* Find which Quake maps the disc carries (a directory of \LVL named as
-   the map: its <MAP>_G0.WLD, <MAP>_T2.TX4, <MAP>_M0.MDL...); returns how
-   many. Call once after cd_init. */
+   the map: its <MAP>.WLD, <MAP>.TX4, <MAP>.MDL...); returns how many.
+   Call once after cd_init. */
 int         world_scan_maps(void);
 int         world_num_maps(void);
 const char *world_map_name(int map);   /* "START", "E1M1", ... */
@@ -94,9 +94,9 @@ int         world_registered(void);    /* the disc carries the registered episod
 typedef void (*world_progress_fn)(uint32_t done, uint32_t total);
 
 /* Load map `map` (0 .. world_num_maps() - 1): its textures (the 4-bit
-   set, <MAP>_T2.TX4), its world (<MAP>_G0.WLD), its own models
-   (<MAP>_M0.MDL); resets the level arena. 1 on success, 0 if missing or
-   too big for the arena. `progress` may be NULL (the reads then block). */
+   set, <MAP>.TX4), its world (<MAP>.WLD), its own models (<MAP>.MDL);
+   resets the level arena. 1 on success, 0 if missing or too big for the
+   arena. `progress` may be NULL (the reads then block). */
 int world_load(int map, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */

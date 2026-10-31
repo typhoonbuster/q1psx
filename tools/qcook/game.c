@@ -1,8 +1,8 @@
 /*
  * qcook — game data: the models, sprites and HUD pictures the engine needs
- * on every map, cooked from the pak into GAME_0.DAT (formats/qgame.h).
+ * on every map, cooked from the pak into GAME.DAT (formats/qgame.h).
  *
- *   qcook game --pak <pak0.pak> --out <prefix>      (<prefix>_0.dat)
+ *   qcook game --pak <pak0.pak> --out <game.dat>
  *
  * Models (Quake MDL): the triangles are cut into face records exactly like
  * the world's (formats/qworld.h), so the renderer draws them with its own
@@ -4031,7 +4031,7 @@ int cmd_game(int argc, char **argv)
 		if (!strcmp(argv[i], "--out")) out_path = argv[i + 1];
 	}
 	if (!pak_path || !out_path)
-		die("usage: qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_0.dat)");
+		die("usage: qcook game --pak <pak0.pak> --out <game.dat>");
 
 	long pak_len;
 	uint8_t *pak = read_file(pak_path, &pak_len);
@@ -4217,15 +4217,13 @@ int cmd_game(int argc, char **argv)
 	memcpy(f.p + rects_at, rects, h.num_rects * sizeof *rects);
 	memcpy(f.p, &h, sizeof h);
 
-	char path[512];
-	snprintf(path, sizeof path, "%s_0.dat", out_path);
-	FILE *fp = fopen(path, "wb");
-	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", path);
+	FILE *fp = fopen(out_path, "wb");
+	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", out_path);
 	fclose(fp);
 	uint32_t texels = 0;
 	for (int p = 0; p < npages; p++) texels += (uint32_t) page_rows[p] * PT;
 	printf("qcook: %s — %u B: %d models (%u B of geometry), %d pictures, %d VRAM pages (%u K texels)\n",
-	       path, (unsigned) f.len, QGM_COUNT, (unsigned) geo.len, QGP_COUNT, npages, texels / 1024);
+	       out_path, (unsigned) f.len, QGM_COUNT, (unsigned) geo.len, QGP_COUNT, npages, texels / 1024);
 	free(rects);
 	free(f.p);
 	return 0;

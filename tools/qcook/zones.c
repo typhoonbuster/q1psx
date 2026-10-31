@@ -1,11 +1,10 @@
 /*
- * q1psx — `qcook zones`: a cooked world (QWVH) split into its skeleton
- * (QWZI) and its zone chunks (QZN2), from the level-chunks analysis'
+ * q1psx — `qcook zones`: a cooked world (QWVI) split into its skeleton
+ * (QWZJ) and its zone chunks (QZN2), from the level-chunks analysis'
  * tables (formats/qworld.h "zones", docs/porting-notes.md §56, §57).
  *
- *   qcook zones --world <map>_g0.wld --tables <dir>/<map>.zones
- *               --skeleton <out.skl> [--resident 3]
- *               --tex4 <map>_t2.tx4 --chunks <out.zon>
+ *   qcook zones --world <map>.wld --tables <dir>/<map>.zones
+ *               --skeleton <out.skl> [--resident 3] --chunks <out.zon>
  *
  * The tables (one text file a map: analysis/export.py's docstring gives
  * the format) are made outside the repo from Quake's maps; the cut in use
@@ -34,7 +33,6 @@
 #include <string.h>
 
 #include "qcook.h"
-#include "../../formats/qtex.h"
 #include "../../formats/qworld.h"
 
 #define SECTOR    2048
@@ -277,7 +275,8 @@ static void put_pool(buf_t *out, const pool_t *p)
 
 /* a record copied out, its vertex indices into `pool`; a world record
    (`loaded`) as the loader leaves one (engine/world.c world_load): its face
-   id doubled, its average light in the flags' bits 2-7 (its UVs: map_uvs) */
+   id doubled, its average light in the flags' bits 2-7 (its UVs on the
+   set's tiles already: the cook's world, tex_map_uvs) */
 static void put_record(buf_t *out, const qw_record *src, pool_t *pool, int loaded)
 {
 	size_t at = out->len;
@@ -298,50 +297,11 @@ static void put_record(buf_t *out, const qw_record *src, pool_t *pool, int loade
 	rec->flags = (uint8_t) ((rec->flags & (QWF_SKY | QWF_LIQUID)) | (avg > 63 ? 63 : avg) << 2);
 }
 
-/* engine/world.c map_uvs on a record stream: the UVs onto the set's tiles
-   (formats/qtex.h qtex_uvmap) */
-static void map_uvs(uint8_t *r, const uint8_t *end, const qtex_uvmap *uvmap, uint32_t nslots)
-{
-	while (r < end) {
-		qw_record *rec = (qw_record *) r;
-		const qtex_uvmap *m = &uvmap[rec->tex < nslots ? rec->tex : 0];
-		uint32_t su = m->su, sv = m->sv, u0 = m->u0, v0 = m->v0, rnd = m->rnd;
-		uint16_t *uv = (uint16_t *) (r + rec->polys + 4);    /* qw_quad / qw_tri: uv at +4 */
-		for (uint32_t q = 0; q < rec->num_quads; q++, uv += 6)
-			for (int k = 0; k < 4; k++) {
-				uint32_t w = uv[k];
-				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) | (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
-			}
-		for (uint32_t t = 0; t < rec->num_tris; t++, uv += 6)
-			for (int k = 0; k < 3; k++) {
-				uint32_t w = uv[k];
-				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) | (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
-			}
-		r += rec->size;
-	}
-}
-
-/* a texture set's UV maps (formats/qtex.h QTX7), its file kept in *keep */
-static const qtex_uvmap *read_uvmap(const char *path, uint32_t *nslots, uint8_t **keep)
-{
-	long len;
-	uint8_t *f = read_file(path, &len);
-	const qtex4_header *h = (const qtex4_header *) f;
-	if ((size_t) len < sizeof *h || memcmp(h->magic, QTEX4_MAGIC, 4) ||
-	    h->ofs_slots + (size_t) h->num_slots * (sizeof(qw_tex) + sizeof(qtex_uvmap)) > (size_t) len)
-		die("%s: not a %s texture set", path, QTEX4_MAGIC);
-	if (h->num_slots != H->num_tex)
-		die("%s: %u texture slots, the world names %u", path, h->num_slots, H->num_tex);
-	*nslots = h->num_slots;
-	*keep = f;
-	return (const qtex_uvmap *) (f + h->ofs_slots + h->num_slots * sizeof(qw_tex));
-}
-
 /* ---------------------------------------------------------------- run -- */
 
 int cmd_zones(int argc, char **argv)
 {
-	const char *wld = 0, *tab = 0, *skl = 0, *tex4 = 0, *zon = 0, *fm_from = 0, *fm_to = 0;
+	const char *wld = 0, *tab = 0, *skl = 0, *zon = 0, *fm_from = 0, *fm_to = 0;
 	int want = 3;
 	for (int i = 2; i < argc; i++) {
 		if (i + 1 >= argc)
@@ -354,13 +314,12 @@ int cmd_zones(int argc, char **argv)
 		else if (!strcmp(argv[i], "--tables"))     tab = argv[++i];
 		else if (!strcmp(argv[i], "--skeleton"))   skl = argv[++i];
 		else if (!strcmp(argv[i], "--resident"))   want = atoi(argv[++i]);
-		else if (!strcmp(argv[i], "--tex4"))       tex4 = argv[++i];
 		else if (!strcmp(argv[i], "--chunks"))     zon = argv[++i];
 		else die("zones: unknown option %s", argv[i]);
 	}
-	if (!wld || !tab || !skl || !tex4 || !zon || want < 1 || want > 5)
+	if (!wld || !tab || !skl || !zon || want < 1 || want > 5)
 		die("usage: qcook zones --world <wld> --tables <zones> --skeleton <skl> [--resident 1..5] "
-		    "--tex4 <tx4> --chunks <zon>");
+		    "--chunks <zon>");
 	remove(skl);                              /* (a map kept whole leaves none) */
 	remove(zon);
 
@@ -714,10 +673,7 @@ int cmd_zones(int argc, char **argv)
 	} else {
 		printf(": zoned, %u KB freed\n", (uint32_t) (flen - resident) / 1024);
 		write_file(skl, &s);
-		/* the chunks, their UVs on the texture set's tiles */
-		uint32_t nslots;
-		uint8_t *keep;
-		const qtex_uvmap *uvmap = read_uvmap(tex4, &nslots, &keep);
+		/* the chunks (their UVs on the texture set's tiles: the world's) */
 		buf_t zf;
 		memset(&zf, 0, sizeof zf);
 		qz_file fh;
@@ -730,16 +686,12 @@ int cmd_zones(int argc, char **argv)
 			uint32_t z = ord[i];
 			if (zf.len != (size_t) dir[z].sector * SECTOR)
 				die("zone %u: at byte %zu, its directory says sector %u", z, zf.len, dir[z].sector);
-			size_t at = zf.len;
 			buf_put(&zf, chunk[z].p, chunk[z].len);
-			const qw_chunk *hd = (const qw_chunk *) (zf.p + at);
-			map_uvs(zf.p + at + hd->ofs_records, zf.p + at + hd->ofs_records + hd->len_records, uvmap, nslots);
 			buf_align(&zf, SECTOR);
 		}
 		write_file(zon, &zf);
-		printf("qcook:   %s: %zu KB, the UVs of %s\n", zon, zf.len / 1024, tex4);
+		printf("qcook:   %s: %zu KB\n", zon, zf.len / 1024);
 		free(zf.p);
-		free(keep);
 	}
 
 	for (uint32_t z = 0; z < nz; z++) {

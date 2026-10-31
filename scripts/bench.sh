@@ -265,11 +265,10 @@ grep -A2 'MISMATCH' "$OUT/bench.log" | head -n 30 || true
 
 # Render the dumped display lists to PNG (build-bench/views/<name>.png) so the
 # output can be checked without a screen (the game's dumps need GAME.DAT's
-# images too: the models level's file); a single map's bench (MAP=...) with
-# that map's textures.
+# images too); a single map's bench (MAP=...) with that map's textures.
 make -s -C "$ROOT/tools/pktview"
 mkdir -p "$OUT/views"
 TEXMAP=start; [ -n "$MAP" ] && TEXMAP=$(echo "$MAP" | tr 'A-Z' 'a-z')
 "$ROOT/tools/pktview/pktview" "$OUT/bench.log" \
-	"$ROOT/cooked/id1/${TEXMAP}_t2.tx4" "$OUT/views/" \
-	"$ROOT/cooked/id1/game_0.dat" "$ROOT/cooked/id1/stream_0.dat" | sed 's/^/  /'
+	"$ROOT/cooked/id1/${TEXMAP}.tx4" "$OUT/views/" \
+	"$ROOT/cooked/id1/game.dat" "$ROOT/cooked/id1/stream.dat" | sed 's/^/  /'

@@ -3,9 +3,10 @@
  * side over 128 texels), packed into whole texture pages, each power-of-two
  * axis aligned for the GPU texture window, a one-texel gutter past each
  * other axis, written in 4bpp, each texture quantized to its own 16 colours,
- * as a QTX7 file (formats/qtex.h) with the map's texture table: the slots'
- * words, how the world's UVs (cooked for the finest layout) land on
- * this set's tiles, the animated textures' tiles.
+ * as a QTX8 file (formats/qtex.h) with the map's texture table: the slots'
+ * words, the animated textures' tiles; and where the finest layout's UVs
+ * land on this set's tiles (tex_uvmaps, tex_map_uvs: the world's and the
+ * map's models', mapped before they are written).
  */
 
 #include <math.h>
@@ -312,10 +313,10 @@ static int face_miptex(const bsp_t *b, int f)
 }
 
 /* The set's tables (formats/qtex.h) into `out`: qw_tex[canon->num] (the
-   CLUT and tpage of `words`, the texture window), qtex_uvmap[canon->num]
-   (the layout's UVs onto this set's tiles), then qw_anim[ts->num_anims]
-   (the animated textures' tiles, and the brush models drawing a chain
-   with alternates: the engine looks at their frame). */
+   CLUT and tpage of `words`, the texture window), then
+   qw_anim[ts->num_anims] (the animated textures' tiles, and the brush
+   models drawing a chain with alternates: the engine looks at their
+   frame). */
 static void tables_build(buf_t *out, const tex_set *ts, const tex_set *canon, const bsp_t *b,
                          const tex_words *words)
 {
@@ -329,24 +330,6 @@ static void tables_build(buf_t *out, const tex_set *ts, const tex_set *canon, co
 			t.window = ts->slots[j].window;
 		}
 		buf_put(out, &t, sizeof t);
-	}
-	for (int i = 0; i < canon->num; i++) {
-		qtex_uvmap m;
-		memset(&m, 0, sizeof m);
-		int j = draw_slot(ts, canon, i);
-		const tex_slot *c = &canon->slots[i];
-		if (j >= 0 && ts->slots[j].present && c->present) {
-			const tex_slot *s = &ts->slots[j];
-			long su = lround(32768.0 * s->res_u / c->res_u), sv = lround(32768.0 * s->res_v / c->res_v);
-			if (su < 1 || sv < 1 || su > 32768 || sv > 32768)
-				die("texture slot %d: scale %ld / %ld (finer than the layout's)", i, su, sv);
-			m.su  = (uint16_t) su;
-			m.sv  = (uint16_t) sv;
-			m.u0  = (uint8_t) (s->win_x ? 0 : s->u0 + s->inner);
-			m.v0  = (uint8_t) (s->win_y ? 0 : s->v0 + s->inner);
-			m.rnd = s->inner ? 0 : 16384;          /* a skin's texels: divided (game.c) */
-		}
-		buf_put(out, &m, sizeof m);
 	}
 	for (int c = 0; c < ts->num_anims; c++) {
 		const tex_anim *a = &ts->anims[c];
@@ -375,9 +358,61 @@ static void tables_build(buf_t *out, const tex_set *ts, const tex_set *canon, co
 	}
 }
 
+void tex_uvmaps(const tex_set *ts, const tex_set *canon, tex_uvmap *maps)
+{
+	for (int i = 0; i < canon->num; i++) {
+		tex_uvmap *m = &maps[i];
+		memset(m, 0, sizeof *m);
+		int j = draw_slot(ts, canon, i);
+		const tex_slot *c = &canon->slots[i];
+		if (j >= 0 && ts->slots[j].present && c->present) {
+			const tex_slot *s = &ts->slots[j];
+			long su = lround(32768.0 * s->res_u / c->res_u), sv = lround(32768.0 * s->res_v / c->res_v);
+			if (su < 1 || sv < 1 || su > 32768 || sv > 32768)
+				die("texture slot %d: scale %ld / %ld (finer than the layout's)", i, su, sv);
+			m->su  = (uint16_t) su;
+			m->sv  = (uint16_t) sv;
+			m->u0  = (uint8_t) (s->win_x ? 0 : s->u0 + s->inner);
+			m->v0  = (uint8_t) (s->win_y ? 0 : s->v0 + s->inner);
+			m->rnd = s->inner ? 0 : 16384;         /* a skin's texels: divided (game.c) */
+		}
+	}
+}
+
+/* (the engine's load did the same until docs/porting-notes.md §119:
+   engine/world.c map_uvs) */
+void tex_map_uvs(uint8_t *r, const uint8_t *end, const tex_uvmap *maps, uint32_t nmaps,
+                 const uint16_t *slot_of, uint32_t nslot_of)
+{
+	while (r < end) {
+		qw_record *rec = (qw_record *) r;
+		if (!rec->size)
+			break;
+		uint32_t slot = rec->tex;
+		if (slot_of)
+			slot = slot < nslot_of ? slot_of[slot] : 0;
+		const tex_uvmap *m = &maps[slot < nmaps ? slot : 0];
+		uint32_t su = m->su, sv = m->sv, u0 = m->u0, v0 = m->v0, rnd = m->rnd;
+		uint16_t *uv = (uint16_t *) (r + rec->polys + 4);    /* qw_quad / qw_tri: uv at +4 */
+		for (uint32_t q = 0; q < rec->num_quads; q++, uv += 6)
+			for (int k = 0; k < 4; k++) {
+				uint32_t w = uv[k];
+				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) |
+				                    (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
+			}
+		for (uint32_t t = 0; t < rec->num_tris; t++, uv += 6)
+			for (int k = 0; k < 3; k++) {
+				uint32_t w = uv[k];
+				uv[k] = (uint16_t) ((u0 + (((w & 0xff) * su + rnd) >> 15)) |
+				                    (v0 + (((w >> 8) * sv + rnd) >> 15)) << 8);
+			}
+		r += rec->size;
+	}
+}
+
 /* ---------------------------------------------------------------- 4bpp -- */
 
-/* The QTX7 file: the pages of `pages` (8bpp indices) re-coded per tile with
+/* The QTX8 file: the pages of `pages` (8bpp indices) re-coded per tile with
    that tile's own 16 colours. */
 static void write_tex4(const tex_set *ts, const tex_set *canon, const bsp_t *b, const uint8_t *pages,
                        const int page_h[], const uint8_t palette[768], const char *path)
@@ -440,7 +475,7 @@ static void write_tex4(const tex_set *ts, const tex_set *canon, const bsp_t *b, 
 	h.num_slots = (uint32_t) canon->num;
 	h.ofs_slots = (uint32_t) (sizeof h + (size_t) nrects * sizeof(qtex_rect));
 	h.num_anims = (uint32_t) ts->num_anims;
-	h.ofs_anims = h.ofs_slots + (uint32_t) canon->num * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
+	h.ofs_anims = h.ofs_slots + (uint32_t) canon->num * (uint32_t) sizeof(qw_tex);
 	fwrite(&h, sizeof h, 1, f);
 
 	uint32_t ofs = h.ofs_slots + (uint32_t) tables.len;

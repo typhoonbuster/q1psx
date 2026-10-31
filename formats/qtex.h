@@ -1,7 +1,6 @@
 /*
- * q1psx — cooked texture set "QTX7" (architecture.md §7), one per map
- * (<MAP>_T2.TX4 on the disc). Written by `qcook`, read
- * by engine/world.c.
+ * q1psx — cooked texture set "QTX8" (architecture.md §7), one per map
+ * (<MAP>.TX4 on the disc). Written by `qcook`, read by engine/world.c.
  *
  * The cook packs every texture tile of the map into whole 4bpp texture
  * pages and ships each page as one VRAM rectangle, so the engine just DMAs
@@ -12,10 +11,10 @@
  * edge (its texture coordinates are rounded to the nearest texel:
  * docs/porting-notes.md §71). The set also carries the map's texture
  * table: each slot's CLUT, tpage and texture-window words (qw_tex, which
- * the renderer reads), how the world's texture coordinates land on its
- * tile (qtex_uvmap), and the animated textures' tiles (qw_anim). The world
- * file's polygons' UVs are cooked for the finest layout (formats/
- * qworld.h), and the loader maps them onto this set's tiles once, at load.
+ * the renderer reads), and the animated textures' tiles (qw_anim). The
+ * world's and the map's models' UVs are on this set's tiles (the cook maps
+ * them from the finest layout it cuts the faces for: tools/qcook
+ * tex_uvmaps).
  *
  * VRAM layout (halfword coordinates):
  *   framebuffers   (0,0)-(319,479)
@@ -37,7 +36,7 @@
  * Layout:
  *   qtex4_header
  *   qtex_rect[num_rects]     the CLUT block first, then the pages
- *   qw_tex[num_slots], qtex_uvmap[num_slots]     at ofs_slots
+ *   qw_tex[num_slots]                            at ofs_slots
  *   qw_anim[num_anims]                           at ofs_anims
  *   pixel data (each rect: w*h halfwords at data_ofs, 64-byte aligned)
  */
@@ -63,24 +62,6 @@ typedef struct {
 	uint32_t window;       /* GP0 E2h texture-window command; 0xE2000000 = no
 	                          wrap (the axes that are not powers of two)      */
 } qw_tex;                  /* 8 bytes */
-
-/* Where the world's texture coordinates land in this set. A world file's
-   UVs are in texels of the finest layout (formats/qworld.h): on an axis
-   that wraps (a power of two: the texture window folds it) a virtual
-   0..255 coordinate, otherwise from the tile's corner. At load each one
-   becomes
-     u' = u0 + ((u * su + rnd) >> 15)        (and v' alike)
-   su = 32768 where the set keeps a texture's texels; 16384 where it
-   halves them (a side over 128 texels, a squeezed model's texture). u0,
-   v0: the tile's corner in its page on an axis that does not wrap, 0 on
-   one that does (a model's skin: its own corner, inside its border). rnd:
-   16384 rounds (a miptex: the cook rounds a world texel), 0 truncates (a
-   skin: the cook divides a skin texel). */
-typedef struct {
-	uint8_t  u0, v0;
-	uint16_t su, sv;
-	uint16_t rnd;
-} qtex_uvmap;              /* 8 bytes */
 
 /* An animated texture (Quake's "+0name" .. "+9name" and the alternates
    "+aname" .. "+jname", R_TextureAnimation): every frame is a tile of the
@@ -114,16 +95,17 @@ typedef struct {
 	                            loader pads a copy of older files) */
 } qtex_rect;
 
-#define QTEX4_MAGIC          "QTX7"
+#define QTEX4_MAGIC          "QTX8"   /* (QTX7 until §119: the UV maps the loader
+                                         applied, after the slots' words) */
 #define QTEX4_PAGE_X0        320
 #define QTEX4_CLUT_Y         481
 #define QTEX4_CLUTS_PER_ROW  20
 #define QTEX4_CLUT_ROWS      22
 
 typedef struct {
-	char     magic[4];       /* "QTX7"                                   */
+	char     magic[4];       /* "QTX8"                                   */
 	uint32_t num_rects;
-	uint32_t num_slots, ofs_slots;   /* qw_tex then qtex_uvmap           */
+	uint32_t num_slots, ofs_slots;   /* qw_tex                           */
 	uint32_t num_anims, ofs_anims;
 } qtex4_header;
 

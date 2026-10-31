@@ -9,13 +9,13 @@
 #
 # The disc's layout (docs/porting-notes.md §84): the root's files (the
 # executable, the game data, the console's background, the pool of streamed
-# assets STREAM_0.DAT, the menu's bank), then one directory a level, its
+# assets STREAM.DAT, the menu's bank), then one directory a level, its
 # files in the order the engine's load reads them, so that a load is one
 # sweep of the head and every read in play a hop within the level's
 # section: its sound bank, its 4-bit textures, its
 # world (a map the cook split takes its skeleton as
-# <MAP>_G0.WLD and its chunks as <MAP>_Z2.ZON, §57), its own models, its
-# own file of the streamed assets (<MAP>_S0.DAT), and with MUSIC its copy
+# <MAP>.WLD and its chunks as <MAP>.ZON, §57), its own models, its own
+# file of the streamed assets (<MAP>_S.DAT), and with MUSIC its copy
 # of its CD track (SPU_<nn>.DAT: tracks 4 to 11 go with the maps that play
 # them; tracks 2 and 3, the title's and the intermission's, once in
 # \MUSIC after the levels). The levels' directories sit under \LVL: the
@@ -29,8 +29,8 @@ set(ROOT_ENTRIES "")
 # the load overlay (docs/porting-notes.md §90.7): the boot's copy in the
 # root, a copy first in every level's directory (its load reads it first)
 string(APPEND ROOT_ENTRIES "<file name=\"LOAD.BIN\" type=\"data\" source=\"load.bin\" />\n\t\t\t")
-if(EXISTS ${_cooked_dir}/id1/game_0.dat)
-	string(APPEND ROOT_ENTRIES "<file name=\"GAME_0.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/game_0.dat\" />\n\t\t\t")
+if(EXISTS ${_cooked_dir}/id1/game.dat)
+	string(APPEND ROOT_ENTRIES "<file name=\"GAME.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/game.dat\" />\n\t\t\t")
 endif()
 # the console's background under the release's menu before a map is loaded
 # (formats/qmenu.h)
@@ -39,8 +39,8 @@ if(EXISTS ${_cooked_dir}/id1/conback.dat)
 endif()
 # the pool of streamed assets: its directory is every level's, read at boot
 # (engine/stream.c), and a level without its own file reads it
-if(EXISTS ${_cooked_dir}/id1/stream_0.dat)
-	string(APPEND ROOT_ENTRIES "<file name=\"STREAM_0.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/stream_0.dat\" />\n\t\t\t")
+if(EXISTS ${_cooked_dir}/id1/stream.dat)
+	string(APPEND ROOT_ENTRIES "<file name=\"STREAM.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/stream.dat\" />\n\t\t\t")
 endif()
 if(EXISTS ${_cooked_dir}/id1/menu.snd)
 	string(APPEND ROOT_ENTRIES "<file name=\"MENU.SND\" type=\"data\" source=\"${_cooked_dir}/id1/menu.snd\" />\n\t\t\t")
@@ -76,29 +76,29 @@ foreach(_map ${_maps})
 	# in the load's order: the load's code, the bank, the textures, the world, the models
 	string(APPEND _entries "<file name=\"LOAD.BIN\" type=\"data\" source=\"load.bin\" />\n\t\t\t\t")
 	string(APPEND _entries "<file name=\"${_MAP}.SND\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}.snd\" />\n\t\t\t\t")
-	if(EXISTS ${_cooked_dir}/id1/${_map}_t2.tx4)
-		string(APPEND _entries "<file name=\"${_MAP}_T2.TX4\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_t2.tx4\" />\n\t\t\t\t")
+	if(EXISTS ${_cooked_dir}/id1/${_map}.tx4)
+		string(APPEND _entries "<file name=\"${_MAP}.TX4\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}.tx4\" />\n\t\t\t\t")
 	endif()
-	set(_wld ${_cooked_dir}/id1/${_map}_g0.wld)
+	set(_wld ${_cooked_dir}/id1/${_map}.wld)
 	set(_zon "")
-	if(EXISTS ${_cooked_dir}/id1/${_map}_g0.skl AND EXISTS ${_cooked_dir}/id1/${_map}_z2.zon)
-		set(_wld ${_cooked_dir}/id1/${_map}_g0.skl)         # the skeleton, and its chunks
-		set(_zon ${_cooked_dir}/id1/${_map}_z2.zon)
+	if(EXISTS ${_cooked_dir}/id1/${_map}.skl AND EXISTS ${_cooked_dir}/id1/${_map}.zon)
+		set(_wld ${_cooked_dir}/id1/${_map}.skl)            # the skeleton, and its chunks
+		set(_zon ${_cooked_dir}/id1/${_map}.zon)
 		math(EXPR _nzoned "${_nzoned} + 1")
 	endif()
 	if(EXISTS ${_wld})
-		string(APPEND _entries "<file name=\"${_MAP}_G0.WLD\" type=\"data\" source=\"${_wld}\" />\n\t\t\t\t")
+		string(APPEND _entries "<file name=\"${_MAP}.WLD\" type=\"data\" source=\"${_wld}\" />\n\t\t\t\t")
 	endif()
-	if(EXISTS ${_cooked_dir}/id1/${_map}_m0.mdl)
-		string(APPEND _entries "<file name=\"${_MAP}_M0.MDL\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_m0.mdl\" />\n\t\t\t\t")
+	if(EXISTS ${_cooked_dir}/id1/${_map}.mdl)
+		string(APPEND _entries "<file name=\"${_MAP}.MDL\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}.mdl\" />\n\t\t\t\t")
 	endif()
 	# what the game reads in play, right before the track: the chunks, the
 	# level's streamed assets
 	if(_zon)
-		string(APPEND _entries "<file name=\"${_MAP}_Z2.ZON\" type=\"data\" source=\"${_zon}\" />\n\t\t\t\t")
+		string(APPEND _entries "<file name=\"${_MAP}.ZON\" type=\"data\" source=\"${_zon}\" />\n\t\t\t\t")
 	endif()
-	if(EXISTS ${_cooked_dir}/id1/${_map}_s0.dat)
-		string(APPEND _entries "<file name=\"${_MAP}_S0.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_s0.dat\" />\n\t\t\t\t")
+	if(EXISTS ${_cooked_dir}/id1/${_map}_s.dat)
+		string(APPEND _entries "<file name=\"${_MAP}_S.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_s.dat\" />\n\t\t\t\t")
 		math(EXPR _nsections "${_nsections} + 1")
 	endif()
 	if(MUSIC)

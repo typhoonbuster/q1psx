@@ -281,7 +281,7 @@ Q_COLD int zone_map_start(const uint8_t *f, const char *map)
 	}
 	char name[32];
 	uint32_t lba, size;
-	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_Z2.ZON;1", map, map);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s.ZON;1", map, map);
 	if (!cd_find(name, &lba, &size)) {
 		printf("zone: no %s on the disc\n", name);
 		return 0;

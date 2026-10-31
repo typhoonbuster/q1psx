@@ -3,13 +3,13 @@
  * qw_model, QIM_*): the BSP item boxes its
  * entities spawn with (items.qc's setmodel: health, ammo; misc.qc's
  * explosive boxes, maps/b_*.bsp), cut into records over their own textures
- * (tex_build's extras, tiling like the world's). Their UVs are the
- * layout's (formats/qtex.h qtex_uvmap), mapped at load. Only what the
+ * (tex_build's extras, tiling like the world's). Their UVs on the map's
+ * texture set's tiles, as the world's (tex_map_uvs). Only what the
  * entities use is cooked. The alias models (the weapons, armour, keys,
  * runes, powerups, the flames, the fireballs) are streamed by their
  * distance (STREAM.DAT, tools/qcook/stream.c, at Quake's detail): the
  * alias path here (their skins reduced among the map's textures, their
- * triangles reduced below the high level, through game.c) stays for a
+ * triangles reduced, through game.c) stays for a
  * map that would keep one.
  */
 
@@ -448,8 +448,13 @@ void items_cook(const tex_set *ts, int first_extra)
 		printf("qcook:   %d own models (items, flames), %u B of geometry\n", nmodels, (unsigned) geo.len);
 }
 
-void items_write(const char *out_path)
+void items_write(const char *out_path, const tex_uvmap *maps, uint32_t nmaps)
 {
+	for (int i = 0; i < nmodels; i++) {
+		const qw_model *q = (const qw_model *) table.p + i;
+		tex_map_uvs(geo.p + q->m.ofs_records, geo.p + q->m.ofs_records + q->m.len_records, maps, nmaps, q->tex,
+		            q->num_tex);
+	}
 	qmm_header h;
 	memset(&h, 0, sizeof h);
 	memcpy(h.magic, QMAPMDL_MAGIC, 4);

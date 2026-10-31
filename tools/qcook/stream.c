@@ -1,7 +1,7 @@
 /*
  * qcook — the streamed assets: `qcook stream --pak <pak0.pak> [--pak1
- * <pak1.pak>] --out <prefix>` (formats/qstream.h: <prefix>_0.dat,
- * STREAM_0.DAT on the disc): the models' triangles reduced
+ * <pak1.pak>] --out <stream.dat>` (formats/qstream.h: STREAM.DAT on the
+ * disc): the models' triangles reduced
  * (tools/qcook/game.c stream_reduce; the monsters' bodies by hand).
  *
  * The models the maps' monsters bring, each with what its QC precaches
@@ -224,14 +224,14 @@ static void write_out(const char *path, entry *ents, int n, const buf_t *data)
 
 int cmd_stream(int argc, char **argv)
 {
-	const char *pak_path = NULL, *pak1_path = NULL, *out_prefix = NULL;
+	const char *pak_path = NULL, *pak1_path = NULL, *out_path = NULL;
 	for (int i = 2; i < argc - 1; i++) {
 		if (!strcmp(argv[i], "--pak"))   pak_path   = argv[i + 1];
 		if (!strcmp(argv[i], "--pak1"))  pak1_path  = argv[i + 1];
-		if (!strcmp(argv[i], "--out"))   out_prefix = argv[i + 1];
+		if (!strcmp(argv[i], "--out"))   out_path   = argv[i + 1];
 	}
-	if (!pak_path || !out_prefix)
-		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <prefix>   (<prefix>_0.dat)");
+	if (!pak_path || !out_path)
+		die("usage: qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>");
 
 	long pak_len, pak1_len = 0;
 	uint8_t *pak = read_file(pak_path, &pak_len), *pak1 = pak1_path ? read_file(pak1_path, &pak1_len) : NULL;
@@ -318,9 +318,7 @@ int cmd_stream(int argc, char **argv)
 			if (ents[i].a.hash == ents[j].a.hash)
 				die("two assets with one hash (%08x)", ents[i].a.hash);
 	qsort(ents, (size_t) n, sizeof *ents, by_hash);
-	char path[512];
-	snprintf(path, sizeof path, "%s_0.dat", out_prefix);
-	write_out(path, ents, n, &data);
+	write_out(out_path, ents, n, &data);
 	free(data.p);
 	int cls_n;
 	size_t cls_saved;

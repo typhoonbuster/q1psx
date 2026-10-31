@@ -2625,3 +2625,13 @@ followed by R0-R4.
   dead `.gitignore` lines go too. The cooked files are the same but
   those two headers; the display lists are the same; the release's level
   arena +800 B.
+- **The disc's names without digits, the UVs mapped by the cook** (§119.8,
+  provisional number, 2026-10-31). The cooked files and the disc lose
+  the levels' digits (`<MAP>.TX4`, `.WLD`, `.MDL`, `.ZON`, `_S.DAT`,
+  GAME.DAT, STREAM.DAT). The world's and the map's models' UVs go onto
+  the texture set's tiles in the cook instead of at the load: the
+  engine's pass over every record and the UV maps' table go (QTX8, QWVI,
+  QWZJ, QMM2), `qcook map` cooks a map in one run. Every new file is the
+  old one put through the load's old mapping, byte for byte; the display
+  lists are the same; the release's level arena +384 B, and 184 to 792 B more
+  of it free while a level plays (the maps' table).

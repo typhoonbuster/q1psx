@@ -1,12 +1,13 @@
 /*
- * qcook — world: QWVG file (formats/qworld.h), one per geometry level.
+ * qcook — world: QWVI file (formats/qworld.h), one per map.
  *
  * Faces are attached to their BSP node (front block / back block), cut on
  * texture-repeat boundaries so every piece's UVs stay inside one VRAM tile
- * (the finest texture level's layout: every texture level maps the UVs onto
- * its own tiles, formats/qtex.h qtex_uvmap), at the ultra level on a light
- * grid as well, triangulated into PS1 quads (+ a triangle when odd) and
- * grouped into face records of <= 63 shared vertices.
+ * (the finest texture layout's: the UVs then go onto the disc's set's
+ * tiles, tex_map_uvs), a brush model's face whose corner lights miss its
+ * lightmap on a light grid as well, triangulated into PS1 quads (+ a
+ * triangle when odd) and grouped into face records of <= 63 shared
+ * vertices.
  */
 
 #include <math.h>
@@ -270,7 +271,7 @@ static void rec_flush(out_t *o, rec_t *r, const tex_slot *s)
 
 /* A wrapped axis gets its virtual 0..256 coordinate (the texture window
    folds it onto the texture); another axis its position in the tile (the
-   loader adds the tile's: formats/qtex.h qtex_uvmap). */
+   tile's corner comes after: tex_map_uvs). */
 static uint16_t uvword(double u, double v)
 {
 	long uu = lround(u), vv = lround(v);
@@ -2055,7 +2056,7 @@ static int clip_share(const bsp_t *b, int *roots, int nroots, qw_clipnode *out)
 	return count;
 }
 
-void world_build(const bsp_t *b, const tex_set *ts, const char *out_path)
+void world_build(const bsp_t *b, const tex_set *ts, const tex_uvmap *maps, uint32_t nmaps, const char *out_path)
 {
 	const bsp_model *wm = &b->models[0];
 	bm_grid_faces = 0;
@@ -2827,6 +2828,8 @@ void world_build(const bsp_t *b, const tex_set *ts, const char *out_path)
 	buf_put(&f, estr.p, estr.len);
 	memcpy(f.p, &h, sizeof h);
 	bmf_rooms(f.p, f.len);                 /* (on the file as the engine reads it) */
+	if (maps)                              /* the UVs onto the disc's set's tiles */
+		tex_map_uvs(f.p + h.ofs_faces, f.p + h.ofs_faces + h.len_faces, maps, nmaps, NULL, 0);
 
 	FILE *fp = fopen(out_path, "wb");
 	if (!fp)

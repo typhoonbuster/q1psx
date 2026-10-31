@@ -3,7 +3,7 @@
  * §40): what a map loads only when the player comes near what uses it.
  *
  * Four pools, each a cache of the one above it:
- *   the disc     STREAM_0.DAT, every asset a sector apart;
+ *   the disc     STREAM.DAT, every asset a sector apart;
  *   RAM          what the level arena leaves once the map is in (bump
  *                allocation, compacted when a block no longer fits);
  *   VRAM         a model's skin images, in what the map's textures and the
@@ -38,10 +38,10 @@
 #include "qstream.h"
 #include "qworld.h"
 
-/* the map's load: its own file of the streamed assets (<MAP>_S0.DAT in
+/* the map's load: its own file of the streamed assets (<MAP>_S.DAT in
    its section, docs/porting-notes.md §84; the pool's directory with the
    sectors of the assets it uses): the stream's reads come from it; a map
-   without one reads the pool (STREAM_0.DAT) */
+   without one reads the pool (STREAM.DAT) */
 void stream_level(const char *map);
 
 #define STREAM_PIN    0u            /* stream_want's score: always resident */
@@ -63,7 +63,7 @@ void stream_level(const char *map);
                                        one)                                   */
 #define STREAM_SOUND_REACH 1500u    /* a sound's (a full sound is heard to 1000) */
 
-/* boot, after cd_init and gdata_load: the directory of STREAM_0.DAT (its
+/* boot, after cd_init and gdata_load: the directory of STREAM.DAT (its
    models reduced: tools/qcook/game.c stream_reduce) */
 void stream_init(void);
 

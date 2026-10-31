@@ -101,7 +101,7 @@ static asset_t *assets;
 static int      num_assets;
 static int32_t  base_lba;      /* the assets' file's first sector: the level's
                                   (stream_level), else the pool's                */
-static int32_t  pool_lba;      /* STREAM_0.DAT's                                 */
+static int32_t  pool_lba;      /* STREAM.DAT's                                   */
 static uint32_t *pool_sector;  /* [num_assets]: each asset's sector in the pool  */
 
 /* The level's RAM-resident sounds (docs/porting-notes.md §86): the level's
@@ -188,10 +188,10 @@ static int read_sectors(int32_t lba, int n, void *dst, int who, int tag)
 	return cd_read_now(lba, (uint32_t) n, dst, who, tag);
 }
 
-/* STREAM_0.DAT's directory into assets[], through the level arena's top */
+/* STREAM.DAT's directory into assets[], through the level arena's top */
 static int load_directory(void)
 {
-	static const char name[] = "\\STREAM_0.DAT;1";
+	static const char name[] = "\\STREAM.DAT;1";
 	uint32_t lba;
 	if (!cd_find(name, &lba, NULL)) {
 		printf("stream: no %s on the disc\n", name);
@@ -267,7 +267,7 @@ Q_COLD void stream_level(const char *map)
 	ram_first = ram_sectors = 0;
 	ram_sounds = 0;
 	char name[32];
-	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_S0.DAT;1", map, map);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_S.DAT;1", map, map);
 	uint32_t lba, mark = mem_level_mark();
 	qst_header *h = num_assets && cd_find(name, &lba, NULL) ? mem_level_alloc(2 * QST_SECTOR) : 0;
 	if (!h) {

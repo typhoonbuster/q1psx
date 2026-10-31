@@ -1,7 +1,7 @@
 /*
  * q1psx — the streamed assets "QST1": every resource a map loads only when
  * the player comes near what uses it (docs/porting-notes.md §40). Written
- * by `qcook stream`, STREAM_0.DAT on the disc for every map (the models'
+ * by `qcook stream`, STREAM.DAT on the disc for every map (the models'
  * triangles reduced: tools/qcook/game.c stream_reduce, §43); engine/
  * stream.c reads its directory at boot, then each asset on demand,
  * straight from the disc into its RAM pool, while the game runs.
@@ -105,7 +105,7 @@ typedef struct {
                                 the file, one read) and played from there, its samples
                                 put in the SPU's swap room when wanted (docs/porting-notes.md
                                 §86) */
-#define QST_ABSENT 0xffffffffu   /* a level's file (<MAP>_S0.DAT, its section: the pool's
+#define QST_ABSENT 0xffffffffu   /* a level's file (<MAP>_S.DAT, its section: the pool's
                                     directory with the sectors of the assets the level
                                     uses, docs/porting-notes.md §84): this asset is not
                                     in it */

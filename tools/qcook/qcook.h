@@ -1,11 +1,12 @@
 /*
  * q1psx — asset cooker (host tool), shared declarations.
  *
- *   qcook.c   command line, pak access, BSP lump parsing, the levels
- *   tex.c     texture tiles, VRAM page packing, 4-bit CLUTs, QTX7 output
- *   world.c   face splitting, face records, nodes/leaves/PVS, QWVF output
- *   game.c    models, sprites, HUD pictures -> QGM6 (formats/qgame.h)
- *   items.c   the map's own models -> QMM1 (formats/qgame.h)
+ *   qcook.c   command line, pak access, BSP lump parsing
+ *   tex.c     texture tiles, VRAM page packing, 4-bit CLUTs, QTX8 output,
+ *             the UV maps onto the set's tiles
+ *   world.c   face splitting, face records, nodes/leaves/PVS, QWVI output
+ *   game.c    models, sprites, HUD pictures -> QGMB (formats/qgame.h)
+ *   items.c   the map's own models -> QMM2 (formats/qgame.h)
  *   decim.c   an alias model's triangles reduced (the map's models, the streamed ones)
  *   ents.c    the entity lump: parsed for the world's entity table, the
  *             sound bank and the player start
@@ -46,7 +47,7 @@ const uint8_t *pak_find(const uint8_t *pak, long pak_len, const char *name, uint
 
 /* ----------------------------------------------------------------- game -- */
 
-/* `qcook game`: models, sprites and HUD pictures -> GAME_0.DAT
+/* `qcook game`: models, sprites and HUD pictures -> GAME.DAT
    (formats/qgame.h; game.c) */
 int cmd_game(int argc, char **argv);
 
@@ -54,8 +55,8 @@ int cmd_game(int argc, char **argv);
 
 /* A tile's sides at most, the texture halved until it fits: the finest
    layout, Quake's own texels, is the one the world and the map's models
-   are cooked for; the disc's set, at most 128 texels a side, maps it onto
-   its tiles (formats/qtex.h qtex_uvmap). */
+   are cut for; the disc's set, at most 128 texels a side, takes their UVs
+   onto its tiles (tex_uvmaps). */
 #define TEX_MAX_FINE 256
 #define TEX_MAX_DISC 128
 
@@ -146,8 +147,8 @@ void ents_used_models(const ent_list *l, int num_models, uint8_t *used);
 
 /* game.c: an alias model cooked for a map: its skin reduced (1 / skin_div)
    with a border of `qc_mdl_border` texels, then its records, their UVs
-   from the skin's own corner inside the border (the world file's kind:
-   formats/qtex.h qtex_uvmap), its triangles reduced (decim.c) */
+   from the skin's own corner inside the border (the finest layout's, as
+   the world's before tex_map_uvs), its triangles reduced (decim.c) */
 typedef struct qc_mdl qc_mdl;
 extern const int qc_mdl_border;
 void    qc_set_palette(const uint8_t *pal);
@@ -157,7 +158,7 @@ int     qc_mdl_flags(const qc_mdl *q);
 void    qc_mdl_one_frame(qc_mdl *q, int frame);   /* that frame alone */
 void    qc_mdl_cook(qc_mdl *q, buf_t *geo, void *qg_model_out);
 /* the compact format of the streamed models (formats/qstream.h): the
-   whole asset (qst_model, frames, records, skin: STREAM_0.DAT's) */
+   whole asset (qst_model, frames, records, skin: STREAM.DAT's) */
 void    qc_mdl_cook_stream(qc_mdl *q, int body, buf_t *out);
 
 /* ---------------------------------------------------------------- stream -- */
@@ -277,15 +278,38 @@ typedef struct {
 /* The map's texture set, no side of a tile over tex_max texels (TEX_MAX_*):
    every slot sized (the miptex, the extras after them, the animations'
    display slots last). With out4_path NULL that is all (the layout the
-   world and the map's models are cut and mapped for: the finest, `canon`
-   NULL). Otherwise the tiles
-   are packed into the map's pages and written in 4bpp (QTX7, 16 colours
-   per texture) to out4_path; their tables map the layout `canon` onto
-   this set (formats/qtex.h qtex_uvmap). 1 when done; 0 when the tiles
-   overflow the map's pages and may_fail (nothing written), else it dies. */
+   world and the map's models are cut for: the finest, `canon` NULL).
+   Otherwise the tiles are packed into the map's pages and written in 4bpp
+   (formats/qtex.h, 16 colours per texture) to out4_path, its texture
+   table a slot of `canon` each. 1 when done; 0 when the tiles overflow
+   the map's pages and may_fail (nothing written), else it dies. */
 int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra *extra,
               int nextra, const uint8_t palette[768], int tex_max, const char *out4_path, int anims,
               int may_fail);
+
+/* Where the finest layout's texture coordinates land in the disc's set,
+   one map a slot of `canon`: u' = u0 + ((u * su + rnd) >> 15) (and v'
+   alike). On an axis that wraps (a power of two: the texture window folds
+   it) a virtual 0..255 coordinate, otherwise from the tile's corner. su =
+   32768 where the set keeps a texture's texels; 16384 where it halves
+   them (a side over 128 texels, a squeezed model's texture). u0, v0: the
+   tile's corner in its page on an axis that does not wrap, 0 on one that
+   does (a model's skin: its own corner, inside its border). rnd: 16384
+   rounds (a miptex: the cook rounds a world texel), 0 truncates (a skin:
+   the cook divides a skin texel). The world's and the map's models' UVs
+   go through it before they are written (until docs/porting-notes.md
+   §119 the engine did it at the load). */
+typedef struct {
+	uint8_t  u0, v0;
+	uint16_t su, sv;
+	uint16_t rnd;
+} tex_uvmap;
+void tex_uvmaps(const tex_set *ts, const tex_set *canon, tex_uvmap *maps);   /* maps[canon->num] */
+/* a record stream's UVs (formats/qworld.h qw_record) through the maps;
+   `slot_of` a record's tex to its slot (a map's model: its own table),
+   NULL for the world's records */
+void tex_map_uvs(uint8_t *r, const uint8_t *end, const tex_uvmap *maps, uint32_t nmaps,
+                 const uint16_t *slot_of, uint32_t nslot_of);
 
 /* ------------------------------------------------------ the map's models -- */
 
@@ -299,7 +323,8 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 void items_prepare(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t *pak0,
                    long pak0_len, const uint8_t *palette, int squeeze, tex_extra **extra, int *nextra);
 void items_cook(const tex_set *canon, int first_extra);
-void items_write(const char *out_path);
+void items_write(const char *out_path, const tex_uvmap *maps, uint32_t nmaps);   /* (their UVs
+                                                   through the maps onto the set's tiles) */
 
 /* ------------------------------------------------------------- decim.c -- */
 
@@ -326,7 +351,11 @@ int decimate(const dmesh *m, int (*tri)[4], int n, double keep, double max_err);
 extern double light_gain;   /* vertex light scale (qcook --light-gain), 1 = Quake */
 extern const char *world_fmap;   /* qcook map --fmap: each world record's Quake faces written
                                     there (the zones' tables translated, QCOOK_MERGE) */
-void world_build(const bsp_t *b, const tex_set *canon, const char *out_path);
+/* the world cut for the layout `canon`; its UVs through `maps` onto the
+   disc's set's tiles (NULL: left in the finest layout, for a world only
+   its face map is wanted from: QCOOK_MERGE's unmerged cook) */
+void world_build(const bsp_t *b, const tex_set *canon, const tex_uvmap *maps, uint32_t nmaps,
+                 const char *out_path);
 
 /* `qcook check`: reload a QWV2 file and verify every invariant. */
 int  world_check(const char *path);

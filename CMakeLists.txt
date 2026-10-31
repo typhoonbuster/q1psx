@@ -307,11 +307,10 @@ else()
 endif()
 
 # The world's zones (docs/porting-notes.md §57): a map the cook split
-# (cooked/id1/<map>_g0.skl and <map>_z2.zon, scripts/cook.sh with the
-# zone tables: the repo's zones/auto_1536_s3 unless Q1PSX_ZONE_TABLES
-# names others, or none) goes on the disc as its skeleton
-# (<MAP>_G0.WLD) and its chunks (<MAP>_Z2.ZON); a map left whole, its
-# whole world. The tables hold
+# (cooked/id1/<map>.skl and <map>.zon, scripts/cook.sh with the zone
+# tables: the repo's zones/auto_1536_s3 unless Q1PSX_ZONE_TABLES names
+# others, or none) goes on the disc as its skeleton (<MAP>.WLD) and its
+# chunks (<MAP>.ZON); a map left whole, its whole world. The tables hold
 # every record the PSX may draw within the draw distance, 1536 units (+ a
 # margin).
 # The tables the cook reads (Q1PSX_ZONE_TABLES: the configure's
@@ -347,9 +346,9 @@ endif()
 option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
 set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h, qworld.h,
-# qgame.h). Every cooked map ships as <MAP>_T2.TX4 (its 4-bit textures),
-# <MAP>_G0.WLD (its world), <MAP>_M0.MDL (its own models), its sound bank
-# <MAP>.SND, plus the game data GAME_0.DAT (the guns, the projectiles, the
+# qgame.h). Every cooked map ships as <MAP>.TX4 (its 4-bit textures),
+# <MAP>.WLD (its world), <MAP>.MDL (its own models), its sound bank
+# <MAP>.SND, plus the game data GAME.DAT (the guns, the projectiles, the
 # HUD). The cook re-runs whenever the cooker or a format header changes, so
 # the disc never carries stale data; and when its settings do (local.env's
 # or the command line's: the zone tables and slots, the maps, the paks...):
@@ -389,7 +388,6 @@ endif()
 file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.skl
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.zon
-                                    ${PROJECT_SOURCE_DIR}/cooked/id1/*_s0.dat
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.tx4
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.mdl
                                     ${PROJECT_SOURCE_DIR}/cooked/id1/*.snd

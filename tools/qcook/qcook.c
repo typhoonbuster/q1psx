@@ -5,16 +5,19 @@
  *               [--tex4 <out.tx4>] [--world <out.wld>] [--sounds <out.snd>]
  *               [--mdl <out.mdl>]                 (tools/qcook/sound.c, items.c)
  *   qcook check <file.wld>
- *   qcook game  --pak <pak0.pak> --out <prefix>     (tools/qcook/game.c)
+ *   qcook game  --pak <pak0.pak> --out <game.dat>   (tools/qcook/game.c)
  *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
  *                                                     (tools/qcook/stream.c)
- *   qcook zones --world <map>_g0.wld --tables <map>.zones --skeleton <out.skl>
- *               [--resident n] --tex4 <map>_t2.tx4 --chunks <out.zon>
+ *   qcook zones --world <map>.wld --tables <map>.zones --skeleton <out.skl>
+ *               [--resident n] --chunks <out.zon>
  *                                                     (tools/qcook/zones.c)
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
  * writes the files the engine loads for that map: its texture set, its
- * world, its own models; any of them in one run.
+ * world, its own models; any of them in one run. The world's and the
+ * models' UVs go onto the tiles of the set the same run builds (--mdl
+ * needs --tex4; a world without it keeps the finest layout's UVs:
+ * QCOOK_MERGE's unmerged cook wants its face map only).
  */
 
 #include <stdarg.h>
@@ -352,9 +355,10 @@ static int cmd_map(int argc, char **argv)
 
 	/* the finest layout: the slots at Quake's own texels, the models'
 	   textures as they are, the animations kept. The world's faces are cut
-	   and the map's models mapped for it; the disc's set maps it onto its
-	   own tiles (formats/qtex.h qtex_uvmap). */
+	   and the map's models mapped for it; their UVs then go onto the disc's
+	   set's tiles (tex_uvmaps) before they are written. */
 	tex_set    canon, ts;
+	tex_uvmap *maps = NULL;
 	tex_extra *extra;
 	int        nextra;
 	items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, 0, &extra, &nextra);
@@ -375,11 +379,15 @@ static int cmd_map(int argc, char **argv)
 			else
 				printf("qcook: the models' textures squeezed to level %d\n", squeeze + 1);
 		}
+		maps = xcalloc((size_t) canon.num + 1, sizeof *maps);
+		tex_uvmaps(&ts, &canon, maps);
 	}
 	if (out_mdl) {
+		if (!maps)
+			die("--mdl needs --tex4 (the models' UVs onto its tiles)");
 		items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, 0, &extra, &nextra);
 		items_cook(&canon, bsp.num_miptex);
-		items_write(out_mdl);
+		items_write(out_mdl, maps, (uint32_t) canon.num);
 	}
 	if (out_snd)
 		{
@@ -393,7 +401,7 @@ static int cmd_map(int argc, char **argv)
 		}
 	if (!out_wld)
 		return 0;
-	world_build(&bsp, &canon, out_wld);
+	world_build(&bsp, &canon, maps, maps ? (uint32_t) canon.num : 0, out_wld);
 	return world_check(out_wld);
 }
 
@@ -423,11 +431,11 @@ int main(int argc, char **argv)
 	        "  qcook map --pak <pak> --map <maps/x.bsp> [--palette-pak <pak0>] [--light-gain g]\n"
 	        "            [--tex4 <out.tx4>] [--world <out.wld>] [--sounds <out.snd>] [--mdl <out.mdl>]\n"
 	        "  qcook check <file.wld>\n"
-	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_0.dat)\n"
-	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <prefix>   (<prefix>_0.dat)\n"
+	        "  qcook game --pak <pak0.pak> --out <game.dat>\n"
+	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
 	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n"
 	        "  qcook zones --world <wld> --tables <map.zones> --skeleton <out.skl> [--resident n]\n"
-	        "              --tex4 <tx4> --chunks <out.zon>\n");
+	        "              --chunks <out.zon>\n");
 	return 2;
 }

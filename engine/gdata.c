@@ -14,10 +14,10 @@ gdata_t gdata;
 qw_vert *gd_view_pool;
 
 
-/* GAME_0.DAT into the level arena (a staging area), checked */
+/* GAME.DAT into the level arena (a staging area), checked */
 static const uint8_t *gdata_file(uint32_t *size)
 {
-	static const char name[] = "\\GAME_0.DAT;1";
+	static const char name[] = "\\GAME.DAT;1";
 	const uint8_t *f = cd_load(name, size, NULL);
 	const qg_header *h = (const qg_header *) f;
 	if (!f || *size < sizeof(qg_header) || memcmp(f, QGAME_MAGIC, 4)) {

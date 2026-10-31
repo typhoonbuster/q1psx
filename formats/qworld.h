@@ -1,6 +1,6 @@
 /*
- * q1psx — cooked world "QWVF" (architecture.md §6), one per map
- * (<MAP>_G0.WLD on the disc). Written by `qcook`, loaded by engine/world.c,
+ * q1psx — cooked world "QWVI" (architecture.md §6), one per map
+ * (<MAP>.WLD on the disc). Written by `qcook`, loaded by engine/world.c,
  * walked by the asm renderer (engine/r_*.s).
  *
  * Units
@@ -17,12 +17,12 @@
  *     whose size is a power of two repeats in hardware: the GPU texture
  *     window (GP0 E2h) wraps it, so that axis is only cut every 256 texels.
  *     Other axes are cut at every repetition (UVs inside the VRAM tile).
- *     The cuts and the UVs are those of the finest texture layout (Quake's
- *     own texels, up to 256 a side): the texture set (formats/qtex.h)
- *     brings the table each record names its texture in (qw_tex: the
- *     CLUT, tpage and texture-window words) and the map from these UVs to
- *     its own tiles (qtex_uvmap), which the loader applies once. Pieces
- *     are grouped into "face records" of <= 63 vertices.
+ *     The cuts are those of the finest texture layout (Quake's own
+ *     texels, up to 256 a side); the cook then maps the UVs onto the
+ *     map's texture set's tiles (formats/qtex.h), which brings the table
+ *     each record names its texture in (qw_tex: the CLUT, tpage and
+ *     texture-window words). Pieces are grouped into "face records" of
+ *     <= 63 vertices.
  *   - The brush models' faces whose corner lights miss their lightmap are
  *     cut on a grid of 128 texels (tools/qcook/world.c BM_LIGHT_GRID); the
  *     T-junctions are left unrepaired (fewer polygons, a crack may show
@@ -57,10 +57,12 @@
 
 #include "qtex.h"          /* qw_tex, qw_anim: the texture set's tables */
 
-#define QWORLD_MAGIC "QWVH"   /* (QWVG until §90.9: the PVS rows Quake's RLE as they
-                                 came; QWVF until §90.6: no brush-model cut arena in
-                                 the header; QWVE until §59: an entity was a whole
-                                 qw_ent; QWVD until §46: the clip roots were 32-bit) */
+#define QWORLD_MAGIC "QWVI"   /* (QWVH until §119: the finest layout's UVs, which
+                                 the loader mapped; QWVG until §90.9: the PVS rows
+                                 Quake's RLE as they came; QWVF until §90.6: no
+                                 brush-model cut arena in the header; QWVE until
+                                 §59: an entity was a whole qw_ent; QWVD until §46:
+                                 the clip roots were 32-bit) */
 
 #define QW_VSCALE       4      /* vertex units per world unit            */
 #define QW_CLIP_SUB     8      /* physics positions (the clip hulls', the
@@ -406,10 +408,9 @@ typedef struct {
    per-record vertex cache). Quad corners are in PS1 order: the GPU draws
    triangles (0,1,2) and (1,2,3). uv[k] = u | v << 8 in texels: on a wrapped
    axis a virtual 0..255 coordinate the texture window folds onto the
-   texture, otherwise page-relative. On the disc they are the finest
-   layout's, tile-relative (formats/qtex.h qtex_uvmap); the loader
-   makes them the loaded set's, page-relative. The renderer ORs the CLUT
-   into uv[0] and the tpage into uv[1]. */
+   texture, otherwise page-relative: on the map's texture set's tiles
+   (the cook maps them from the finest layout it cuts for). The renderer
+   ORs the CLUT into uv[0] and the tpage into uv[1]. */
 typedef struct {
 	uint8_t  idx[4];
 	uint16_t uv[4];
@@ -475,12 +476,11 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
  * the one drawn, and the zones nearest to it by walking distance,
  * prefetched (engine/zone.c).
  *
- *   <MAP>_G0.WLD    the skeleton, "QWZG": a QWVF file's header and
+ *   <MAP>.WLD       the skeleton, "QWZJ": a QWVI file's header and
  *                   sections, a qw_zone_header right after the header, the
  *                   face stream and the vertex pool holding the brush
- *                   models' records only (their UVs mapped by the loader,
- *                   as a QWVF's);
- *   <MAP>_Z2.ZON    the chunks: a qz_file header in sector 0, then each
+ *                   models' records only;
+ *   <MAP>.ZON       the chunks: a qz_file header in sector 0, then each
  *                   zone's qw_chunk from a sector of its own
  *                   (qw_chunk_dir). A chunk's records come as the loader
  *                   would leave them: face ids doubled, the average light
@@ -502,10 +502,11 @@ _Static_assert(sizeof(qw_clipnode) == 6 && __builtin_offsetof(qw_clipnode, child
  * is in pieces, would take 10-80 KB less a map, but moving the drawn
  * chunk costs a frame: docs/porting-notes.md §57.)
  */
-#define QWORLD_ZONED_MAGIC "QWZI"   /* (QWZH until §90.9: QWVG's PVS rows; QWZG
-                                       until §90.6: QWVF's header; QWVZ until §59: the
-                                       entities of QWVE; QWZF until the zones' finer
-                                       cut: a byte a leaf's set) */
+#define QWORLD_ZONED_MAGIC "QWZJ"   /* (QWZI until §119: QWVH's UVs; QWZH until
+                                       §90.9: QWVG's PVS rows; QWZG until §90.6:
+                                       QWVF's header; QWVZ until §59: the entities
+                                       of QWVE; QWZF until the zones' finer cut: a
+                                       byte a leaf's set) */
 #define QZONES_MAGIC       "QZN2"   /* (QZN1 until §119: the texture level's word) */
 #define QZ_NONE            0xffu    /* a qw_zone_set's empty entry                   */
 #define QZ_LEAF_NONE       0xffffu  /* a leaf in no set (the camera in solid)        */
