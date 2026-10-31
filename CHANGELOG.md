@@ -2471,6 +2471,18 @@ followed by R0-R4.
   (`vid_stats.vbl_whole`). The bench's fight lines give each window's
   vblanks a frame; the game bench ends with the caps' pacing (`bench
   pace`).
+- **The slow stage cheaper, the same display lists** (§112, provisional
+  number, 2026-10-31). The
+  grid's (§92) five edge tests a polygon run inline, each corner unpacked
+  once, the levels past 0 alone in a subroutine; the slow path's stack
+  holds its triangles' pool entries (three words: nothing to decode at a
+  pop), a split's last child goes straight on, the midpoints' lookups and
+  `sm_new` take entries, REFINE reads its product in a shadow. Every
+  display list the base's (START's views and the 128 views, at T 4 and
+  32, under the interpreter too). START -4.3 % (its slow stage -8.5 %),
+  the 128 views -3.9 % (-1.9 % at T 32), E2M7's fight -1.34 %; +520
+  bytes. The midpoints by the GTE weighed, not built: another
+  subdivision, for about -0.3 %.
 - **The monsters' shared detail budget** (§114, provisional number, 
   2026-10-31). The bodies drawn share 600
   expanded vertices a frame. A level common to them raises each body's

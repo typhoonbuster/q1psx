@@ -9,8 +9,9 @@
 
 #if Q1PSX_BENCH_SLOWSTAT
 extern volatile uint32_t r_slow_stat[16];     /* (engine/r_slow.s) */
-static const char *const slowstat_name[9] = {
+static const char *const slowstat_name[14] = {
 	"polys", "clipped", "popped", "onscreen", "leaves", "split", "refined", "mids", "forced",
+	"one", "two", "three", "looks", "marked",
 };
 #endif
 
@@ -97,7 +98,7 @@ void bench_print(const bench_acc_t *b)
 	printf("%s\n", b->full_frames ? " FULL" : "");
 #if Q1PSX_BENCH_SLOWSTAT
 	printf("slowstat %s", b->name);         /* (a frame's, on average) */
-	for (int i = 0; i < 9; i++)
+	for (int i = 0; i < 14; i++)
 		printf(" %s=%u", slowstat_name[i], r_slow_stat[i] / n);
 	printf("\n");
 #endif

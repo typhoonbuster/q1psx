@@ -14,7 +14,7 @@
 	*/r_world.s.obj(.text.ic.ds_records)
 	*/r_tess.s.obj(.text.ic.tess_poly)
 	*/r_tess.s.obj(.text.ic.tess_line)
-	*/r_tess.s.obj(.text.ic.tess_edge)
+	*/r_tess.s.obj(.text.ic.tess_lvl)
 	*/r_tess.s.obj(.text.ic.tess_corner)
 	*/r_tess.s.obj(.text.ic.tess_proj)
 	*/r_slow.s.obj(.text.ic.slow_poly)

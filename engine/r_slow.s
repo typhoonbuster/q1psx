@@ -34,9 +34,12 @@
 # +4 z, +8 z * T2, +12 u, +16 v (texels x 256), +20 key (a midpoint: its
 # edge, lower index << 9 | higher; else -1), +24 grey colour word (light in
 # its low byte), +28 uv word (packet-ready). Corners take entries 0..n-1,
-# then clip crossings, then midpoints. A triangle on the stack is one word:
-# i0 | i1 << 9 | i2 << 18 | depth << 27; a negative word under the first
-# ends the polygon.
+# then clip crossings, then midpoints. A triangle on the stack is three
+# words, its corners' entries (addresses: no decoding when it comes off),
+# the first one's low four bits its depth; a 0 word under the first ends
+# the polygon. The triangle in hand keeps its words in its stack entry (a3
+# points there: sp_split reads its corners back, its children overwrite
+# them).
 #
 # Midpoint table: HASH_N halfwords, slot = f(key) -> a pool index. A slot
 # is believed only if that index is below s4 and the entry there carries the
@@ -65,7 +68,8 @@
 .set KOFS,    8192     # midpoint rounding offset (r_slow.c rdiv)
 .set POOL_N,  512      # pool entries (9-bit indices)
 .set HASH_N,  512      # midpoint table slots
-.set STACK_N, 64       # triangle stack words (depth first: 3 x MAXD + 2 + fan)
+.set STACK_N, 28       # triangle stack entries, 12 B each (depth first: the end
+                       # marker, a fan's 3, then 3 more a level, MAXD levels)
 
 	.section .bss.r_slow_pool, "aw", @nobits
 	.align  4
@@ -94,9 +98,9 @@ r_slow_hash:                             # (HASH_OFS from the pool: v1-relative)
 
 	.section .data.r_slow_stack, "aw", @progbits
 	.align  2
-r_slow_stack:                            # word 0: the end marker under every
-	.word   -1                           # polygon's triangles (never written)
-	.space  (STACK_N - 1) * 4
+r_slow_stack:                            # entry 0: the end marker under every
+	.word   0                            # polygon's triangles (never written)
+	.space  STACK_N * 12 - 4
 
 .ifndef SLOWSTAT
 .set SLOWSTAT, 0
@@ -159,36 +163,39 @@ sp_ctab:                                 # children by split mask (1..7)
 # set in s3) stays whole when its screen length as max + 3/8 min of |dx|,
 # |dy| (3 % under to 7 % over the true one: |dx| + |dy| was up to 41 % over,
 # on a diagonal) passes the same test: (max + 3/8 min) |dz| <= zta + ztb;
-# over the span (|dx| + |dy| > SPAN: the GPU's) it splits all the same.
-# Clobbers at, v0, t9 and a0 (dz: what were three delay slots' nops do
-# work, §81.3; sp_refine sets a0 again for sp_emit).
+# over the span (|dx| + |dy| > SPAN: the GPU's) it splits all the same (that
+# test and the bound in the product's shadow). Clobbers at, v0, t9 and a0
+# (dz: what were three delay slots' nops do work, §81.3; sp_refine sets a0
+# again for sp_emit).
 .macro REFINE xa, ya, za, zta, xb, yb, zb, ztb, bit
 	andi    $at, $s3, \bit
 	beqz    $at, 9f                      # (not marked: whole already)
 	subu    $at, \xa, \xb
+	STAT    13, $v0, $t9                 # (marked edges refined)
 	bgez    $at, 1f
 	subu    $v0, \ya, \yb
 	subu    $at, $zero, $at              # |dx|
 1:	bgez    $v0, 2f
 	subu    $a0, \za, \zb                # (dz)
 	subu    $v0, $zero, $v0              # |dy|
-2:	addu    $t9, $at, $v0
-	sltiu   $t9, $t9, SPAN + 1
-	beqz    $t9, 9f                      # over the span: it splits
-	sltu    $t9, $at, $v0
-	beqz    $t9, 3f                      # at the max, v0 the min
-	sll     $t9, $v0, 1                  # (2 min, if so)
-	xor     $at, $at, $v0
-	xor     $v0, $v0, $at
-	xor     $at, $at, $v0
-	sll     $t9, $v0, 1                  # 2 min
-3:	addu    $t9, $t9, $v0
-	sra     $t9, $t9, 3
-	bgez    $a0, 4f
-	addu    $at, $at, $t9                # max + 3/8 min
+2:	sltu    $t9, $at, $v0
+	bnez    $t9, 3f
+	sll     $t9, $v0, 1                  # (|dx| the max: 2 |dy|)
+	addu    $t9, $t9, $v0
+	srl     $t9, $t9, 3
+	b       4f
+	addu    $t9, $at, $t9                # |dx| + 3/8 |dy|
+3:	sll     $t9, $at, 1
+	addu    $t9, $t9, $at
+	srl     $t9, $t9, 3
+	addu    $t9, $v0, $t9                # |dy| + 3/8 |dx|
+4:	bgez    $a0, 5f
+	addu    $at, $at, $v0                # (|dx| + |dy|: the span)
 	subu    $a0, $zero, $a0              # |dz|
-4:	mult    $at, $a0
+5:	mult    $t9, $a0                     # (max + 3/8 min) |dz|
+	sltiu   $at, $at, SPAN + 1           # 1: within the span
 	addu    $t9, \zta, \ztb              # T2 (za + zb)
+	beqz    $at, 9f                      # over the span: it splits
 	mflo    $at
 	sltu    $at, $t9, $at                # 1: over all the same: it splits
 	bnez    $at, 9f
@@ -197,15 +204,28 @@ sp_ctab:                                 # children by split mask (1..7)
 9:
 .endm
 
-# PUSHW off, ra, rb, rc: triangle (pool indices) at depth t9 (<< 27) into the
-# stack word off(a3); the caller moves a3. Clobbers v0, at.
-.macro PUSHW off, ra, rb, rc
-	sll     $v0, \rb, 9
-	sll     $at, \rc, 18
-	or      $v0, $v0, \ra
-	or      $v0, $v0, $at
-	or      $v0, $v0, $t9
+# PUSH3 off, ra, rb, rc: triangle (pool entries) at depth t9 into the stack
+# entry off(a3); the caller moves a3. Clobbers v0.
+.macro PUSH3 off, ra, rb, rc
+	or      $v0, \ra, $t9                # its first corner | its depth
 	sw      $v0, \off($a3)
+	sw      \rb, \off+4($a3)
+	sw      \rc, \off+8($a3)
+.endm
+
+# NEXT3 off, ra, rb, rc: a split's last child, the one sp_sub would pop next:
+# into the entry off(a3), a3 moved to it, and straight into a0-a2 and s2
+# (sp_sub_1 takes it: no load).
+.macro NEXT3 off, ra, rb, rc
+	or      $s2, \ra, $t9
+	sw      $s2, \off($a3)
+	sw      \rb, \off+4($a3)
+	sw      \rc, \off+8($a3)
+	move    $a0, \ra
+	move    $a1, \rb
+	move    $a2, \rc
+	b       sp_sub_1
+	addiu   $a3, $a3, \off
 .endm
 
 # CORNER k: pool entry k from the record's vertex cache, for corner k of the
@@ -250,10 +270,10 @@ sp_ctab:                                 # children by split mask (1..7)
 	sw      $t0, (32 * \k + PV_ZT)($v1)
 .endm
 
-# MIDLOOK dst: dst = the pool index of the midpoint of entries t0, t1
-# (indices), found through the table or made by sm_new (the table slot is
-# written in the call's delay slot; sm_new's first instruction is done
-# here, in the table load's slot). Clobbers at, v0, t0-t7, t9, a0-a2.
+# MIDLOOK dst: dst = the pool entry of the midpoint of entries a0, a1 (the
+# edge's ends), found through the table or made by sm_new (the table slot
+# is written in the call's delay slot; sm_new's first two loads are done
+# here, in a load's slot and a branch's). Clobbers at, v0, t0-t7, t9, a0-a2.
 # WCORNER k: CORNER k for a monster through a liquid's surface (SP_WATER
 # set): the light word's top bit is ds_water's mark (r_world.s: the corner
 # past the surface), taken off the colour into s1 bit 8 + k, and the clip
@@ -300,30 +320,33 @@ sp_ctab:                                 # children by split mask (1..7)
 .endm
 
 .macro MIDLOOK dst
-	sltu    $at, $t0, $t1                # key: lower << 9 | higher
-	bnez    $at, 91f
-	sll     $t2, $t0, 9
-	xor     $t0, $t0, $t1
-	xor     $t1, $t0, $t1
-	xor     $t0, $t0, $t1
-	sll     $t2, $t0, 9
-91:	or      $t2, $t2, $t1
+	STAT    12, $v0, $t3
+	subu    $t0, $a0, $v1                # the ends' offsets: 32 x their indices
+	subu    $t1, $a1, $v1
+	sltu    $at, $t0, $t1                # key: lower index << 9 | higher
+	beqz    $at, 90f
+	sll     $t2, $t1, 4                  # (a1 the lower)
+	sll     $t2, $t0, 4                  # a0 the lower,
+	b       91f
+	srl     $t3, $t1, 5                  #  a1 the higher
+90:	srl     $t3, $t0, 5
+91:	or      $t2, $t2, $t3
 	srl     $t3, $t2, 4
 	xor     $t3, $t3, $t2
 	andi    $t3, $t3, HASH_N - 1         # slot
 	sll     $t3, $t3, 1
 	addu    $t6, $t3, $v1                # (pool-relative)
 	lhu     $v0, HASH_OFS($t6)           # the index it holds
-	sll     $t0, $t0, 5                  # (sm_new's first: p's offset)
+	lh      $t0, PV_SXY($a0)             # (sm_new's px)
+	sll     $t4, $v0, 5
+	addu    $t4, $t4, $v1                # the entry it names (in the pool: a
+	lw      $t5, PV_KEY($t4)             #  harmless read if not this polygon's)
 	sltu    $at, $v0, $s4                # one of this polygon's?
 	beqz    $at, 92f
-	sll     $t4, $v0, 5
-	addu    $t4, $t4, $v1
-	lw      $t4, PV_KEY($t4)
-	move    \dst, $v0                    # (if it is the one)
-	beq     $t4, $t2, 93f                # found
-	nop
-92:	jal     sm_new_1                     # else made: v0 = its index
+	lw      $t3, PV_Z($a0)               # (sm_new's pz)
+	beq     $t5, $t2, 93f                # found
+	move    \dst, $t4
+92:	jal     sm_new                       # else made: v0 = its entry
 	sh      $s4, HASH_OFS($t6)           # (the table: this edge -> n)
 	move    \dst, $v0
 93:
@@ -343,7 +366,9 @@ slow_poly:
 	sw      $s4, SP_SV+16($t8)
 	sw      $s5, SP_SV+20($t8)
 	lw      $t7, SP_T2($t8)              # T2
-	lw      $s2, SP_SZCLIP($t8)          # (CORNER's near bound)
+	.global slow_poly_1
+slow_poly_1:                             # (engine/r_tess.s: ra and s0-s5 in these slots
+	lw      $s2, SP_SZCLIP($t8)          #  already, the T2 load in its jump's slot)
 	lui     $v1, %hi(r_slow_pool)
 	addiu   $v1, $v1, %lo(r_slow_pool)   # v1 = pool, for the whole call
 	STAT    0, $t0, $t1                  # (polygons)
@@ -356,20 +381,27 @@ slow_poly:
 	CORNER  2
 	li      $t0, 3
 	beq     $a2, $t0, sp_tri0
-	lui     $a3, %hi(r_slow_stack + 4)
+	lui     $a3, %hi(r_slow_stack + 12)
 	CORNER  3
 	sw      $zero, (3 * 32 + PV_KEY)($v1)    # a corner, not a stale midpoint
-	addiu   $a3, $a3, %lo(r_slow_stack + 4)  # a3 = the first free stack word
+	addiu   $a3, $a3, %lo(r_slow_stack + 12) # a3 = the first free stack entry
 	bnez    $s1, sp_clip
 	li      $s4, 4                       # (pool: the corners)
 
 	# ---- 2. straight from the cache: (1, 3, 2) under (0, 1, 2), depth 0 ---
-	li      $t0, 2 << 18 | 3 << 9 | 1
-	li      $t1, 2 << 18 | 1 << 9 | 0
-	sw      $t0, 0($a3)
+	addiu   $a1, $v1, 32                 # p1
+	addiu   $t1, $v1, 96                 # p3
+	addiu   $a2, $v1, 64                 # p2
+	sw      $a1, 0($a3)
 	sw      $t1, 4($a3)
-	b       sp_sub
-	addiu   $a3, $a3, 8
+	sw      $a2, 8($a3)
+	addiu   $a3, $a3, 12
+	sw      $v1, 0($a3)                  # (0, 1, 2) in hand
+	sw      $a1, 4($a3)
+	sw      $a2, 8($a3)
+	move    $a0, $v1
+	b       sp_sub_1
+	move    $s2, $v1
 	.size slow_poly, . - slow_poly
 	# slow_wpoly: slow_poly for a monster through a liquid's surface (SP_WATER
 	# set; r_world.s ds_tri_skip): a triangle (a sorted model has no quads),
@@ -397,11 +429,11 @@ slow_wpoly:
 	WCORNER 1
 	WCORNER 2
 	srl     $t0, $s1, 8                  # a corner past the surface: its clip
-	lui     $a3, %hi(r_slow_stack + 4)
+	lui     $a3, %hi(r_slow_stack + 12)
 	beqz    $t0, sp_tri0                 # none: slow_poly's way
 	li      $s4, 3
 	b       sp_wclip
-	addiu   $a3, $a3, %lo(r_slow_stack + 4)
+	addiu   $a3, $a3, %lo(r_slow_stack + 12)
 	.size slow_wpoly, . - slow_wpoly
 	# slow_wpoly's clip path: sp_clip's corners in view space and ring, then
 	# the liquid's surface first (sp_water: a0 the record still)
@@ -456,14 +488,18 @@ sp_wclip:
 
 
 	ICSEC   sp_tri0
-sp_tri0:                                 # a triangle: (0, 1, 2)
-	addiu   $a3, $a3, %lo(r_slow_stack + 4)
+sp_tri0:                                 # a triangle: (0, 1, 2), in hand
+	addiu   $a3, $a3, %lo(r_slow_stack + 12)
 	bnez    $s1, sp_clip
 	li      $s4, 3
-	li      $t1, 2 << 18 | 1 << 9 | 0
-	sw      $t1, 0($a3)
-	b       sp_sub
-	addiu   $a3, $a3, 4
+	addiu   $a1, $v1, 32
+	addiu   $a2, $v1, 64
+	sw      $v1, 0($a3)
+	sw      $a1, 4($a3)
+	sw      $a2, 8($a3)
+	move    $a0, $v1
+	b       sp_sub_1
+	move    $s2, $v1
 
 	# ---- 3. clip path ---------------------------------------------------------
 	# Corners to view space in ring order (a quad: 0, 1, 3, 2); a corner the
@@ -574,33 +610,33 @@ sp_project:
 	lbu     $t0, 0($a0)                  # l[0]
 	addiu   $t6, $s2, -2                 # i = n - 2 .. 1
 	addu    $t3, $a0, $t6
+	sll     $t0, $t0, 5
+	addu    $t0, $t0, $v1                # its entry
 10:	lbu     $t1, 0($t3)                  # l[i]
 	lbu     $t2, 1($t3)                  # l[i + 1]
 	addiu   $t3, $t3, -1
-	sll     $v0, $t1, 9
-	sll     $at, $t2, 18
-	or      $v0, $v0, $t0
-	or      $v0, $v0, $at
-	sw      $v0, 0($a3)
+	sll     $t1, $t1, 5
+	sll     $t2, $t2, 5
+	addu    $t1, $t1, $v1
+	addu    $t2, $t2, $v1
+	sw      $t0, 0($a3)
+	sw      $t1, 4($a3)
+	sw      $t2, 8($a3)
 	addiu   $t6, $t6, -1
 	bgtz    $t6, 10b
-	addiu   $a3, $a3, 4
+	addiu   $a3, $a3, 12
 
 	# ---- 4. subdivision -----------------------------------------------------------
 sp_sub:
-	lw      $s2, -4($a3)                 # the triangle on top
-	addiu   $a3, $a3, -4
-	bltz    $s2, sp_done                 # the end marker: done
-	sll     $a0, $s2, 5
+	addiu   $a3, $a3, -12
+	lw      $s2, 0($a3)                  # the triangle on top: p0 | its depth,
+	lw      $a1, 4($a3)                  #  p1, p2
+	lw      $a2, 8($a3)
+	beqz    $s2, sp_done                 # the end marker: done
+	andi    $at, $s2, 15
+	xor     $a0, $s2, $at                # p0
+sp_sub_1:                                # (a split's last child, the roots: a0-a2, s2 set)
 	STAT    2, $t0, $t1                  # (triangles popped)
-	andi    $a0, $a0, 0x3fe0
-	srl     $a1, $s2, 4
-	andi    $a1, $a1, 0x3fe0
-	srl     $a2, $s2, 13
-	andi    $a2, $a2, 0x3fe0
-	addu    $a0, $a0, $v1                # p0 / p1 / p2
-	addu    $a1, $a1, $v1
-	addu    $a2, $a2, $v1
 	lh      $t0, PV_SXY($a0)             # x0 y0
 	lh      $t1, PV_SXY+2($a0)
 	lh      $t3, PV_SXY($a1)             # x1 y1
@@ -661,8 +697,8 @@ sp_o_bounds:
 	lw      $ra, PV_ZT($a2)
 
 	# split decisions (none at max depth)
-	sll     $at, $s2, 1                  # depth 8 (MAXD): bit 30
-	bltz    $at, sp_leaf_max
+	andi    $at, $s2, 8                  # depth 8 (MAXD): bit 3
+	bnez    $at, sp_leaf_max
 	subu    $s3, $t0, $t3                # (the first test's x0 - x1)
 	NOSPLIT $s3, $t0, $t1, $t2, $s0, $t3, $t4, $t5, $s5, 0, "subu $at, $t3, $t6"   # p0-p1
 	NOSPLIT $at, $t3, $t4, $t5, $s5, $t6, $t7, $s1, $ra, 0   # p1-p2
@@ -722,106 +758,91 @@ sp_refine:
 	REFINE  $t6, $t7, $s1, $ra, $t0, $t1, $t2, $s0, 4   # p2-p0
 	bnez    $s3, sp_split
 	sltu    $t2, $s7, $s6                # (sp_emit's arena test)
-	sll     $a0, $s2, 5                  # (p0 again: REFINE took a0)
-	andi    $a0, $a0, 0x3fe0
-	addu    $a0, $a0, $v1
+	andi    $a0, $s2, 15                 # (p0 again: REFINE took a0)
+	xor     $a0, $s2, $a0
 	b       sp_emit
 	lui     $t9, CODE_GT3 >> 16
 
 	ICSEC   sp_split
-sp_split:                                # s3 = mask, s2 = the triangle
+sp_split:                                # s3 = mask, s2 = p0 | depth, a1 = p1
 	STAT    5, $at, $v0                  # (triangles split)
 	sltiu   $at, $s4, POOL_N - 2         # the pool nearly full: a forced leaf
 	beqz    $at, sp_leaf_max
 	andi    $v0, $s3, 1                  # (harmless there)
 	beqz    $v0, 1f
-	andi    $t0, $s2, 0x1ff              # (i0)
-	srl     $t1, $s2, 9
-	andi    $t1, $t1, 0x1ff              # i1
+	andi    $at, $s2, 15
+	xor     $a0, $s2, $at                # p0, p1
 	MIDLOOK $s0                          # s0 = m01
 1:	andi    $v0, $s3, 2
 	beqz    $v0, 2f
-	srl     $t0, $s2, 9
-	andi    $t0, $t0, 0x1ff              # i1
-	srl     $t1, $s2, 18
-	andi    $t1, $t1, 0x1ff              # i2
+	lw      $a0, 4($a3)                  # p1, p2 (the triangle's stack entry:
+	lw      $a1, 8($a3)                  #  MIDLOOK took a0-a2)
 	MIDLOOK $s5                          # s5 = m12
 2:	andi    $v0, $s3, 4
 	beqz    $v0, 3f
-	srl     $t0, $s2, 18
-	andi    $t0, $t0, 0x1ff              # i2
-	andi    $t1, $s2, 0x1ff              # i0
+	andi    $at, $s2, 15
+	lw      $a0, 8($a3)                  # p2, p0
+	xor     $a1, $s2, $at
 	MIDLOOK $s1                          # s1 = m20
 3:	# children in r_slow.c's order (the last pushed comes out first):
-	# t0..t2 = i0..i2, t9 = (depth + 1) << 27
-	srl     $at, $s2, 27
-	addiu   $at, $at, 1
-	sll     $t9, $at, 27
+	# t0..t2 = p0..p2, t9 = the depth + 1
+	andi    $t9, $s2, 15
 	sll     $at, $s3, 2
 	lui     $v0, %hi(sp_ctab)
 	addu    $v0, $v0, $at
 	lw      $v0, %lo(sp_ctab)($v0)
-	andi    $t0, $s2, 0x1ff
-	srl     $t1, $s2, 9
-	andi    $t1, $t1, 0x1ff
-	srl     $t2, $s2, 18
+	xor     $t0, $s2, $t9                # p0
+	lw      $t1, 4($a3)                  # p1
+	lw      $t2, 8($a3)                  # p2
 	jr      $v0
-	andi    $t2, $t2, 0x1ff
+	addiu   $t9, $t9, 1
 	ICSEC   sp_c7
 sp_c7:                                   # all three: 4 triangles
-	PUSHW   0,  $t0, $s0, $s1            # (p0, m01, m20)
-	PUSHW   4,  $s0, $t1, $s5            # (m01, p1, m12)
-	PUSHW   8,  $s1, $s5, $t2            # (m20, m12, p2)
-	PUSHW   12, $s0, $s5, $s1            # (m01, m12, m20)
-	b       sp_sub
-	addiu   $a3, $a3, 16
+	STAT    11, $v0, $at
+	PUSH3   0, $t0, $s0, $s1             # (p0, m01, m20)
+	PUSH3   12, $s0, $t1, $s5            # (m01, p1, m12)
+	PUSH3   24, $s1, $s5, $t2            # (m20, m12, p2)
+	NEXT3   36, $s0, $s5, $s1            # (m01, m12, m20)
 	ICSEC   sp_c3
 sp_c3:                                   # p0-p1 and p1-p2 (p2-p0 whole)
-	PUSHW   0,  $t0, $s0, $t2            # (p0, m01, p2)
-	PUSHW   4,  $s0, $t1, $s5            # (m01, p1, m12)
-	PUSHW   8,  $s0, $s5, $t2            # (m01, m12, p2)
-	b       sp_sub
-	addiu   $a3, $a3, 12
+	STAT    10, $v0, $at
+	PUSH3   0, $t0, $s0, $t2             # (p0, m01, p2)
+	PUSH3   12, $s0, $t1, $s5            # (m01, p1, m12)
+	NEXT3   24, $s0, $s5, $t2            # (m01, m12, p2)
 	ICSEC   sp_c6
 sp_c6:                                   # p1-p2 and p2-p0 (p0-p1 whole)
-	PUSHW   0,  $t1, $s5, $t0            # (p1, m12, p0)
-	PUSHW   4,  $s5, $t2, $s1            # (m12, p2, m20)
-	PUSHW   8,  $s5, $s1, $t0            # (m12, m20, p0)
-	b       sp_sub
-	addiu   $a3, $a3, 12
+	STAT    10, $v0, $at
+	PUSH3   0, $t1, $s5, $t0             # (p1, m12, p0)
+	PUSH3   12, $s5, $t2, $s1            # (m12, p2, m20)
+	NEXT3   24, $s5, $s1, $t0            # (m12, m20, p0)
 	ICSEC   sp_c5
 sp_c5:                                   # p2-p0 and p0-p1 (p1-p2 whole)
-	PUSHW   0,  $t2, $s1, $t1            # (p2, m20, p1)
-	PUSHW   4,  $s1, $t0, $s0            # (m20, p0, m01)
-	PUSHW   8,  $s1, $s0, $t1            # (m20, m01, p1)
-	b       sp_sub
-	addiu   $a3, $a3, 12
+	STAT    10, $v0, $at
+	PUSH3   0, $t2, $s1, $t1             # (p2, m20, p1)
+	PUSH3   12, $s1, $t0, $s0            # (m20, p0, m01)
+	NEXT3   24, $s1, $s0, $t1            # (m20, m01, p1)
 	ICSEC   sp_c1
 sp_c1:                                   # p0-p1
-	PUSHW   0,  $t0, $s0, $t2            # (p0, m01, p2)
-	PUSHW   4,  $s0, $t1, $t2            # (m01, p1, p2)
-	b       sp_sub
-	addiu   $a3, $a3, 8
+	STAT    9, $v0, $at
+	PUSH3   0, $t0, $s0, $t2             # (p0, m01, p2)
+	NEXT3   12, $s0, $t1, $t2            # (m01, p1, p2)
 	ICSEC   sp_c2
 sp_c2:                                   # p1-p2
-	PUSHW   0,  $t1, $s5, $t0            # (p1, m12, p0)
-	PUSHW   4,  $s5, $t2, $t0            # (m12, p2, p0)
-	b       sp_sub
-	addiu   $a3, $a3, 8
+	STAT    9, $v0, $at
+	PUSH3   0, $t1, $s5, $t0             # (p1, m12, p0)
+	NEXT3   12, $s5, $t2, $t0            # (m12, p2, p0)
 	ICSEC   sp_c4
 sp_c4:                                   # p2-p0
-	PUSHW   0,  $t2, $s1, $t1            # (p2, m20, p1)
-	PUSHW   4,  $s1, $t0, $t1            # (m20, p0, p1)
-	b       sp_sub
-	addiu   $a3, $a3, 8
+	STAT    9, $v0, $at
+	PUSH3   0, $t2, $s1, $t1             # (p2, m20, p1)
+	NEXT3   12, $s1, $t0, $t1            # (m20, p0, p1)
 
 	# a forced leaf (max depth, pool full): only if the GPU takes it
 	ICSEC   sp_leaf_max
 sp_leaf_max:
 	STAT    8, $at, $v0                  # (forced leaves)
-	sll     $a0, $s2, 5                  # (p0 again: from sp_split, REFINE
-	andi    $a0, $a0, 0x3fe0             #  took a0)
-	addu    $a0, $a0, $v1
+	andi    $a0, $s2, 15                 # (p0 again: from sp_split, REFINE
+	xor     $a0, $s2, $a0                #  took a0)
 	move    $at, $t0                     # max x - min x <= 1023?
 	slt     $v0, $t3, $at
 	beqz    $v0, 1f
@@ -1008,23 +1029,16 @@ sp_done:
 
 # -----------------------------------------------------------------------------
 # sm_new: a new vertex at index n = s4, the projected 3D midpoint of pool
-# entries t0, t1 (indices; t2 = their key). v0 = n. Clobbers at, t0-t7, t9,
-# a0-a2 (s-registers, v1, a3 kept; s4 grows by one). MIDLOOK enters at
-# sm_new_1, its first instruction done.
+# entries a0, a1 (t2 = their key; MIDLOOK loads p's x and z into t0, t3).
+# v0 = its entry. Clobbers at, t0-t7, t9, a0-a2 (s-registers, v1, a3 kept;
+# s4 grows by one).
 # Scheduled around HI / LO: the four products, then the two divisions with
 # the u, v and light work in their shadows (36 cycles each). z T2 needs no
 # multiply: the pool holds pz T2 and qz T2, T2 is even, so
 # T2 (zs >> 1) = (pz T2 + qz T2) / 2 - (zs & 1) T, exactly.
 	ICSEC   sm_new
-sm_new:
-	sll     $t0, $t0, 5
-sm_new_1:
-	STAT    7, $t3, $t5                  # (midpoints made)
-	addu    $a0, $t0, $v1                # p
-	lh      $t0, PV_SXY($a0)             # px
-	lw      $t3, PV_Z($a0)               # pz
-	sll     $t1, $t1, 5
-	addu    $a1, $t1, $v1                # q
+sm_new:                                  # (t0 = px, t3 = pz)
+	STAT    7, $t5, $t6                  # (midpoints made)
 	mult    $t0, $t3                     # px pz
 	lh      $t1, PV_SXY($a1)             # qx
 	lw      $t5, PV_Z($a1)               # qz
@@ -1081,11 +1095,9 @@ sm_new_1:
 	sw      $t1, PV_UVW($a2)
 	addiu   $t0, $t0, -KOFS
 	sh      $t0, PV_SXY($a2)             # x
-	lw      $t1, PV_GC($a0)
-	lw      $t3, PV_GC($a1)
+	lbu     $t1, PV_GC($a0)              # the lights: the colour words' low bytes
+	lbu     $t3, PV_GC($a1)
 	addiu   $s4, $s4, 1
-	andi    $t1, $t1, 0xff
-	andi    $t3, $t3, 0xff
 	addu    $t1, $t1, $t3
 	srl     $t1, $t1, 1                  # light
 	sll     $t3, $t1, 8                  # grey c -> 0x00cccccc
@@ -1093,7 +1105,7 @@ sm_new_1:
 	sll     $t3, $t1, 8
 	or      $t1, $t1, $t3
 	sw      $t1, PV_GC($a2)
-	addiu   $v0, $s4, -1                 # its index
+	move    $v0, $a2                     # its entry
 	mflo    $t1                          # y + KOFS
 	addiu   $t1, $t1, -KOFS
 	jr      $ra
@@ -1155,11 +1167,9 @@ sp_lerp_1:
 	mult    $s3, $t2                     # v
 	addu    $v0, $v0, $t4
 	sw      $v0, PV_U($t0)               # u
-	lw      $t4, PV_GC($t7)              # light: the grey's low byte
-	lw      $s3, PV_GC($t9)
+	lbu     $t4, PV_GC($t7)              # light: the colour word's low byte
+	lbu     $s3, PV_GC($t9)
 	mflo    $v0
-	andi    $t4, $t4, 0xff
-	andi    $s3, $s3, 0xff
 	subu    $s3, $s3, $t4
 	sra     $v0, $v0, 14
 	mult    $s3, $t2                     # light

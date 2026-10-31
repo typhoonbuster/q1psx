@@ -194,7 +194,8 @@
 #         SLOWSTAT=1: the slow path counts its paths (engine/r_slow.s STAT):
 #         a "slowstat" line after each view's, a frame's polygons, clipped
 #         ones, triangles popped, wholly on the screen, leaves, split,
-#         refined, midpoints made, forced leaves.
+#         refined, midpoints made, forced leaves, the splits on one, two
+#         and three edges, the midpoints looked up, the edges refined.
 #
 # Each line reads:
 #   bench <scenario> n=<frames> vbl=<vblanks/frame x100>

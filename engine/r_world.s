@@ -890,7 +890,8 @@ r_ysites:
 	sw      $a2, SP_SAVE+12($t8)
 	sw      $a3, SP_SAVE+16($t8)
 	sw      $t0, SP_SAVE+32($t8)
-	sw      $s6, SP_SAVE+20($t8)         # (the slow path's bytes, below)
+	sw      $s6, SP_SAVE+20($t8)         # (the slow path's bytes, below; tess_poly reads
+	                                     #  +4, +16 and +32 back: engine/r_tess.s)
 .if R_PROFILE
 	lw      $t1, SP_SKIPPED($t8)         # polygons sent to the slow path
 	lhu     $t2, TIMER2($t8)
