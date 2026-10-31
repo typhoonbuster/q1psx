@@ -2463,7 +2463,8 @@ followed by R0-R4.
   meanwhile; `vid_flip` starts a late frame's list at once and the next
   frame begins at once, a frame on time waiting for its vblank as before
   (the caps' pacing kept). E2M7's fight 3.53 -> 3.02 vblanks a frame
-  (17.0 -> 19.9 fps), the guns' views 2.00 -> 1.56-1.68, frames of 1.3
+  (17.0 -> 19.9 fps; with §114-§115, 3.50 -> 2.95: 20.3 fps), the guns'
+  views 2.00 -> 1.56-1.68, frames of 1.3
   vblanks shown at 46 fps where they ran at 30 (unevenly, as at the 45
   fps cap); the display lists identical; +360 bytes. The warp's control
   takes the frame's vblanks as it would have waited for them

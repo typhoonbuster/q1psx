@@ -14755,6 +14755,16 @@ measures (the fight's vblanks a frame over each window of 300 frames;
   within 0.03 %); the samples 384 726 -> 323 316 (-16.0 %: the minute of
   fight played in 16 % less time), the SDK's wait (16.0 %) gone, the
   waits left 0.4 % (as before).
+- **The same on master 6ff9264** (§114's shared budget and §115's light
+  merged in; master's vid.c, vid.h, pad.c and pad.h with the bench's
+  measures against the merged branch): 3.50 -> 2.95 vblanks a frame (17.1
+  -> 20.3 fps, -15.6 %), each window -11 to -18 %, the same game in each
+  (the frames' cycles within 0.05 %); the samples 380 993 -> 315 540
+  (-17.2 %; the SDK's wait 17.1 % there). §114's lighter frames (the
+  drawing -3.6 %) moved master's fight by 1 % alone (3.53 -> 3.50 vblanks
+  a frame: what they saved was mostly waited away at the vblank); with
+  the flip they show. The 128 views identical to master's (a `m373`
+  reference); the release's arena 1 351 984 bytes.
 - **The game bench** (`BENCH_GAME=1`): the guns' views 2.00 -> 1.56-1.68
   vblanks a frame (their frames 0.88-0.93 M cycles), the rocket
   launcher's 3.00 -> 2.31, the lightning gun's 2.00 -> 1.87, the HUDs'
