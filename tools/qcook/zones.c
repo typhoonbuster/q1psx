@@ -508,14 +508,6 @@ int cmd_zones(int argc, char **argv)
 	   patch words, its own pool */
 	buf_t *chunk = xcalloc(nz, sizeof *chunk);
 	uint32_t max_bytes = 0, min_bytes = ~0u, max_patch = 0, total = 0, chunk_records = 0;
-	/* the cooked walk (formats/qworld.h, tools/qcook/seq.c) at the end of
-	   each chunk, for the maps QCOOK_SEQ names */
-	const int seq_on = seq_wanted(wld);
-	seq_world sw = { f, H, NODES, FACES, world, new_of, nn2 + 1, T.leaf_zone };   /* (the leaves follow
-	                                                                              the sentinel) */
-	seq_stats seq_tot;
-	uint32_t seq_zones = 0, seq_max_words = 0, seq_max_depth = 0, max_bytes_noseq = 0;
-	memset(&seq_tot, 0, sizeof seq_tot);
 	for (uint32_t z = 0; z < nz; z++) {
 		pool_t pool;
 		pool_init(&pool);
@@ -573,26 +565,6 @@ int cmd_zones(int argc, char **argv)
 		buf_zero(b, QW_STREAM_TAIL);
 		buf_align(b, 8);
 		put_pool(b, &pool);
-		if (b->len > max_bytes_noseq) max_bytes_noseq = (uint32_t) b->len;
-		if (seq_on) {
-			buf_t sq;
-			seq_stats st;
-			memset(&sq, 0, sizeof sq);
-			if (seq_build(&sw, (int) z, T.member[z], &sq, &st)) {
-				buf_align(b, 4);
-				hd.ofs_seq = (uint32_t) b->len;
-				buf_put(b, sq.p, sq.len);
-				memcpy(b->p, &hd, sizeof hd);
-				seq_zones++;
-				seq_tot.words += st.words; seq_tot.leaves += st.leaves; seq_tot.blocks += st.blocks;
-				seq_tot.nodes += st.nodes; seq_tot.tested += st.tested; seq_tot.vars += st.vars;
-				seq_tot.cells += st.cells; seq_tot.var_nodes += st.var_nodes; seq_tot.anc_vars += st.anc_vars;
-				seq_tot.anc_front_vars += st.anc_front_vars;
-				if (st.words > seq_max_words) seq_max_words = st.words;
-				if (st.depth > seq_max_depth) seq_max_depth = st.depth;
-			}
-			free(sq.p);
-		}
 		if (b->len > max_bytes) max_bytes = (uint32_t) b->len;
 		if (b->len < min_bytes) min_bytes = (uint32_t) b->len;
 		if (npatch > max_patch) max_patch = npatch;
@@ -732,9 +704,8 @@ int cmd_zones(int argc, char **argv)
 	memcpy(s.p + sizeof h, &zh, sizeof zh);
 
 	/* zoned only when the skeleton and its slots take less than the whole
-	   world (the cooked walks aside: they add to the slots on the maps that
-	   take them, docs/porting-notes.md §91) */
-	const uint32_t resident = (uint32_t) s.len + nslots * sectors_of(max_bytes_noseq) * SECTOR;
+	   world */
+	const uint32_t resident = (uint32_t) s.len + nslots * sectors_of(max_bytes) * SECTOR;
 	printf("qcook: zones %s: %u zones, %u records in them (the world's %u), chunks %u..%u B, %u KB on the "
 	       "disc; %u nodes patched (%u never, %u the brush models'), %u patch words at most; %u sets; the "
 	       "skeleton %u B + %u slots of %u B = %u KB, the whole %u KB", wld, nz, chunk_records, H->num_faces,
@@ -744,15 +715,6 @@ int cmd_zones(int argc, char **argv)
 		printf(": the map stays whole\n");
 	} else {
 		printf(": zoned, %u KB freed\n", (uint32_t) (flen - resident) / 1024);
-		if (seq_on)
-			printf("qcook:   the cooked walk in %u of %u chunks (%s): %u words (%u at most a zone, %u KB in all), "
-			       "%u leaves, %u blocks, %u nodes gated (%u tested), %u var among %u crossing planes (%u behind "
-			       "a cell's own boundary, %u before one), %u camera leaves, %u frames deep at most; the biggest "
-			       "chunk %u -> %u B\n", seq_zones, nz,
-			       getenv("QCOOK_SEQ_FAST") && atoi(getenv("QCOOK_SEQ_FAST")) ? "fast" : "exact",
-			       seq_tot.words, seq_max_words, seq_tot.words * 4 / 1024, seq_tot.leaves, seq_tot.blocks,
-			       seq_tot.nodes, seq_tot.tested, seq_tot.vars, seq_tot.var_nodes, seq_tot.anc_vars,
-			       seq_tot.anc_front_vars, seq_tot.cells, seq_max_depth, max_bytes_noseq, max_bytes);
 		write_file(skl, &s);
 		/* the chunks per texture set, their UVs on its tiles */
 		for (int t = 0; t < ntex; t++) {

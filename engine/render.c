@@ -51,7 +51,6 @@ _Static_assert(offsetof(r_state_t, vh2)          == 204, "r_state layout");
 _Static_assert(offsetof(r_state_t, nlights)      == 208, "r_state layout");
 _Static_assert(offsetof(r_state_t, lights)       == 212, "r_state layout");
 _Static_assert(offsetof(r_state_t, fragpool)     == 216, "r_state layout");
-_Static_assert(offsetof(r_state_t, seq)          == 220, "r_state layout");
 _Static_assert(offsetof(qw_leaf, light)          == 27,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");
@@ -266,57 +265,6 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 	warp_apply(t < lo ? lo : t > r_warp.t_max ? r_warp.t_max : t);
 }
 
-/* ------------------------------------------------------- the cooked walk -- */
-
-/* the world's record loop's three ways out to the tree walk (r_world.s
-   RECLOOP wx: dr) and draw_ents' way back, PC-relative branches, pointed
-   at seq_next while a cooked walk runs */
-extern uint32_t dr_xa[], dr_xb[], dr_xc[], ei_x[], seq_next[], seq_ents_back[];
-static uint32_t *const seq_site[] = { dr_xa, dr_xb, dr_xc, ei_x };
-#define SEQ_SITES (int) (sizeof seq_site / sizeof seq_site[0])
-static uint32_t seq_orig[SEQ_SITES];
-#define SEQ_IMM16(w, v)  (((w) & 0xffff0000u) | ((uint32_t) (v) & 0xffffu))
-static int      seq_mode = -1;           /* -1 as built (the tree's), 0 the tree, 1 the cooked walk */
-
-/* the sites as the mode wants them (no cache flush here). draw_ents' way
-   back goes to seq_ents_back (the registers a leaf's list clobbers taken
-   back). */
-static void seq_apply(void)
-{
-	if (seq_mode < 0)
-		return;
-	for (int i = 0; i < SEQ_SITES; i++) {
-		uint32_t w = seq_orig[i];
-		if (seq_mode) {
-			uint32_t *to = seq_site[i] == ei_x ? seq_ents_back : seq_next;
-			int32_t off = ((int32_t) (uintptr_t) to - ((int32_t) (uintptr_t) seq_site[i] + 4)) >> 2;
-			if (off != (int16_t) off) {      /* (the link put them too far apart: the tree walk then) */
-				printf("render: the cooked walk's loop is out of a branch's reach\n");
-				seq_mode = 0;
-				r_state.seq = 0;
-				seq_apply();
-				return;
-			}
-			w = SEQ_IMM16(w, off);
-		}
-		*seq_site[i] = w;
-	}
-}
-
-void r_seq_set(uint32_t seq)
-{
-	r_state.seq = seq;
-	int on = seq != 0;
-	if (on == seq_mode)
-		return;
-	if (seq_mode < 0)
-		for (int i = 0; i < SEQ_SITES; i++)
-			seq_orig[i] = *seq_site[i];
-	seq_mode = on;
-	seq_apply();
-	FlushCache();
-}
-
 /* ----------------------------------------------------- the draw distance -- */
 
 /* the fogged transform's table (r_world.s XFORM fog): by SZ / 64, a
@@ -410,7 +358,6 @@ void r_bind_world(void)
 	r_state.view_leaf     = 0;
 	r_state.force_mark    = 1;
 	bound = 1;
-	r_seq_set(0);                                /* (the tree walk until a zone's chunk says otherwise) */
 	mark_patch();                                /* (through the zones' hook or not) */
 }
 
@@ -493,9 +440,7 @@ void r_frame(void)
 	r_state.stat_polys   = r_state.stat_skipped = 0;
 	r_state.ticks_block  = r_state.ticks_mark = 0;
 	{
-		extern volatile uint32_t r_seq_stat[4];  /* (the cooked walk's tests, r_world.s) */
 		extern volatile uint32_t r_tess_stat[6]; /* (the regular subdivision's, r_tess.s) */
-		r_seq_stat[0] = r_seq_stat[1] = r_seq_stat[2] = r_seq_stat[3] = 0;
 		r_tess_stat[0] = r_tess_stat[1] = r_tess_stat[2] = r_tess_stat[3] = r_tess_stat[4] = r_tess_stat[5] = 0;
 	}
 

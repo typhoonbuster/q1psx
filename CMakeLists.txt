@@ -134,8 +134,6 @@ add_custom_command(TARGET q1psx POST_BUILD
 # Renderer counters and stage timers (debug overlay, bench breakdown). Off in
 # the "release" preset: the asm renderer then skips their per-node, per-record
 # and per-polygon upkeep (R_PROFILE in engine/r_defs.inc).
-set(Q1PSX_TESS_KMAX 3 CACHE STRING "The regular grid's finest level, 2^KMAX cells along an axis (0: the unsplit polygons alone, every split one to the slow path)")
-set(Q1PSX_TESS_CAP 4 CACHE STRING "The regular grid's cap: a polygon whose two levels sum past it (more than 2^CAP cells) goes to the slow path, whose splits follow the near corner alone")
 option(Q1PSX_PROFILE "Renderer counters and stage timers" ON)
 if(Q1PSX_PROFILE)
 	set(_q1psx_profile 1)
@@ -184,13 +182,6 @@ endif()
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.
 set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference, 2 the asm checked by the C")
-# The world's dynamic lights' least minlight (world units, engine/dlight.h;
-# docs/porting-notes.md §113): Quake's minlight, which only its muzzle
-# flash sets (32), for every light on the world's faces, whose faintest
-# edge is then left unlit and whose reach is shorter; 0 each light's own
-# (Quake's look)
-set(Q1PSX_DLIGHT_MINLIGHT 32 CACHE STRING "The world's dynamic lights' least minlight, world units (0: Quake's own)")
-target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_MINLIGHT=${Q1PSX_DLIGHT_MINLIGHT})
 # The brush models' cut by the world's BSP: the asm (engine/bmfrag.s) or its
 # C specification (engine/bmfrag.c cut_model_c); 2 runs both on every cut
 # and compares them ("bmfasm" lines).
@@ -215,24 +206,8 @@ else()
 	set(_slow_c 0)
 	set(_zone_c 0)
 endif()
-target_compile_definitions(q1psx PRIVATE Q1PSX_TESS_KMAX=${Q1PSX_TESS_KMAX} Q1PSX_TESS_CAP=${Q1PSX_TESS_CAP})
-target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,TESS_KMAX=${Q1PSX_TESS_KMAX},--defsym,TESS_CAP=${Q1PSX_TESS_CAP}>)
 target_compile_definitions(q1psx PRIVATE Q1PSX_ENGINE_C=$<BOOL:${Q1PSX_ENGINE_C}>
 	Q1PSX_BMF_C=${_bmf_c} Q1PSX_ORDER_C=${_order_c} Q1PSX_DLIGHT_C=${_dlight_c})
-# The monsters' level of detail by their vertices' order (formats/qstream.h
-# QSTM_LOD, docs/porting-notes.md §88): 1 on, 0 the whole model at every
-# distance (an A / B: the cooked order stays)
-set(Q1PSX_LOD 1 CACHE STRING "The streamed models' level of detail: 1 on, 0 off (the whole model at every distance)")
-target_compile_definitions(q1psx PRIVATE Q1PSX_LOD=${Q1PSX_LOD})
-# The monsters' shared detail budget (engine/rlist.c, docs/porting-notes.md
-# §114): the expanded vertices the bodies drawn share a frame (0: none, the
-# bands from the depth alone), the floor of their shared level (a band), a
-# body's cap (its band at most that many 256ths of its depth's: 384, 1.5)
-set(Q1PSX_LOD_BUDGET 600 CACHE STRING "The bodies' shared budget of expanded vertices a frame (0: none)")
-set(Q1PSX_LOD_FLOOR 16 CACHE STRING "The budget's shared level at most (a band, 0-23)")
-set(Q1PSX_LOD_CAP 384 CACHE STRING "A body's band under the budget at most this many 256ths of its depth's")
-target_compile_definitions(q1psx PRIVATE Q1PSX_LOD_BUDGET=${Q1PSX_LOD_BUDGET}
-	Q1PSX_LOD_FLOOR=${Q1PSX_LOD_FLOOR} Q1PSX_LOD_CAP=${Q1PSX_LOD_CAP})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${_dlight_c}>)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_SLOW_C=${_slow_c}>)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ZONE_C=${_zone_c}>)   # (engine/zone.s)
@@ -268,7 +243,6 @@ set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A
 set(Q1PSX_BENCH_WARPDYN 0 CACHE STRING "1: the views with the game's dynamic warp control (T its floor), the T each ends at printed")
 set(Q1PSX_BENCH_TMAX 32 CACHE STRING "The dynamic warp control's cap with WARPDYN=1 (px; the anti-warping's: low 48, default 32, medium 16, high 8, ultra 4)")
 set(Q1PSX_BENCH_VRAMCHK 0 CACHE STRING "1: each streamed image's VRAM place also searched the way before §100 (every resident image for every candidate), the two compared (stream: vramchk lines)")
-set(Q1PSX_BENCH_SEQCHK 0 CACHE STRING "1: each view drawn by the cooked walk is drawn again by the tree walk, the leaves' and faces' stamps and the records drawn compared (seqchk lines)")
 set(Q1PSX_BENCH_IRQTIME 0 CACHE STRING "1: the interrupts' handler times itself: the bench lines' irq= (cycles a frame, entries x 100)")
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,IRQTIME=$<AND:$<BOOL:${Q1PSX_BENCH}>,$<BOOL:${Q1PSX_BENCH_IRQTIME}>>>)
 set(Q1PSX_BENCH_SLOWSTAT 0 CACHE STRING "1: the slow path counts its paths: the bench's slowstat lines (engine/r_slow.s STAT)")
@@ -301,7 +275,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_CAPTURE=${Q1PSX_BENCH_CAPTURE}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ}
 		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN} Q1PSX_BENCH_TMAX=${Q1PSX_BENCH_TMAX}
-		Q1PSX_BENCH_SEQCHK=${Q1PSX_BENCH_SEQCHK} Q1PSX_BENCH_VRAMCHK=${Q1PSX_BENCH_VRAMCHK})
+		Q1PSX_BENCH_VRAMCHK=${Q1PSX_BENCH_VRAMCHK})
 	if(Q1PSX_BENCH_VIEW)
 		# groups of five numbers, one definition with no spaces (a quoted string
 		# with spaces does not survive the generator's command line)
@@ -352,15 +326,9 @@ endif()
 # zone tables: the repo's zones/auto_1536_s3 unless Q1PSX_ZONE_TABLES
 # names others, or none) goes on the disc as its skeleton
 # (<MAP>_G0.WLD) and its chunks at the build's texture level
-# (<MAP>_Z<N>.ZON); OFF, or a map left whole, its whole world. The tables
-# hold every record the PSX may draw within the draw distance, 1536 units
-# (+ a margin).
-option(Q1PSX_ZONES "The zoned maps' skeletons and chunks on the disc (the whole worlds when OFF)" ON)
-if(Q1PSX_ZONES)
-	set(_disc_zones 1)
-else()
-	set(_disc_zones 0)
-endif()
+# (<MAP>_Z<N>.ZON); a map left whole, its whole world. The tables hold
+# every record the PSX may draw within the draw distance, 1536 units (+ a
+# margin).
 # The tables the cook reads (Q1PSX_ZONE_TABLES: the configure's
 # environment's, else local.env's, else the repo's zones/auto_1536_s3; a
 # cook run by hand with others is not seen here) are cut
@@ -372,13 +340,13 @@ endif()
 # is refused. The seen tables carry only what the renders saw: a wall seen
 # from a place the scan did not sample is missing there (docs/porting-notes.md
 # §57.8, §95).
-if(_disc_zones AND _zone_tables AND _zone_tables MATCHES "(pvs|seen|auto)_([0-9]+)_s?([0-9]+)/?$")
+if(_zone_tables AND _zone_tables MATCHES "(pvs|seen|auto)_([0-9]+)_s?([0-9]+)/?$")
 	set(_tables_kind ${CMAKE_MATCH_1})
 	set(_tables_dist ${CMAKE_MATCH_2})
 	if(_tables_dist LESS 1536)
 		message(FATAL_ERROR "q1psx: the zone tables ${_zone_tables} are cut at ${_tables_dist} units, the draw distance is 1536: "
 		        "the walls between the two would be missing from afar. Point Q1PSX_ZONE_TABLES (local.env) at a *_1536_* set, "
-		        "or build with -DQ1PSX_ZONES=OFF for the whole worlds.")
+		        "or at none for the whole worlds.")
 	endif()
 	if(_tables_kind STREQUAL "seen")
 		message(STATUS "q1psx: zone tables ${_tables_kind}_${_tables_dist}: the chunks hold what the analysis' renders saw only (a wall the scan never looked at is missing there; the pvs tables are exact)")
@@ -393,13 +361,6 @@ endif()
 # bench's disc has none (Q1PSX_MUSIC OFF unless Q1PSX_BENCH_MUSIC).
 option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
 set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
-# the music's ring in SPU RAM (engine/music.h: chunks a channel, 0.325 s
-# each; 6 = 2 s) and the seek its refills plan with (engine/music.c)
-set(Q1PSX_MUSIC_RING 6 CACHE STRING "The SPU music's ring: chunks a channel (0.325 s each; 6 = 2 s, 4 = 1.3 s)")
-set(Q1PSX_MUSIC_REFILL 2 CACHE STRING "A refill of the music's ring: chunks a channel at a time (2 = 8 sectors every 0.65 s, the game's: a 16 KB staging buffer, docs/porting-notes.md §90.3; 4 = 16 every 1.3 s, §84's)")
-set(Q1PSX_MUSIC_SEEK_MS 100 CACHE STRING "The seek the music's refills plan a read around, in ms (100: a hop within a level's section)")
-target_compile_definitions(q1psx PRIVATE MUSIC_RING_CHUNKS=${Q1PSX_MUSIC_RING} MUSIC_REFILL_CHUNKS=${Q1PSX_MUSIC_REFILL}
-                           MUSIC_SEEK_MS=${Q1PSX_MUSIC_SEEK_MS})
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h, qworld.h,
 # qgame.h, qlevels.h). Every cooked map ships as <MAP>_T<N>.TX4 (its 4-bit
 # textures at the build's level: 1 medium, 2 high), <MAP>_G0.WLD (its low
@@ -471,7 +432,7 @@ set(_cd_xml ${CMAKE_CURRENT_BINARY_DIR}/cd_image.xml)
 add_custom_command(
 	OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/q1psx.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx.cue
 	COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DOUT=${_cd_xml}
-	        -DTEXTURES=${Q1PSX_TEXTURES} -DMUSIC=${_disc_music} -DZONES=${_disc_zones} -DPAK0=${_pak0_path}
+	        -DTEXTURES=${Q1PSX_TEXTURES} -DMUSIC=${_disc_music} -DPAK0=${_pak0_path}
 	        -DSDK_VERSION=${PSN00BSDK_VERSION} -P ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake
 	COMMAND ${MKPSXISO} -y -q -o q1psx.bin -c q1psx.cue ${_cd_xml}
 	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/iso/iso.xml

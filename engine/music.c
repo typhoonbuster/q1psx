@@ -47,12 +47,9 @@ static int playing;               /* the track, 0 none                   */
 #define READ_CHUNKS    MUSIC_REFILL_CHUNKS   /* a refill (engine/music.h): its chunks fill
                                                 the staging buffer (stream.c STAGE_SECTORS) */
 #define TICKS_SAMPLE_P 393216u   /* a sample's ticks x the pitch       */
-#ifndef MUSIC_SEEK_MS
-#define MUSIC_SEEK_MS  250       /* a seek's guess (CMake Q1PSX_MUSIC_SEEK_MS;
-                                    the music files lie next to the streamed
-                                    assets: short ones)                     */
-#endif
-#define SEEK_MS        MUSIC_SEEK_MS
+#define SEEK_MS        100       /* a seek's guess: a hop within a level's
+                                    section (the music files lie next to the
+                                    streamed assets: short ones; §84) */
 #define MUSIC_VOL      0x2ccc    /* as the CD's (engine/snd.c CD_VOL)        */
 
 static uint32_t track_lba[MAX_TRACK + 1];   /* \MUSIC\SPU_<nn>.DAT's first sector, 0 none */

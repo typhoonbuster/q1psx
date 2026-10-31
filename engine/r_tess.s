@@ -73,14 +73,10 @@
 	.include "inline_s.inc"
 	.include "r_defs.inc"
 
-.ifndef TESS_KMAX                        # the finest level, 2^KMAX cells along an axis
-.set TESS_KMAX, 3                        #  (CMake Q1PSX_TESS_KMAX: --defsym; 0: the grid
-.endif                                   #  never, the unsplit polygons alone)
-.set KMAX,     TESS_KMAX
-.ifndef TESS_CAP                         # the cap: a polygon whose levels sum past it (more
-.set TESS_CAP, 4                         #  than 2^CAP cells) goes to the slow path, whose
-.endif                                   #  splits follow the near corner alone (CMake
-                                         #  Q1PSX_TESS_CAP)
+.set KMAX,     3                        # the finest level, 2^KMAX cells along an axis
+.set TESS_CAP, 4                         # the cap: a polygon whose levels sum past it (more
+                                         #  than 2^CAP cells) goes to the slow path, whose
+                                         #  splits follow the near corner alone
 .set TP_SIZE,  32
 .set TP_U,     8
 .set TP_V,     10

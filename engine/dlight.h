@@ -31,14 +31,11 @@
 #define DL_PRUNE    64           /* vertex units: a plane farther than a light's
                                     reach + this holds none of its lit vertices
                                     on its far side (engine/r_defs.inc DL_PRUNE) */
-#ifndef Q1PSX_DLIGHT_MINLIGHT
-#define Q1PSX_DLIGHT_MINLIGHT 32 /* (CMake) the world's lights' least minlight, world
-                                    units: Quake's minlight, which the muzzle flash
-                                    alone sets (32), for every light on the world's
-                                    faces; their faintest edge left unlit, their
-                                    reach shorter. 0: each light's own (Quake's look;
-                                    docs/porting-notes.md §113) */
-#endif
+#define DL_WORLD_MINLIGHT 32     /* the world's lights' least minlight, world units:
+                                    Quake's minlight, which the muzzle flash alone
+                                    sets (32), for every light on the world's faces;
+                                    their faintest edge left unlit, their reach
+                                    shorter (docs/porting-notes.md §113) */
 
 typedef struct {
 	int32_t origin[3];

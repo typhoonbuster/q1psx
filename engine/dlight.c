@@ -186,7 +186,7 @@ void dl_push(int now)
 	int n = 0;
 	for (int i = 0; i < MAX_DLIGHTS && dl_enabled; i++) {
 		const dlight_t *l = &dlights[i];
-		int minlight = l->minlight > Q1PSX_DLIGHT_MINLIGHT ? l->minlight : Q1PSX_DLIGHT_MINLIGHT;
+		int minlight = l->minlight > DL_WORLD_MINLIGHT ? l->minlight : DL_WORLD_MINLIGHT;
 		if (l->die < now || l->radius <= minlight)
 			continue;                        /* (none of the world reaches its minlight) */
 		rlight_t *r = &rlights[n++];

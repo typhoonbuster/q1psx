@@ -41,10 +41,7 @@
 # in percent; default 98, 100 or 0 its own rate; docs/porting-notes.md
 # §87; QCOOK_LOD_PX: the monsters' level of detail's tolerance in pixels,
 # 2 by default, QCOOK_NOLOD=1 none, the vertices in today's order, §88;
-# QCOOK_SEQ: the maps whose zone chunks carry the cooked walk ("start
-# e1m1", "all"; "none" by default: measured slower than the tree walk),
-# and its knobs QCOOK_SEQ_FAST, QCOOK_SEQ_TEST, QCOOK_SEQ_PRUNE,
-# QCOOK_SEQ_ZERO, tools/qcook/seq.c, §91; QCOOK_ANIM_TOL: every body's
+# QCOOK_ANIM_TOL: every body's
 # animations thinned to that many units (a frame its neighbours' average
 # makes well enough left out, tools/qcook/game.c ANIM_THIN, §97; 0 none);
 # QCOOK_MERGE: a node's coplanar faces merged (1 by default, 0 the cook as
@@ -142,7 +139,6 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 		echo "music: none"
 	fi
 	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-} QCOOK_MERGE=${QCOOK_MERGE:-} QCOOK_MERGE_ERR=${QCOOK_MERGE_ERR:-}"
-	echo "qcook walk: QCOOK_SEQ=${QCOOK_SEQ-none} QCOOK_SEQ_FAST=${QCOOK_SEQ_FAST:-} QCOOK_SEQ_TEST=${QCOOK_SEQ_TEST:-} QCOOK_SEQ_PRUNE=${QCOOK_SEQ_PRUNE:-} QCOOK_SEQ_ZERO=${QCOOK_SEQ_ZERO:-}"
 }
 if [ "${1:-}" = --stale ]; then
 	stamp=${2:?--stale needs the file the cook depends on}

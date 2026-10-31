@@ -36,19 +36,18 @@ int rl_lod_cut, rl_lod_band_hi;
 #endif
 
 /* The monsters' shared detail budget (docs/porting-notes.md §114): the
-   bodies drawn in a frame share Q1PSX_LOD_BUDGET expanded vertices. A
-   level L common to them all, Q1PSX_LOD_FLOOR at most, raises a body from
-   its depth's band d to L, never past its cap: Q1PSX_LOD_CAP / 256 times
-   d (its depth in the view's units times the cap >> 16, d being that
-   depth >> 8), so that its error on screen stays within that many times
-   the distance's. L is the last frame's bodies' (lod_level): one step a
-   frame toward the least level within the budget, down only once a lower
-   level fits within 7/8 of it; each body drawn adds what every level
-   would draw of it (lod_count). Q1PSX_LOD_BUDGET 0: the bands from the
-   depth alone. */
+   bodies drawn in a frame share RL_LOD_BUDGET expanded vertices. A level
+   L common to them all, RL_LOD_FLOOR at most, raises a body from its
+   depth's band d to L, never past its cap: RL_LOD_CAP / 256 times d (its
+   depth in the view's units times the cap >> 16, d being that depth >>
+   8), so that its error on screen stays within that many times the
+   distance's. L is the last frame's bodies' (lod_level): one step a frame
+   toward the least level within the budget, down only once a lower level
+   fits within 7/8 of it; each body drawn adds what every level would draw
+   of it (lod_count). */
 int rl_lod_level, rl_lod_raised;
-#if Q1PSX_LOD && Q1PSX_LOD_BUDGET
-#define LOD_FLOOR (Q1PSX_LOD_FLOOR < QST_LOD_BANDS ? Q1PSX_LOD_FLOOR : QST_LOD_BANDS - 1)
+#define LOD_FLOOR RL_LOD_FLOOR
+_Static_assert(LOD_FLOOR < QST_LOD_BANDS, "rlist.h RL_LOD_FLOOR: a band");
 static int32_t lod_base;                     /* the depths' bands' vertices, summed */
 static int32_t lod_more[LOD_FLOOR + 1];      /* at level L: what L adds of the bodies it raises to L */
 static int32_t lod_step[LOD_FLOOR + 2];      /* differences: past a body's cap, what its cap adds */
@@ -60,9 +59,9 @@ static void lod_level(void)
 	for (int L = 0; L <= LOD_FLOOR; L++) {   /* (the totals never grow with L) */
 		s += lod_step[L];
 		int32_t t = lod_base + lod_more[L] + s;
-		if (up < 0 && t <= Q1PSX_LOD_BUDGET)
+		if (up < 0 && t <= RL_LOD_BUDGET)
 			up = L;
-		if (t <= Q1PSX_LOD_BUDGET - Q1PSX_LOD_BUDGET / 8) {
+		if (t <= RL_LOD_BUDGET - RL_LOD_BUDGET / 8) {
 			down = L;
 			break;
 		}
@@ -84,7 +83,7 @@ static int lod_count(const qst_lod *l, int d, int32_t z, int32_t rho)
 {
 	if (z - rho >= R_DRAW_Z)
 		return d;
-	int cap = z > 0 ? (int) (((uint32_t) z * Q1PSX_LOD_CAP) >> 16) : 0;
+	int cap = z > 0 ? (int) (((uint32_t) z * RL_LOD_CAP) >> 16) : 0;
 	if (cap > QST_LOD_BANDS - 1)
 		cap = QST_LOD_BANDS - 1;
 	if (cap < d)
@@ -103,15 +102,12 @@ static int lod_count(const qst_lod *l, int d, int32_t z, int32_t rho)
 	rl_lod_raised++;
 	return b;
 }
-#endif
 
 void rl_begin(void)
 {
 	n_items = n_ents = n_lists = 0;
 	mdl_new_frame();
-#if Q1PSX_LOD && Q1PSX_LOD_BUDGET
 	lod_level();
-#endif
 	rl_lod_raised = 0;
 #ifdef Q1PSX_BENCH
 	rl_lod_cut = rl_lod_band_hi = 0;
@@ -329,7 +325,6 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 		gte_stlvnl2(&z);
 	}
 	int band = 0;
-#if Q1PSX_LOD
 	if (m->flags & QSTM_LOD) {
 		const qst_lod *l = qst_lod_of(m);
 		band = z >> 8;                            /* QST_LOD_BAND world units = 256 vertex units */
@@ -337,9 +332,7 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 			band = 0;
 		if (band >= QST_LOD_BANDS)
 			band = QST_LOD_BANDS - 1;
-#if Q1PSX_LOD_BUDGET
 		band = lod_count(l, band, z, (m->radius * 3 >> 1) + R_SORT_MARGIN);   /* (the shared budget) */
-#endif
 		while (band && l->num_verts[band - 1] == l->num_verts[band])
 			band--;                               /* (the nearest band of the same cut: one
 		                                             expansion in the cache for them all) */
@@ -352,7 +345,6 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 		}
 #endif
 	}
-#endif
 	const qw_vert *pool = mdl_frame(a, m, frame, band << 11);
 	if (!pool)
 		return 0;

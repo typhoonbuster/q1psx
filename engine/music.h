@@ -16,18 +16,13 @@
 /* the SPU music's: its voices (the last two: left, right) and its ring at
    the top of SPU RAM, which the sounds leave it (engine/snd.c) */
 #define MUSIC_SPU_VOICES 2
-#ifndef MUSIC_RING_CHUNKS
 #define MUSIC_RING_CHUNKS 6              /* chunks a channel, 0.325 s each: 2 s at
-                                            22 kHz (CMake Q1PSX_MUSIC_RING) */
-#endif
+                                            22 kHz */
 #define MUSIC_SPU_BYTES  (2 * MUSIC_RING_CHUNKS * 4096)
-#ifndef MUSIC_REFILL_CHUNKS
-#define MUSIC_REFILL_CHUNKS 2            /* a refill: chunks a channel at a time (CMake
-                                            Q1PSX_MUSIC_REFILL; 2 = 8 sectors every 0.65 s,
-                                            the staging buffer 16 KB (stream.c STAGE_SECTORS:
-                                            2 x 4 KB a chunk); 4 = 16 every 1.3 s and 32 KB,
-                                            §84's choice before §90.3 took the RAM) */
-#endif
+#define MUSIC_REFILL_CHUNKS 2            /* a refill: chunks a channel at a time: 8
+                                            sectors every 0.65 s, the staging buffer 16 KB
+                                            (stream.c STAGE_SECTORS: 2 x 4 KB a chunk; §84's
+                                            4 before §90.3 took the RAM) */
 
 void music_init(void);
 void music_level(const char *map);   /* the map being loaded: its section's copy of its

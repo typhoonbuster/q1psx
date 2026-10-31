@@ -46,7 +46,6 @@
 .set RS_NLIGHTS,      208   # dynamic lights this frame, and their table
 .set RS_LIGHTS,       212   #   (engine/dlight.c rlight_t, 32 bytes each)
 .set RS_FRAGPOOL,     216   # the brush models' pieces' vertex pool (bmfrag.c)
-.set RS_SEQ,          220   # the zone's cooked walk for this frame, 0: the tree walk (zone.c)
 .set DL_O,            0     # int32 origin[3], vertex units
 .set DL_RADIUS,       12    # vertex units
 .set DL_MINLIGHT,     16

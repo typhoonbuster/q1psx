@@ -2595,3 +2595,11 @@ followed by R0-R4.
   `Q1PSX_PADSCRIPT` still walked the Graphics page as it was before §52;
   the option, the script and its prints are gone. The release's and the
   default preset's executables are byte for byte the same.
+- **The cooked walk removed, five settings frozen** (§119.5, provisional
+  number, 2026-10-31). The
+  cooked walk of §91 (off by default, slower than the tree walk) is gone
+  from the engine, the cook and the format. The monsters' level of
+  detail and its budget, the near polygons' grid, the world lights' least
+  minlight, the zones on the disc and the music's ring are fixed at the
+  values every build used; their CMake settings and bench knobs are gone.
+  The display lists are the same; the release's level arena +1760 B.

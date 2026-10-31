@@ -15837,3 +15837,44 @@ guards around them.
 - **Checked** (TESTING 11.101): the release's and the default preset's
   executables byte for byte those of 119.3 (the script was in no build);
   the bench builds; no warning.
+
+### 119.5 The cooked walk removed, five settings frozen
+
+Removed (2026-10-31), from the list of what was left to
+remove:
+
+- **The cooked walk** (§91): a zone's walk cooked into its chunk and run
+  by an asm interpreter, measured slower than the tree walk and off by
+  default since. Gone: `engine/r_world.s`'s interpreter (`seq_*`, 1.6 KB
+  of the release's code) and the frame's test that entered it, the record
+  loop's patched exits and draw_ents' (`dr_xa`..`xc`, `ei_x`),
+  `engine/render.c` `r_seq_set`, `engine/zone.c` `seq_select`,
+  `r_state.seq`, the bench's `SEQCHK=` and `seq view` lines,
+  `tools/qcook/seq.c` and its use in `zones.c`, `QCOOK_SEQ*`, and the
+  format's sequence words (`formats/qworld.h`: the chunk's `ofs_seq` is
+  its pad word again, 0). The cook's 310 files are byte for byte the same
+  (`cooked/settings.txt` aside: it no longer lists the cooked walk's
+  knobs).
+- **Frozen at the values every build used**, their CMake settings and
+  the bench's knobs gone:
+  - the monsters' level of detail and its shared budget (`Q1PSX_LOD`,
+    `LOD_BUDGET`, `LOD_FLOOR`, `LOD_CAP`; the bench's `LOD=`,
+    `LODBUDGET=`, `LODFLOOR=`, `LODCAP=`): on, 600 vertices, 16, 384
+    (`engine/rlist.h` `RL_LOD_*`);
+  - the near polygons' grid (`Q1PSX_TESS_KMAX`, `TESS_CAP`; `TESSK=`,
+    `TESSC=`): 3 and 4 (`engine/r_tess.s`, `r_tess.c`);
+  - the world's dynamic lights' least minlight (`Q1PSX_DLIGHT_MINLIGHT`;
+    `DLIGHT_MINLIGHT=`): 32 (`engine/dlight.h` `DL_WORLD_MINLIGHT`);
+  - the zones on the disc (`Q1PSX_ZONES`; `WHOLE=`): always, a map the
+    tables leave whole as before (`Q1PSX_ZONE_TABLES=none`: every map
+    whole);
+  - the SPU music's ring, refill and seek (`Q1PSX_MUSIC_RING`,
+    `MUSIC_REFILL`, `MUSIC_SEEK_MS`; `MUSIC_RING=`, `MUSIC_REFILL=`,
+    `MUSIC_SEEK=`): 6 chunks, 2 chunks, 100 ms (`engine/music.h`,
+    `music.c`).
+- **Checked** (TESTING 11.102), against master 8274a70's references at
+  the high effects: START's 12 views and the 128 spawn views identical;
+  the game bench (the menus' warp fixed for the test): 22 of 29 dumps,
+  the Graphics pages as before; the C engine's START frames master's C
+  engine's; the release's level arena 1369008 → 1370768 B (+1760:
+  `.text` −1692, the data −68); the default preset builds.

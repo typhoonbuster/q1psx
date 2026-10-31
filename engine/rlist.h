@@ -121,7 +121,11 @@ void rl_begin(void);
 extern int rl_lod_cut;      /* this frame's streamed models cut to a band past 0 */
 extern int rl_lod_band_hi;  /* the farthest band among them */
 #endif
-extern int rl_lod_level;    /* the bodies' shared level this frame (Q1PSX_LOD_BUDGET) */
+/* the monsters' shared detail budget (rlist.c, docs/porting-notes.md §114) */
+#define RL_LOD_BUDGET 600   /* the expanded vertices the bodies drawn in a frame share  */
+#define RL_LOD_FLOOR  16    /* the shared level at most (a band)                         */
+#define RL_LOD_CAP    384   /* a body's band at most this many 256ths of its depth's     */
+extern int rl_lod_level;    /* the bodies' shared level this frame */
 extern int rl_lod_raised;   /* the bodies it raised past their depth's band this frame */
 
 /* an entity for a model's frame, positioned (1/R_POS_SUB world units) and

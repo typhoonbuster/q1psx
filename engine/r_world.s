@@ -892,9 +892,9 @@
 
 .endm
 
-# RECLOOP p, exit, var [, wx]: the record loop, labels prefixed by p, a
-# chain of its own (entered by a jump), leaving for `exit` when the block
-# is done or the arena is full. Instantiated for the world's face blocks
+# RECLOOP p, exit, var: the record loop, labels prefixed by p, a chain of
+# its own (entered by a jump), leaving for `exit` when the block is done
+# or the arena is full. Instantiated for the world's face blocks
 # (dr, back to the walk; var = 0: the careful test's near bound is 96) and
 # for a model's records (de, draw_model; var = 1: the bound is SP_SZCLIP,
 # the view model's 124). The comment above describes it. The draw
@@ -905,7 +905,7 @@
 # colour, its average light (times the fog's factor at its centre): its
 # vertices without their lights (their colour words that colour, for the
 # slow path), its polygons POLY_FT4 / POLY_FT3 (POLYS flat).
-.macro RECLOOP p, exit, var, wx=0
+.macro RECLOOP p, exit, var
 	ICSEC   \p\()_records
 	.globl  \p\()_records
 \p\()_records:
@@ -913,10 +913,6 @@
 	sw      $t9, SP_T0($t8)
 	lw      $v0, SP_CLUT16($t8)
 .endif
-.if \wx
-	.globl  \p\()_xa                   # (the world's loops: their three ways out to
-\p\()_xa:                                 #  the walk, pointed at the cooked walk's
-.endif                                   #  seq_next while one runs: render.c r_seq_set)
 	bnez    $t0, \exit                    # packet arena full: nothing more
 	move    $t2, $zero
 \p\()_cull:
@@ -927,10 +923,6 @@
 .if R_PROFILE
 	beq     $a0, $a1, \p\()_done
 .else
-.if \wx
-	.globl  \p\()_xb
-\p\()_xb:
-.endif
 	beq     $a0, $a1, \exit
 .endif
 	lhu     $t1, R_FACE_ID($a0)          # (at the block end: a harmless read)
@@ -1225,18 +1217,9 @@
 	subu    $t0, $t0, $t9
 	andi    $t0, $t0, 0xffff
 	addu    $t1, $t1, $t0
-.if \wx
-	.globl  \p\()_xb, \p\()_xc        # (one way out serves both)
-\p\()_xb:
-\p\()_xc:
-.endif
 	b       \exit
 	sw      $t1, SP_TBLOCK($t8)
 .else
-.if \wx
-	.globl  \p\()_xc
-\p\()_xc:
-.endif
 	b       \exit
 	sw      $t0, SP_FULL($t8)
 .endif
@@ -1566,12 +1549,10 @@ dsn_next:
 .endif
 
 	# ---- BSP walk -------------------------------------------------------
-	lw      $t0, RS_SEQ($s0)             # the zone's cooked walk, while the camera is
-	lw      $s1, RS_ROOT($s0)            # in one of its leaves (zone.c): seq_start below
+	lw      $s1, RS_ROOT($s0)            # the root
 	lw      $s0, SP_PLANES($t8)          # s0 = the plane table for the walk
 	li      $s2, 0xf                     # all four frustum planes active
 	sw      $zero, SP_SPILLS($t8)
-	bnez    $t0, seq_start
 	addiu   $s3, $t8, 4                  # walk stack = scratchpad + 4
 
 walk:
@@ -1801,7 +1782,7 @@ pop_1:                                   # (t0 loaded; draw_ents, wl_ents come h
 	j       dr_records
 	move    $gp, $t2
 
-	RECLOOP dr, walk, 0, 1
+	RECLOOP dr, walk, 0
 
 # dr_light_rec: the stamped record a0 of a block a dynamic light reaches
 # (gp = the node), in view (past the frustum test, so no light is spent on
@@ -3437,8 +3418,6 @@ draw_ents:
 	lhu     $t9, 0($t1)                  # the first item + 1
 	nop
 ei_item:
-	.globl  ei_x                         # (the cooked walk's leaves come back to seq_next:
-ei_x:                                    #  render.c r_seq_set points this branch there)
 	beqz    $t9, pop_1
 	lw      $t0, SP_STACK($s3)           # (pop_1's first)
 	lw      $t0, SP_RSTATE($t8)
@@ -3520,349 +3499,6 @@ ep_back:                                 # (ei_next's own work here)
 	lhu     $t9, SP_NEXTITEM($t8)
 	b       ei_item
 	sw      $t2, SP_FVBASE($t8)
-
-# -----------------------------------------------------------------------------
-# The cooked walk (formats/qworld.h "the cooked walk", docs/porting-notes.md
-# §91). While the camera's leaf is one of the current zone's and its chunk
-# carries one, r_state.seq points at the zone's sequence (zone.c), and
-# this runs it in place of the tree walk above: the tree's steps for a
-# camera in the zone, flat, the cook having taken the camera's side of
-# every plane that leaves the zone's leaves on one side. Each word, by its
-# type (bits 30-31; an offset is the node's or the leaf's from the leaves'
-# array, 24 bits signed, in s0):
-#   LEAF   the leaf: in the PVS (its stamp), its box against the frustum
-#          when the cook asked (bit 29), its marks stamped, its render list
-#          drawn (draw_ents, which comes back to seq_next: render.c points
-#          ei_item's branch here, and the record loops' exits, r_seq_set)
-#   BLOCK  the node's face block on the side of bit 29, through the record
-#          loop as the tree's pop sends it (gp = the node when a dynamic
-#          light reaches it)
-#   NODE   a subtree's root, the next word its words: out of the PVS, the
-#          subtree skipped; a tested one (bit 29) keeps a frame (the clip
-#          flags before its box's test, back at its END), its subtree run
-#          with the flags the test leaves, or skipped when the box is out
-#   VAR    a node whose plane crosses the zone, the next word its two
-#          subtrees' words (F's, then B's << 16): the camera's side as the
-#          walk takes it (d < 0: behind; |d| <= eps: no faces), written
-#          into the word's bits 26-27 for the subtrees' ENDs, which name
-#          their VAR (their way back, in words): F's END draws the front
-#          block when in front (B follows) or jumps past B when behind;
-#          B's END draws the back block and jumps to F when behind
-#   ENDN   a tested node's end (its flags back);  STOP  the walk's: walk_done
-# A tested node's flags go on the walk's scratchpad stack (s3; the cook
-# bounds their nesting to QW_SEQ_MAX_DEPTH). The walk's registers: s1 the sequence,
-# s2 the clip flags, s4 / s5 the stamps, s6 / s7 / fp the packets, t8 the
-# scratchpad, v1 the texture cache (never touched), gp a frame being made
-# or a block's lit node.
-	ICSEC   seq_start
-seq_start:                               # t0 = the sequence (r_state.seq)
-	lw      $t1, SP_RSTATE($t8)
-	sll     $s1, $t0, 8
-	srl     $s1, $s1, 8                  # KUSEG: a frame holds it in 24 bits
-	lw      $s0, RS_LEAVES($t1)          # the offsets' base
-	.globl  seq_next                     # (render.c: the record loops' and draw_ents' way here)
-seq_next:
-	lw      $t1, 0($s1)                  # the entry
-.if R_PROFILE
-	lui     $t4, %hi(r_seq_stat)
-	lw      $t3, %lo(r_seq_stat + 12)($t4)   # (the entries dispatched)
-	addiu   $s1, $s1, 4
-	sll     $t2, $t1, 8
-	addiu   $t3, $t3, 1
-	sw      $t3, %lo(r_seq_stat + 12)($t4)
-.else
-	addiu   $s1, $s1, 4
-	sll     $t2, $t1, 8
-.endif
-	bltz    $t1, seq_hi                  # NODE, VAR, END, STOP
-	sra     $t2, $t2, 8                  # its offset, signed
-	sll     $t0, $t1, 1
-	bltz    $t0, seq_block               # BLOCK
-	addu    $a0, $s0, $t2                # LEAF: a0 = the leaf
-	lhu     $t0, L_VISFRAME($a0)
-	lhu     $a3, L_NMARKS($a0)
-	bne     $t0, $s5, seq_next           # not in the PVS: on
-	lw      $a2, L_MARKS($a0)
-	sll     $t3, $t1, 2                  # (its test bit to the sign)
-	bgez    $t3, sl_marks                # no box test asked (the fast walk)
-	sll     $a3, $a3, 1                  # marks x 2 bytes
-	beqz    $s2, sl_marks                # fully inside the frustum: no box
-	move    $gp, $s2                     # (the flags back after: a leaf's test is its own)
-.if R_PROFILE
-	lui     $t4, %hi(r_seq_stat)
-	lw      $t3, %lo(r_seq_stat)($t4)
-.endif
-	lh      $t1, L_C+4($a0)              # the box, as walk_leaf loads it
-	lwc2    C2_VXY0, L_C+0($a0)
-	lh      $t2, L_H+4($a0)
-	lwc2    C2_VXY1, L_H+0($a0)
-	mtc2    $t1, C2_VZ0
-	mtc2    $t2, C2_VZ1
-.if R_PROFILE
-	addiu   $t3, $t3, 1
-	sw      $t3, %lo(r_seq_stat)($t4)
-.else
-	nop                                  # (two before the GTE reads them)
-	nop
-.endif
-	FRUSTUM sl_cull
-	move    $s2, $gp
-sl_marks:
-	lw      $t3, SP_FVBASE($t8)
-	lw      $t9, L_VIS($a0)              # (the leaf's render list: its top byte)
-	beqz    $a3, sl_ents
-	addu    $a3, $a3, $a2                # the marks' end
-	lhu     $t0, 0($a2)
-sl_mark:
-	addiu   $a2, $a2, 2
-	addu    $t0, $t0, $t3
-	sh      $s4, 0($t0)                  # face_visframe[mark] = framecount
-	bne     $a2, $a3, sl_mark
-	lhu     $t0, 0($a2)                  # (next; one past the last: harmless)
-sl_ents:
-	bgez    $t9, seq_next                # nothing in the leaf
-	lui     $t0, %hi(seq_keep)
-	sw      $s1, %lo(seq_keep)($t0)      # models / particles / pieces here: draw_ents (a
-	sw      $s2, %lo(seq_keep + 4)($t0)  # sorted model takes s1, s2, a brush model the
-	sw      $s0, %lo(seq_keep + 8)($t0)  # plane table in s0, the walk's dead ones at a
-	j       draw_ents                    # leaf); back at seq_ents_back (render.c's patch)
-	lw      $s0, SP_PLANES($t8)
-seq_block:                               # t1 = the word (bit 29: the side), t2 = the node's offset
-	addu    $t2, $s0, $t2                # the node
-	srl     $t3, $t1, 27
-	andi    $t3, $t3, 4                  # the side x 4
-seq_block_n:                             # (t2 = the node, t3 = the side x 4: the VAR ends too)
-	lhu     $t7, N_DLSTAMP($t2)          # (pop's block: a dynamic light's node in gp)
-	addu    $t5, $t2, $t3
-	lw      $a0, N_FACES($t5)            # the block on the camera's side
-	sll     $t6, $t3, 3                  # side x 32: its end, faces[1] or the next node's faces[0]
-	addu    $t6, $t6, $t2
-	lw      $a1, N_FACES+4($t6)
-.if R_PROFILE
-	lhu     $t9, TIMER2($t8)
-	lw      $t0, SP_FULL($t8)
-.else
-	lw      $t0, SP_FULL($t8)
-	lw      $v0, SP_CLUT16($t8)
-.endif
-	bne     $t7, $s4, 1f
-	move    $gp, $zero
-	move    $gp, $t2
-1:	j       dr_records                   # (its first word: the options' copy; out at seq_next)
-	nop
-
-	ICSEC   sl_cull
-sl_cull:                                 # the leaf's box out of the frustum: the flags back
-	b       seq_next
-	move    $s2, $gp
-
-	ICSEC   seq_ents_back
-	.globl  seq_ents_back
-seq_ents_back:                           # a leaf's render list drawn (ei_item's branch, patched)
-	lui     $t0, %hi(seq_keep)
-	lw      $s1, %lo(seq_keep)($t0)
-	lw      $s2, %lo(seq_keep + 4)($t0)
-	lw      $s0, %lo(seq_keep + 8)($t0)
-	b       seq_next
-	nop
-
-	ICSEC   seq_hi
-seq_hi:                                  # t1 = the word, t2 = its offset
-	sll     $t0, $t1, 1
-	bgez    $t0, seq_node                # NODE
-	addu    $t2, $s0, $t2                # (the node)
-	sll     $t0, $t1, 2                  # the others: bits 28-29
-	bgez    $t0, 1f                      # bit 29 clear: VAR (00), ENDF (01)
-	sll     $t3, $t1, 3                  # (bit 28 to the sign)
-	bltz    $t3, seq_endn                # 11: a tested node's END, or STOP
-	nop
-	b       seq_endb                     # 10: B's END
-	nop
-1:	bltz    $t3, seq_endf                # 01: F's END
-	lhu     $a2, N_PLANE3($t2)           # VAR: its plane (a harmless read for an END)
-seq_var:                                 # t1 = the VAR word, t2 = the node; s1 -> the lengths' word
-	lhu     $t0, N_VISFRAME($t2)         # out of the PVS: F and B skipped at once
-	lw      $a3, 0($s1)                  # the lengths: F's words | B's << 16
-	lw      $a1, SP_PLANES($t8)
-	bne     $t0, $s5, sv_skip
-	sll     $a2, $a2, 2
-	addu    $a2, $a2, $a1                # the plane
-	lw      $a1, PN_DIST($a2)
-	lbu     $a0, PN_TYPE($a2)
-	addiu   $t5, $s1, -4                 # the VAR word: its state bits (26: behind, 27:
-	lui     $t6, 0xf3ff                  #  no faces) rewritten below, its ENDs read them
-	ori     $t6, $t6, 0xffff
-	sra     $a1, $a1, 1                  # dist -> vertex units, x4096
-	sltiu   $t0, $a0, 3
-	beqz    $t0, sv_general
-	sll     $t0, $a0, 2
-	addu    $t0, $t0, $t8
-	lw      $v0, SP_CAM($t0)             # axial: n . cam = cam[type] x4096
-	addiu   $s1, $s1, 4                  # F follows the lengths
-.if R_PROFILE
-	lui     $t4, %hi(r_seq_stat)
-	lw      $t3, %lo(r_seq_stat + 8)($t4)
-	sll     $v0, $v0, 12
-	addiu   $t3, $t3, 1
-	sw      $t3, %lo(r_seq_stat + 8)($t4)
-.else
-	sll     $v0, $v0, 12
-.endif
-sv_side:                                 # v0 = n . cam, a1 = dist, a3 = the lengths, s1 = F,
-	subu    $v0, $v0, $a1                # d (x4096, vertex units)   t5 = the VAR word, t6 its mask
-	addiu   $t2, $v0, BACKFACE_EPS       # no faces if |d| <= eps:
-	sltiu   $t2, $t2, 2 * BACKFACE_EPS + 1   # (unsigned) d + eps <= 2 eps
-	srl     $t0, $v0, 31                 # behind when d < 0
-	sll     $t2, $t2, 27
-	sll     $t0, $t0, 26
-	or      $t2, $t2, $t0                # the state
-	and     $t1, $t1, $t6
-	or      $t1, $t1, $t2
-	bltz    $v0, sv_back                 # behind the plane: B first
-	sw      $t1, 0($t5)
-	b       seq_next                     # in front: F follows
-	nop
-sv_back:
-	andi    $a3, $a3, 0xffff             # F's words: B after them
-	sll     $a3, $a3, 2
-	b       seq_next
-	addu    $s1, $s1, $a3
-
-	ICSEC   sv_skip
-sv_skip:                                 # the VAR node out of the PVS: past the lengths, F and B
-	srl     $t0, $a3, 16
-	andi    $a3, $a3, 0xffff
-	addu    $t0, $t0, $a3
-	sll     $t0, $t0, 2
-	addiu   $s1, $s1, 4
-	b       seq_next
-	addu    $s1, $s1, $t0
-
-	ICSEC   sv_general
-sv_general:                              # a general plane: n . cam by the GTE (the colour
-	lwc2    C2_VXY0, PN_N+0($a2)         # matrix's first row is the camera: r_render)
-	lh      $t2, PN_N+4($a2)
-	addiu   $s1, $s1, 4                  # F follows the lengths
-	mtc2    $t2, C2_VZ0
-.if R_PROFILE
-	lui     $t4, %hi(r_seq_stat)
-	lw      $t3, %lo(r_seq_stat + 8)($t4)
-	MVMVA   0, 2, 0, 3, 0                # MAC1 = cam . n
-	addiu   $t3, $t3, 1
-	sw      $t3, %lo(r_seq_stat + 8)($t4)
-.else
-	nop
-	nop
-	MVMVA   0, 2, 0, 3, 0                # MAC1 = cam . n
-.endif
-	mfc2    $v0, C2_MAC1                 # (waits for the GTE)
-	b       sv_side
-	nop
-
-	ICSEC   seq_node
-seq_node:                                # t1 = the word (bit 29: tested), t2 = the node
-	lw      $a2, 0($s1)                  # its subtree's words
-	lhu     $t0, N_VISFRAME($t2)
-	addiu   $s1, $s1, 4
-	sll     $a2, $a2, 2
-	bne     $t0, $s5, sn_skip            # out of the PVS: the subtree too
-	sll     $t3, $t1, 2                  # (the test bit to the sign)
-	bgez    $t3, seq_next                # a PVS gate alone: on
-	sll     $gp, $s2, 28                 # (a tested node's frame: the flags, kind 0)
-	beqz    $s2, sn_push                 # fully inside already: nothing to test
-	lh      $t1, N_C+4($t2)              # the box (a harmless load when inside)
-.if R_PROFILE
-	lui     $t4, %hi(r_seq_stat)
-	lw      $t3, %lo(r_seq_stat + 4)($t4)
-.endif
-	lwc2    C2_VXY0, N_C+0($t2)
-	lh      $t5, N_H+4($t2)
-	lwc2    C2_VXY1, N_H+0($t2)
-	mtc2    $t1, C2_VZ0
-	mtc2    $t5, C2_VZ1
-.if R_PROFILE
-	addiu   $t3, $t3, 1
-	sw      $t3, %lo(r_seq_stat + 4)($t4)
-.else
-	nop                                  # (two before the GTE reads them)
-	nop
-.endif
-	FRUSTUM sn_cull
-sn_push:
-	sw      $gp, SP_STACK($s3)
-	b       seq_next
-	addiu   $s3, $s3, 4
-
-	ICSEC   sn_cull
-sn_cull:                                 # out of the frustum: the flags back (the test cleared
-	srl     $s2, $gp, 28                 #  some), the subtree skipped
-sn_skip:
-	b       seq_next
-	addu    $s1, $s1, $a2
-
-	ICSEC   seq_endf
-seq_endf:                                # F's end: t1 = the word, its way back to the VAR word
-	sll     $t4, $t1, 8
-	srl     $t4, $t4, 6                  # the way back x 4
-	subu    $t2, $s1, $t4
-	addiu   $t2, $t2, -4                 # the VAR word (s1 is past this END)
-	lw      $t3, 0($t2)                  # its state: behind (bit 26), no faces (27)
-	lw      $a3, 4($t2)                  # the lengths
-	sll     $t0, $t3, 5
-	bltz    $t0, ef_back                 # behind: F was last, B done before it: past B
-	sll     $t4, $t3, 4
-	bltz    $t4, seq_next                # in front, no faces: on to B, which follows
-	sll     $t3, $t3, 8
-	sra     $t3, $t3, 8                  # the node's offset
-	addu    $t2, $s0, $t3
-	b       seq_block_n                  # the front block, then B
-	move    $t3, $zero
-ef_back:
-	srl     $a3, $a3, 16                 # B's words
-	sll     $a3, $a3, 2
-	b       seq_next
-	addu    $s1, $s1, $a3
-
-	ICSEC   seq_endb
-seq_endb:                                # B's end
-	sll     $t4, $t1, 8
-	srl     $t4, $t4, 6
-	subu    $t2, $s1, $t4
-	addiu   $t2, $t2, -4                 # the VAR word
-	lw      $t3, 0($t2)
-	nop
-	sll     $t0, $t3, 5
-	bgez    $t0, seq_next                # in front: B was last: on
-	sll     $t4, $t3, 4
-	addiu   $s1, $t2, 8                  # behind: F next (after the lengths)
-	bltz    $t4, seq_next                # no faces
-	sll     $t3, $t3, 8
-	sra     $t3, $t3, 8
-	addu    $t2, $s0, $t3
-	b       seq_block_n                  # the back block, then F
-	li      $t3, 4
-
-	ICSEC   seq_endn
-seq_endn:                                # a tested node's end: its flags back; or STOP (bit 0)
-	andi    $t0, $t1, 1
-	bnez    $t0, seq_stop
-	lw      $gp, SP_STACK-4($s3)
-	addiu   $s3, $s3, -4
-	b       seq_next
-	srl     $s2, $gp, 28
-
-	ICSEC   seq_stop
-seq_stop:
-	j       walk_done
-	nop
-
-	.section .bss.r_seq_stat, "aw", @nobits
-	.align  2
-	.global r_seq_stat
-r_seq_stat:                              # the frame's: leaf tests, node tests, side tests (R_PROFILE)
-	.space  16
-seq_keep:                                # s1, s2, s0 across a leaf's render list
-	.space  16
 
 # -----------------------------------------------------------------------------
 # mark_pvs: a0 = new camera leaf. visframe++, then the leaf's PVS row

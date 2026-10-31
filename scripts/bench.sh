@@ -92,9 +92,7 @@
 #         §48).
 #         DLIGHT_C=1 builds the dynamic lights' C reference instead of the
 #         asm (the hashes must match); DLIGHT_C=2 the asm checked record
-#         by record by the C ("dlchk" lines). DLIGHT_MINLIGHT=<world
-#         units>: the world's lights' least minlight (CMake
-#         Q1PSX_DLIGHT_MINLIGHT, 32 by default; 0: Quake's own, §113). BMF_C=1 builds the brush
+#         by record by the C ("dlchk" lines). BMF_C=1 builds the brush
 #         models' cut in C (engine/bmfrag.c) instead of the asm
 #         (engine/bmfrag.s), BMF_C=2 the asm checked cut by cut by the C
 #         ("bmfasm" lines: the cuts checked, any mismatch); that build
@@ -115,9 +113,7 @@
 #         capture's scenarios in real time through the game's loop (the
 #         sounds read from the disc in their worst cases: engine/main.c
 #         bench_capture), for an emulator's recording; with MUSIC=1.
-#         WHOLE=1 puts the whole worlds on the
-#         disc, the zones' A / B (CMake Q1PSX_ZONES OFF). Every bench prints
-#         a "bench zone <map>" line per map loaded: the skeleton, the
+#         Every bench prints a "bench zone <map>" line per map loaded: the skeleton, the
 #         chunk arena, the stream's pool.
 #         CDLOG=1 writes the drive's journal: a "cd" line per read (who
 #         read what, where the head came from, the vblanks it took, the
@@ -127,30 +123,17 @@
 #         mechanism, and the sectors at double speed): the walk's late
 #         frames, the stream's reads and the music's underruns as on a
 #         console, in fast forward (docs/porting-notes.md §83). Both go
-#         with MUSIC=1. MUSIC_RING=<chunks> sizes the music's ring in SPU
-#         RAM (6 = 2 s, the game's; 4 = 1.3 s), MUSIC_REFILL=<chunks> a
-#         refill (2, the game's: 8 sectors every 0.65 s, a 16 KB staging
-#         buffer; 4: 16 every 1.3 s, 32 KB, §84's),
-#         MUSIC_SEEK=<ms> the seek its refills plan around a read (100, the
-#         game's: a hop within a level's section; docs/porting-notes.md
-#         §84); tools/cdsim/cdsim.py replays a journal on another disc
-#         layout. MEMLOG=1 logs the level arena: a "memlog" line per
+#         with MUSIC=1; tools/cdsim/cdsim.py replays a journal on another
+#         disc layout. MEMLOG=1 logs the level arena: a "memlog" line per
 #         block taken or given back, with its caller's return address
 #         (addr2line -e build-bench/q1psx.elf): a map's RAM block by block
 #         (docs/porting-notes.md §90).
-#         LOD=0 draws every streamed model whole at every distance (CMake
-#         Q1PSX_LOD; the level of detail by the vertices' order,
-#         docs/porting-notes.md §88): an A / B of the engine's cut alone,
-#         the cook's order kept (QCOOK_NOLOD=1 cooks today's order). Every
-#         view prints a "lod view" line: the streamed models drawn, those
-#         cut to a band; MONSTERS=4 a "clear frames" line: the fights'
-#         frames, their cycles, the models drawn and cut.
-#         LODBUDGET=<vertices> the monsters' shared detail budget (CMake
-#         Q1PSX_LOD_BUDGET, default 600; 0 none: the bands from the depth
-#         alone), LODFLOOR=<band> its level at most (16), LODCAP=<256ths>
-#         a body's band at most that share of its depth's (384: 1.5;
-#         docs/porting-notes.md §114); MONSTERS=3's fight prints a "mon
-#         lod" line a window: the level, the bodies raised.
+#         Every view prints a "lod view" line (the level of detail by the
+#         vertices' order, docs/porting-notes.md §88): the streamed models
+#         drawn, those cut to a band; MONSTERS=4 a "clear frames" line: the
+#         fights' frames, their cycles, the models drawn and cut;
+#         MONSTERS=3's fight a "mon lod" line a window: the shared detail
+#         budget's level (§114), the bodies raised.
 #         ENGINE_C=1 builds the C engine (CMake Q1PSX_ENGINE_C: every asm
 #         part's C version but the world renderer's, docs/porting-notes.md
 #         §55) in build-bench-c/, beside the asm's: its frames must be the
@@ -176,14 +159,6 @@
 #         VRAMCHK=1: every streamed image's VRAM place searched again the
 #         way before §100 and compared ("stream: vramchk" lines at each
 #         map's start: the searches, the places that differ).
-#         SEQCHK=1: a view drawn by a zone's cooked walk (docs/porting-notes.md
-#         §91) is drawn again by the tree walk and the two compared: the
-#         leaves' and the faces' stamps, the records drawn ("seqchk" lines).
-#         TESSK=<0..3>: the grid's finest level, 2^k cells along an axis (0: the
-#         unsplit polygons alone go out as one packet, every split one to the
-#         slow path; default 3)
-#         TESSC=<n>: the grid's cap: a polygon whose two levels sum past n (more
-#         than 2^n cells) goes to the slow path (default 4)
 #         SLOWSTAT=1: the slow path counts its paths (engine/r_slow.s STAT):
 #         a "slowstat" line after each view's, a frame's polygons, clipped
 #         ones, triangles popped, wholly on the screen, leaves, split,
@@ -225,7 +200,6 @@ BENCH_MAPS=${BENCH_MAPS:-0}
 PROFILE=${PROFILE:-1}
 HASHONLY=${HASHONLY:-0}
 DLIGHT_C=${DLIGHT_C:-0}
-DLIGHT_MINLIGHT=${DLIGHT_MINLIGHT:-32}
 BMF_C=${BMF_C:-0}
 ORDER_C=${ORDER_C:-0}
 ENGINE_C=${ENGINE_C:-0}
@@ -250,21 +224,10 @@ IRQTIME=${IRQTIME:-0}
 SLOWSTAT=${SLOWSTAT:-0}
 WARPDYN=${WARPDYN:-0}
 TMAX=${TMAX:-32}
-SEQCHK=${SEQCHK:-0}
 VRAMCHK=${VRAMCHK:-0}
-TESSK=${TESSK:-3}
-TESSC=${TESSC:-4}
-LOD=${LOD:-1}
-LODBUDGET=${LODBUDGET:-600}
-LODFLOOR=${LODFLOOR:-16}
-LODCAP=${LODCAP:-384}
-WHOLE=${WHOLE:-0}
 CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
 MEMLOG=${MEMLOG:-0}
-MUSIC_RING=${MUSIC_RING:-6}
-MUSIC_REFILL=${MUSIC_REFILL:-2}
-MUSIC_SEEK=${MUSIC_SEEK:-100}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" \
       -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
@@ -272,11 +235,11 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \
       -DQ1PSX_BENCH_BMFCULL="$((1 - NOBMFCULL))" \
       -DQ1PSX_BENCH_BMFCHK="$BMFCHK" -DQ1PSX_BENCH_BMFARENA="$BMFARENA" -DQ1PSX_BENCH_BMFTRACE="$BMFTRACE" -DQ1PSX_STACK_BYTES="$STACK_BYTES" -DQ1PSX_LEVEL_MIN="$LEVEL_MIN" -DQ1PSX_LEVEL_CAP="$LEVEL_CAP" \
-      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_DLIGHT_MINLIGHT="$DLIGHT_MINLIGHT" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
+      -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_SKILL="${SKILL:-1}" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
-      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" \
+      -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
 	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }

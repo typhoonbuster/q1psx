@@ -4,7 +4,7 @@
 # background) go on the disc at the first build. (Listed at CMake's
 # configure step, they would miss that build: the cook runs after it.)
 #
-#   cmake -DROOT=<source dir> -DOUT=<xml> -DTEXTURES=high|medium -DMUSIC=0|1 -DZONES=0|1
+#   cmake -DROOT=<source dir> -DOUT=<xml> -DTEXTURES=high|medium -DMUSIC=0|1
 #         [-DPAK0=<pak0.pak>] -DSDK_VERSION=<v> -P scripts/cd_image.cmake
 #
 # The disc's layout (docs/porting-notes.md §84): the root's files (the
@@ -13,7 +13,7 @@
 # files in the order the engine's load reads them, so that a load is one
 # sweep of the head and every read in play a hop within the level's
 # section: its sound bank, its 4-bit textures at the build's level, its
-# world (with ZONES, a map the cook split takes its skeleton as
+# world (a map the cook split takes its skeleton as
 # <MAP>_G0.WLD and its chunks as <MAP>_Z<N>.ZON, §57), its own models, its
 # own file of the streamed assets (<MAP>_S0.DAT), and with MUSIC its copy
 # of its CD track (SPU_<nn>.DAT: tracks 4 to 11 go with the maps that play
@@ -86,7 +86,7 @@ foreach(_map ${_maps})
 	endif()
 	set(_wld ${_cooked_dir}/id1/${_map}_g0.wld)
 	set(_zon "")
-	if(ZONES AND EXISTS ${_cooked_dir}/id1/${_map}_g0.skl AND EXISTS ${_cooked_dir}/id1/${_map}_z${_tex_level}.zon)
+	if(EXISTS ${_cooked_dir}/id1/${_map}_g0.skl AND EXISTS ${_cooked_dir}/id1/${_map}_z${_tex_level}.zon)
 		set(_wld ${_cooked_dir}/id1/${_map}_g0.skl)         # the skeleton, and its chunks
 		set(_zon ${_cooked_dir}/id1/${_map}_z${_tex_level}.zon)
 		math(EXPR _nzoned "${_nzoned} + 1")

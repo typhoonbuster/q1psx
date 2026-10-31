@@ -20,14 +20,8 @@
 #include "render.h"
 #include "vid.h"
 
-#ifndef Q1PSX_TESS_KMAX
-#define Q1PSX_TESS_KMAX 3
-#endif
-#define KMAX     Q1PSX_TESS_KMAX          /* the finest level (0: the unsplit polygons alone) */
-#ifndef Q1PSX_TESS_CAP
-#define Q1PSX_TESS_CAP 4
-#endif
-#define CAP      Q1PSX_TESS_CAP           /* the cap: levels summing past it, the slow path's */
+#define KMAX     3                        /* the finest level (engine/r_tess.s KMAX) */
+#define CAP      4                        /* the cap: levels summing past it, the slow path's */
 #define SPAN     500
 #define NMAX     8
 

@@ -102,22 +102,6 @@ static int is_wanted(int z, const uint8_t want[WANT], int upto)
 	return 0;
 }
 
-/* the renderer's walk for the frames to come: the drawn chunk's cooked
-   walk (formats/qworld.h "the cooked walk") while the camera's leaf is one
-   of its zone's and the chunk carries one, else the tree walk (a late
-   frame: the old zone drawn from elsewhere; the camera in solid; the maps
-   cooked without) */
-static void seq_select(void)
-{
-	uint32_t seq = 0;
-	if (zh && cur_slot >= 0 && want_set < zh->num_sets && zsets[want_set].zone == cur_zone) {
-		const qw_chunk *c = (const qw_chunk *) (arena + slots[cur_slot].at);
-		if (c->ofs_seq)
-			seq = (uint32_t) ((const uint8_t *) c + c->ofs_seq + sizeof(qw_seq_header));
-	}
-	r_seq_set(seq);
-}
-
 /* the chunk drawn: the world nodes' blocks into it, its pool the renderer's */
 static void make_current(int s)
 {
@@ -127,7 +111,6 @@ static void make_current(int s)
 	r_state.vertpool = (uint32_t) ((uint8_t *) c + c->ofs_verts);
 	cur_slot = s;
 	cur_zone = slots[s].zone;
-	seq_select();
 	uint32_t cyc = prof_cycles(t0, prof_now());
 	zone_stats.switches++;
 	zone_stats.switch_cycles += cyc;
@@ -277,7 +260,6 @@ void zone_abort(void)
 	cur_slot = cur_zone = -1;
 	want_set = SET_NONE;
 	zone_rt.set = SET_NONE;
-	r_seq_set(0);
 	for (int i = 0; i < MAX_RES; i++)
 		slots[i].zone = -1;
 	nslots = 0;
@@ -381,16 +363,12 @@ Q_COLD void zone_preload(const int32_t eye[3])
 void zone_enter(uint32_t set)
 {
 	zone_rt.set = set;
-	if (!zh || set >= zh->num_sets) {
-		r_seq_set(0);                             /* (QZ_NONE: the camera in solid: the zone kept, */
-		return;                                   /*  the tree walk, the camera being nowhere cooked) */
-	}
+	if (!zh || set >= zh->num_sets)
+		return;                                   /* (QZ_NONE: the camera in solid: the zone kept) */
 	want_set = set;
 	int z = zsets[set].zone;
-	if (z == cur_zone) {
-		seq_select();                             /* (another set of the drawn zone, or back from solid) */
-		return;
-	}
+	if (z == cur_zone)
+		return;                                   /* (another set of the drawn zone, or back from solid) */
 	int s = slot_of(z);
 	if (s >= 0 && slots[s].ready) {
 		make_current(s);
@@ -407,8 +385,7 @@ void zone_enter(uint32_t set)
 		}
 	}
 #endif
-	zone_stats.late_events++;
-	seq_select();                                 /* (late: the old zone's chunk, the tree walk) */
+	zone_stats.late_events++;                     /* (late: the old zone's chunk drawn) */
 }
 
 void zone_frame(void)

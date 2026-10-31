@@ -75,9 +75,6 @@ typedef struct {
 	uint32_t lights;         /* +212 their table, 32 bytes each (DL_*)        */
 	uint32_t fragpool;       /* +216 qw_vert *: the brush models' pieces'
 	                                 vertices (bmfrag.c)                       */
-	uint32_t seq;            /* +220 the zone's cooked walk (its words, formats/
-	                                 qworld.h), run in place of the tree walk this
-	                                 frame; 0: the tree walk (zone.c, r_seq_set)  */
 } r_state_t;
 
 extern r_state_t r_state;
@@ -184,15 +181,7 @@ int32_t r_view_depth(const int32_t pos[3]);
 /* asm entry point (engine/r_world.s) */
 void r_render(r_state_t *s);
 
-/* The cooked walk this frame (engine/zone.c: the current zone's, while the
-   camera's leaf is one of the zone's), or 0, the tree walk. The record
-   loops' exits and draw_ents' return are branches into the tree walk: they
-   are pointed at the cooked walk's loop while one runs, and back (the
-   words patched, the cache flushed, on a change only). */
-void r_seq_set(uint32_t seq);
-
 #ifdef Q1PSX_BENCH
-extern volatile uint32_t r_seq_stat[4];   /* the frame's: leaf tests, node tests, side tests (PROFILE) */
 extern volatile uint32_t r_tess_stat[6];  /* the frame's: polygons cut by the regular subdivision, cells
                                              emitted, polygons to the slow path near, to it too fine */
 #endif
