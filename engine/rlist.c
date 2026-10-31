@@ -35,10 +35,84 @@ extern int ents_debug;
 int rl_lod_cut, rl_lod_band_hi;
 #endif
 
+/* The monsters' shared detail budget (docs/porting-notes.md §114): the
+   bodies drawn in a frame share Q1PSX_LOD_BUDGET expanded vertices. A
+   level L common to them all, Q1PSX_LOD_FLOOR at most, raises a body from
+   its depth's band d to L, never past its cap: Q1PSX_LOD_CAP / 256 times
+   d (its depth in the view's units times the cap >> 16, d being that
+   depth >> 8), so that its error on screen stays within that many times
+   the distance's. L is the last frame's bodies' (lod_level): one step a
+   frame toward the least level within the budget, down only once a lower
+   level fits within 7/8 of it; each body drawn adds what every level
+   would draw of it (lod_count). Q1PSX_LOD_BUDGET 0: the bands from the
+   depth alone. */
+int rl_lod_level, rl_lod_raised;
+#if Q1PSX_LOD && Q1PSX_LOD_BUDGET
+#define LOD_FLOOR (Q1PSX_LOD_FLOOR < QST_LOD_BANDS ? Q1PSX_LOD_FLOOR : QST_LOD_BANDS - 1)
+static int32_t lod_base;                     /* the depths' bands' vertices, summed */
+static int32_t lod_more[LOD_FLOOR + 1];      /* at level L: what L adds of the bodies it raises to L */
+static int32_t lod_step[LOD_FLOOR + 2];      /* differences: past a body's cap, what its cap adds */
+
+static void lod_level(void)
+{
+	int32_t s = 0;
+	int up = -1, down = LOD_FLOOR;
+	for (int L = 0; L <= LOD_FLOOR; L++) {   /* (the totals never grow with L) */
+		s += lod_step[L];
+		int32_t t = lod_base + lod_more[L] + s;
+		if (up < 0 && t <= Q1PSX_LOD_BUDGET)
+			up = L;
+		if (t <= Q1PSX_LOD_BUDGET - Q1PSX_LOD_BUDGET / 8) {
+			down = L;
+			break;
+		}
+	}
+	if (up < 0)
+		up = LOD_FLOOR;
+	if (up > rl_lod_level)
+		rl_lod_level++;
+	else if (down < rl_lod_level)
+		rl_lod_level--;
+	lod_base = 0;
+	memset(lod_more, 0, sizeof lod_more);
+	memset(lod_step, 0, sizeof lod_step);
+}
+
+/* a body drawn: its band, d its depth's, z its depth (the view's units),
+   rho its radius there; counted unless wholly past the draw distance */
+static int lod_count(const qst_lod *l, int d, int32_t z, int32_t rho)
+{
+	if (z - rho >= r_draw_z)
+		return d;
+	int cap = z > 0 ? (int) (((uint32_t) z * Q1PSX_LOD_CAP) >> 16) : 0;
+	if (cap > QST_LOD_BANDS - 1)
+		cap = QST_LOD_BANDS - 1;
+	if (cap < d)
+		cap = d;
+	const uint16_t *nv = l->num_verts;
+	int32_t nd = nv[d];
+	lod_base += nd;
+	int top = cap < LOD_FLOOR ? cap : LOD_FLOOR;
+	for (int L = d + 1; L <= top; L++)
+		lod_more[L] += nv[L] - nd;
+	if (cap < LOD_FLOOR)
+		lod_step[cap + 1] += nv[cap] - nd;
+	int b = rl_lod_level < cap ? rl_lod_level : cap;
+	if (b <= d)
+		return d;
+	rl_lod_raised++;
+	return b;
+}
+#endif
+
 void rl_begin(void)
 {
 	n_items = n_ents = n_lists = 0;
 	mdl_new_frame();
+#if Q1PSX_LOD && Q1PSX_LOD_BUDGET
+	lod_level();
+#endif
+	rl_lod_raised = 0;
 #ifdef Q1PSX_BENCH
 	rl_lod_cut = rl_lod_band_hi = 0;
 	if (ents_debug)                             /* (the debug frame's places: rl_order_print) */
@@ -221,6 +295,13 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 	e->recs     = (uint32_t) ((const uint8_t *) m + m->ofs_records);
 	e->recs_end = e->recs + m->len_records;
 	e->tex      = (uint32_t) stream_model_tex(a);
+	if (!(m->flags & QSTM_FLAT))                  /* Quake shades an alias model from its */
+		light = light * 4 / 3;                    /* light up to twice it (r_alias.c: ambient
+		                                             + shade x cos, both its light); the light
+		                                             table (gdata.dots) spans 1 to 1.5 times:
+		                                             x 4/3, the lit side at Quake's twice (the
+		                                             game's models and the gun keep the table's:
+		                                             the 2D gun's pictures are cooked at it) */
 	if (light > 170) light = 170;
 	if (light < 0) light = 0;
 	e->light = (uint32_t) light;
@@ -256,6 +337,9 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 			band = 0;
 		if (band >= QST_LOD_BANDS)
 			band = QST_LOD_BANDS - 1;
+#if Q1PSX_LOD_BUDGET
+		band = lod_count(l, band, z, (m->radius * 3 >> 1) + R_SORT_MARGIN);   /* (the shared budget) */
+#endif
 		while (band && l->num_verts[band - 1] == l->num_verts[band])
 			band--;                               /* (the nearest band of the same cut: one
 		                                             expansion in the cache for them all) */

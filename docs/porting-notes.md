@@ -14807,3 +14807,144 @@ measures (the fight's vblanks a frame over each window of 300 frames;
 - The warp's `more` (111.3) trades frames a second for the floor's look
   now: a call left open, whether a frame just over a vblank should keep
   the 32 px warp instead.
+
+## §114 — The monsters' shared detail budget (2026-10-31)
+
+(The number is provisional: §111-§113 are the levers' branches, not
+merged.)
+
+- **The request**: the compromise that keeps the bodies readable and
+  coherent, chosen from the shared-budget LOD's proof of concept. That
+  is an HTML page outside the repo: it draws the cooked bodies band by
+  band as the engine does, reads `STREAM_0.DAT` at run time and holds no
+  data of its own. The result goes in a release to play before
+  any merge.
+- **What the page showed**:
+  - The starting rule pulls a near body straight to L: a body's band is
+    `max(d, L)`, d its depth's band, L a level the bodies in view share
+    (the least level whose total fits the budget, a floor at most).
+    Example: a shambler at 68 units goes from band 1 to band 10.
+  - The error that rule adds: band b's collapses are within 2 px at 64 b
+    units (§110), about 0.8 b world units, so 128 b / d px at depth d.
+    The shambler above shows up to 19 px of error: unreadable.
+  - The fix is a cap: a body's band at most k times its depth's band, so
+    its error at most k times today's (3 px at a band's start: §88's
+    bands of 42.7 units, z >> 8 in the view's units).
+- **The choice** (the page's `tune.mjs`, the cooked tables alone): 300
+  random fights a size, 64-900 units from the eye, the 13 kinds without
+  the bosses. Triangles saved against the distance alone, and the error
+  added on the bodies raised:
+
+  | budget, floor, cap | 10 / 14 / 20 / 26 bodies | error added, worst / mean |
+  |---|---|---|
+  | 800, 16, none | 2.4 / 23.3 / 45.6 / 46.5 % | 32 / 7.5 px |
+  | 800, 16, k 2 | 2.3 / 20.1 / 29.1 / 29.1 % | 6.0 / 4.8 px |
+  | 800, 16, k 1.5 | 1.9 / 15.5 / 19.5 / 19.6 % | 4.5 / 4.0 px |
+  | 800, 16, k 1.25 | 1.4 / 9.9 / 11.9 / 11.8 % | 3.7 / 3.5 px |
+  | **600, 16, k 1.5** | 12.2 / 19.6 / 19.5 / 19.6 % | 4.5 / 4.0 px |
+
+  k = 1.5 keeps the error within 4.5 px, near the worst §110 leaves
+  today (2.8 px at 64 b units, 4.2 px at the engine's band starts). The
+  budget only decides how often the bodies are raised, never how far.
+  600 vertices was chosen on the fight below; the page and the release
+  default to it.
+- **The engine** (engine/rlist.c, `rl_model_stream`, `rl_begin`):
+  - The settings: CMake `Q1PSX_LOD_BUDGET` (600 expanded vertices a
+    frame; 0: none, the code compiled out), `Q1PSX_LOD_FLOOR` (16),
+    `Q1PSX_LOD_CAP` (384, k = 1.5 in 256ths); `scripts/bench.sh` takes
+    `LODBUDGET`, `LODFLOOR` and `LODCAP`.
+  - A body's band d is taken from its depth as before. Then `lod_count`:
+    - its cap c = z x `Q1PSX_LOD_CAP` >> 16 (z its depth in the view's
+      units, d = z >> 8; at least d);
+    - its band max(d, min(L, c)), L the frame's level;
+    - it adds to the frame's sums what each level would draw of it, as
+      expanded vertices (the band's `num_verts`: the cooked qst_lod, no
+      new data): the base, its depth's band; the levels between d and its
+      cap, theirs; past its cap, its cap's (a difference array);
+    - a body wholly past the draw distance (`r_draw_z`, render.c) is not
+      counted.
+  - `rl_begin` (`lod_level`) finds the least level within the budget
+    from the last frame's sums. L moves one band a frame toward it, and
+    goes down only once a lower level fits within 7/8 of the budget:
+    - a crowd turning into view is raised one band a frame;
+    - no level flickers at the budget's edge.
+  - About 150 bytes of BSS (the release's arena 1 352 416 B). The bench's
+    fight prints a `mon lod` line a window: the level, the bodies raised.
+- **Measured**: §106's fight (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0
+  SKILL=2 VIEW=1780,1803,-304,204,0`), against the budget off
+  (`LODBUDGET=0`: master's bands, the code compiled out), window by
+  window. The game is the same: the same models drawn and monsters alive
+  in each window.
+
+  | | budget 600 (the default) | budget 800 |
+  |---|---|---|
+  | drawing (12 windows) | -3.57 % (13.38 M -> 12.90 M cycles) | -0.40 % |
+  | windows at work | 7 | 3 |
+  | those windows | -3.6 to -8.1 % | -0.2 to -3.0 % |
+  | the idle windows (its sums) | +0.1 % | +0.1 % |
+  | level a frame | 1-14 on average, 16 at most | about 6, 8 at most |
+  | bodies raised a frame | 3.9 to 7.7 | about 4.5 |
+  | samples | -1.09 % | |
+  | models left out for the packets' room | 203 -> 1 | 203 -> 22 |
+
+  The models left out (`r_model_skipped`) are monsters not drawn at all
+  in master's busiest window, for want of packet room.
+- **For a test**: the release (`cmake --preset release`) carries the
+  600-vertex budget; `-DQ1PSX_LOD_BUDGET=0` builds without it. To be
+  seen in play on DuckStation: a big fight's near and mid-range
+  monsters, no part lost, the bodies' detail changing one band at a
+  time.
+
+## §115 — The monsters lit as Quake lights them (2026-10-31)
+
+(The number is provisional, like §114's.)
+
+- **The report**: the maps were brightened to 1.66 (the cook's
+  `LIGHT_GAIN`, §79), but the monsters seemed left as they were. Very
+  dark, they could not be seen in places; E4M2 is the darkest.
+- **The gain is every map's**: `scripts/cook.sh` passes `--light-gain`
+  to every map's cook. The monsters' light (a leaf's, `qw_leaf.light`)
+  was made from the faces' gained vertex lights.
+- **Why the monsters fell behind the walls** (a scratch tool on the
+  paks; for every monster's spawn point, before the gain):
+  - **The light's source.** Quake lights a model with R_LightPoint
+    (r_light.c): the lightmap where a line straight down from its origin
+    first meets a lit face, the floor under it. The cook took the
+    average of the leaf's faces, the walls and ceilings in it. Quake's
+    is 1.04-1.27 times brighter (median per map):
+
+    | map | Quake's light, median | the leaf average, median | Quake / port, median |
+    |---|---|---|---|
+    | E1M1 | 81 | 72 | 1.24 |
+    | E2M7 | 49 | 42 | 1.18 |
+    | E4M2 | 38 | 34 | 1.24 |
+    | E4M3 | 45 | 36 | 1.19 |
+
+  - **The shading.** Quake shades an alias model from its light up to
+    twice it on the side the light comes from (r_alias.c: ambient +
+    shade x cos, both the model's light below 96). The port's light
+    table (`gdata.dots`, tools/qcook/game.c) spans 1 to 1.5 times.
+  - Against the walls at 1.66 times Quake's, the bodies came out about
+    30 % darker than Quake drew them beside the same walls.
+- **The fix**:
+  - The cook (tools/qcook/world.c):
+    - a leaf's light is now Quake's R_LightPoint, ported
+      (`light_point_rec`: the front side first, the node's faces at the
+      crossing within Quake's CalcSurfaceExtents, then the back side;
+      sky and liquids skipped);
+    - it is averaged over the points of a 3 x 3 x 3 grid in the leaf's
+      box that lie in the leaf, at the cook's gain;
+    - a leaf no line reaches keeps the faces' average.
+    - The monsters' leaves are covered at 95-100 %. Their light (median
+      before the gain) comes out at Quake's own: E1M1 80 (Quake 81),
+      E4M2 42 (38), E4M3 45 (45). The cook's log prints a line a map.
+  - The engine (engine/rlist.c `rl_model_stream`):
+    - the streamed models' light (the monsters, their heads, the items'
+      models; not the flat ones) is multiplied by 4/3 before its bound,
+      which puts the lit side at Quake's twice;
+    - the game's models and the gun keep the table's span, because the
+      2D gun's pictures are cooked at it.
+- **Checked**: E1M1's monsters' frames (`MONSTERS=1 MAP=E1M1`), before
+  and after, side by side. The grunt and the dog in the dark corners,
+  nearly black before, now stand out; the grunt near has Quake's lit
+  side. The cycles are unchanged (the light is a value a body).
