@@ -175,7 +175,7 @@
 #         leaves' and the faces' stamps, the records drawn ("seqchk" lines).
 #         TESS=<maps>: the maps whose near polygons take the regular subdivision
 #         before the slow path (engine/r_tess.s, §92): names separated by commas,
-#         all, or none (default START,E1M1)
+#         all, or none (default all, the game's since §108)
 #         TESSK=<0..3>: the grid's finest level, 2^k cells along an axis (0: the
 #         unsplit polygons alone go out as one packet, every split one to the
 #         slow path; default 3)
@@ -249,7 +249,7 @@ SLOWSTAT=${SLOWSTAT:-0}
 WARPDYN=${WARPDYN:-0}
 SEQCHK=${SEQCHK:-0}
 VRAMCHK=${VRAMCHK:-0}
-TESS=${TESS:-START,E1M1}
+TESS=${TESS:-all}
 TESSK=${TESSK:-3}
 TESSC=${TESSC:-4}
 LOD=${LOD:-1}

@@ -134,7 +134,10 @@ add_custom_command(TARGET q1psx POST_BUILD
 # Renderer counters and stage timers (debug overlay, bench breakdown). Off in
 # the "release" preset: the asm renderer then skips their per-node, per-record
 # and per-polygon upkeep (R_PROFILE in engine/r_defs.inc).
-set(Q1PSX_TESS_MAPS "START,E1M1" CACHE STRING "The maps whose near polygons are cut on a regular grid before the slow path (engine/r_tess.s, docs/porting-notes.md §92): names separated by commas, all, or nothing")
+set(Q1PSX_TESS_MAPS "all" CACHE STRING "The maps whose near polygons are cut on a regular grid before the slow path (engine/r_tess.s, docs/porting-notes.md §92, §108): names separated by commas, all, or nothing")
+if(Q1PSX_TESS_MAPS STREQUAL "START,E1M1")    # (the default before §108, kept by a build folder's cache)
+	set(Q1PSX_TESS_MAPS "all" CACHE STRING "The maps whose near polygons are cut on a regular grid before the slow path (engine/r_tess.s, docs/porting-notes.md §92, §108): names separated by commas, all, or nothing" FORCE)
+endif()
 set(Q1PSX_TESS_KMAX 3 CACHE STRING "The regular grid's finest level, 2^KMAX cells along an axis (0: the unsplit polygons alone, every split one to the slow path)")
 set(Q1PSX_TESS_CAP 4 CACHE STRING "The regular grid's cap: a polygon whose two levels sum past it (more than 2^CAP cells) goes to the slow path, whose splits follow the near corner alone")
 option(Q1PSX_PROFILE "Renderer counters and stage timers" ON)

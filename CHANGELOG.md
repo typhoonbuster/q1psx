@@ -2421,3 +2421,7 @@ followed by R0-R4.
   reads it there. The display lists identical; E2M7's fight's drawing
   -2.62 %, the 128 views -0.3 %. The near polygons' grid (§92) on every
   map measured, not changed: the 128 views -5.7 %, the fight -1.75 %.
+- **The near polygons' grid on every map** (§108, 2026-10-31). `Q1PSX_TESS_MAPS` defaults to `all` (a build
+  folder still caching the old `START,E1M1` moves to it): the 128 views
+  -5.7 %, E2M7's fight -1.75 %, the pictures moving by a texel where a
+  polygon is cut.

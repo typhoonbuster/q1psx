@@ -14401,3 +14401,19 @@ contents a tick), the last place only when this level's and near.
     16;
   - the pictures move by a texel where a polygon is cut (§92's boards):
     a call left open.
+
+## §108 — The near polygons' grid on every map (2026-10-31)
+
+The choice after §107's measure: the regular grid before the slow
+path (§92) cuts every map's near polygons, not START's and E1M1's alone.
+`Q1PSX_TESS_MAPS` defaults to `all` (CMakeLists.txt; `scripts/bench.sh`'s
+`TESS` too). A build folder's cache that still holds the old default
+(`START,E1M1`) is moved to `all` at its next configure (the build runs
+it when CMakeLists.txt changes); any other list is kept as it is. The
+measure is §107's: the 128 views -5.73 % (103 faster, 17 slower, 18 past
+a vblank -> 16), E2M7's fight's drawing -1.75 %; the pictures move by a
+texel where a polygon is cut (§92's boards). The 128 views' display
+lists change with it: a `scripts/dlcheck.sh` reference saved before must
+be saved again. Checked: the release folder's cache moved to `all` at
+its build; E2M3's views benched with the defaults draw what `TESS=all`
+drew (its frames' cycles within 20 of them), not the old default's.
