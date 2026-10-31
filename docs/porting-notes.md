@@ -15491,13 +15491,16 @@ would rarely act; the cost is each light's reach.
   the lit records' save and restore (their share of the 4.7 % not
   measured apart).
 
-### 113.3 Both, on master 5cf05f5
+### 113.3 Both, on master df69840
 
-Master moved during the work (§111, §114, §115, §116); merged into the
-branch, `QCOOK_MERGE=0` still cooks the 32 worlds byte for byte as
+Master moved during the work (§111, §112, §114, §115, §116); merged into
+the branch, `QCOOK_MERGE=0` still cooks the 32 worlds byte for byte as
 master's own qcook does. Both levers against both off (`QCOOK_MERGE=0
-DLIGHT_MINLIGHT=0`, master's frames), one run each: E2M7's fight's
-drawing 12 858 120 → 12 511 011 cycles (−2.70 %; each window −3.63 to
-−1.12 %, the same models drawn), the 128 views 40 293 952 → 40 076 813
-(−0.54 %; 78 faster, 48 slower; 16 → 15 views past a vblank), the same
-17 maps zoned.
+DLIGHT_MINLIGHT=0`, master's frames), one run each:
+
+| base | E2M7's fight's drawing | the 128 views |
+|---|---|---|
+| 5cf05f5 (§111, §114-§116) | 12 858 120 → 12 511 011 (−2.70 %; windows −3.63 to −1.12 %) | 40 293 952 → 40 076 813 (−0.54 %; 78 faster, 48 slower; 16 → 15 past a vblank) |
+| df69840 (and §112) | 12 685 199 → 12 352 384 (−2.62 %; windows −3.49 to −1.15 %) | 38 716 287 → 38 511 747 (−0.53 %; 78 faster, 46 slower; 15 → 15 past a vblank) |
+
+The same models drawn in every window, the same 17 maps zoned.
