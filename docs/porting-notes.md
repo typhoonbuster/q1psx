@@ -11415,7 +11415,9 @@ mesh by half-edge collapses):
   the frames played, plus the error v already carries from earlier
   collapses onto it (the accumulated error of the chain), times 3 when
   the skin would stretch across the model (the two corners' texels more
-  than 24 apart on the triangle's side of the skin);
+  than 24 apart on the triangle's side of the skin) (§110: the rims and a
+  memory of the model's own vertices in the accumulated error's place,
+  which let thin parts go far past the tolerance);
 - a collapse that turns any triangle over in any frame is refused;
 - after a collapse the costs of the vertices around v and u are worked
   out again (the POC only re-evaluated those around u: a vertex whose
@@ -14453,3 +14455,111 @@ drew (its frames' cycles within 20 of them), not the old default's.
   triangle is drawn: a `scripts/dlcheck.sh` reference saved before must
   be saved again.
 
+## §110 — The ogre's arm lost at a distance: the level of detail's cost measured for real (2026-10-31)
+
+### 110.1 The cause
+
+Every ogre lost its right arm in some animations, the chainsaw flying
+alone like a thrown fist. Not the hand cut (§62): the ogre whole (band 0)
+has its arm. From band 1 (64 units) on, the forearm was gone in `swing5`
+and the frames like it, the chainsaw held by nothing. §88's cost sees a
+collapse's move along the normals of the vertex's triangles; the forearm
+is a tube open at the wrist (its end inside the hand: the model's only
+four border edges), and its rings collapsed one onto the next toward the
+shoulder, each move along the tube, square to every side's normal: a
+cost of about 0 a step (§88.5's ogre of E3M7.v4: 19 vertices under 0.4
+units at band 1), band 1 taking all of them. At rest the arm hangs along
+the body and the loss hardly shows; swung out, 30 units of arm are gone.
+
+### 110.2 The measure
+
+A scratch tool (outside the repository) draws a cooked body at its bands
+the way §64's sheets do, and measures each band's true error: the
+two-sided distance between the whole model's surface and the band's
+(points sampled on each surface, the nearest point of the other's
+triangles), over every 8th frame played, in pixels at the band's near
+depth (the GTE's H of 160); the tolerance is 2 px (§88). Before, every
+body but Shub-Niggurath (whose collapses all lie past the draw distance)
+was over it somewhere, the bands 1 / 2 / 4 / 8 / 12:
+
+| body | before (px) | after (px) |
+|---|---|---|
+| soldier | 6.2 / 3.1 / 1.6 / 2.5 / 6.2 | 0.6 / 0.7 / 1.7 / 1.6 / 1.9 |
+| dog | 4.7 / 5.6 / 2.8 / 6.7 / 4.5 | 0.8 / 2.3 / 1.4 / 1.9 / 1.7 |
+| ogre | 39.2 / 19.6 / 9.8 / 8.0 / 5.5 | 0.0 / 0.7 / 1.4 / 1.4 / 1.7 |
+| knight | 0.6 / 1.2 / 18.8 / 9.4 / 8.0 | 0.6 / 1.4 / 0.7 / 1.4 / 1.7 |
+| zombie | 1.3 / 2.2 / 5.4 / 6.1 / 4.1 | 1.3 / 1.5 / 1.8 / 2.1 / 1.9 |
+| wizard | 1.0 / 1.2 / 1.1 / 3.8 / 3.9 | 1.0 / 1.2 / 1.1 / 1.5 / 1.2 |
+| demon | 19.1 / 9.6 / 5.8 / 7.3 / 7.1 | 0.0 / 0.0 / 1.0 / 1.3 / 2.8 |
+| shambler | 0.0 / 0.0 / 1.1 / 4.7 / 4.0 | 0.0 / 0.0 / 1.1 / 1.4 / 1.3 |
+| boss | 134.3 / 67.1 / 33.6 / 16.8 / 11.2 | 0.0 / 0.0 / 0.0 / 1.2 / 1.7 |
+| enforcer | 11.3 / 5.7 / 2.8 / 2.2 / 6.9 | 0.7 / 0.7 / 1.4 / 1.8 / 1.7 |
+| hknight | 15.4 / 7.7 / 21.6 / 12.1 / 8.8 | 0.0 / 1.7 / 1.4 / 2.5 / 1.9 |
+| tarbaby | 7.6 / 3.8 / 2.4 / 1.1 / 0.7 | 0.0 / 0.0 / 0.6 / 1.0 / 1.1 |
+| shalrath | 38.2 / 19.1 / 9.6 / 6.1 / 6.8 | 1.0 / 1.2 / 1.2 / 1.4 / 1.5 |
+| fish | 27.7 / 13.9 / 6.9 / 3.5 / 2.3 | 0.6 / 1.8 / 1.3 / 1.7 / 1.7 |
+
+Seen beside Quake's (the worst frames): the knight (`death10`) and the
+hell knight (`slice9`) without their swords at band 4, Chthon (`shockc1`,
+53.7 units) without the spikes of his back at band 1, the shalrath
+(`attack1`) with its legs' ends short at band 1: all the same way, a part
+drawn back into its root step by step, each step cheap.
+
+### 110.3 The cost, two terms
+
+`tools/qcook/lod.c`, the ordering's cost, the larger of two distances,
+the worst frame played (times the skin's 3 as before; a collapse that
+turns a triangle over still refused):
+
+- **the rims**, added to §88's normals (the root of the sum of the
+  squares): v's move across an edge at it where the surface ends, within
+  the edge's triangle's plane, which no normal sees. A border's edge (one
+  triangle: the forearm's open end), or a fold's (two triangles turned
+  back on each other, their normals more than 90 degrees apart: a thin
+  sheet's edge) by the part its other triangle's normal misses (the
+  normals' cosine squared: all of it at 180 degrees, none at 90), the two
+  triangles' mean. Alone it brought the near bands within the tolerance
+  but not the far ones (the hell knight still lost its sword at band 8,
+  10.8 px);
+- **the memory**: the model's own vertices that the corners of the
+  triangles the collapse changes stand for (each vertex keeps a list:
+  itself and those collapsed onto it), their farthest from the triangles
+  after the collapse with a corner among them (the whole model's when
+  none is left: a part going), what the steps lose together: a tube
+  drawn back ring by ring, a blade whose tip loses its last triangles
+  (the tip's own vertex is a corner, not an end, of the collapse: the
+  first try, the two ends' lists alone, left the sword's 36.7 units).
+  It can only raise a cost, so it is taken lazily: for the cheapest by
+  the first term, which is then chosen again; a vertex next to one whose
+  triangles changed takes it again when wanted. It replaces §88's
+  accumulated error (a vertex's own chain, added to every later step of
+  it: blind to a neighbour's loss, too dear elsewhere).
+
+The bands, the numbering, the tables and the engine are unchanged; the
+stream's cook takes 3.2 s (2.8 before).
+
+### 110.4 Measured
+
+- The errors above (after): every band of every body within 2.8 px (the
+  demon's band 12; 2.5 below it), most within 2: the memory measures the
+  vertices, the tool samples between them.
+- The triangles drawn, bands 1-15 summed per body (the cook's tables):
+  35 747 -> 38 034 (+6.4 %): Chthon +33.3 %, the ogre +20.0 %, the fish
+  +8.6 %, the hell knight +6.1 %, the knight +5.6 %, the dog +4.3 %, the
+  enforcer +2.5 %, the shambler +0.9 %; the zombie -2.8 %, the soldier
+  -2.1 %, the wizard -1.6 %, the spawn -1.3 %, the demon -0.8 %, the
+  shalrath -0.6 % (the accumulated error cost them more than it caught).
+  The ogre's band 1 keeps its 266 triangles (228 before), band 8 164
+  (144).
+- §106's fight (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0 SKILL=2
+  VIEW=1780,1803,-304,204,0`, with §109) against §108's: the drawing
+  -0.50 % (13.44 M -> 13.38 M cycles over its 12 windows, each -1.6 to
+  +0.3 %), the same streamed models drawn in each window; its samples
+  386 011 -> 384 637.
+- The pictures: the ogre in `swing5` at bands 0 / 1 / 4 / 8, the hell
+  knight in `slice9` at 0 / 4 / 8 (its sword kept, thinner at 8), the
+  crucified zombie at 0 / 4, the shalrath in `attack9` at 0 / 8, each
+  beside Quake's.
+- The display lists of a body drawn past band 0 change (most views with a
+  monster): a `scripts/dlcheck.sh` reference saved before must be saved
+  again.

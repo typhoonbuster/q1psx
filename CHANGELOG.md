@@ -2432,3 +2432,14 @@ followed by R0-R4.
   showed one triangle of four. The cook turns a brush model's polygons the
   alias models' way round (corners 1 and 2 swapped, a quad's diagonal
   kept), the BSP cut keeping the turn.
+- **The ogre's arm lost at a distance** (§110, 2026-10-31). The level of detail's cost (§88) saw a vertex's
+  move along its triangles' normals alone: the ogre's forearm, a tube open
+  in its hand, drew back into the shoulder at band 1 in the swings (the
+  chainsaw flying alone), the knights' swords went at band 4, Chthon's
+  spikes at band 1; measured, every body but Shub-Niggurath was over the 2
+  px tolerance somewhere (up to 134 px). The cost adds the rims (a
+  border's or a fold's edge, the move across it in its plane) and a memory
+  (the model's own vertices the changed triangles' corners stand for,
+  their distance to the surface after the collapse), the accumulated error
+  dropped: every band within 2.8 px; the triangles at bands 1-15 +6.4 %,
+  E2M7's fight -0.5 %.
