@@ -74,7 +74,8 @@ typedef struct {
 		struct {
 			uint32_t lod_band;   /* +60 RE_SORT: the level of detail's band x 2 (its
 			                         entry in each record's table, formats/qstream.h
-			                         QST_LOD_REC_BYTES; 0: the whole model)        */
+			                         QST_LOD_REC_BYTES; 0: the whole model), the
+			                         pool's entries in the upper half (light_pool) */
 			int16_t  water_z;    /* +64 RE_WATER: the liquid's surface in the
 			                         model's own z (its vertex pool's): the corners
 			                         on the side of it the eye is not on hidden    */

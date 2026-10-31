@@ -2415,3 +2415,9 @@ followed by R0-R4.
   log and its sampler covers the whole code. E2M7's 78 monsters awake on
   Hard: the drawing 57 % of a fight's frame (the models 24 %), the
   collision 15.5 %, the logic 9 %, the vblank's waits 16 %.
+- **The sorted bodies lit by their pool** (§107, 2026-10-31). A monster's light was worked out for each slot of
+  its records (2.3 slots a vertex of its band); `light_pool` lights each
+  entry of its frame's pool once (byte 7) and the sorted loop's transform
+  reads it there. The display lists identical; E2M7's fight's drawing
+  -2.62 %, the 128 views -0.3 %. The near polygons' grid (§92) on every
+  map measured, not changed: the 128 views -5.7 %, the fight -1.75 %.

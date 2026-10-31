@@ -195,11 +195,17 @@ r_ysites:
 	sw      $at, SP_COL+4($t4)
 	sw      $at, SP_COL+8($t4)
 .endif
+.if \light == 1 || \light == 3
 .if \light == 1
 	lbu     $t0, 0($at)                  # while the GTE works: the three
 	lbu     $t1, 1($at)                  # lights, grey c -> 0x00cccccc
 	lbu     $t6, 2($at)                  # (x = c | c << 8; x | x << 8)
 	addiu   $at, $at, 3
+.else
+	lbu     $t0, 7($t0)                  # light 3: each vertex's own, byte 7 of
+	lbu     $t1, 7($t1)                  # its pool's entry (light_pool's; the
+	lbu     $t6, 7($t6)                  # addresses the loads above used)
+.endif
 .if \fog
 	mfc2    $a3, C2_SZ1                  # (waits for the RTPT) each light x
 	mfc2    $t7, C2_SZ2                  # its depth's factor / 128
@@ -274,9 +280,14 @@ r_ysites:
 	addu    $t0, $t0, $t9
 	lwc2    C2_VXY0, 0($t0)
 	lwc2    C2_VZ0,  4($t0)
+.if \light == 1 || \light == 3
 .if \light == 1
 	lbu     $t1, 0($at)
 	addiu   $at, $at, 1
+.else
+	lbu     $t1, 7($t0)                  # (light 3: the vertex's own)
+	nop                                  # (two after the lwc2: the GTE's wait)
+.endif
 	RTPS
 .if \fog
 	addiu   $t5, $t5, -1
@@ -2511,59 +2522,43 @@ lr_done:
 	jr      $ra
 	nop
 
-# light_recs for a sorted body (QSTM_SORT, formats/qstream.h QSTM_LOD): of
-# each record the slots its level-of-detail table gives for the band
-# (SP_LODBAND: the entry's offset; the table is the record's last
-# QST_LOD_REC_BYTES bytes, two a band: slots, triangles), none skipped. The
-# same registers as light_recs's, and t5 (a1 = the records, a2 their end,
-# a3 the light table, t1 the light, t4 the pool; t0, t5-t7, v0, v1 used).
-	ICSEC   light_recs_lod
-light_recs_lod:
-lrl_rec:
-	beq     $a1, $a2, lrl_done
-	lw      $t0, SP_LODBAND($t8)         # (at the end: a harmless read)
-	lhu     $t5, R_SIZE($a1)
-	lhu     $t7, R_POLYS($a1)
-	lbu     $v0, R_NVERTS($a1)           # (its light bytes: polys - ((nv + 3) & ~3))
-	addu    $t5, $t5, $a1                # the next record
-	addu    $t0, $t0, $t5
-	lbu     $t6, -QST_LOD_REC_BYTES($t0) # the band's slots of it
-	addiu   $v0, $v0, 3
-	andi    $v0, $v0, 0xfc
-	addu    $t7, $t7, $a1
-	subu    $t7, $t7, $v0                # the light bytes
-	addiu   $v1, $a1, R_VERTS            # the indices
-	beqz    $t6, lrl_rec                 # none at this band: the next
-	move    $a1, $t5
-	beqz    $a3, lrl_flat
+# light_pool: a sorted body's lights (QSTM_SORT): byte 7 of each of the t5
+# entries of its frame's pool t4 (engine/mdl.c: a level of detail's band
+# expanded, the others copies of their parents, so every slot finds its
+# own), its normal's factor in the table a3 (x128) times the light t1, or
+# the light itself (a3 = 0: flat); XFORM's light 3 reads it where a byte a
+# slot of the records was written (2.3 slots a vertex of the band, 1.4 an
+# entry of the pool in E2M7's fight: docs/porting-notes.md §107). Two
+# entries in flight: the next one's factor read while the multiply runs
+# (its read past the last entry harmless: the frame cache's ring, a light
+# table's neighbour). Keeps a0, a2, a3, t1, t2, t4; clobbers t0, t5-t7.
+	ICSEC   light_pool
+light_pool:
+	beqz    $a3, lp_flat
+	addiu   $t6, $t4, 6                  # (the entry's normal)
+	lbu     $t7, 0($t6)                  # the first normal
 	nop
-lrl_v:
-	lhu     $t0, 0($v1)
-	addiu   $v1, $v1, 2
-	sll     $t0, $t0, 3
-	addu    $t0, $t0, $t4
-	lbu     $t0, 6($t0)                  # the normal index
-	addiu   $t6, $t6, -1
-	addu    $t0, $t0, $a3
-	lbu     $t0, 0($t0)                  # its factor
-	addiu   $t7, $t7, 1
-	mult    $t0, $t1
+	addu    $t7, $t7, $a3
+	lbu     $t0, 0($t7)                  # its factor
+lp_v:
+	lbu     $t7, 8($t6)                  # the next entry's normal
+	mult    $t0, $t1                     # this one's light
+	addiu   $t5, $t5, -1
+	addu    $t7, $t7, $a3
+	lbu     $t7, 0($t7)                  # the next one's factor
+	addiu   $t6, $t6, 8
 	mflo    $t0
 	srl     $t0, $t0, 7
-	bnez    $t6, lrl_v
-	sb      $t0, -1($t7)
-	b       lrl_rec
+	sb      $t0, -7($t6)                 # (byte 7 of the entry just passed)
+	bnez    $t5, lp_v
+	move    $t0, $t7
+	jr      $ra
 	nop
-	ICSEC   lrl_flat
-lrl_flat:
-	sb      $t1, 0($t7)
-	addiu   $t6, $t6, -1
-	bnez    $t6, lrl_flat
-	addiu   $t7, $t7, 1
-	b       lrl_rec
-	nop
-	ICSEC   lrl_done
-lrl_done:
+lp_flat:
+	sb      $t1, 1($t6)                  # byte 7: the light itself
+	addiu   $t5, $t5, -1
+	bnez    $t5, lp_flat
+	addiu   $t6, $t6, 8
 	jr      $ra
 	nop
 
@@ -2632,9 +2627,11 @@ dm_draw:                                 # kept for the farther world's records
 	lw      $t1, RE_LIGHT($a0)
 	andi    $t3, $t2, RE_SORT            # a monster: its records' level-of-detail
 	lw      $t0, RE_LODBAND($a0)         # tables, read at its band (SP_LODBAND:
-	beqz    $t3, dm_lit                  # light_recs_lod, ds_records)
-	move    $t4, $t5
-	jal     light_recs_lod
+	beqz    $t3, dm_lit                  # ds_records), its pool's entries lit
+	move    $t4, $t5                     # (light_pool: their count the word's
+	srl     $t5, $t0, 16                 #  upper half, rlist.c)
+	andi    $t0, $t0, 0xffff
+	jal     light_pool
 	sw      $t0, SP_LODBAND($t8)
 	b       dm_lit_done
 	li      $t7, -32768
@@ -2892,9 +2889,8 @@ ds_o_dcull:
 	slt     $t9, $t6, $t9                # an affine error over the threshold
 	sll     $t9, $t9, 2                  # possible (RECLOOP's)
 	or      $a2, $a2, $t9
-	lbu     $t2, R_NVERTS($a0)
 	beq     $at, $a3, ds_tex_done        # the last record's texture
-	lhu     $t0, R_POLYS($a0)            # (the light bytes' offset, below)
+	lw      $t4, SP_LODCNT($t8)          # (the band's slots of it: the transform's)
 	lw      $t5, SP_TEXBASE($t8)         # its words (8 B entry)
 	sll     $t6, $a3, 3
 	sw      $a3, SP_LASTTEX($t8)
@@ -2908,10 +2904,8 @@ ds_o_dcull:
 	sw      $v0, SP_CLUT16($t8)          # (the slow path's copies)
 	sw      $v1, SP_TPAGE16($t8)
 ds_tex_done:
-	lw      $t4, SP_LODCNT($t8)          # the band's slots of it (the transform's
-	addiu   $t1, $t2, 3                  # light bytes: polys - ((nv + 3) & ~3)
-	andi    $t1, $t1, 0xfc               #  count; the light bytes the record's own)
-	andi    $t4, $t4, 0xff
+	nop                                  # (the branch's slot loaded the count;
+	andi    $t4, $t4, 0xff               #  the lights are the pool's: XFORM light 3)
 .if R_PROFILE
 	lw      $t9, SP_RECORDS($t8)
 	lw      $t2, SP_VERTS($t8)
@@ -2920,8 +2914,6 @@ ds_tex_done:
 	sw      $t9, SP_RECORDS($t8)
 	sw      $t2, SP_VERTS($t8)
 .endif
-	addu    $t0, $t0, $a0
-	subu    $at, $t0, $t1
 	.globl  ds_o_fogz
 ds_o_fogz:
 	slti    $t0, $t3, 0                  # farthest depth before the fog?
@@ -2931,7 +2923,7 @@ ds_o_fogz:
 	addiu   $t5, $t2, -2                 # (vertices left - 2: RTPT while 3+)
 	beqz    $t0, ds_fog                  # reaching into the fog: the fogged
 	move    $t4, $t8                     #  transform (cache cursor)
-	XFORM   1, ds_xf, ds_one, ds_xf_done
+	XFORM   1, ds_xf, ds_one, ds_xf_done, 3
 ds_xf_done:
 	beqz    $a2, ds_polys                # nothing near nor warping: no careful test
 	andi    $t0, $a2, 4
@@ -3383,7 +3375,7 @@ dw_tri_skip:
 ds_fog:
 	lui     $t2, %hi(r_fogtab)
 	addiu   $t2, $t2, %lo(r_fogtab)
-	XFORM   1, ds_xfg, ds_oneg, ds_xfg_done, 1, 1
+	XFORM   1, ds_xfg, ds_oneg, ds_xfg_done, 3, 1
 ds_xfg_done:
 	lw      $t2, SP_LODCNT($t8)          # (the band's slot count and SZ_FAST back:
 	lw      $t7, SP_SZFAST($t8)          #  the table and the fog's temporary

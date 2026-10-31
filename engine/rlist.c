@@ -272,6 +272,9 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 	const qw_vert *pool = mdl_frame(a, m, frame, band << 11);
 	if (!pool)
 		return 0;
+	if (m->flags & QSTM_SORT)                     /* (its pool's entries, each lit once:
+		                                             r_world.s light_pool) */
+		e->lod_band |= (uint32_t) m->num_verts << 16;
 	n_ents++;
 	e->pool = (uint32_t) pool;
 	if (m->flags & QSTM_SORT)

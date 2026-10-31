@@ -14349,3 +14349,55 @@ contents a tick), the last place only when this level's and near.
     zone.c, the triggers), the block's size on the `sample` line;
   - `prof_sample_pause`: the fight's aim (a sight line to every monster
     each tick, 9.6 % of the samples) and the `e_seen` check are left out.
+
+## §107 — A fight's two levers: the sorted bodies lit by their pool, the grid on every map measured (2026-10-31)
+
+- **The request**: §106's two first levers, measured on its fight
+  (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0 SKILL=2
+  VIEW=1780,1803,-304,204,0`, the frames' cycles compared window by
+  window: the game is the same, the models drawn the same in each).
+- **(1) The sorted bodies' lights by their pool's entries**:
+  `light_recs_lod` wrote a light byte for each slot of each record at
+  the body's band (the slot's vertex's normal through the yaw's table,
+  times the light), records shared by every body of the model, so a
+  light computed for a frame could not be kept for the next (eight
+  zombies in view write the same bytes in turn). The fight lit 4.66 M
+  slots for 1.99 M vertices of the bands and 3.37 M entries of the pools
+  (a band's pool holds every vertex: the band's expanded, the others
+  copies of their parents, engine/mdl.c, and the band's slots reference
+  both): 2.3 slots a band's vertex, 1.4 a pool's entry.
+  - `light_pool` (r_world.s, in `light_recs_lod`'s place) writes the
+    light into byte 7 of each entry of the pool (0 since `mdl_expand`:
+    the word `z | normal << 16`), two entries in flight (the next one's
+    factor read while the multiply runs); the pool's entries come in
+    `lod_band`'s upper half (rlist.c, `RE_LODBAND`'s, split in
+    `draw_model`);
+  - `XFORM`'s light 3: the three loads of a turn read byte 7 of the
+    vertices the transform just loaded (their addresses still in the
+    registers), the record's light bytes left alone; the sorted loop
+    (`ds_xf`, its fogged `ds_xfg`) takes it, and `ds_records` no longer
+    works out where a record's light bytes are (two loads and four
+    instructions a record);
+  - the unsorted alias models (the items, the view model) and the brush
+    models keep `light_recs` and their records' bytes.
+  - The display lists identical: the 128 views (`BENCH_MAPS=1
+    HASHONLY=1 PROFILE=0`) and E1M1's monsters' frames (`MONSTERS=1
+    MAP=E1M1`, 16 frames, every packet), against references the base
+    saved (`scripts/dlcheck.sh`).
+  - The fight's drawing -2.62 % (13.68 M -> 13.32 M cycles over its 12
+    windows, each -1.6 to -3.3 %), its samples -1.3 % (389730 ->
+    384809); the 128 views -0.3 % (30 faster, E4M5.v1 -3.2 %, E4M5.v0
+    -2.9 %, E3M4.v2 -2.2 %; none slower).
+- **(2) The near polygons' grid (§92) on every map**, measured, not
+  changed: master cuts START's and E1M1's alone (`Q1PSX_TESS_MAPS`);
+  `TESS=all`:
+  - the fight's drawing -1.75 % (13.68 M -> 13.44 M), its samples -1.0 %
+    (the slow path 11.7 -> 6.5 %, r_tess.s's own 4.3 %): the bodies, not
+    the world, weigh in a fight;
+  - the 128 views (with (1)) -5.73 %, the 120 outside START and E1M1
+    -6.11 % (39.95 M -> 37.51 M): 103 faster (END.v2 -30 %, E4M2.v1
+    -20.4 %, E4M7.v1 -19.8 %, E4M3.v0 -17.9 %), 17 slower (E3M2.v2
+    +5.8 %, E3M5.v0 +3.7 %); 18 views past a vblank's 564 k cycles ->
+    16;
+  - the pictures move by a texel where a polygon is cut (§92's boards):
+    a call left open.

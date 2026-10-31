@@ -85,7 +85,8 @@
                         # 4 (RE_SORT): a monster, its triangles sorted far to near
 .set RE_CAM,     60     # RE_BMODEL: the camera in the model's space, vertex units
 .set RE_LODBAND, 60     # RE_SORT: the level of detail's band x 2: the entry in each
-                        #   record's table (rlist.h lod_band; 0 the whole model)
+                        #   record's table (rlist.h lod_band; 0 the whole model); the
+                        #   pool's entries in the upper half (light_pool)
 .set RE_WATERZ,  64     # RE_WATER: the liquid's surface in the model's z (halfword), and at
                         # +66 1 (the part above shown) or -1 (below): one word, SP_WATER's
 .set RE_ZSF,     72     # RE_SORT: ZSF3 for its triangles' buckets (rlist.c ent_sort)
