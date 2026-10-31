@@ -27,6 +27,9 @@ static uint32_t    *ovl_head, *ovl_tail;   /* this frame's overlay chain */
 
 vid_frame_t vid_frame;
 vid_stats_t vid_stats;
+#ifdef Q1PSX_BENCH
+uint32_t    vid_shown_for[4];
+#endif
 
 static void begin_buffer(int i)
 {
@@ -388,6 +391,9 @@ void vid_flip(void)
 	uint32_t now = (uint32_t) VSync(-1);
 	vid_stats.vbl = now - last_vbl;
 	last_vbl = now;
+#ifdef Q1PSX_BENCH
+	vid_shown_for[vid_stats.vbl < 4 ? vid_stats.vbl - 1 : 3]++;   /* (the buffer shown below's predecessor) */
+#endif
 
 	/* show what the GPU just finished, start drawing what the CPU built
 	   (its clear: none under the internal resolution's stretch, for this

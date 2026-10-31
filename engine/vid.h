@@ -63,6 +63,9 @@ typedef struct {
 
 extern vid_frame_t vid_frame;
 extern vid_stats_t vid_stats;
+#ifdef Q1PSX_BENCH
+extern uint32_t    vid_shown_for[4];   /* the bench's: buffers shown for 1, 2, 3, 4+ vblanks */
+#endif
 
 void  vid_init(void);
 void  vid_set_bg(int r, int g, int b);
