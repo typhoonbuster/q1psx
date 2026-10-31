@@ -43,8 +43,8 @@ typedef struct {
 	int music;       /* the music's, tenths (bgmvolume 1)                    */
 	int fps_cap;     /* fps_caps[] index: 60 (none), 45, 30                  */
 	int tick;        /* tick_rates[] index: the world's 60, 30 ticks a second */
-	int warp;        /* the anti-warping: low, default, high, ultra (the
-	                    dynamic warp control's floor and cap, settings.c) */
+	int warp;        /* the anti-warping: low, default, medium, high, ultra
+	                    (the dynamic warp control's floor and cap, settings.c) */
 	int brightness;  /* the Options' Brightness, 0-10: Quake's v_gamma 1 down
 	                    to 0.5 on the CLUTs (engine/gamma.c)                 */
 } settings_t;

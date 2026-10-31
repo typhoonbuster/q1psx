@@ -172,7 +172,8 @@
 #         (PCSX-Redux draws at once: 0). WARPDYN=1 renders the views with
 #         the game's dynamic warp control (T= its floor, TMAX= its cap,
 #         default 32: the anti-warping's levels are 16/48 low, 4/32
-#         default, 4/8 high, 1/4 ultra, docs/porting-notes.md §117) and
+#         default, 4/16 medium, 4/8 high, 1/4 ultra, docs/porting-notes.md
+#         §117) and
 #         prints the T each view ends at ("warp <view> T <px> more
 #         <vblanks>").
 #         IRQTIME=1: the interrupts' handler (engine/irq.s) times itself, the

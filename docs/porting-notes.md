@@ -15302,8 +15302,9 @@ merged.)
 
 - **The request**: a Graphics row choosing how much the textures may
   warp: the dynamic warp control's floor and cap set by a level, low,
-  default, high or ultra, the default being the control as it is; the
-  menu shows the level and what it does, never the figures.
+  default, high or ultra, the default being the control as it is, then
+  medium between default and high; the menu shows the level and what it
+  does, never the figures.
 - **The control as it was** (§19.4, §79.2, engine/render.c): T, the
   affine error the near polygons are split by (the slow path, §92's
   grid, the records' bound), one value a frame; from a floor of 4 px
@@ -15312,11 +15313,12 @@ merged.)
   every 4 frames with room; a view the cap cannot fit takes a vblank
   more at the floor.
 - **The levels** (engine/settings.c `warp_levels`, the floor / the cap,
-  px): low 16 / 48, default 4 / 32 (the control as it was), high 4 / 8,
-  ultra 1 / 4. Low lets the textures warp more for speed (a floor four
-  times the default's, a cap half again); high keeps the floor and stops
-  at 8 px (a view that needs more takes a vblank more); ultra splits
-  down to 1 px and stops at 4, the default's floor.
+  px): low 16 / 48, default 4 / 32 (the control as it was), medium 4 /
+  16, high 4 / 8, ultra 1 / 4, each one warping less than the one before.
+  Low lets the textures warp more for speed (a floor four times the
+  default's, a cap half again); medium and high keep the floor and stop
+  at 16 and 8 px (a view that needs more takes a vblank more); ultra
+  splits down to 1 px and stops at 4, the default's floor.
 - **The engine**: `r_set_warp` takes the cap (`r_warp.t_max`);
   `R_WARP_T_MAX` is 48, the records' bound table (`k16 = round(16
   sqrt(560 / T))`) 16 entries longer, its first 33 unchanged;
@@ -15332,8 +15334,10 @@ merged.)
     close";
   - default: "The port's balance of speed and warp", "low: faster;
     higher: less warping";
-  - high: "- slower: more polygons split", "+ less texture warping up
+  - medium: "- a little slower: more splits", "+ less texture warping up
     close";
+  - high: "- slower: more polygons split", "+ much less texture
+    warping";
   - ultra: "- slowest: the most polygons split", "+ the least texture
     warping".
 - **Ultra's guard**: under the default's 4 px the near polygons' packets
@@ -15353,13 +15357,13 @@ merged.)
 - **The bench**: `TMAX=` the cap with `WARPDYN=1` (32 by default), `T=`
   the floor or the fixed threshold as before; the game bench's walk
   through the release menu (`BENCH_GAME=1`) goes to the row, dumps the
-  page at default, high and low and prints each level's floor and cap.
-- **RAM**: the release's level arena 1 349 008 -> 1 348 304 B (-704): the
-  code 296 B (the feedback's guard 144, `r_frame`'s two stores 28, the
-  rows' cases, the cap), the hints' and the row's strings about 300 B,
-  the tables 84 B (the bound table's 16 entries 32 B, the levels', the
-  names', the hints' pointers), `r_warp`'s and `settings`' new fields 16
-  B, the levels 8 B.
+  page at each level and prints each level's floor and cap.
+- **RAM**: the release's level arena 1 349 008 -> 1 348 208 B (-800): the
+  code 300 B (the feedback's guard 144, `r_frame`'s two stores 28, the
+  rows' cases, the cap), the hints' and the row's strings about 380 B
+  (with their alignment), the tables 106 B (the bound table's 16 entries
+  32 B, the hints' pointers 40, the names' 20, the levels' 10),
+  `r_warp`'s and `settings`' new fields 16 B. Medium alone: 96 B.
 - **Measured** (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`, a fixed T, the
   views' 16 frames each):
   - 1 px against 4 px, the 84 views the 1 px run reached (it stopped
@@ -15371,5 +15375,9 @@ merged.)
     farthest records lost) and eight left far models out (`mskip`:
     E1M8.v0 228 over the 16 frames, E1M8.v1, E2M7.v0, E3M3.v3, E3M4.v0,
     E3M6.v3, v5, v7); at 4 px none (the 128 views);
-  - ultra's control (`WARPDYN=1 T=1 TMAX=4`) over the 128 views and the
-    game bench's walk: follow in the next commit.
+  - ultra's control as the game runs it (`WARPDYN=1 T=1 TMAX=4`, the
+    guard in), the 128 views: no arena filled, no model left out; the
+    cycles +18.9 % against the fixed 4 px (38.72 M -> 46.03 M), the views
+    at 60 fps 113 -> 111; T ended at 1 px in 55 views, 2 in 34, 3 in 15,
+    4 in 24, 4 views taking a vblank more;
+  - the game bench's walk: the next commit.

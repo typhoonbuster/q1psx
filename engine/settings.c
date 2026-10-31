@@ -22,12 +22,12 @@ const int num_tick_rates   = (int) sizeof tick_rates;
 /* The anti-warping's levels (docs/porting-notes.md §117): the dynamic warp
    control's floor and cap, px (engine/render.h r_set_warp); default is the
    control as it was (§79.2). Low lets the textures warp more for speed,
-   high and ultra less at a cost. */
-enum { WARP_LOW, WARP_DEFAULT, WARP_HIGH, WARP_ULTRA, WARP_LEVELS };
+   medium, high and ultra less at a cost. */
+enum { WARP_LOW, WARP_DEFAULT, WARP_MEDIUM, WARP_HIGH, WARP_ULTRA, WARP_LEVELS };
 static const uint8_t warp_levels[WARP_LEVELS][2] = {
-	{ 16, 48 }, { SETTINGS_WARP_FLOOR, 32 }, { 4, 8 }, { 1, 4 },
+	{ 16, 48 }, { SETTINGS_WARP_FLOOR, 32 }, { 4, 16 }, { 4, 8 }, { 1, 4 },
 };
-static const char *const warp_name[WARP_LEVELS] = { "low", "default", "high", "ultra" };
+static const char *const warp_name[WARP_LEVELS] = { "low", "default", "medium", "high", "ultra" };
 
 settings_t settings;
 int settings_level_mask[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK, QL_EFFECT_MASK };
@@ -154,7 +154,8 @@ void settings_hint(int row, const char *line[2])
 		static const char *const wh[WARP_LEVELS][2] = {
 			{ "+ faster: fewer polygons split",       "- more texture warping up close" },
 			{ "The port's balance of speed and warp", "low: faster; higher: less warping" },
-			{ "- slower: more polygons split",        "+ less texture warping up close" },
+			{ "- a little slower: more splits",       "+ less texture warping up close" },
+			{ "- slower: more polygons split",        "+ much less texture warping" },
 			{ "- slowest: the most polygons split",   "+ the least texture warping" },
 		};
 		a = wh[settings.warp][0];

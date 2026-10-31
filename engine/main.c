@@ -2404,14 +2404,13 @@ static void bench_menu(void)
 	bench_menu_key(PAD_LEFT, 0);                      /* (medium again) */
 	for (int i = 0; i < SET_WARP; i++)
 		bench_menu_key(PAD_DOWN, 0);                  /* (to Anti-warping) */
-	bench_menu_key(0, "mgraphics_warp");              /* default: its hint */
-	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
-	bench_menu_key(PAD_RIGHT, "mgraphics_warp_high");
-	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
-	bench_menu_key(PAD_RIGHT, 0);
-	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
-	bench_menu_key(PAD_RIGHT, "mgraphics_warp_low");  /* (ultra, then round to low) */
-	printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
+	static const char *const warp_page[] = {          /* default, then each level round */
+		"mgraphics_warp", "mgraphics_warp_medium", "mgraphics_warp_high", "mgraphics_warp_ultra",
+		"mgraphics_warp_low" };
+	for (int i = 0; i < (int) (sizeof warp_page / sizeof warp_page[0]); i++) {
+		bench_menu_key(i ? PAD_RIGHT : 0, warp_page[i]);
+		printf("anti-warping %d: T %d..%d\n", settings.warp, r_warp.t, r_warp.t_max);
+	}
 	bench_menu_key(PAD_RIGHT, 0);                     /* (default again) */
 	bench_menu_key(PAD_START, 0);                     /* out: options, main, the game */
 	bench_menu_key(PAD_START, 0);
