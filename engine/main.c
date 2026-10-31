@@ -3008,6 +3008,8 @@ static void bench_monsters(void)
 		                                                least room a model found) */
 		int32_t room_min = 0x7fffffff;
 		uint32_t skipped0 = r_model_skipped, full = 0;
+		uint32_t lsum = 0, lraised = 0;              /* (the bodies' shared level, those raised) */
+		int lmax = 0;
 		mdl_refused_since();
 		prof_sample_start();                         /* (SAMPLE=1: the fight's profile) */
 		for (int t = 0; t < 3600; t++) {
@@ -3038,6 +3040,10 @@ static void bench_monsters(void)
 			run_frame(0, 0);
 			fsum += prof_stage[PROF_FRAME];
 			fdrawn += (uint32_t) monsters_drawn;
+			lsum += (uint32_t) rl_lod_level;
+			lraised += (uint32_t) rl_lod_raised;
+			if (rl_lod_level > lmax)
+				lmax = rl_lod_level;
 			if (vid_stats.pkt_bytes > pkt_max)
 				pkt_max = vid_stats.pkt_bytes;
 			if (r_model_room_min < room_min)
@@ -3071,6 +3077,12 @@ static void bench_monsters(void)
 				       (unsigned) (mdl_stat_lerped - lerp0));
 				exp0  = mdl_stat_expanded;
 				lerp0 = mdl_stat_lerped;
+				printf("mon lod t %d: the bodies' level %u.%u a frame (%d at most), %u.%u bodies raised a frame; "
+				       "budget %d vertices, floor %d, cap %d/256\n", t + 1, (unsigned) (lsum / 300),
+				       (unsigned) (lsum * 10 / 300 % 10), lmax, (unsigned) (lraised / 300),
+				       (unsigned) (lraised * 10 / 300 % 10), Q1PSX_LOD_BUDGET, Q1PSX_LOD_FLOOR, Q1PSX_LOD_CAP);
+				lsum = lraised = 0;
+				lmax = 0;
 				printf("mon sounds t %d: %u started, %u cut by another (the dynamic channels full), %u by their "
 				       "own channel, %u stopped (their samples swapped out), %u unheard (not in SPU RAM)\n", t + 1,
 				       (unsigned) (snd_stat_started - st0), (unsigned) (snd_stat_stolen - sl0),

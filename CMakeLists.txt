@@ -228,6 +228,15 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_ENGINE_C=$<BOOL:${Q1PSX_ENGINE_C}
 # distance (an A / B: the cooked order stays)
 set(Q1PSX_LOD 1 CACHE STRING "The streamed models' level of detail: 1 on, 0 off (the whole model at every distance)")
 target_compile_definitions(q1psx PRIVATE Q1PSX_LOD=${Q1PSX_LOD})
+# The monsters' shared detail budget (engine/rlist.c, docs/porting-notes.md
+# §114): the expanded vertices the bodies drawn share a frame (0: none, the
+# bands from the depth alone), the floor of their shared level (a band), a
+# body's cap (its band at most that many 256ths of its depth's: 384, 1.5)
+set(Q1PSX_LOD_BUDGET 600 CACHE STRING "The bodies' shared budget of expanded vertices a frame (0: none)")
+set(Q1PSX_LOD_FLOOR 16 CACHE STRING "The budget's shared level at most (a band, 0-23)")
+set(Q1PSX_LOD_CAP 384 CACHE STRING "A body's band under the budget at most this many 256ths of its depth's")
+target_compile_definitions(q1psx PRIVATE Q1PSX_LOD_BUDGET=${Q1PSX_LOD_BUDGET}
+	Q1PSX_LOD_FLOOR=${Q1PSX_LOD_FLOOR} Q1PSX_LOD_CAP=${Q1PSX_LOD_CAP})
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_DLIGHT_C=${_dlight_c}>)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_SLOW_C=${_slow_c}>)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ZONE_C=${_zone_c}>)   # (engine/zone.s)

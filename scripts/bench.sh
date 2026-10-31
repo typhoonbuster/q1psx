@@ -148,6 +148,12 @@
 #         view prints a "lod view" line: the streamed models drawn, those
 #         cut to a band; MONSTERS=4 a "clear frames" line: the fights'
 #         frames, their cycles, the models drawn and cut.
+#         LODBUDGET=<vertices> the monsters' shared detail budget (CMake
+#         Q1PSX_LOD_BUDGET, default 600; 0 none: the bands from the depth
+#         alone), LODFLOOR=<band> its level at most (16), LODCAP=<256ths>
+#         a body's band at most that share of its depth's (384: 1.5;
+#         docs/porting-notes.md §114); MONSTERS=3's fight prints a "mon
+#         lod" line a window: the level, the bodies raised.
 #         ENGINE_C=1 builds the C engine (CMake Q1PSX_ENGINE_C: every asm
 #         part's C version but the world renderer's, docs/porting-notes.md
 #         §55) in build-bench-c/, beside the asm's: its frames must be the
@@ -256,6 +262,9 @@ TESS=${TESS:-all}
 TESSK=${TESSK:-3}
 TESSC=${TESSC:-4}
 LOD=${LOD:-1}
+LODBUDGET=${LODBUDGET:-600}
+LODFLOOR=${LODFLOOR:-16}
+LODCAP=${LODCAP:-384}
 WHOLE=${WHOLE:-0}
 CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
@@ -273,7 +282,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_SKILL="${SKILL:-1}" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \

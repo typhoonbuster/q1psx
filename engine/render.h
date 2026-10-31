@@ -202,6 +202,10 @@ void r_set_options(int dist, int flat);
 extern int32_t r_part_z;
 int32_t r_view_depth(const int32_t pos[3]);
 
+/* the draw distance in the view's units (world x 6; 0x7fffffff: none): a
+   record wholly past it is culled (r_world.s ds_o_dcull's) */
+extern int32_t r_draw_z;
+
 /* asm entry point (engine/r_world.s) */
 void r_render(r_state_t *s);
 

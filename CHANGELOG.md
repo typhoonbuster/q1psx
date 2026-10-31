@@ -2456,3 +2456,13 @@ followed by R0-R4.
   their distance to the surface after the collapse), the accumulated error
   dropped: every band within 2.8 px; the triangles at bands 1-15 +6.4 %,
   E2M7's fight -0.5 %.
+- **The monsters' shared detail budget** (§114, provisional number, 
+  2026-10-31). The bodies drawn share 600
+  expanded vertices a frame. A level common to them raises each body's
+  band toward it, by one band a frame; it goes down only once a lower
+  level fits within 7/8 of the budget. A body never goes past 1.5 times
+  its depth's band (its error on screen within 1.5 times today's) nor
+  past band 16. Chosen on the shared-budget page (outside the repo),
+  which showed the plain shared level unreadable near the eye. E2M7's
+  fight: the drawing -3.6 % (-3.6 to -8.1 % in the 7 windows where the
+  budget works); the models left out for the packets' room 203 -> 1.

@@ -121,6 +121,8 @@ void rl_begin(void);
 extern int rl_lod_cut;      /* this frame's streamed models cut to a band past 0 */
 extern int rl_lod_band_hi;  /* the farthest band among them */
 #endif
+extern int rl_lod_level;    /* the bodies' shared level this frame (Q1PSX_LOD_BUDGET) */
+extern int rl_lod_raised;   /* the bodies it raised past their depth's band this frame */
 
 /* an entity for a model's frame, positioned (1/R_POS_SUB world units) and
    oriented (binary degrees, Quake's entity angles: pitch, yaw, roll), lit
