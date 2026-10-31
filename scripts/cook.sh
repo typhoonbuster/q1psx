@@ -19,12 +19,15 @@
 #                <Quake>/rerelease/id1/music); default: next to pak0. ffmpeg
 #                resamples them for the SPU music.
 #   COOK_MUSIC   0 skips the music (default 1 when the directory exists)
-#   Q1PSX_ZONE_TABLES  optional — the level-chunks analysis' zone tables
-#                (<dir>/<map>.zones, e.g. .../zones/pvs_1536_96: derived
-#                from Quake's data, never in the repo): each map split into
+#   Q1PSX_ZONE_TABLES  the level-chunks analysis' zone tables, one
+#                <dir>/<map>.zones a map (numbers only: each zone's records,
+#                each leaf's zone and its nearest by walking distance; made
+#                outside the repo, analysis/export.py): each map split into
 #                its skeleton and zone chunks (docs/porting-notes.md §57),
-#                or left whole where that saves no RAM. Unset: every map
-#                whole, as before
+#                or left whole where that saves no RAM. Default:
+#                zones/auto_1536_s3, the repo's copy of the cut in use (§93,
+#                §118; a path from the repo's root, or absolute); "none" (or
+#                empty): every map whole
 #   Q1PSX_ZONE_SLOTS   with the tables, the chunks resident at once (3, the
 #                default; 4: the three nearest zones; 5: and the last left)
 # The command line's Q1PSX_ZONE_TABLES and Q1PSX_ZONE_SLOTS win over
@@ -35,7 +38,7 @@
 # the zone tables' and the music's contents, qcook's own switches
 # (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP, QCOOK_SOUND_KEEP: the share of
 # its energy every sound keeps, each cooked at the lowest rate that does,
-# in percent; default 95, 100 or 0 its own rate; docs/porting-notes.md
+# in percent; default 98, 100 or 0 its own rate; docs/porting-notes.md
 # §87; QCOOK_LOD_PX: the monsters' level of detail's tolerance in pixels,
 # 2 by default, QCOOK_NOLOD=1 none, the vertices in today's order, §88;
 # QCOOK_SEQ: the maps whose zone chunks carry the cooked walk ("start
@@ -44,6 +47,9 @@
 # QCOOK_SEQ_ZERO, tools/qcook/seq.c, §91; QCOOK_ANIM_TOL: every body's
 # animations thinned to that many units (a frame its neighbours' average
 # makes well enough left out, tools/qcook/game.c ANIM_THIN, §97; 0 none);
+# QCOOK_MERGE: a node's coplanar faces merged (1 by default, 0 the cook as
+# before) and QCOOK_MERGE_ERR, the light it may lose at a luxel (16 of 255
+# by default, negative no bound; tools/qcook/world.c, §113);
 # QCOOK_MUSIC_RING_KB: the
 # SPU RAM the music's ring takes, 48 by default: the bank fills the rest
 # beside a swap room, §86). `cook.sh --stale <file>`, the
@@ -89,6 +95,14 @@ _zone_slots=${Q1PSX_ZONE_SLOTS-unset}
 [ -f local.env ] && set -a && . ./local.env && set +a
 [ "$_zone_tables" != unset ] && Q1PSX_ZONE_TABLES=$_zone_tables
 [ "$_zone_slots" != unset ] && Q1PSX_ZONE_SLOTS=$_zone_slots
+Q1PSX_ZONE_TABLES=${Q1PSX_ZONE_TABLES-zones/auto_1536_s3}   # (the defaults, docs/porting-notes.md §118;
+Q1PSX_ZONE_SLOTS=${Q1PSX_ZONE_SLOTS:-3}                      #  CMakeLists.txt checks the tables' draw
+export QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-98}              #  distance; 98: tools/qcook/sound.c's)
+[ "$Q1PSX_ZONE_TABLES" = none ] && Q1PSX_ZONE_TABLES=
+if [ -n "$Q1PSX_ZONE_TABLES" ] && [ ! -d "$Q1PSX_ZONE_TABLES" ]; then
+	echo "cook: no zone tables at $Q1PSX_ZONE_TABLES (Q1PSX_ZONE_TABLES; none: every map whole)" >&2
+	exit 1
+fi
 : "${QUAKE_PAK0:?set QUAKE_PAK0 in local.env}"
 
 EP1="start e1m1 e1m2 e1m3 e1m4 e1m5 e1m6 e1m7 e1m8"
@@ -117,7 +131,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 		echo "zone tables: $(cd "$Q1PSX_ZONE_TABLES" && pwd -P)," \
 		     "contents $( (cat "$Q1PSX_ZONE_TABLES"/*.zones 2>/dev/null || true) | md5sum | cut -c1-32)," \
-		     "slots ${Q1PSX_ZONE_SLOTS:-3}"
+		     "slots $Q1PSX_ZONE_SLOTS"
 	else
 		echo "zone tables: none"
 	fi
@@ -127,7 +141,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-}"
+	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-} QCOOK_MERGE=${QCOOK_MERGE:-} QCOOK_MERGE_ERR=${QCOOK_MERGE_ERR:-}"
 	echo "qcook walk: QCOOK_SEQ=${QCOOK_SEQ-none} QCOOK_SEQ_FAST=${QCOOK_SEQ_FAST:-} QCOOK_SEQ_TEST=${QCOOK_SEQ_TEST:-} QCOOK_SEQ_PRUNE=${QCOOK_SEQ_PRUNE:-} QCOOK_SEQ_ZERO=${QCOOK_SEQ_ZERO:-}"
 }
 if [ "${1:-}" = --stale ]; then
@@ -176,15 +190,31 @@ cook_one() {   # map axis level (t / g / m, 0..2)
 	name=$(echo low medium high ultra | cut -d' ' -f$(($3 + 1)))
 	case $2 in
 	t) what="--textures $name --tex4 $out.tx4" ;;
-	g) what="--geometry $name --world $out.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset" ;;
+	g) what="--geometry $name --world $out.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset"
+	   if [ "$FMAP" = 1 ] && [ -f "$Q1PSX_ZONE_TABLES/$1.zones" ]; then   # (the zones' tables name the
+		                                 #  records of a cook without the merge: each record's faces,
+		                                 #  to translate them, below)
+		what="$what --fmap $LOGS/$1_$2$3.fmap"
+		QCOOK_MERGE=0 tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
+		              --geometry $name --world "$LOGS/$1_$2$3.unmerged.wld" --fmap "$LOGS/$1_$2$3.unmerged.fmap" \
+		              --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1_$2$3.unmerged.log" 2>&1 \
+		|| { echo "cook FAILED: $1 $2$3 (unmerged)"; cat "$LOGS/$1_$2$3.unmerged.log"; return 1; }
+	   fi ;;
 	m) what="--models $name --mdl $out.mdl" ;;
 	esac
 	tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" $what \
 	                      --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1_$2$3.log" 2>&1 \
 	|| { echo "cook FAILED: $1 $2$3"; cat "$LOGS/$1_$2$3.log"; return 1; }
 }
+# the coplanar faces merged (QCOOK_MERGE, 1 by default; docs/porting-notes.md
+# §113) renumber the world's records: the zones' tables, made on a cook
+# without it, are translated through each record's Quake faces
+FMAP=0
+if [ "${QCOOK_MERGE:-1}" != 0 ] && [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
+	FMAP=1
+fi
 export -f cook_one
-export QUAKE_PAK0 QUAKE_PAK1 LOGS LIGHT_GAIN
+export QUAKE_PAK0 QUAKE_PAK1 LOGS LIGHT_GAIN FMAP Q1PSX_ZONE_TABLES
 
 for m in $MAPS; do
 	for n in 1 2; do echo "$m t $n"; done         # textures: medium, high (the build takes one)
@@ -217,16 +247,17 @@ cat "$LOGS"/*_s.log | grep '^qcook: ' | sed 's|^qcook: .*/|section: |' || true
 # last one left, kept)
 if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 	export Q1PSX_ZONE_TABLES
-	export Q1PSX_ZONE_SLOTS=${Q1PSX_ZONE_SLOTS:-3}
+	export Q1PSX_ZONE_SLOTS
 	for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c \
 	    't="$Q1PSX_ZONE_TABLES/{}.zones"; [ -f "$t" ] || exit 0
-	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}_g0.wld --tables "$t" --skeleton cooked/id1/{}_g0.skl \
+	     fm=""; [ "$FMAP" = 1 ] && fm="--fmap $LOGS/{}_g0.unmerged.fmap $LOGS/{}_g0.fmap"   # (QCOOK_MERGE)
+	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}_g0.wld --tables "$t" $fm --skeleton cooked/id1/{}_g0.skl \
 	         --tex4 cooked/id1/{}_t1.tx4 --chunks cooked/id1/{}_z1.zon \
 	         --tex4 cooked/id1/{}_t2.tx4 --chunks cooked/id1/{}_z2.zon > "$LOGS/{}_z.log" 2>&1 \
 	     || { echo "cook FAILED: zones {}"; cat "$LOGS/{}_z.log"; exit 1; }'
 	echo "zones: $(ls cooked/id1/*_g0.skl 2>/dev/null | wc -l) of $(echo $MAPS | wc -w) maps split ($Q1PSX_ZONE_TABLES)"
 else
-	echo "zones: none, every map whole (Q1PSX_ZONE_TABLES in local.env names the tables)"
+	echo "zones: none, every map whole (Q1PSX_ZONE_TABLES=none; zones/auto_1536_s3 by default)"
 fi
 
 # the music: Quake's CD tracks 2..11 (worldspawn "sounds"), from the

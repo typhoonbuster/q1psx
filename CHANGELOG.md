@@ -2511,6 +2511,29 @@ followed by R0-R4.
   the console's. The map's and the game's CLUTs are kept as cooked and
   sent again through the new table at each step. Nothing changes in a
   frame's work.
+- **The coplanar faces merged in the cook** (§113.1, provisional number,
+  2026-10-31). A node's faces
+  with one texture mapping, marked by the same leaves and connected, are
+  cut on one cell grid and their pieces in a cell merged while convex;
+  every vertex then lying on a straight run of each piece holding it is
+  dropped from all of them (no new crack). The light stays within 16 of
+  255 of what the faces' own cuts gave at each of Quake's luxels
+  (`QCOOK_MERGE_ERR`), and the zones' tables are translated to the new
+  records through their Quake faces. The polygons −2.3 % over the 32
+  maps, the 128 views −0.55 % (16 → 15 views past a vblank), E2M7's
+  fight's drawing −1.2 %, the stream's pool +7 KB a map on average;
+  every map's display lists change. `QCOOK_MERGE=0` cooks as before.
+- **Lighter dynamic lights** (§113.2, provisional number, 
+  2026-10-31). Measured by turning
+  parts off, the dynamic lights took 10.4 % of E2M7's fight's drawing (the
+  world's 9.1 %: the nodes' stamping 3.0 %, the records' tests 1.4 %, the
+  lit records 4.7 %). With no loss, the stamping bounds a light by its
+  reach (radius − minlight) and the models' light takes its root from the
+  world's table: the fight −0.37 %, the frames the same. Then every light
+  on the world's faces takes at least Quake's muzzle-flash minlight, 32
+  (`Q1PSX_DLIGHT_MINLIGHT`, 0: Quake's look): its faintest edge is not
+  drawn, its reach 32 units shorter; the fight −1.73 %, the rocket
+  launcher's view −4.05 % (48: −2.49 / −8.54 %, 64: −3.24 / −10.54 %).
 - **The Graphics page's Anti-warping** (§117, provisional number, 
   2026-10-31). A row choosing the dynamic
   warp control's floor and cap: low 16 / 48 px, default 4 / 32 (the
@@ -2524,3 +2547,14 @@ followed by R0-R4.
   as the game runs it, +18.9 % (111 of the 128 views at 60 fps, 113 at
   the default's 4 px), no arena filled. The release's level arena
   -800 B.
+- **The zone tables in the repo, the cook's settings by default** (§118,
+  provisional number, 2026-10-31). The cut in use (§93's `auto_1536_s3`)
+  and its four-slot twin sit in `zones/`, byte for byte the analysis'
+  export: numbers only. The cook takes the cut in use by default
+  (`Q1PSX_ZONE_TABLES`; `none`: every map whole; a missing folder now
+  stops the cook), with three slots (`Q1PSX_ZONE_SLOTS`) and 98 % of
+  every sound's energy (`QCOOK_SOUND_KEEP`); `local.env` or the command
+  line may set others, and CMake's draw-distance check reads the same
+  default. With `local.env` holding only the Quake paths, the cook gives
+  the same bytes (`GAME_0.DAT`'s finale names carry stack leftovers that
+  vary from cook to cook, as before).

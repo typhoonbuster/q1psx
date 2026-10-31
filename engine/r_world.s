@@ -1555,13 +1555,14 @@ mark_done:
 .else
 	# the asm (the C reference above documents it): for each live light,
 	# from the root, a node out of the PVS or whose box is out of the
-	# sphere's reach ends its subtree; one whose plane the sphere
-	# straddles (|d| <= radius: its faces lie on that plane) takes the
-	# frame count. A plane farther than radius + DL_PRUNE leaves only the
+	# light's reach (radius - minlight: no vertex farther takes any of
+	# it) ends its subtree; one whose plane the reach straddles (|d| <=
+	# radius - minlight: its faces lie on that plane) takes the frame
+	# count. A plane farther than the reach + DL_PRUNE leaves only the
 	# light's side to descend (R_MarkLights). Depth first, the back child
 	# first and the front child pushed: a stack on sp of at most the
-	# tree's depth; s2 = radius + DL_PRUNE (the walk sets s1 - s3 after).
-	# The counters (dlnodes) are the C reference's only.
+	# tree's depth; s2 = the reach + DL_PRUNE (the walk sets s1 - s3
+	# after). The counters (dlnodes) are the C reference's only.
 	addiu   $sp, $sp, -DSN_STACK
 	lw      $a1, RS_LIGHTS($s0)
 	lw      $v1, SP_PLANES($t8)          # the plane table
@@ -1572,7 +1573,7 @@ dsn_light:
 dsn_light_b:
 	lw      $t1, DL_O+4($a1)
 	lw      $t2, DL_O+8($a1)
-	lw      $t6, DL_RADIUS($a1)
+	lw      $t6, DL_RMM($a1)             # its reach
 	lw      $a0, RS_ROOT($s0)            # the root
 	move    $a3, $sp                     # the stack, empty
 	addiu   $s2, $t6, DL_PRUNE           # the side-only bound
@@ -1597,7 +1598,7 @@ dsn_node_vis:
 	subu    $t3, $t3, $at                # |dz|
 	lh      $t7, N_H+0($a0)
 	lh      $t9, N_H+2($a0)
-	addu    $t7, $t7, $t6                # h + radius
+	addu    $t7, $t7, $t6                # h + the reach
 	slt     $at, $t7, $t4                # < |dx|: the box out of reach
 	bnez    $at, dsn_pop
 	addu    $t9, $t9, $t6
@@ -1644,13 +1645,13 @@ dsn_node_vis:
 	addu    $t9, $t9, $t4
 4:	sra     $t9, $t9, 12                 # d, vertex units
 	slt     $at, $s2, $t9
-	bnez    $at, dsn_front               # d > radius + DL_PRUNE: the front only
+	bnez    $at, dsn_front               # d > the reach + DL_PRUNE: the front only
 	addu    $at, $t9, $s2
-	bltz    $at, dsn_back                # d < -(radius + DL_PRUNE): the back only
+	bltz    $at, dsn_back                # d < -(the reach + DL_PRUNE): the back only
 	sra     $at, $t9, 31
 	xor     $t9, $t9, $at
 	subu    $t9, $t9, $at                # |d|
-	slt     $at, $t6, $t9                # radius < |d|: no face of the plane lit
+	slt     $at, $t6, $t9                # the reach < |d|: no face of the plane lit
 	bnez    $at, 3f
 	andi    $t3, $t5, 1                  # (the back child a leaf?)
 	sh      $s4, N_DLSTAMP($a0)          # stamped

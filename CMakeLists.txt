@@ -195,6 +195,13 @@ endif()
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.
 set(Q1PSX_DLIGHT_C 0 CACHE STRING "Dynamic lights: 0 the asm, 1 the C reference, 2 the asm checked by the C")
+# The world's dynamic lights' least minlight (world units, engine/dlight.h;
+# docs/porting-notes.md §113): Quake's minlight, which only its muzzle
+# flash sets (32), for every light on the world's faces, whose faintest
+# edge is then left unlit and whose reach is shorter; 0 each light's own
+# (Quake's look)
+set(Q1PSX_DLIGHT_MINLIGHT 32 CACHE STRING "The world's dynamic lights' least minlight, world units (0: Quake's own)")
+target_compile_definitions(q1psx PRIVATE Q1PSX_DLIGHT_MINLIGHT=${Q1PSX_DLIGHT_MINLIGHT})
 # The brush models' cut by the world's BSP: the asm (engine/bmfrag.s) or its
 # C specification (engine/bmfrag.c cut_model_c); 2 runs both on every cut
 # and compares them ("bmfasm" lines).
@@ -333,16 +340,20 @@ endif()
 # bundle it into the CD image so the engine can read it. iso.xml consumes
 # @PAK0_ENTRY@ (empty when no pak is configured).
 set(PAK0_ENTRY "")
+set(_zone_tables zones/auto_1536_s3)   # (scripts/cook.sh's default: the repo's tables, §118)
 if(EXISTS "${PROJECT_SOURCE_DIR}/local.env")
 	file(STRINGS "${PROJECT_SOURCE_DIR}/local.env" _local_env)
 	foreach(_line ${_local_env})
 		if(_line MATCHES "^[ \t]*QUAKE_PAK0[ \t]*=[ \t]*(.+)$")
 			string(STRIP "${CMAKE_MATCH_1}" _pak0_path)
 		endif()
-		if(_line MATCHES "^[ \t]*Q1PSX_ZONE_TABLES[ \t]*=[ \t]*(.+)$")
+		if(_line MATCHES "^[ \t]*Q1PSX_ZONE_TABLES[ \t]*=[ \t]*(.*)$")
 			string(STRIP "${CMAKE_MATCH_1}" _zone_tables)
 		endif()
 	endforeach()
+endif()
+if(DEFINED ENV{Q1PSX_ZONE_TABLES})     # (the command line's wins over local.env's, as in the cook)
+	set(_zone_tables "$ENV{Q1PSX_ZONE_TABLES}")
 endif()
 if(_pak0_path AND EXISTS "${_pak0_path}")
 	message(STATUS "q1psx: bundling pak0.pak from ${_pak0_path}")
@@ -352,8 +363,9 @@ else()
 endif()
 
 # The world's zones (docs/porting-notes.md §57): a map the cook split
-# (cooked/id1/<map>_g0.skl and <map>_z<N>.zon, scripts/cook.sh with
-# Q1PSX_ZONE_TABLES in local.env) goes on the disc as its skeleton
+# (cooked/id1/<map>_g0.skl and <map>_z<N>.zon, scripts/cook.sh with the
+# zone tables: the repo's zones/auto_1536_s3 unless Q1PSX_ZONE_TABLES
+# names others, or none) goes on the disc as its skeleton
 # (<MAP>_G0.WLD) and its chunks at the build's texture level
 # (<MAP>_Z<N>.ZON); OFF, or a map left whole, its whole world. The tables
 # hold every record the PSX may draw within 1536 units (+ a margin): a
@@ -367,8 +379,9 @@ elseif(Q1PSX_ZONES)
 else()
 	set(_disc_zones 0)
 endif()
-# The tables the cook reads (local.env's Q1PSX_ZONE_TABLES: the command
-# line's, when scripts/cook.sh is run by hand, is not seen here) are cut
+# The tables the cook reads (Q1PSX_ZONE_TABLES: the configure's
+# environment's, else local.env's, else the repo's zones/auto_1536_s3; a
+# cook run by hand with others is not seen here) are cut
 # for one draw distance, in their directory's name (pvs_1536_96: every
 # record the PVS may draw within 1536 units; auto_1536_s3: the same, the
 # cap chosen a map for three slots, §93; seen_1024_64: those the
@@ -382,7 +395,7 @@ if(_disc_zones AND _zone_tables AND _zone_tables MATCHES "(pvs|seen|auto)_([0-9]
 	set(_tables_dist ${CMAKE_MATCH_2})
 	if(_tables_dist LESS Q1PSX_DRAWDIST)
 		message(FATAL_ERROR "q1psx: the zone tables ${_zone_tables} are cut at ${_tables_dist} units, the draw distance is ${Q1PSX_DRAWDIST}: "
-		        "the walls between the two would be missing from afar. Point local.env's Q1PSX_ZONE_TABLES at a *_${Q1PSX_DRAWDIST}_* set, "
+		        "the walls between the two would be missing from afar. Point Q1PSX_ZONE_TABLES (local.env) at a *_${Q1PSX_DRAWDIST}_* set, "
 		        "or build with -DQ1PSX_DRAWDIST=${_tables_dist}, or -DQ1PSX_ZONES=OFF for the whole worlds.")
 	endif()
 	if(_tables_kind STREQUAL "seen")

@@ -118,12 +118,14 @@ void dl_decay(int now, int dt)
 
 #if Q1PSX_DLIGHT_C == 1
 /* the C reference of r_render's descent (engine/r_world.s, after
-   mark_done): the nodes whose box the light's sphere reaches, from the root (a box
-   outside it ends its subtree, so does one out of the PVS: r_render
-   calls this after mark_pvs), stamped when the sphere straddles their
-   plane too (R_MarkLights' rule: a node's faces lie on its plane, so a
-   plane farther than the radius has none to light). A plane farther than
-   radius + DL_PRUNE puts the light's whole reach on one side: only that
+   mark_done): the nodes whose box the light's reach (radius - minlight)
+   touches, from the root (a box outside it ends its subtree, so does one
+   out of the PVS: r_render calls this after mark_pvs), stamped when the
+   reach straddles their plane too (R_MarkLights' rule: a node's faces lie
+   on its plane, so a plane farther than the radius has none to light;
+   farther than radius - minlight, R_AddDynamicLights lights none of
+   them: a lit vertex lies within radius - minlight of the light). A plane
+   farther than the reach + DL_PRUNE puts it whole on one side: only that
    child is descended (R_MarkLights again; the margin covers dl_sqrt's
    and the roundings' error, so no vertex the far side holds would have
    taken any light) */
@@ -137,7 +139,7 @@ static void mark_nodes(qw_node *n, const rlight_t *l, uint16_t stamp, uint16_t v
 		if (dx < 0) dx = -dx;
 		if (dy < 0) dy = -dy;
 		if (dz < 0) dz = -dz;
-		if (dx > n->h[0] + l->radius || dy > n->h[1] + l->radius || dz > n->h[2] + l->radius)
+		if (dx > n->h[0] + l->rmm || dy > n->h[1] + l->rmm || dz > n->h[2] + l->rmm)
 			return;
 		const qw_plane *pl = (const qw_plane *) ((const int32_t *) world.planes + n->plane3);
 		int32_t d = pl->type < 3
@@ -145,7 +147,7 @@ static void mark_nodes(qw_node *n, const rlight_t *l, uint16_t stamp, uint16_t v
 		          : pl->n[0] * l->o[0] + pl->n[1] * l->o[1] + pl->n[2] * l->o[2] - (pl->dist >> 1);
 		d >>= 12;                            /* vertex units */
 		uint32_t front = n->child[0], back = n->child[1];
-		if (d > l->radius + DL_PRUNE || d < -(l->radius + DL_PRUNE)) {
+		if (d > l->rmm + DL_PRUNE || d < -(l->rmm + DL_PRUNE)) {
 			uint32_t c = d > 0 ? front : back;   /* R_MarkLights: the light's side only */
 			if (c & 1)
 				return;
@@ -153,7 +155,7 @@ static void mark_nodes(qw_node *n, const rlight_t *l, uint16_t stamp, uint16_t v
 			continue;
 		}
 		if (d < 0) d = -d;
-		if (d <= l->radius)
+		if (d <= l->rmm)
 			n->dlstamp = stamp;
 		if (!(front & 1))
 			mark_nodes((qw_node *) front, l, stamp, visframe);
@@ -184,13 +186,14 @@ void dl_push(int now)
 	int n = 0;
 	for (int i = 0; i < MAX_DLIGHTS && dl_enabled; i++) {
 		const dlight_t *l = &dlights[i];
-		if (l->die < now || !l->radius)
-			continue;
+		int minlight = l->minlight > Q1PSX_DLIGHT_MINLIGHT ? l->minlight : Q1PSX_DLIGHT_MINLIGHT;
+		if (l->die < now || l->radius <= minlight)
+			continue;                        /* (none of the world reaches its minlight) */
 		rlight_t *r = &rlights[n++];
 		for (int k = 0; k < 3; k++)
 			r->o[k] = l->origin[k] * QW_VSCALE / R_POS_SUB;
 		r->radius   = l->radius * QW_VSCALE;
-		r->minlight = l->minlight * QW_VSCALE;
+		r->minlight = minlight * QW_VSCALE;
 		r->rmm      = r->radius - r->minlight;
 	}
 	r_state.nlights = (uint32_t) n;
@@ -405,7 +408,16 @@ int dl_add_at(const int32_t org[3], int now)
 		}
 		if (m >= l->radius * 2)
 			continue;                        /* (the Manhattan distance bounds it) */
-		int dist = (int) isqrt32((uint32_t) (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]));
+		uint32_t d2 = (uint32_t) (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+		int dist;
+		if (d2 < 1024u << 7) {               /* the world's table (vertex units, x 4 these),
+			                                    then exact: isqrt32's */
+			dist = dl_sqrt[d2 >> 7] >> 2;
+			while ((uint32_t) (dist + 1) * (uint32_t) (dist + 1) <= d2)
+				dist++;
+		} else {
+			dist = (int) isqrt32(d2);
+		}
 		if (l->radius > dist)
 			add += l->radius - dist;
 	}

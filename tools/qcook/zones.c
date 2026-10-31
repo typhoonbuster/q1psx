@@ -8,8 +8,10 @@
  *               [--tex4 <map>_t<N>.tx4 --chunks <out_z<N>.zon>]...
  *
  * The tables (one text file a map: analysis/export.py's docstring gives
- * the format) are derived from Quake's data: they stay out of the repo,
- * local.env names their directory (scripts/cook.sh). They list each zone's
+ * the format) are made outside the repo from Quake's maps; the cut in use
+ * sits in the repo's zones/auto_1536_s3, the one scripts/cook.sh takes
+ * unless Q1PSX_ZONE_TABLES names another (docs/porting-notes.md §118:
+ * numbers only). They list each zone's
  * records (the world records' visibility ids) and, for each leaf, its zone
  * and the three nearest other zones by walking distance. `--resident`: the
  * zones a camera leaf wants at once (its own and the nearest): the slots
@@ -19,6 +21,12 @@
  * its skeleton and slots would take as much RAM as its whole world,
  * when it has one zone, or when the tables do not match the world (another
  * cook's).
+ *
+ * `--fmap <tables' cook's> <this world's>` (scripts/cook.sh with
+ * QCOOK_MERGE: the coplanar faces merged renumber the records): two
+ * `qcook map --fmap` files, each world record's Quake faces; a zone then
+ * takes every record of this world that holds a face of one of its
+ * records in the tables' (docs/porting-notes.md §113).
  */
 
 #include <stdio.h>
@@ -139,6 +147,55 @@ static int read_tables(const char *path, tables_t *t)
 		if (t->leaf_zone[l] < 0)
 			die("%s: leaf %u has no line", path, l);
 	return 1;
+}
+
+/* a `qcook map --fmap` file: its records' count, its (record, face) pairs */
+static uint32_t read_fmap(const char *path, int (**pairs)[2], int *npairs)
+{
+	FILE *fp = fopen(path, "r");
+	unsigned nrec;
+	if (!fp || fscanf(fp, "fmap %u %d", &nrec, npairs) != 2 || *npairs < 0)
+		die("%s: not a face map", path);
+	*pairs = xmalloc((size_t) (*npairs + 1) * sizeof **pairs);
+	for (int i = 0; i < *npairs; i++)
+		if (fscanf(fp, "%d %d", &(*pairs)[i][0], &(*pairs)[i][1]) != 2 || (*pairs)[i][0] < 0 ||
+		    (uint32_t) (*pairs)[i][0] >= nrec || (*pairs)[i][1] < 0)
+			die("%s: a bad pair", path);
+	fclose(fp);
+	return nrec;
+}
+
+/* the tables' records (another cook's: from) translated to this world's
+   (to) through the Quake faces each holds: a zone takes every record that
+   holds a face of one of its records */
+static void translate_tables(tables_t *t, const char *from, const char *to)
+{
+	int (*pf)[2], (*pt)[2], nf, nt;
+	uint32_t rf = read_fmap(from, &pf, &nf), rt = read_fmap(to, &pt, &nt);
+	if (rf != t->num_faces)
+		die("%s: %u records, the tables %u", from, rf, t->num_faces);
+	int maxf = 0;
+	for (int i = 0; i < nf; i++) if (pf[i][1] > maxf) maxf = pf[i][1];
+	for (int i = 0; i < nt; i++) if (pt[i][1] > maxf) maxf = pt[i][1];
+	int *first = xmalloc((size_t) (maxf + 2) * sizeof *first), *next = xmalloc((size_t) (nt + 1) * sizeof *next);
+	for (int f = 0; f <= maxf + 1; f++)
+		first[f] = -1;
+	for (int i = nt - 1; i >= 0; i--) {        /* a face -> this world's records */
+		next[i] = first[pt[i][1]];
+		first[pt[i][1]] = i;
+	}
+	for (uint32_t z = 0; z < t->num_zones; z++) {
+		uint8_t *m = xcalloc(rt + 1, 1);
+		for (int i = 0; i < nf; i++)
+			if (t->member[z][pf[i][0]])
+				for (int j = first[pf[i][1]]; j >= 0; j = next[j])
+					m[pt[j][0]] = 1;
+		free(t->member[z]);
+		t->member[z] = m;
+	}
+	printf("qcook: zones: the tables' %u records translated to %u by their faces\n", t->num_faces, rt);
+	t->num_faces = rt;
+	free(first); free(next); free(pf); free(pt);
 }
 
 /* ------------------------------------------------------------ helpers -- */
@@ -285,12 +342,16 @@ static const qtex_uvmap *read_uvmap(const char *path, uint32_t *nslots, uint8_t 
 
 int cmd_zones(int argc, char **argv)
 {
-	const char *wld = 0, *tab = 0, *skl = 0, *tex4[MAX_TEX], *zon[MAX_TEX];
+	const char *wld = 0, *tab = 0, *skl = 0, *tex4[MAX_TEX], *zon[MAX_TEX], *fm_from = 0, *fm_to = 0;
 	int ntex = 0, nzon = 0, want = 3;
 	for (int i = 2; i < argc; i++) {
 		if (i + 1 >= argc)
 			die("zones: %s needs a value", argv[i]);
 		if (!strcmp(argv[i], "--world"))           wld = argv[++i];
+		else if (!strcmp(argv[i], "--fmap") && i + 2 < argc) {
+			fm_from = argv[++i];
+			fm_to   = argv[++i];
+		}
 		else if (!strcmp(argv[i], "--tables"))     tab = argv[++i];
 		else if (!strcmp(argv[i], "--skeleton"))   skl = argv[++i];
 		else if (!strcmp(argv[i], "--resident"))   want = atoi(argv[++i]);
@@ -321,6 +382,8 @@ int cmd_zones(int argc, char **argv)
 		free(f);
 		return 0;
 	}
+	if (fm_from)
+		translate_tables(&T, fm_from, fm_to);
 	/* (a table may count the brush models' leaves one by one, as the cook
 	   wrote them before they were shared, docs/porting-notes.md §58: the
 	   world's leaves are the same, the camera's never past them) */

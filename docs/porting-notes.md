@@ -15296,6 +15296,217 @@ merged.)
   - The colours on screen are to be judged on DuckStation:
     PCSX-Redux runs without a GPU here.
 
+## §113 — Two small CPU levers: the coplanar faces merged in the cook, lighter dynamic lights (2026-10-31)
+
+The fourth lever after §106's profile (the vblank wait and the slow
+path went to their own branches, §111 and §112; the section numbers are
+provisional): two small ones, a slight loss allowed for a real gain, each
+in its own commit and behind an option that can be turned off.
+
+### 113.1 The coplanar faces merged in the cook (`QCOOK_MERGE`)
+
+§79.3 measured it without building it: a node's faces with one texture,
+side and cell, merged while their union stays convex, −2.5 to −5.7 % of
+the polygons. qbsp cuts a surface every 240 texels for its lightmaps,
+which the PS1 does not use; the cook then cuts each face on its own cells
+(§39.1: a wrapped axis every 256 cooked texels from the face's own origin),
+so a cell of a big floor held two to four pieces of different faces.
+
+- **The cook** (`tools/qcook/world.c`, before the T-junctions' repair and
+  the records):
+  - a *cluster*: the faces of a node's side with one texture mapping
+    (texinfo), marked by the same leaves (always drawn together: the
+    records' own rule, §14.6) and connected by their edges; a brush
+    model's face cut on its light grid (§96) stays out;
+  - the cluster is cut on one cell grid: on a wrapped axis, of the origins
+    on a repetition within a cell of its lowest face's, the one whose
+    cells its faces' boxes reach fewest of (a face alone keeps its own
+    origin, as before);
+  - in each cell its pieces are merged while their union is convex (the
+    hull's area within 0.25 square units of theirs), at most 32 vertices
+    a piece: the hull's corners and every vertex of either on the hull's
+    outline;
+  - then every vertex lying on a straight run of each piece holding it
+    (within 1/16 unit) is dropped from all of them: the inner edges' ends
+    the merges left on the outlines, and the vertices qbsp put into the
+    walls' edges for them. A vertex that any piece keeps as a corner stays
+    in every piece holding it, so no edge loses a vertex its neighbour
+    keeps: no new crack (the low geometry repairs no T-junction, §39.2;
+    the others' repair runs after);
+  - a merged piece's vertex takes its light from the lightmap of its face
+    that holds it; the record draws its faces' pieces as one (their pairs
+    with the record: the leaves' marks unchanged).
+- **The light** (`QCOOK_MERGE_ERR`, 16 of 255 at the cook's gain by
+  default; negative: no bound). Three checks against Quake's lightmap:
+  a merge whose dropped points the merged piece's corners light worse by
+  more than that (the fan from its corner 0, as the record draws it) is
+  not made; a vertex whose run's ends would light it worse by more is kept
+  (in every piece: the crack rule); and a cluster whose cut on the common
+  grid lights one of its faces' luxels worse by more than that than the
+  faces' own cuts did takes its own cuts back, unmerged (the grid moves
+  the cuts, so the points where the light is sampled: without that check
+  E4M7.v7's floor lost its pool of light, the luminance 19.9 → 17.8, its
+  frame +13 %).
+- **The zones' tables** (`tools/qcook/zones.c`, `scripts/cook.sh`): they
+  name the records of a cook without the merge (§93's scan), so the merged
+  worlds no longer matched them and the 17 zoned maps stayed whole (the
+  frames +0.47 %, measured without the merge; the pools down to −74 KB:
+  E4M7 442 → 368 KB). With the
+  merge and a table, `cook.sh` also cooks the map without it, `qcook map
+  --fmap` writes each world record's Quake faces for both, and `qcook
+  zones --fmap` gives a zone every record holding a face of one of its
+  records: the same 17 maps zoned, every chunk a superset by faces.
+- **The options**: `QCOOK_MERGE=0` cooks as before (the 83 world, skeleton
+  and chunk files byte for byte master's); `QCOOK_MERGE_ERR=<0..255>`. Both
+  are in `cooked/settings.txt`'s line: a build re-cooks when they change.
+- **Measured** (PCSX-Redux, master d7de758's cook against the branch's):
+  - the cook, the 32 maps: the polygons 264 270 → 258 223 (−2.29 %), the
+    records 141 054 → 139 650 (−1.0 %), the world files −179 KB;
+  - the 128 views (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`, zoned): 40 228 823
+    → 40 007 841 cycles (−0.55 %), 73 faster, 53 slower; the views past a
+    vblank 16 → 15 (E3M3.v1 575 883 → 483 397, −16.1 %, two vblanks to
+    one; E4M8.v2 −14.2 %; the worst E3M7.v2 +8.2 %, its pixels the same:
+    its near polygons cut otherwise by the grid and the slow path); with
+    the profile: the records' stage −1.35 %, the slow path −0.28 %, the
+    polygons drawn −1.24 %, the vertices −1.35 %;
+  - E2M7's fight of §106 (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0
+    SKILL=2 VIEW=1780,1803,-304,204,0`): the drawing 13 376 539 →
+    13 215 610 cycles over its 12 windows (−1.20 %; each −1.9 to +0.15 %),
+    the same streamed models drawn in each;
+  - the stream's pool: +1 to +21 KB a map (E3M5 +21, E2M7 +14, the mean
+    619.6 → 626.6 KB).
+- **On the way** (the 128 views, with the profile, against the base):
+
+  | variant | polygons (cook) | frames | records' stage | slow path |
+  |---|---|---|---|---|
+  | no light bound | −6.00 % | −0.24 % | −3.22 % | +1.32 % |
+  | bound 32, no cluster check | −5.00 % | −0.29 % | −2.72 % | +0.96 % |
+  | bound 16, no cluster check | −3.41 % | +0.05 % | −1.99 % | +1.20 % |
+  | bound 32, the cluster check | −4.06 % | −0.56 % | −2.13 % | +0.13 % |
+  | **bound 16, the cluster check** | **−2.29 %** | **−0.54 %** | **−1.35 %** | **−0.28 %** |
+
+  A bigger piece near the eye goes whole to the slow path (its corner
+  under the near clip, or the grid's levels past their cap) where the
+  grid took the pieces it replaced: unbound, the slow path took back most
+  of what the records saved. The merges without the drop give +2.1 %
+  polygons (the merged pieces keep their straight runs and are cut into
+  ears), the drop without the merges −0.05 %. Caps on a merge's growth
+  (its union within 1.25 or 1.5 times its larger piece: −2.9 and −4.5 %
+  polygons) or extent (128, 192 units: +1.4 and +0.3 %, the common grid
+  adding pieces the merges no longer take back), and leaving the floors
+  out (−4.5 %): their frames, measured while the zoned maps still loaded
+  whole, were no better than the unbound merge's.
+- **The pictures**: pktview's boards (before | after | difference x4) of
+  START's, E1M1's, E3M3's, E3M7's, E4M7's and E2M7's 12 views each, in the
+  side-session notes (`boards-113a/`): the largest mean change E2M7.v0's
+  2.7 levels (the floor's light dithered otherwise), then E3M3.v1 1.95 and
+  E4M7.v10 1.8; a texture moves by a texel where a near polygon is now cut
+  otherwise (E1M1.v5's pillar).
+- **The display lists** of every map change: a `scripts/dlcheck.sh`
+  reference saved before must be saved again.
+- **Left**: a look on DuckStation; the ultra geometry's light
+  grid with the merge (the disc carries the low geometry alone: not
+  cooked); the zones' tables are best made again on the merged cook by
+  the scan (§93) the next time they are.
+
+### 113.2 Lighter dynamic lights (`Q1PSX_DLIGHT_MINLIGHT`)
+
+§106's profile gave the dynamic lights on the world 4.0 % of E2M7's
+fight's samples. The sampler's 64-byte blocks spread a small function's
+samples over its neighbours (`dl_restore_asm` kept 5 300 of them in a
+build where it returned at once), so the cost was measured by turning
+parts off (temporary builds, not kept; the fight of §106, its drawing
+over the 12 windows, 13 215 468 cycles with §113.1):
+
+| off | the fight's drawing |
+|---|---|
+| every dynamic light (none pushed, none on the models) | −10.38 % |
+| the world's lights (the models keep theirs) | −9.11 % |
+| the models' lights alone (`dl_add_at`) | −1.17 % |
+| the world's but the walk's gate (the nodes stamped, never matched) | −6.15 % |
+| the world's lighting (stamped, the records tested, none lit) | −4.73 % |
+
+So on the world: the nodes' stamping about 3.0 %, the blocks' gate, the
+records' tests and the Gouraud path the stamped blocks take about 1.4 %,
+the lit records (the save, the planes' terms, the vertices, the restore)
+about 4.7 %. Counted in the C reference: 1.54 lights live a frame (none
+in 224 frames of 3 600, one in 1 791, two in 1 113, three or more in
+472: rockets of 200 units, explosions of 350 decaying, the muzzle flash),
+144 nodes visited a light for 31 records lit. A cap on the lights' count
+would rarely act; the cost is each light's reach.
+
+- **No loss** (`engine/r_world.s` dsn_*, its C reference `mark_nodes`):
+  the stamping's descent bounds a light by its reach, radius − minlight,
+  not its radius. A lit vertex lies within radius − minlight of the light
+  (R_AddDynamicLights lights a point of a plane at |d| only within
+  radius − |d| − minlight of the impact point), so a box or a plane
+  farther holds none: the frames are the same (the game bench's 23
+  `H` lines, the floor at 0). A light whose radius is not over its
+  minlight is not pushed for the world. The muzzle flash (minlight 32)
+  gains: the shotgun's, the nailguns' views −0.04 to −0.28 %. The
+  models' light (`dl_add_at`) takes its root from the world's table
+  (`dl_sqrt`, then exact: isqrt32's value, a few compares where the bit
+  loop took its 16 steps).
+- **The floor** (`Q1PSX_DLIGHT_MINLIGHT`, CMake, 32 by default; the
+  bench's `DLIGHT_MINLIGHT=`): every light on the world's faces takes at
+  least that minlight, Quake's own way to end a light's faint edge, the
+  value it gives its muzzle flash (32). Quake adds `rad − dist` to a
+  luxel down to `rad − dist = minlight` (R_AddDynamicLights), so a
+  light's add stays Quake's wherever it reaches; its last 32 units of
+  light (13 of the 255 vertex light levels at the cook's gain) are not
+  drawn, and its reach is 32 units shorter (an explosion's 350 → 318, a
+  rocket's 200 → 168): fewer nodes stamped, records tested and vertices
+  lit. The models keep Quake's light (`dl_add_at`: no minlight in
+  R_DrawAliasModel). 0 is each light's own minlight, Quake's look.
+- **Measured**:
+
+  | floor | the fight's drawing | the rocket launcher's view | ghud1 / ghud2 |
+  |---|---|---|---|
+  | 0 (no loss) | −0.37 % | −0.07 % | −0.14 / −0.19 % |
+  | **32 (the default)** | **−1.73 %** | **−4.05 %** | **−3.43 / −3.43 %** |
+  | 48 | −2.49 % | −8.54 % | −5.65 / −5.63 % |
+  | 64 | −3.24 % | −10.54 % | −8.52 / −8.49 % |
+
+  (the fight against §113.1's, the same models drawn in every window;
+  the game bench's views, `BENCH_GAME=1 HASHONLY=1 PROFILE=0`, against
+  §113.1's: 1 282 794 cycles for the rocket launcher's, still three
+  vblanks.) The C reference (`DLIGHT_C=1`) and the asm checked by it
+  (`DLIGHT_C=2`, no `dlchk` line) draw the asm's frames; under the
+  interpreter the game bench's frames are the dynarec's but the last
+  menu page's (`mgraphics_fx`), which differs there on §113.1 as well.
+- **The pictures** (pktview's boards, before | after | difference x4, in
+  the side-session notes, `boards-113b/`): eight frames of the fight with
+  an explosion within 250 units of the player (a dump the bench took for
+  this measure, not kept) and the game bench's rocket views, each at 32
+  and 64 against 0. At 32 the frames differ by 0.04 to 0.35 levels on
+  average (the glow's outer ring); at 64 by 0.26 to 1.83 (the farthest
+  walls an explosion lights stay darker: E2M7's arch beside the player,
+  the luminance 26.8 → 25.0).
+- **Left**: an eye on DuckStation (an explosion against a near
+  wall, the rockets in a dark corridor, the muzzle flash) and the floor's
+  value (48 and 64 measured, not chosen). Not done: the stamping cut by
+  the view's frustum (the walk draws no block outside it; how many of a
+  light's 144 nodes lie outside was not measured; the descent would
+  carry the frustum's planes as the walk does: a larger asm change), and
+  the lit records' save and restore (their share of the 4.7 % not
+  measured apart).
+
+### 113.3 Both, on master df69840
+
+Master moved during the work (§111, §112, §114, §115, §116); merged into
+the branch, `QCOOK_MERGE=0` still cooks the 32 worlds byte for byte as
+master's own qcook does. Both levers against both off (`QCOOK_MERGE=0
+DLIGHT_MINLIGHT=0`, master's frames), one run each:
+
+| base | E2M7's fight's drawing | the 128 views |
+|---|---|---|
+| 5cf05f5 (§111, §114-§116) | 12 858 120 → 12 511 011 (−2.70 %; windows −3.63 to −1.12 %) | 40 293 952 → 40 076 813 (−0.54 %; 78 faster, 48 slower; 16 → 15 past a vblank) |
+| df69840 (and §112) | 12 685 199 → 12 352 384 (−2.62 %; windows −3.49 to −1.15 %) | 38 716 287 → 38 511 747 (−0.53 %; 78 faster, 46 slower; 15 → 15 past a vblank) |
+
+The same models drawn in every window, the same 17 maps zoned. The
+branch's merge into master was approved with its defaults (the merge on,
+its light bound 16, the floor 32) after the test images (2026-10-31).
+
 ## §117 — The Graphics page's Anti-warping (2026-10-31)
 
 (Provisional number: §113 is another branch's.)
@@ -15381,3 +15592,62 @@ merged.)
     at 60 fps 113 -> 111; T ended at 1 px in 55 views, 2 in 34, 3 in 15,
     4 in 24, 4 views taking a vblank more;
   - the game bench's walk: the next commit.
+
+## §118 — The zone tables in the repo, the cook's settings by default (2026-10-31)
+
+The cook's zone tables (§57) stayed outside the repo with the rest of what
+is derived from Quake's data: each checkout's `local.env` named the
+analysis' folder (`quakespasm-q1psx/zones/auto_1536_s3/`, the
+cut of §93), the chunk slots (3) and the sounds' share of energy (98,
+§87.2). That rule is lifted for these tables alone; the paks, the
+BSPs, the textures and the renders stay out.
+
+- **`zones/`** holds two cuts of the analysis' export (`analysis/export.py`),
+  byte for byte its files: `auto_1536_s3`, the cut in use (the PVS need
+  within 1536 units + 32, a cap per level for three slots: 17 maps zoned),
+  and `auto_1536_s4` (the same for four slots: every map whole). One
+  `<map>.zones` text file a map, 32 a cut, 1.9 and 1.6 MB: numbers only
+  (each zone's records by their visibility ids and its bytes, each leaf's
+  zone and its three nearest by walking distance).
+- **The defaults** (scripts/cook.sh, after `local.env`; the command line's
+  value still wins over `local.env`'s):
+  - `Q1PSX_ZONE_TABLES`: `zones/auto_1536_s3`, a path from the repo's
+    root (an absolute one as before). `none` or an empty value cooks every
+    map whole, what an unset value did until now. A value that is not a
+    folder stops the cook; it used to cook every map whole without a word.
+  - `Q1PSX_ZONE_SLOTS`: 3, as before.
+  - `QCOOK_SOUND_KEEP`: 98, qcook's own default since §87.2 (the script's
+    header said 95). The script exports it, so `cooked/settings.txt`
+    records 98 whether it is set or not.
+  - CMake's check of the tables' cut against the draw distance (§95) reads
+    the same default, then `local.env`'s value (an empty one too), then the
+    configure's environment's.
+- **The re-cook tracking** is unchanged: `cooked/settings.txt` records the
+  tables' real path, a hash of their contents and the slots, and a build
+  cooks again when one of them changes. A checkout whose `local.env` named
+  the analysis' folder cooks once more on its next build, to the same
+  bytes. A CMake cache would keep an old default in an existing build
+  folder: the default is a plain variable, and the cook resolves the
+  settings itself at every build.
+- **Checked** (TESTING 11.97): master 8a169cc's cook with the old
+  `local.env` against a release build of the branch whose `local.env`
+  holds only the Quake paths. 308 of the 309 cooked files are byte for
+  byte the same; `settings.txt` differs in the tables' path alone. The
+  309th, `GAME_0.DAT`, differs from one cook to the next on any branch:
+  `tools/qcook/game.c` builds the finales' map names in `fin_block
+  blocks[16]` on the stack, uninitialised, and copies all twelve bytes of
+  each name into the file, the stack's leftovers after its NUL too (54
+  bytes in 7 records; four runs of one qcook gave four files). Those
+  bytes zeroed, the two cooks' files are the same. The engine reads the
+  names up to their NUL: the game is not affected. Overrides on the
+  command line reach the cook: `Q1PSX_ZONE_SLOTS=4` (1 map of 32 zoned
+  with the three-slot cut), `Q1PSX_ZONE_TABLES=zones/auto_1536_s4
+  Q1PSX_ZONE_SLOTS=4` (none, as that cut says), `none` (no tables in the
+  settings), a missing folder (the cook stops); a configure with
+  `Q1PSX_ZONE_TABLES=zones/pvs_1024_64` in its environment is refused at
+  the 1536 draw distance. A second build with nothing changed does not
+  cook; back to the defaults, the cook gives the default files again.
+- **Left:** `GAME_0.DAT`'s leftovers (`blocks` zeroed before use would
+  make the file the same from cook to cook). The other worktrees'
+  `local.env` files still name the analysis' folder, which wins over the
+  default until those lines go.
