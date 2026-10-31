@@ -15936,3 +15936,53 @@ Removed (2026-10-31), from the same list:
   C engine's: the same pixels. The release's level arena 1370768 → 1371072
   B (+304: `.text` −220, the data −76; the load overlay −124); the
   default preset builds.
+
+### 119.7 The quality levels' machinery, the stream cook's other levels
+
+Removed (2026-10-31): the four leftovers 119.6 listed:
+
+- **The quality levels** (§39; one of each on every disc since §52: the
+  textures high, the geometry and the models low). `formats/qlevels.h` is
+  gone, its axes and masks with it.
+  - The engine no longer reads a map's directory at boot to learn the
+    disc's levels (`world_level_mask`, `settings.level[]`,
+    `settings_level_mask`, `settings_level_step`, `world.level[]`,
+    `gdata.level`): `world_load`, `gdata_load`, `stream_init` and
+    `zone_map_start` open the files by their names, `<MAP>_T2.TX4`,
+    `<MAP>_G0.WLD`, `<MAP>_M0.MDL`, `<MAP>_Z2.ZON`, GAME_0.DAT,
+    STREAM_0.DAT, `<MAP>_S0.DAT`. The names keep their digits, so the
+    cooked files and the tools beside this repository that read them stay
+    as they are.
+  - The debug overlay's first line loses the levels (`T2 G0 M0`), the
+    bench's `bench map` line its `geometry low`.
+  - The formats lose two fields nothing read: GAME.DAT's model level and
+    its largest level's geometry (QGMA → QGMB), the chunk files' texture
+    level (QZN1 → QZN2).
+  - The cook: `qcook map` without `--textures` and `--models`; a texture
+    set built for its largest tile instead of a level (`TEX_MAX_FINE`
+    256, the layout the world is cut for; `TEX_MAX_DISC` 128, the
+    disc's), the dead low row with them; `qcook zones` maps one set
+    (`--tex4`, `--chunks` once); `qcook game` writes one file; the brush
+    models' light grid keeps its two numbers in `tools/qcook/world.c`
+    (`BM_LIGHT_GRID`, `BM_LIGHT_ERR`). `scripts/cook.sh` names its jobs
+    by what they make (`t`, `g`, `m`) and no longer looks for the cooks
+    before §52 (`_g2.wld`) to find the maps already cooked.
+- **The stream cook's other levels**: the medium and high model levels it
+  still built in memory (the low one took nothing from them: each level
+  was reduced from Quake's model, a body the same at every level), the
+  shared assets of the XA carousels (`qcook stream --pool`, QSX1,
+  `formats/qstream.h` `qst_shared` and its assembly) and the check of
+  each level against them.
+- **`.gitignore`**: the folders of the release-ultra and release-spu
+  presets.
+- **Checked** (TESTING 11.104): the cook's 261 files' md5 before and
+  after: GAME_0.DAT and the 17 zones' chunk files alone differ, every
+  section of GAME_0.DAT the same byte for byte (its size too: the header's
+  8 bytes go in the alignment before the pixels) and every chunk file past
+  its header; STREAM_0.DAT the same (the other levels gave the low one
+  nothing). Against 119.6's display lists: START's 12 views, the 128
+  spawn views, the game bench's 28 dumps (the menus' warp fixed for the
+  test) the same; the C engine's START frames 119.6's C engine's. The
+  boot reads one directory fewer. The release's level arena 1371072 →
+  1371872 B (+800: `.text` −704, the data −100; the load overlay −340);
+  the default preset builds.

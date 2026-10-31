@@ -307,11 +307,11 @@ else()
 endif()
 
 # The world's zones (docs/porting-notes.md §57): a map the cook split
-# (cooked/id1/<map>_g0.skl and <map>_z<N>.zon, scripts/cook.sh with the
+# (cooked/id1/<map>_g0.skl and <map>_z2.zon, scripts/cook.sh with the
 # zone tables: the repo's zones/auto_1536_s3 unless Q1PSX_ZONE_TABLES
 # names others, or none) goes on the disc as its skeleton
-# (<MAP>_G0.WLD) and its chunks at the build's texture level
-# (<MAP>_Z<N>.ZON); a map left whole, its whole world. The tables hold
+# (<MAP>_G0.WLD) and its chunks (<MAP>_Z2.ZON); a map left whole, its
+# whole world. The tables hold
 # every record the PSX may draw within the draw distance, 1536 units (+ a
 # margin).
 # The tables the cook reads (Q1PSX_ZONE_TABLES: the configure's
@@ -347,16 +347,15 @@ endif()
 option(Q1PSX_MUSIC "Put the cooked music on the disc" ON)
 set(_music_glob ${PROJECT_SOURCE_DIR}/cooked/spu/spu_*.dat)
 # Cooked assets (scripts/cook.sh -> cooked/, formats/qtex.h, qworld.h,
-# qgame.h, qlevels.h). Every cooked map ships as <MAP>_T<N>.TX4 (its 4-bit
-# textures at the build's level: 1 medium, 2 high), <MAP>_G0.WLD (its low
-# geometry), <MAP>_M0.MDL (its own models, low), its sound bank <MAP>.SND,
-# plus the game data GAME_0.DAT (the guns, the projectiles, the HUD). The
-# cook re-runs whenever the cooker or a format header changes, so the disc
-# never carries stale data; and when its settings do (local.env's or the
-# command line's: the zone tables and slots, the maps, the paks...): every
-# build first runs `scripts/cook.sh --stale`, which rewrites cook.settings
-# when they differ from the last cook's (cooked/settings.txt, shared with
-# the other build directories).
+# qgame.h). Every cooked map ships as <MAP>_T2.TX4 (its 4-bit textures),
+# <MAP>_G0.WLD (its world), <MAP>_M0.MDL (its own models), its sound bank
+# <MAP>.SND, plus the game data GAME_0.DAT (the guns, the projectiles, the
+# HUD). The cook re-runs whenever the cooker or a format header changes, so
+# the disc never carries stale data; and when its settings do (local.env's
+# or the command line's: the zone tables and slots, the maps, the paks...):
+# every build first runs `scripts/cook.sh --stale`, which rewrites
+# cook.settings when they differ from the last cook's (cooked/settings.txt,
+# shared with the other build directories).
 if(_pak0_path AND EXISTS "${_pak0_path}")
 	file(GLOB _qcook_deps CONFIGURE_DEPENDS
 		${PROJECT_SOURCE_DIR}/tools/qcook/*.c

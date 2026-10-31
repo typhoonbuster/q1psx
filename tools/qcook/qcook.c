@@ -2,21 +2,19 @@
  * q1psx — asset cooker (host tool).
  *
  *   qcook map   --pak <pak0.pak> --map maps/start.bsp
- *               [--textures high --tex4 <out.tx4>]
- *               [--world <out.wld>] [--sounds <out.snd>]
- *               [--models low --mdl <out.mdl>]    (tools/qcook/sound.c, items.c)
+ *               [--tex4 <out.tx4>] [--world <out.wld>] [--sounds <out.snd>]
+ *               [--mdl <out.mdl>]                 (tools/qcook/sound.c, items.c)
  *   qcook check <file.wld>
  *   qcook game  --pak <pak0.pak> --out <prefix>     (tools/qcook/game.c)
  *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
  *                                                     (tools/qcook/stream.c)
  *   qcook zones --world <map>_g0.wld --tables <map>.zones --skeleton <out.skl>
- *               [--resident n] [--tex4 <map>_t<N>.tx4 --chunks <out.zon>]...
+ *               [--resident n] --tex4 <map>_t2.tx4 --chunks <out.zon>
  *                                                     (tools/qcook/zones.c)
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
- * writes the files the engine loads for that map: a texture set per
- * texture level, a world per geometry level, the map's own models per
- * model level (formats/qlevels.h); any of them in one run.
+ * writes the files the engine loads for that map: its texture set, its
+ * world, its own models; any of them in one run.
  */
 
 #include <stdarg.h>
@@ -82,25 +80,6 @@ static int32_t  rd_i32(const uint8_t *p) { return (int32_t) rd_u32(p); }
 static uint16_t rd_u16(const uint8_t *p) { return (uint16_t) (p[0] | (p[1] << 8)); }
 static int16_t  rd_i16(const uint8_t *p) { return (int16_t) rd_u16(p); }
 static float    rd_f32(const uint8_t *p) { uint32_t u = rd_u32(p); float f; memcpy(&f, &u, 4); return f; }
-
-/* --------------------------------------------------------------- levels -- */
-
-const char *const level_name[QL_LEVELS] = { "low", "medium", "high", "ultra" };
-
-int level_find(const char *name, int mask, const char *axis)
-{
-	for (int i = 0; i < QL_LEVELS; i++)
-		if (!strcmp(level_name[i], name) && (mask & 1 << i))
-			return i;
-	die("no %s level '%s'", axis, name);
-}
-
-const tex_level_t tex_levels[QL_LEVELS] = {
-	/*              shift  max rep                                            */
-	[QL_LOW]   = {   2,      32 },   /* 1/4 res                               */
-	[QL_HIGH]  = {   0,     128 },   /* native (<= 128)                       */
-	[QL_ULTRA] = {   0,     256 },   /* native: the layout the world is cut for */
-};
 
 /* ------------------------------------------------------------------- pak -- */
 
@@ -340,8 +319,6 @@ static int cmd_map(int argc, char **argv)
 {
 	const char *pak_path = arg(argc, argv, "--pak", NULL);
 	const char *map      = arg(argc, argv, "--map", NULL);
-	const char *tex_name = arg(argc, argv, "--textures", "high");
-	const char *mdl_name = arg(argc, argv, "--models", "low");
 	const char *out_tex4 = arg(argc, argv, "--tex4", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
 	const char *out_mdl  = arg(argc, argv, "--mdl", NULL);
@@ -351,11 +328,8 @@ static int cmd_map(int argc, char **argv)
 	light_gain           = atof(arg(argc, argv, "--light-gain", "1.66"));
 	world_fmap           = arg(argc, argv, "--fmap", NULL);
 	if (!pak_path || !map || (!out_tex4 && !out_wld && !out_mdl))
-		die("usage: qcook map --pak <pak> --map <name> [--textures l --tex4 <out>]"
-		    " [--world <out>] [--models l --mdl <out>] [--palette-pak <pak0>]");
-
-	int tex_level = level_find(tex_name, QL_TEXTURE_MASK, "texture");
-	int mdl_level = level_find(mdl_name, QL_MODEL_MASK, "model");
+		die("usage: qcook map --pak <pak> --map <name> [--tex4 <out>] [--world <out>] [--mdl <out>]"
+		    " [--palette-pak <pak0>]");
 
 	long pak_len;
 	uint8_t *pak = read_file(pak_path, &pak_len);
@@ -376,25 +350,24 @@ static int cmd_map(int argc, char **argv)
 	printf("qcook: %s — %d nodes, %d leaves, %d faces, %d textures\n",
 	       map, bsp.num_nodes, bsp.num_leaves, bsp.models[0].numfaces, bsp.num_miptex);
 
-	/* the layout every level shares: the finest texture level's slots, the
-	   models' textures as they are, the animations kept. The world's faces
-	   are cut and the map's models mapped for it; a texture set maps it
-	   onto its own tiles (formats/qtex.h qtex_uvmap). */
+	/* the finest layout: the slots at Quake's own texels, the models'
+	   textures as they are, the animations kept. The world's faces are cut
+	   and the map's models mapped for it; the disc's set maps it onto its
+	   own tiles (formats/qtex.h qtex_uvmap). */
 	tex_set    canon, ts;
 	tex_extra *extra;
 	int        nextra;
 	items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, 0, &extra, &nextra);
-	tex_build(&canon, NULL, &bsp, extra, nextra, pal, QL_ULTRA, NULL, 1, 0);
+	tex_build(&canon, NULL, &bsp, extra, nextra, pal, TEX_MAX_FINE, NULL, 1, 0);
 
 	if (out_tex4) {
-		printf("qcook: textures at %s\n", level_name[tex_level]);
 		/* the pages full: the models' textures squeezed level by level,
 		   then the same without the textures' animation (their frames and
 		   display tiles: the faces show the chain's first frame) */
 		for (int attempt = 0; ; attempt++) {
 			int anims = attempt <= ITEMS_SQUEEZE_MAX, squeeze = anims ? attempt : attempt - ITEMS_SQUEEZE_MAX - 1;
 			items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, squeeze, &extra, &nextra);
-			if (tex_build(&ts, &canon, &bsp, extra, nextra, pal, tex_level, out_tex4, anims,
+			if (tex_build(&ts, &canon, &bsp, extra, nextra, pal, TEX_MAX_DISC, out_tex4, anims,
 			              attempt < 2 * ITEMS_SQUEEZE_MAX + 1))
 				break;
 			if (attempt == ITEMS_SQUEEZE_MAX)
@@ -404,9 +377,8 @@ static int cmd_map(int argc, char **argv)
 		}
 	}
 	if (out_mdl) {
-		printf("qcook: models at %s\n", level_name[mdl_level]);
 		items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, 0, &extra, &nextra);
-		items_cook(&canon, bsp.num_miptex, mdl_level);
+		items_cook(&canon, bsp.num_miptex);
 		items_write(out_mdl);
 	}
 	if (out_snd)
@@ -449,15 +421,13 @@ int main(int argc, char **argv)
 	fprintf(stderr,
 	        "usage:\n"
 	        "  qcook map --pak <pak> --map <maps/x.bsp> [--palette-pak <pak0>] [--light-gain g]\n"
-	        "            [--textures high --tex4 <out.tx4>]\n"
-	        "            [--world <out.wld>] [--sounds <out.snd>]\n"
-	        "            [--models low|medium|high --mdl <out.mdl>]\n"
+	        "            [--tex4 <out.tx4>] [--world <out.wld>] [--sounds <out.snd>] [--mdl <out.mdl>]\n"
 	        "  qcook check <file.wld>\n"
-	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n"
-	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
+	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_0.dat)\n"
+	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <prefix>   (<prefix>_0.dat)\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
 	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n"
 	        "  qcook zones --world <wld> --tables <map.zones> --skeleton <out.skl> [--resident n]\n"
-	        "              [--tex4 <tx4> --chunks <out.zon>]...\n");
+	        "              --tex4 <tx4> --chunks <out.zon>\n");
 	return 2;
 }

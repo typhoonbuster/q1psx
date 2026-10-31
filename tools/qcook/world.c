@@ -573,8 +573,19 @@ static uint8_t face_light_at(const facelight *fl, double s, double t)
 	return (uint8_t) (l > 255 ? 255 : l);
 }
 
+/* The brush models' faces: a door's or a bridge's face is one big polygon
+   whose corner may sit in a shadow of Quake's lightmap (E1M1's bridge: a
+   64-texel shadow at one corner), which four corner lights would spread
+   over half of it; a 128-texel cell keeps it to a quarter (64: to the
+   cell, at twice the records). Only the faces whose corner lights miss
+   their lightmap (BM_LIGHT_ERR) are cut (docs/porting-notes.md §96: 1-3 KB
+   a map of records and arena). */
+#define BM_LIGHT_GRID 128
+#define BM_LIGHT_ERR  56   /* the face is cut when its corner lights' Gouraud misses a
+                              luxel of its lightmap by more than this (0..255, after the gain) */
+
 /* A brush model's face whose four corner lights, spread by the GPU's
-   Gouraud, would miss its lightmap by more than QL_BM_LIGHT_ERR at some
+   Gouraud, would miss its lightmap by more than BM_LIGHT_ERR at some
    luxel (a shadow at a corner, a light in the middle): cut on the light
    grid (docs/porting-notes.md §96). The Gouraud is taken as the bilinear
    of the samples at the face's (s, t) extents, over every luxel of its
@@ -594,7 +605,7 @@ static int bm_face_needs_grid(const bsp_t *b, int f, const poly_t *pl, double sm
 				continue;
 			double fs = (sl - smin) / (smax - smin), ft = (tl - tmin) / (tmax - tmin);
 			double est = (c00 * (1 - fs) + c10 * fs) * (1 - ft) + (c01 * (1 - fs) + c11 * fs) * ft;
-			if (fabs(est - face_light_at(&fl, sl, tl)) > QL_BM_LIGHT_ERR)
+			if (fabs(est - face_light_at(&fl, sl, tl)) > BM_LIGHT_ERR)
 				return 1;
 		}
 	return 0;
@@ -750,7 +761,7 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 	   coordinate keeps the texture's phase; the face's own origin, so it
 	   is cut as little as possible. Another axis: the VRAM tile (one
 	   repetition) on the global grid. A brush model's face whose corner
-	   lights miss its lightmap (§96) is cut again every QL_BM_LIGHT_GRID
+	   lights miss its lightmap (§96) is cut again every BM_LIGHT_GRID
 	   texels from the cell's corner (luxel boundaries: a texture's size is
 	   a multiple of 16), the UVs still from the cell's corner, so the
 	   vertex light follows the lightmap closer.
@@ -778,8 +789,8 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 			/* the light grid's lines inside the cell (none: the cell whole) */
 			double cs0 = s0 + i * W, cs1 = cs0 + W, ct0 = t0 + j * H, ct1 = ct0 + H;
 			double gs0 = cs0, gs1 = cs1, gt0 = ct0, gt1 = ct1;
-			double G = face_model[f] && bm_grid ? QL_BM_LIGHT_GRID : 0;   /* (a brush model's face the
-			                                                                 vertex lights misrepresent) */
+			double G = face_model[f] && bm_grid ? BM_LIGHT_GRID : 0;   /* (a brush model's face the
+			                                                              vertex lights misrepresent) */
 			if (G > 0) {                 /* (the cell's sub-cells the face reaches) */
 				gs0 = cs0 + floor(((smin > cs0 ? smin : cs0) - cs0) / G) * G;
 				gt0 = ct0 + floor(((tmin > ct0 ? tmin : ct0) - ct0) / G) * G;
@@ -2845,7 +2856,7 @@ void world_build(const bsp_t *b, const tex_set *ts, const char *out_path)
 		       "%u slivers left out\n", mg_pieces, mg_into, mg_dropped, mg_dead);
 	}
 	if (bm_grid_faces)
-		printf("qcook:   brush models' light grid: %d faces cut every %d texels\n", bm_grid_faces, QL_BM_LIGHT_GRID);
+		printf("qcook:   brush models' light grid: %d faces cut every %d texels\n", bm_grid_faces, BM_LIGHT_GRID);
 	if (has_spawn)
 		printf("qcook:   spawn %d %d %d yaw %d\n", h.spawn[0], h.spawn[1], h.spawn[2], h.spawn_yaw);
 	{

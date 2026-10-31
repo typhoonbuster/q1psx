@@ -101,7 +101,7 @@ static asset_t *assets;
 static int      num_assets;
 static int32_t  base_lba;      /* the assets' file's first sector: the level's
                                   (stream_level), else the pool's                */
-static int32_t  pool_lba;      /* STREAM_<n>.DAT's                               */
+static int32_t  pool_lba;      /* STREAM_0.DAT's                                 */
 static uint32_t *pool_sector;  /* [num_assets]: each asset's sector in the pool  */
 
 /* The level's RAM-resident sounds (docs/porting-notes.md §86): the level's
@@ -188,15 +188,10 @@ static int read_sectors(int32_t lba, int n, void *dst, int who, int tag)
 	return cd_read_now(lba, (uint32_t) n, dst, who, tag);
 }
 
-static int stream_level_n = -1;   /* the model level whose STREAM_<n>.DAT is read */
-
-/* STREAM_<level>.DAT's directory into assets[] (allocated at the first:
-   every level's file holds the same assets in the same order, its models
-   reduced at that level, the same sounds), through the level arena's top */
-static int load_directory(int level)
+/* STREAM_0.DAT's directory into assets[], through the level arena's top */
+static int load_directory(void)
 {
-	char name[24];
-	q_snprintf(name, sizeof name, "\\STREAM_%d.DAT;1", level);
+	static const char name[] = "\\STREAM_0.DAT;1";
 	uint32_t lba;
 	if (!cd_find(name, &lba, NULL)) {
 		printf("stream: no %s on the disc\n", name);
@@ -253,7 +248,6 @@ static int load_directory(int level)
 		pool_sector = mem_game_alloc(n * sizeof *pool_sector);
 	for (uint32_t i = 0; i < n; i++)
 		pool_sector[i] = assets[i].d.sector;
-	stream_level_n = level;
 	printf("stream: %s, %d assets from sector %d\n", name, num_assets, (int) base_lba);
 	return 1;
 }
@@ -273,7 +267,7 @@ Q_COLD void stream_level(const char *map)
 	ram_first = ram_sectors = 0;
 	ram_sounds = 0;
 	char name[32];
-	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_S%d.DAT;1", map, map, stream_level_n);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_S0.DAT;1", map, map);
 	uint32_t lba, mark = mem_level_mark();
 	qst_header *h = num_assets && cd_find(name, &lba, NULL) ? mem_level_alloc(2 * QST_SECTOR) : 0;
 	if (!h) {
@@ -379,12 +373,12 @@ uint32_t stream_kept(int a)
 }
 #endif
 
-Q_COLD void stream_init(int level)
+Q_COLD void stream_init(void)
 {
 	num_assets = 0;
 	for (int i = 0; i < MAX_RES; i++)
 		res[i].asset = -1;
-	load_directory(level);
+	load_directory();
 #ifdef Q1PSX_BENCH
 	bench_scan();
 #endif

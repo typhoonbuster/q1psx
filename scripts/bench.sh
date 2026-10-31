@@ -6,7 +6,7 @@
 # Usage:  [T=px] [VIEWS=0|1] [BENCH_MAPS=0|1] [BENCH_GAME=0|1] [PROFILE=0|1]
 #         scripts/bench.sh [max-seconds]
 #         Every disc alike: the 4-bit textures high, the geometry and the
-#         models low (formats/qlevels.h; docs/porting-notes.md §52, §119).
+#         models low (docs/porting-notes.md §52, §119).
 #         T is the affine-warp threshold, fixed (default 4 px: the game's
 #         dynamic control's floor).
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the

@@ -19,14 +19,10 @@
 
 #include <stdint.h>
 
-#include "qlevels.h"
-
 #define SETTINGS_WARP_FLOOR 4    /* px: the dynamic warp control's least threshold at the
                                     default anti-warping (the bench's T) */
 
 typedef struct {
-	int level[QL_AXES];   /* the disc's textures, geometry and models (one
-	                         level each: the build's) */
 	int hud;         /* HUD_*                                                */
 	int dlights;     /* the dynamic lights                                   */
 	int volume;      /* the sound effects', tenths (Quake's volume 0.7)      */
@@ -46,12 +42,8 @@ extern const int num_fps_caps;
 extern const uint8_t tick_rates[];
 extern const int num_tick_rates;
 
-/* each axis's levels the disc carries (bit n: level n; world_level_mask) */
-extern int settings_level_mask[QL_AXES];
-
 void settings_defaults(void);
 void settings_apply(void);
-int  settings_level_step(int axis, int level, int d);   /* the next level the disc has */
 
 /* The rows both menus show (engine/menu.c's Graphics page, the debug map
    menu), in their order: */

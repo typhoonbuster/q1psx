@@ -33,8 +33,6 @@ rogue/
 /build-bench-c/
 /build-c/
 /build-release-c/
-/build-release-ultra/
-/build-release-spu/
 *.o
 *.a
 *.elf

@@ -1,10 +1,10 @@
 /*
- * qcook — textures: one tile per used miptex (one texture repetition at the
- * level's resolution), packed into whole texture pages, each power-of-two
+ * qcook — textures: one tile per used miptex (one texture repetition, no
+ * side over 128 texels), packed into whole texture pages, each power-of-two
  * axis aligned for the GPU texture window, a one-texel gutter past each
  * other axis, written in 4bpp, each texture quantized to its own 16 colours,
  * as a QTX7 file (formats/qtex.h) with the map's texture table: the slots'
- * words, how the world's UVs (cooked for the finest level's layout) land on
+ * words, how the world's UVs (cooked for the finest layout) land on
  * this set's tiles, the animated textures' tiles.
  */
 
@@ -290,7 +290,7 @@ static void quantize16(const uint32_t hist[256], const uint8_t pal[768],
 typedef struct { uint16_t clut, tpage; } tex_words;
 
 /* The slot of `ts` that draws slot i of the layout `canon`: itself, or, for
-   an animation's display slot at a level that left the animation out, the
+   an animation's display slot in a set that left the animation out, the
    chain's first frame (the display tile is cut from it); -1 if none. */
 static int draw_slot(const tex_set *ts, const tex_set *canon, int i)
 {
@@ -492,10 +492,9 @@ static void write_tex4(const tex_set *ts, const tex_set *canon, const bsp_t *b, 
 /* ------------------------------------------------------------- build -- */
 
 int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra *extra,
-              int nextra, const uint8_t palette[768], int level, const char *out4_path, int anims,
+              int nextra, const uint8_t palette[768], int tex_max, const char *out4_path, int anims,
               int may_fail)
 {
-	const tex_level_t *lv = &tex_levels[level];
 	memset(ts, 0, sizeof *ts);
 
 	/* which miptex do the drawn models' faces use? (the world's and the
@@ -579,7 +578,7 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		for (int k = 0; k < a->nframes; k++) { used[a->frames[k]] = 1; ts->remap[a->frames[k]] = a->display; }
 		for (int k = 0; k < a->nalt; k++)    { used[a->alt[k]] = 1;    ts->remap[a->alt[k]] = a->display; }
 	}
-	/* a level that leaves the animations out still draws the chains' first
+	/* a set that leaves the animations out still draws the chains' first
 	   frames: the stand-ins for their display slots (draw_slot) */
 	for (int c = 0; canon && !anims && c < canon->num_anims; c++)
 		used[canon->anims[c].src] = 1;
@@ -598,7 +597,7 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		for (int k = 0; k < a->nalt; k++)    animated[a->alt[k]] = 1;
 	}
 
-	/* tile size per texture: one repetition at the level's resolution */
+	/* tile size per texture: one repetition, halved until it fits */
 	pack_item *items = xcalloc((size_t) total + 1, sizeof *items);
 	int nitems = 0;
 	for (int i = 0; i < total; i++) {
@@ -625,9 +624,9 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 			continue;
 		}
 
-		int shift = lv->tex_shift + (x ? x->shift : 0);
+		int shift = x ? x->shift : 0;
 		int w = m->w >> shift, h = m->h >> shift;
-		while (w > lv->tex_max || h > lv->tex_max) {
+		while (w > tex_max || h > tex_max) {
 			w >>= 1;
 			h >>= 1;
 		}
@@ -701,15 +700,15 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 				extras += ar;
 		}
 		if (may_fail) {
-			printf("qcook: %ld K texels (%ld K the models') overflow %d pages at %s\n",
-			       need / 1024, extras / 1024, QTEX_MAP_PAGES, level_name[level]);
+			printf("qcook: %ld K texels (%ld K the models') overflow %d pages\n",
+			       need / 1024, extras / 1024, QTEX_MAP_PAGES);
 			free(best_at);
 			free(items);
 			free(used);
 			return 0;
 		}
-		die("textures do not fit in %d VRAM pages at %s (%ld K texels, %ld K of them the models', "
-		    "%d tiles)", QTEX_MAP_PAGES, level_name[level], need / 1024, extras / 1024, nitems);
+		die("textures do not fit in %d VRAM pages (%ld K texels, %ld K of them the models', "
+		    "%d tiles)", QTEX_MAP_PAGES, need / 1024, extras / 1024, nitems);
 	}
 
 	uint8_t *pages = xcalloc(QTEX_PAGES, PAGE_TEX * PAGE_TEX);

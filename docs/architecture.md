@@ -187,11 +187,11 @@ The cook keeps every face record within `QW_MAX_VERTS` (42) vertices and
 
 ## 6. World format (cooked by `qcook`)
 
-One file per map and geometry level (`<MAP>_G<n>.WLD`; the quality levels:
-`formats/qlevels.h`, `docs/porting-notes.md` §39). The texture set comes per
-texture level (`<MAP>_T<n>.TEX`, §7) and the map's own models per model level
-(`<MAP>_M<n>.MDL`), so any texture level goes with any geometry level. Every
-section is 4-byte aligned and laid out in the order the walker reads it.
+One file per map (`<MAP>_G0.WLD`; the quality levels of `docs/porting-notes.md`
+§39, gone since §119, left their digits in the disc's names). The texture set
+(`<MAP>_T2.TX4`, §7) and the map's own models (`<MAP>_M0.MDL`) come beside
+it. Every section is 4-byte aligned and laid out in the order the walker
+reads it.
 
 - **Nodes** (32 B each): plane (`int16 n[3]`, `uint8 type`, `int32 dist`),
   `int16 child[2]`, `int16 bbox[6]`, and offsets to the node's **two face
@@ -232,17 +232,18 @@ section is 4-byte aligned and laid out in the order the walker reads it.
 - **Cook-time polygon splitting**: every Quake face is cut
   1. along its **texture-repeat boundaries**, so each piece's UVs sit inside a
      single texture tile (a power-of-two axis wraps in the texture window:
-     cut every 256 texels), at the **finest texture level's** sizes, so the
-     pieces fit every texture level and the world file is shared by all of
-     them;
-  2. at the ultra geometry level, again every 128 texels from the cell's
-     corner (`QL_LIGHT_GRID`), so the vertex light follows the lightmap
-     closer (+37 % polygons on start).
+     cut every 256 texels), at the **finest layout's** sizes (Quake's own
+     texels);
+  2. a brush model's face whose corner lights miss its lightmap, again every
+     128 texels from the cell's corner (`tools/qcook/world.c`
+     `BM_LIGHT_GRID`, porting-notes §96), so the vertex light follows the
+     lightmap closer (until §119 the ultra geometry level cut every face so,
+     +37 % polygons on start).
 
-  The UVs on the disc are the finest level's, tile-relative; the loader maps
-  them once onto the loaded set's tiles (`qtex_uvmap`: an offset and a
-  scale per texture slot). The low geometry level leaves the T-junctions
-  unrepaired (-2.3 % polygons, cracks possible). The affine warp itself is
+  The UVs on the disc are the finest layout's, tile-relative; the loader
+  maps them once onto the texture set's tiles (`qtex_uvmap`: an offset and
+  a scale per texture slot). The T-junctions are left unrepaired (-2.3 %
+  polygons, cracks possible). The affine warp itself is
   the renderer's subdivision threshold (a menu setting, §8).
 - **Zoned worlds** (porting-notes §57): with the level-chunks analysis'
   tables, `qcook zones` splits a map's world into its skeleton ("QWZF",

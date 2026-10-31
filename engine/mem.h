@@ -48,7 +48,7 @@
                                           whose code leaves more than the release's) */
 #endif
 #define MEM_LEVEL_WORLD (1136 * 1024)  /* the room a map's world may take while it
-                                          loads (below it, a lower geometry level):
+                                          loads (past it, the map fails to load):
                                           the arena's size before §45, so the room
                                           the game arena gave goes to what follows
                                           the world (the stream's pool), not to a

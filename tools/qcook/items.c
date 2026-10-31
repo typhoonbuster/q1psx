@@ -1,6 +1,6 @@
 /*
- * q1psx — `qcook map --models`: the map's own models (formats/qgame.h
- * qw_model, QIM_*), one file per model level: the BSP item boxes its
+ * q1psx — `qcook map --mdl`: the map's own models (formats/qgame.h
+ * qw_model, QIM_*): the BSP item boxes its
  * entities spawn with (items.qc's setmodel: health, ammo; misc.qc's
  * explosive boxes, maps/b_*.bsp), cut into records over their own textures
  * (tex_build's extras, tiling like the world's). Their UVs are the
@@ -416,7 +416,7 @@ static void cook_box(int q, const tex_set *ts, int first_extra, qw_model *out)
 	m->flags  = QGF_MAP | QGF_FLAT;       /* (its texture words: the loader's, from the set) */
 }
 
-void items_cook(const tex_set *ts, int first_extra, int model_level)
+void items_cook(const tex_set *ts, int first_extra)
 {
 	geo.len = table.len = 0;
 	nmodels = 0;
@@ -434,7 +434,7 @@ void items_cook(const tex_set *ts, int first_extra, int model_level)
 			if (!s->present)
 				continue;
 			buf_align4(&geo);
-			qc_mdl_cook(mdls[q], model_level, &geo, &out.m);
+			qc_mdl_cook(mdls[q], &geo, &out.m);
 			out.num_tex = 1;
 			out.tex[0]  = (uint16_t) (first_extra + extra_of[q]);
 			out.m.flags |= QGF_MAP;

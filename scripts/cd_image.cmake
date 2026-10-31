@@ -14,7 +14,7 @@
 # sweep of the head and every read in play a hop within the level's
 # section: its sound bank, its 4-bit textures, its
 # world (a map the cook split takes its skeleton as
-# <MAP>_G0.WLD and its chunks as <MAP>_Z<N>.ZON, §57), its own models, its
+# <MAP>_G0.WLD and its chunks as <MAP>_Z2.ZON, §57), its own models, its
 # own file of the streamed assets (<MAP>_S0.DAT), and with MUSIC its copy
 # of its CD track (SPU_<nn>.DAT: tracks 4 to 11 go with the maps that play
 # them; tracks 2 and 3, the title's and the intermission's, once in
@@ -23,7 +23,6 @@
 # with SYSTEM.CNF and the executable in it. iso.xml's slots: @ROOT_ENTRIES@,
 # @LEVEL_DIRS@ (inside <dir name="LVL">), @MUSIC_ENTRIES@, @PAK0_ENTRY@.
 
-set(_tex_level 2)                        # (the textures high: formats/qlevels.h)
 set(_cooked_dir ${ROOT}/cooked)
 
 set(ROOT_ENTRIES "")
@@ -77,14 +76,14 @@ foreach(_map ${_maps})
 	# in the load's order: the load's code, the bank, the textures, the world, the models
 	string(APPEND _entries "<file name=\"LOAD.BIN\" type=\"data\" source=\"load.bin\" />\n\t\t\t\t")
 	string(APPEND _entries "<file name=\"${_MAP}.SND\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}.snd\" />\n\t\t\t\t")
-	if(EXISTS ${_cooked_dir}/id1/${_map}_t${_tex_level}.tx4)
-		string(APPEND _entries "<file name=\"${_MAP}_T${_tex_level}.TX4\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_t${_tex_level}.tx4\" />\n\t\t\t\t")
+	if(EXISTS ${_cooked_dir}/id1/${_map}_t2.tx4)
+		string(APPEND _entries "<file name=\"${_MAP}_T2.TX4\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_t2.tx4\" />\n\t\t\t\t")
 	endif()
 	set(_wld ${_cooked_dir}/id1/${_map}_g0.wld)
 	set(_zon "")
-	if(EXISTS ${_cooked_dir}/id1/${_map}_g0.skl AND EXISTS ${_cooked_dir}/id1/${_map}_z${_tex_level}.zon)
+	if(EXISTS ${_cooked_dir}/id1/${_map}_g0.skl AND EXISTS ${_cooked_dir}/id1/${_map}_z2.zon)
 		set(_wld ${_cooked_dir}/id1/${_map}_g0.skl)         # the skeleton, and its chunks
-		set(_zon ${_cooked_dir}/id1/${_map}_z${_tex_level}.zon)
+		set(_zon ${_cooked_dir}/id1/${_map}_z2.zon)
 		math(EXPR _nzoned "${_nzoned} + 1")
 	endif()
 	if(EXISTS ${_wld})
@@ -96,7 +95,7 @@ foreach(_map ${_maps})
 	# what the game reads in play, right before the track: the chunks, the
 	# level's streamed assets
 	if(_zon)
-		string(APPEND _entries "<file name=\"${_MAP}_Z${_tex_level}.ZON\" type=\"data\" source=\"${_zon}\" />\n\t\t\t\t")
+		string(APPEND _entries "<file name=\"${_MAP}_Z2.ZON\" type=\"data\" source=\"${_zon}\" />\n\t\t\t\t")
 	endif()
 	if(EXISTS ${_cooked_dir}/id1/${_map}_s0.dat)
 		string(APPEND _entries "<file name=\"${_MAP}_S0.DAT\" type=\"data\" source=\"${_cooked_dir}/id1/${_map}_s0.dat\" />\n\t\t\t\t")

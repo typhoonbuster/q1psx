@@ -2614,3 +2614,14 @@ followed by R0-R4.
   GAME_0.DAT is 89 KB smaller and its images packed anew: the display
   lists' texture words move, the pictures are the same pixels; the
   release's level arena +304 B.
+- **The quality levels' machinery removed** (§119.7, provisional number,
+  2026-10-31). With one
+  level of each on every disc, the levels go: `formats/qlevels.h`, the
+  engine's look at a map's files at boot and its level settings (the
+  files opened by their names, which keep their digits), the cook's
+  `--textures` and `--models`, two words nothing read in GAME.DAT (QGMB)
+  and in the zones' chunk files (QZN2). The stream cook no longer builds
+  the medium and high models nor the XA carousels' shared assets; two
+  dead `.gitignore` lines go too. The cooked files are the same but
+  those two headers; the display lists are the same; the release's level
+  arena +800 B.

@@ -13,8 +13,6 @@
 
 world_t world;
 
-const char *const level_name[QL_LEVELS] = { "low", "medium", "high", "ultra" };
-
 /* Every Quake map, in play order; the disc carries some of them
    (scripts/cook.sh: episode 1 by default, all with COOK_MAPS=all). */
 static const char *const quake_maps[] = {
@@ -29,7 +27,6 @@ static const char *disc_maps[NUM_QUAKE_MAPS];
 static int         num_disc_maps;
 
 static uint8_t map_on_disc[NUM_QUAKE_MAPS];
-static int     level_mask[QL_AXES];   /* the levels the disc's maps come in, per axis */
 
 /* cd_list_dirs's call on \LVL: a directory named as a map holds that map
    (its section: docs/porting-notes.md §84) */
@@ -40,47 +37,14 @@ static void note_map_dir(const char *name)
 			map_on_disc[i] = 1;
 }
 
-/* cd_list_dir's call on one map's directory: a "<MAP>_T<N>.TX4", a
-   "<MAP>_G<N>.WLD" and a "<MAP>_M<N>.MDL" add texture, geometry and model
-   level N (a disc carries one of each: the build's, docs/porting-notes.md
-   §52, the same for every map) */
-static void note_map_file(const char *name, uint32_t lba, uint32_t size)
-{
-	(void) lba;
-	(void) size;
-	const char *s = name;
-	while (*s && *s != '_') s++;
-	if (s[0] != '_' || s[2] < '0' || s[2] >= '0' + QL_LEVELS || s[3] != '.')
-		return;
-	int axis = !strncmp(s + 1, "T", 1) && !strncmp(s + 3, ".TX4", 4) ? QL_TEXTURES
-	         : !strncmp(s + 1, "G", 1) && !strncmp(s + 3, ".WLD", 4) ? QL_GEOMETRY
-	         : !strncmp(s + 1, "M", 1) && !strncmp(s + 3, ".MDL", 4) ? QL_MODELS : -1;
-	if (axis >= 0)
-		level_mask[axis] |= 1 << (s[2] - '0');
-}
-
-int world_level_mask(int axis)
-{
-	static const int all[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK };
-	if (axis < 0 || axis >= QL_AXES)
-		return 0;
-	return level_mask[axis] ? level_mask[axis] : all[axis];
-}
-
 Q_COLD int world_scan_maps(void)
 {
 	num_disc_maps = 0;
-	memset(level_mask, 0, sizeof level_mask);
 	memset(map_on_disc, 0, sizeof map_on_disc);
 	cd_list_dirs("\\LVL", note_map_dir);          /* (one directory read) */
 	for (int i = 0; i < NUM_QUAKE_MAPS; i++)
 		if (map_on_disc[i])
 			disc_maps[num_disc_maps++] = quake_maps[i];
-	if (num_disc_maps) {                          /* the levels the disc carries: one map's files */
-		char path[16];
-		q_snprintf(path, sizeof path, "\\LVL\\%s", disc_maps[0]);
-		cd_list_dir(path, note_map_file);         /* (one directory read) */
-	}
 	printf("world: %d maps on the disc\n", num_disc_maps);
 	return num_disc_maps;
 }
@@ -329,7 +293,7 @@ static int load_models(const char *name)
 
 #define REL(base, ofs) ((uint32_t) (base) + (ofs))
 
-Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn progress)
+Q_COLD int world_load(int map, world_progress_fn progress)
 {
 	zone_abort();                        /* (a chunk read stopped before the arena goes) */
 	mem_level_reset();
@@ -341,9 +305,9 @@ Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn p
 
 	char name[32], tex_name[32], mdl_name[32];
 	uint32_t tex_size = 0, wld_size = 0, mdl_size = 0;
-	q_snprintf(tex_name, sizeof tex_name, "\\LVL\\%s\\%s_T%d.TX4;1", disc_maps[map], disc_maps[map], tex);
-	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_G%d.WLD;1", disc_maps[map], disc_maps[map], geo);
-	q_snprintf(mdl_name, sizeof mdl_name, "\\LVL\\%s\\%s_M%d.MDL;1", disc_maps[map], disc_maps[map], models);
+	q_snprintf(tex_name, sizeof tex_name, "\\LVL\\%s\\%s_T2.TX4;1", disc_maps[map], disc_maps[map]);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_G0.WLD;1", disc_maps[map], disc_maps[map]);
+	q_snprintf(mdl_name, sizeof mdl_name, "\\LVL\\%s\\%s_M0.MDL;1", disc_maps[map], disc_maps[map]);
 	load_progress = progress;
 	if (progress) {
 		cd_exists(tex_name, &tex_size);
@@ -485,11 +449,8 @@ Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn p
 	/* a zoned world (formats/qworld.h "zones"): the skeleton read, its
 	   world blocks empty until zone_preload makes a chunk current; the
 	   slots last, under the world's cap */
-	if (zoned && !zone_map_start(f, disc_maps[map], tex))
+	if (zoned && !zone_map_start(f, disc_maps[map]))
 		return 0;
-	world.level[QL_TEXTURES] = (int8_t) tex;
-	world.level[QL_GEOMETRY] = (int8_t) geo;
-	world.level[QL_MODELS]   = (int8_t) models;
 
 	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, %u brush models, "
 	       "%u entities, %u models, arena %u KB\n",

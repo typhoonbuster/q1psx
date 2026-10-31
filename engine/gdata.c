@@ -6,7 +6,6 @@
 #include "cd.h"
 #include "gamma.h"
 #include "gdata.h"
-#include "q_fmt.h"
 #include "world.h"
 #include "mem.h"
 #include "qtex.h"
@@ -15,11 +14,10 @@ gdata_t gdata;
 qw_vert *gd_view_pool;
 
 
-/* GAME_<level>.DAT into the level arena (a staging area), checked */
-static const uint8_t *gdata_file(int level, uint32_t *size)
+/* GAME_0.DAT into the level arena (a staging area), checked */
+static const uint8_t *gdata_file(uint32_t *size)
 {
-	char name[20];
-	q_snprintf(name, sizeof name, "\\GAME_%d.DAT;1", level);
+	static const char name[] = "\\GAME_0.DAT;1";
 	const uint8_t *f = cd_load(name, size, NULL);
 	const qg_header *h = (const qg_header *) f;
 	if (!f || *size < sizeof(qg_header) || memcmp(f, QGAME_MAGIC, 4)) {
@@ -34,11 +32,11 @@ static const uint8_t *gdata_file(int level, uint32_t *size)
 	return f;
 }
 
-Q_COLD int gdata_load(int level)
+Q_COLD int gdata_load(void)
 {
 	uint32_t mark = mem_level_mark(), size;
 	memset(&gdata, 0, sizeof gdata);
-	const uint8_t *f = gdata_file(level, &size);
+	const uint8_t *f = gdata_file(&size);
 	if (!f) {
 		mem_level_release(mark);
 		return 0;
@@ -91,7 +89,6 @@ Q_COLD int gdata_load(int level)
 	}
 	gdata.geo   = g;
 	gdata.clut  = h->clut;
-	gdata.level = level;
 	gdata.ok    = 1;
 	mem_level_release(mark);
 	printf("gdata: %u models, %u pictures, %u VRAM rects, %u B of geometry -> game arena %u KB\n",

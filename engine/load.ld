@@ -36,7 +36,6 @@
 	*libpsxgte_exe_gprel.a:(.text.InitGeom)
 	*/music.c.obj(.text.music_level)
 	*/bmfrag.c.obj(.text.model_nodes)
-	*/world.c.obj(.text.world_level_mask)
 	*/mdl.c.obj(.text.mdl_reset)
 	*/ai.c.obj(.text.ai_map_start)
 	*/game.c.obj(.text.unlikely.game_init)

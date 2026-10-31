@@ -1,6 +1,6 @@
 /*
- * qcook — an alias model's triangles reduced for a model level below high
- * (formats/qlevels.h).
+ * qcook — an alias model's triangles reduced (tools/qcook/game.c: the
+ * map's own models, the streamed ones).
  *
  * Half-edge collapses: a vertex u goes onto a neighbour v, the triangles on
  * the edge vanish and u's other triangles take v. No vertex moves, so every

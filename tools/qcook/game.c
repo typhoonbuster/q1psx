@@ -1,9 +1,8 @@
 /*
  * qcook — game data: the models, sprites and HUD pictures the engine needs
- * on every map, cooked from the pak into one QGM7 file per model level
- * (formats/qgame.h, formats/qlevels.h).
+ * on every map, cooked from the pak into GAME_0.DAT (formats/qgame.h).
  *
- *   qcook game --pak <pak0.pak> --out <prefix>      (<prefix>_<level>.dat)
+ *   qcook game --pak <pak0.pak> --out <prefix>      (<prefix>_0.dat)
  *
  * Models (Quake MDL): the triangles are cut into face records exactly like
  * the world's (formats/qworld.h), so the renderer draws them with its own
@@ -763,8 +762,8 @@ static int by_dist(const void *a, const void *b)
 	return x->d < y->d ? -1 : x->d > y->d;
 }
 
-/* The low model level's triangles (formats/qlevels.h, the one level since
-   §52): up to half of those kept go (decim.c), as long as no surface or
+/* A map model's triangles (the low model level's of §39, the one level
+   since §52): up to half of those kept go (decim.c), as long as no surface or
    texture moves more than 3 units: 4 px at 128 units. The view models stay
    Quake's: seen from the eye, they lose nothing at an error of 2 to 4 px on
    the screen, and at 12 px, for 1 to 3 % of a frame, their outline broke
@@ -2085,7 +2084,7 @@ static int view_repaint(model_src *ms, const mdl_t *m, double wind, const int *e
 	return changed;
 }
 
-static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
+static void cook_mdl(model_src *ms, gbuf *geo, qg_model *out)
 {
 	const model_spec *sp = ms->sp;
 	mdl_t *m = &ms->mdl;
@@ -2107,7 +2106,7 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 	uint8_t *keep = xmalloc((size_t) m->ntris + 1);
 	memset(keep, 1, (size_t) m->ntris + 1);
 
-	/* the model level: the triangles kept, reduced (they all stay) */
+	/* the triangles kept, reduced (they all stay) */
 	mdl_t reduced;
 	int (*reduced_tris)[4] = reduce_mdl(m, sp, keep, &reduced);
 	if (reduced_tris) {
@@ -2297,7 +2296,7 @@ static void cook_mdl(model_src *ms, int model_level, gbuf *geo, qg_model *out)
 	       sp->file, m->nframes, full_tris, dropped_near, dropped_back, dropped_hidden, m->ntris, nrec, nslots,
 	       m->nverts, im->w, im->h, (unsigned) (geo->len - rec_start));
 	if (reduced_tris)
-		printf("; %s: %d of %d tris", level_name[model_level], decim_left, decim_tris);
+		printf("; reduced: %d of %d tris", decim_left, decim_tris);
 	if (sp->view)
 		printf("; order: %d cycles broken (%.0f px2 of overlap out of order), %d texels repainted",
 		       order_cycles, order_left, repainted);
@@ -2803,14 +2802,14 @@ int qc_mdl_flags(const qc_mdl *q)
 
 const int qc_mdl_border = GP_BORDER;
 
-void qc_mdl_cook(qc_mdl *q, int model_level, buf_t *geo, void *qg_model_out)
+void qc_mdl_cook(qc_mdl *q, buf_t *geo, void *qg_model_out)
 {
 	qg_model *out = qg_model_out;
 	image *im = q->src.im;
 	im->u    = 0;                /* the layout's UVs: from the skin's corner */
 	im->v    = 0;
 	im->page = 0;
-	cook_mdl(&q->src, model_level, (gbuf *) geo, out);
+	cook_mdl(&q->src, (gbuf *) geo, out);
 }
 
 /* ------------------------------------------------- the compact format -- */
@@ -2866,31 +2865,21 @@ static void cut_image(const image *im, int x0, int x1, buf_t *pix, uint16_t *w, 
 	*h = (uint16_t) bh;
 }
 
-/* A streamed model's triangles at a model level (formats/qlevels.h): a
-   monster's body at every level, high included (2026-10-19: START's nine
+/* A streamed model's triangles (the low model level's of §39): a
+   monster's body without its triangles by hand (2026-10-19: START's nine
    crucified zombies, 347 triangles each, filled the GPU's packet arena and
-   cost a frame), half of them at high, a third at medium, a quarter at
-   low (bounds of 64, 96, 128: the animation makes every collapse cost, a
-   bound of 3 kept 84 % of the zombie's triangles, 12 kept 68 %);
-   the rest (heads, gibs, projectiles, the items, the flames) as the map's
-   own models (reduce_mdl: Quake's at high). The vertices no triangle uses
+   cost a frame) to a quarter of them (a bound of 128: the animation makes
+   every collapse cost, a bound of 3 kept 84 % of the zombie's triangles,
+   12 kept 68 %); the rest (heads, gibs, projectiles, the items, the
+   flames) as the map's own models (reduce_mdl). The vertices no triangle uses
    any more leave the frames (the RAM pool's bytes, the expansion's work).
    Returns 1 with *out filled (its own arrays), 0: the model as it is;
    orig (m->nverts entries) receives each kept vertex's index in m. */
 static int reduce_finish(const mdl_t *m, int (*tris)[4], int left, mdl_t *out, int *orig);
 
-static int stream_reduce(const mdl_t *m, int model_level, int body, mdl_t *out, int *orig)
+static int stream_reduce(const mdl_t *m, int body, mdl_t *out, int *orig)
 {
-	double keep, err;
-	if (body) {
-		keep = model_level >= QL_HIGH ? 0.5 : model_level == QL_MEDIUM ? 0.35 : 0.25;
-		err  = model_level >= QL_HIGH ? 64 : model_level == QL_MEDIUM ? 96 : 128;
-	} else if (model_level >= QL_HIGH) {
-		return 0;
-	} else {
-		keep = model_level == QL_LOW ? 0.5 : 0.75;
-		err  = model_level == QL_LOW ? 3.0 : 1.5;
-	}
+	double keep = body ? 0.25 : 0.5, err = body ? 128 : 3.0;
 	if (m->ntris < DECIM_MIN)
 		return 0;
 	int (*tris)[4] = xmalloc((size_t) m->ntris * sizeof *tris);
@@ -2962,8 +2951,8 @@ static int reduce_finish(const mdl_t *m, int (*tris)[4], int left, mdl_t *out, i
    vertices' grid four times coarser: §64), the parts that carry the look
    kept whole (the head, the hands, the feet, a weapon); the triangles no
    view of any frame shows dropped (from outside the model, zoomed till
-   the triangle spans 24 pixels: never 3 of them seen, §64). The same
-   model at every level (no decimation). */
+   the triangle spans 24 pixels: never 3 of them seen, §64). No
+   decimation. */
 typedef struct {
 	const char     *file;
 	const uint16_t (*cuts)[2];
@@ -3309,9 +3298,8 @@ static void frame_plan_thin(const mdl_t *m, const char *file, const int *order, 
 }
 
 /* a body's frames stored: those played, each once (its vertices' words, in
-   the shared numbering `order`, the nv the high level keeps: equal there,
-   equal at every level), the animations thinned (frame_plan_thin); 0 when
-   every frame would be stored */
+   the asset's numbering `order`, its nv kept), the animations thinned
+   (frame_plan_thin); 0 when every frame would be stored */
 static int frame_plan_make(const mdl_t *m, const char *file, const int *order, int nv, frame_plan *fp)
 {
 	uint8_t *played = xmalloc((size_t) m->nframes);
@@ -3813,171 +3801,69 @@ static void cook_compact(qc_mdl *q, const mdl_t *m, buf_t *out)
 	}
 }
 
-/* The three model levels of a streamed model (formats/qstream.h
-   qst_shared): each level's reduction (stream_reduce), nested (a lower
-   level's vertices a subset of the higher's: the collapses go on in the
-   same order); the vertices numbered by the lowest level keeping them,
-   each level's asset cooked with that numbering (out[level]); the shared
-   asset (shared) from them: the high level's frames, the levels' records,
-   the images (the same at every level), checked against each level's
-   asset through qst_assemble. */
-void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
+/* A streamed model's asset (formats/qstream.h): its triangles reduced
+   (stream_reduce; a monster's body by hand: mob_hand_reduce), the kept
+   vertices in their order (a hand-made body's by their relevance, its
+   level of detail, §88), cooked in the compact format into out. */
+void qc_mdl_cook_stream(qc_mdl *q, int body, buf_t *out)
 {
 	const mdl_t *m = &q->src.mdl;
-	mdl_t red[3];
-	int *orig[3], nv[3], reduced[3];
+	mdl_t red;
 	const mob_hand *hand = body ? mob_hand_find(q->file) : NULL;
 	q->sort = body;                               /* (its triangles drawn by depth: QSTM_SORT) */
-	for (int l = 0; l < 3; l++) {
-		/* (a body without its hand table, a new monster's first cook:
-		   the low level's reduction, the one level
-		   on the disc since §52, at every level, as a hand-made one is
-		   the same model at every level: the frame map and the level of
-		   detail's tables are every level's) */
-		orig[l] = xmalloc((size_t) m->nverts * sizeof *orig[l]);
-		reduced[l] = hand ? mob_hand_reduce(m, hand, &red[l], orig[l])
-		                  : stream_reduce(m, body ? 0 : l, body, &red[l], orig[l]);
-		if (!reduced[l]) {                        /* the model as it is */
-			red[l] = *m;
-			for (int v = 0; v < m->nverts; v++)
-				orig[l][v] = v;
-		}
-		nv[l] = red[l].nverts;
+	int *orig = xmalloc((size_t) m->nverts * sizeof *orig);
+	int reduced = hand ? mob_hand_reduce(m, hand, &red, orig) : stream_reduce(m, body, &red, orig);
+	if (!reduced) {                               /* the model as it is */
+		red = *m;
+		for (int v = 0; v < m->nverts; v++)
+			orig[v] = v;
 	}
-	/* a hand-made body's level of detail (§88): the same model at every
-	   level, its vertices numbered by their relevance */
+	int nv = red.nverts;
+	/* a hand-made body's level of detail (§88): its vertices numbered by
+	   their relevance */
 	lod_plan lplan;
-	q->lplan = hand && lod_plan_body(&red[0], q->file, &lplan) ? &lplan : NULL;
-	/* the shared numbering: low's vertices in low's order, then medium's
-	   others in medium's, then high's (a level of detail: its order) */
+	q->lplan = hand && lod_plan_body(&red, q->file, &lplan) ? &lplan : NULL;
 	int *rank = xmalloc((size_t) m->nverts * sizeof *rank), *order = xmalloc((size_t) m->nverts * sizeof *order);
-	int n = 0, prefix[3];
+	int n = 0;
 	for (int v = 0; v < m->nverts; v++)
 		rank[v] = -1;
-	for (int l = 0; l < 3; l++) {
-		for (int i = 0; i < nv[l]; i++) {
-			int ov = orig[l][q->lplan ? q->lplan->perm[i] : i];
-			if (rank[ov] < 0) {
-				rank[ov] = n;
-				order[n++] = ov;
-			}
+	for (int i = 0; i < nv; i++) {
+		int ov = orig[q->lplan ? q->lplan->perm[i] : i];
+		if (rank[ov] < 0) {
+			rank[ov] = n;
+			order[n++] = ov;
 		}
-		prefix[l] = n;
-		if (prefix[l] != nv[l])
-			die("%s: the model levels' vertices are not nested (level %d: %d of %d)", q->file, l, nv[l],
-			    prefix[l]);
 	}
+	if (n != nv)
+		die("%s: the reduction's vertices repeat (%d of %d)", q->file, n, nv);
 	frame_plan plan;                              /* a body's frames stored (QSTM_FMAP) */
-	q->fplan = body && frame_plan_make(m, q->file, order, nv[2], &plan) ? &plan : NULL;
-	for (int l = 0; l < 3; l++) {
-		mdl_t lv = red[l];
-		lv.nverts = nv[l];
-		lv.st     = xmalloc((size_t) nv[l] * sizeof *lv.st);
-		lv.tris   = xmalloc((size_t) red[l].ntris * sizeof *lv.tris);
-		lv.frames = xmalloc((size_t) m->nframes * sizeof *lv.frames);
-		tvert *tv = xmalloc((size_t) m->nframes * nv[l] * sizeof *tv);
-		for (int j = 0; j < nv[l]; j++)
-			memcpy(lv.st[j], m->st[order[j]], sizeof lv.st[0]);
-		for (int f = 0; f < m->nframes; f++) {
-			lv.frames[f] = tv + (size_t) f * nv[l];
-			for (int j = 0; j < nv[l]; j++)
-				lv.frames[f][j] = m->frames[f][order[j]];
-		}
-		for (int t = 0; t < red[l].ntris; t++) {
-			lv.tris[t][0] = red[l].tris[t][0];
-			for (int k = 1; k < 4; k++)
-				lv.tris[t][k] = rank[orig[l][red[l].tris[t][k]]];
-		}
-		memset(&out[l], 0, sizeof out[l]);
-		cook_compact(q, &lv, &out[l]);
-		if (reduced[l])
-			printf("qcook: %-22s %s: %d of %d tris, %d of %d verts%s\n", q->file, level_name[l], lv.ntris,
-			       m->ntris, lv.nverts, m->nverts, hand ? " (by hand)" : "");
-		free(lv.st);
-		free(lv.tris);
-		free(tv);
-		free(lv.frames);
+	q->fplan = body && frame_plan_make(m, q->file, order, nv, &plan) ? &plan : NULL;
+	mdl_t lv = red;
+	lv.st     = xmalloc((size_t) nv * sizeof *lv.st);
+	lv.tris   = xmalloc((size_t) red.ntris * sizeof *lv.tris);
+	lv.frames = xmalloc((size_t) m->nframes * sizeof *lv.frames);
+	tvert *tv = xmalloc((size_t) m->nframes * nv * sizeof *tv);
+	for (int j = 0; j < nv; j++)
+		memcpy(lv.st[j], m->st[order[j]], sizeof lv.st[0]);
+	for (int f = 0; f < m->nframes; f++) {
+		lv.frames[f] = tv + (size_t) f * nv;
+		for (int j = 0; j < nv; j++)
+			lv.frames[f][j] = m->frames[f][order[j]];
 	}
-	/* the shared asset */
-	const qst_model *h[3];
-	for (int l = 0; l < 3; l++)
-		h[l] = (const qst_model *) out[l].p;
-	uint32_t img_len = (uint32_t) out[2].len - (h[2]->ofs_records + h[2]->len_records);
-	qst_shared sh;
-	memset(&sh, 0, sizeof sh);
-	sh.num_frames = h[2]->num_frames;
-	sh.num_verts  = h[2]->num_verts;
-	sh.flags      = h[2]->flags;
-	sh.shift      = h[2]->shift;
-	sh.num_images = h[2]->num_images;
-	memcpy(sh.scale, h[2]->scale, sizeof sh.scale);
-	memcpy(sh.origin, h[2]->origin, sizeof sh.origin);
-	uint32_t img2 = h[2]->ofs_records + h[2]->len_records;
-	for (int k = 0; k < 2; k++) {
-		sh.images[k] = h[2]->images[k];
-		sh.small[k]  = h[2]->small[k];
-		if (k < sh.num_images) {
-			sh.images[k].ofs -= img2;
-			sh.small[k].ofs  -= img2;
-		}
+	for (int t = 0; t < red.ntris; t++) {
+		lv.tris[t][0] = red.tris[t][0];
+		for (int k = 1; k < 4; k++)
+			lv.tris[t][k] = rank[orig[red.tris[t][k]]];
 	}
-	buf_t sb = { 0 };
-	buf_put(&sb, &sh, sizeof sh);
-	if (q->fplan) {                               /* the frame map: every level's */
-		sh.ofs_map    = (uint32_t) sb.len;
-		sh.num_stored = (uint16_t) q->fplan->nstored;
-		buf_put(&sb, out[2].p + sizeof(qst_model), qst_map_bytes(sh.flags, sh.num_frames));
-	}
-	if (sh.flags & QSTM_LOD) {                    /* the level of detail: every level's */
-		uint32_t at = (uint32_t) sizeof(qst_model) + qst_map_bytes(sh.flags, sh.num_frames);
-		sh.ofs_lod = (uint32_t) sb.len;
-		sh.len_lod = h[2]->ofs_frames - at;
-		buf_put(&sb, out[2].p + at, sh.len_lod);
-	}
-	sh.ofs_frames = (uint32_t) sb.len;
-	buf_put(&sb, out[2].p + h[2]->ofs_frames, (size_t) qst_stored_frames(h[2]) * h[2]->num_verts * 4);
-	for (int l = 0; l < 3; l++) {
-		const uint8_t *r = out[l].p + h[l]->ofs_records;
-		int same = -1;
-		for (int k = 0; k < l && same < 0; k++)
-			if (h[k]->len_records == h[l]->len_records &&
-			    !memcmp(out[k].p + h[k]->ofs_records, r, h[l]->len_records))
-				same = k;
-		sh.level[l].num_verts   = h[l]->num_verts;
-		sh.level[l].num_records = h[l]->num_records;
-		sh.level[l].len_records = h[l]->len_records;
-		sh.level[l].radius      = h[l]->radius;
-		if (same >= 0) {
-			sh.level[l].ofs_records = sh.level[same].ofs_records;
-		} else {
-			sh.level[l].ofs_records = (uint32_t) sb.len;
-			buf_put(&sb, r, h[l]->len_records);
-		}
-	}
-	sh.ofs_images = (uint32_t) sb.len;
-	sh.len_images = img_len;
-	buf_put(&sb, out[2].p + img2, img_len);
-	memcpy(sb.p, &sh, sizeof sh);
-	/* every level's asset as the engine will make it from the shared one */
-	for (int l = 0; l < 3; l++) {
-		uint32_t imgl = h[l]->ofs_records + h[l]->len_records;
-		if (out[l].len - imgl != img_len || memcmp(out[l].p + imgl, out[2].p + img2, img_len))
-			die("%s: the %s level's images are not the high level's", q->file, level_name[l]);
-		qst_model lm;
-		qst_layout lay;
-		uint32_t size = qst_level_model(&sh, l, &lm);
-		qst_layout_of(&sh, l, &lay);
-		uint8_t *a = xcalloc(size, 1);
-		memcpy(a, &lm, sizeof lm);
-		for (uint32_t ofs = 0; ofs < sb.len; ofs += QST_SECTOR) {   /* (sector by sector, as captured) */
-			uint32_t piece = sb.len - ofs < QST_SECTOR ? (uint32_t) (sb.len - ofs) : QST_SECTOR;
-			qst_assemble(&lay, ofs, sb.p + ofs, piece, a);
-		}
-		if (size != out[l].len || memcmp(a, out[l].p, size))
-			die("%s: the %s level's asset made from the shared one differs", q->file, level_name[l]);
-		free(a);
-	}
-	*shared = sb;
+	memset(out, 0, sizeof *out);
+	cook_compact(q, &lv, out);
+	if (reduced)
+		printf("qcook: %-22s %d of %d tris, %d of %d verts%s\n", q->file, lv.ntris, m->ntris, lv.nverts,
+		       m->nverts, hand ? " (by hand)" : "");
+	free(lv.st);
+	free(lv.tris);
+	free(tv);
+	free(lv.frames);
 	if (q->fplan) {
 		free(plan.map);
 		free(plan.src);
@@ -3987,11 +3873,9 @@ void qc_mdl_cook_levels(qc_mdl *q, int body, buf_t out[3], buf_t *shared)
 		lod_plan_free(&lplan);
 		q->lplan = NULL;
 	}
-	for (int l = 0; l < 3; l++) {
-		if (reduced[l])
-			stream_reduce_free(&red[l]);
-		free(orig[l]);
-	}
+	if (reduced)
+		stream_reduce_free(&red);
+	free(orig);
 	free(rank);
 	free(order);
 }
@@ -4147,7 +4031,7 @@ int cmd_game(int argc, char **argv)
 		if (!strcmp(argv[i], "--out")) out_path = argv[i + 1];
 	}
 	if (!pak_path || !out_path)
-		die("usage: qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<level>.dat)");
+		die("usage: qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_0.dat)");
 
 	long pak_len;
 	uint8_t *pak = read_file(pak_path, &pak_len);
@@ -4181,33 +4065,23 @@ int cmd_game(int argc, char **argv)
 		p->w = (uint16_t) ps->im->w;
 		p->h = (uint16_t) ps->im->h;
 	}
-	/* the models at every model level (their triangles; the pictures and
-	   skins are the same): one file each */
-	static gbuf geos[QL_LEVELS];
-	static qg_model level_models[QL_LEVELS][QGM_COUNT];
-	uint32_t len_geo_max = 0;
-	for (int lv = 0; lv < QL_LEVELS; lv++) {
-		if (!(QL_MODEL_MASK & 1 << lv))
-			continue;
-		printf("qcook: models at %s\n", level_name[lv]);
-		gbuf *geo = &geos[lv];
-		memset(geo, 0, sizeof *geo);
-		for (int i = 0; i < QGM_COUNT; i++) {
-			model_src *ms = &srcs[i];
-			qg_model *out = &level_models[lv][i];
-			memset(out, 0, sizeof *out);
-			out->id = (uint16_t) i;
-			galign(geo, 4);
-			if (strstr(ms->sp->file, ".spr"))
-				cook_spr(ms, geo, out);
-			else
-				cook_mdl(ms, lv, geo, out);
-			out->tex.clut = (uint16_t) ((QG_CLUT_Y << 6) | (QG_CLUT_X >> 4));
-		}
-		galign(geo, 4);
-		if (geo->len > len_geo_max)
-			len_geo_max = (uint32_t) geo->len;
+	/* the models */
+	gbuf geo;
+	static qg_model models[QGM_COUNT];
+	memset(&geo, 0, sizeof geo);
+	for (int i = 0; i < QGM_COUNT; i++) {
+		model_src *ms = &srcs[i];
+		qg_model *out = &models[i];
+		memset(out, 0, sizeof *out);
+		out->id = (uint16_t) i;
+		galign(&geo, 4);
+		if (strstr(ms->sp->file, ".spr"))
+			cook_spr(ms, &geo, out);
+		else
+			cook_mdl(ms, &geo, out);
+		out->tex.clut = (uint16_t) ((QG_CLUT_Y << 6) | (QG_CLUT_X >> 4));
 	}
+	galign(&geo, 4);
 
 	/* light tables: a vertex's factor (x128) by its normal, for a model
 	   yawed by k x 22.5 degrees; Quake's fixed light comes from -x: a
@@ -4225,12 +4099,7 @@ int cmd_game(int argc, char **argv)
 	for (int i = 0; i < 256; i++)
 		rgb[i] = (uint32_t) palette[i * 3] | (uint32_t) palette[i * 3 + 1] << 8 | (uint32_t) palette[i * 3 + 2] << 16;
 
-	/* assemble each level's file: header, rects, tables, geometry, pixels */
-	for (int lv = 0; lv < QL_LEVELS; lv++) {
-	if (!(QL_MODEL_MASK & 1 << lv))
-		continue;
-	gbuf geo = geos[lv];
-	qg_model *models = level_models[lv];
+	/* assemble the file: header, rects, tables, geometry, pixels */
 	int npages = 0;
 	for (int p = 0; p < GP_PAGES; p++)
 		if (page_rows[p]) npages = p + 1;
@@ -4246,8 +4115,6 @@ int cmd_game(int argc, char **argv)
 	size_t rects_at = f.len;
 	{ qtex_rect z; memset(&z, 0, sizeof z); for (uint32_t i = 0; i < h.num_rects; i++) gput(&f, &z, sizeof z); }
 	h.num_models = QGM_COUNT; h.ofs_models = (uint32_t) f.len; gput(&f, models, QGM_COUNT * sizeof *models);
-	h.level = (uint32_t) lv;
-	h.len_geo_max = len_geo_max;
 	h.num_pics = QGP_COUNT;   h.ofs_pics = (uint32_t) f.len;   gput(&f, pics, sizeof pics);
 	h.ofs_dots = (uint32_t) f.len; gput(&f, dots, sizeof dots); galign(&f, 4);
 	h.ofs_rgb  = (uint32_t) f.len; gput(&f, rgb, sizeof rgb);
@@ -4351,7 +4218,7 @@ int cmd_game(int argc, char **argv)
 	memcpy(f.p, &h, sizeof h);
 
 	char path[512];
-	snprintf(path, sizeof path, "%s_%d.dat", out_path, lv);
+	snprintf(path, sizeof path, "%s_0.dat", out_path);
 	FILE *fp = fopen(path, "wb");
 	if (!fp || fwrite(f.p, 1, f.len, fp) != f.len) die("cannot write %s", path);
 	fclose(fp);
@@ -4361,6 +4228,5 @@ int cmd_game(int argc, char **argv)
 	       path, (unsigned) f.len, QGM_COUNT, (unsigned) geo.len, QGP_COUNT, npages, texels / 1024);
 	free(rects);
 	free(f.p);
-	}
 	return 0;
 }

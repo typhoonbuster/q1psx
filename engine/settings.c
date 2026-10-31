@@ -27,12 +27,9 @@ static const uint8_t warp_levels[WARP_LEVELS][2] = {
 static const char *const warp_name[WARP_LEVELS] = { "low", "default", "medium", "high", "ultra" };
 
 settings_t settings;
-int settings_level_mask[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK };
 
 void settings_defaults(void)
 {
-	for (int a = 0; a < QL_AXES; a++)           /* the disc's (the lowest it has) */
-		settings.level[a] = settings_level_step(a, QL_LEVELS - 1, 1);
 	settings.hud     = HUD_ORIGINAL;
 	settings.dlights = 1;
 	settings.volume  = 7;
@@ -53,16 +50,6 @@ void settings_apply(void)
 	vid_set_fps_cap(fps_caps[settings.fps_cap]);
 	game_world_hz = tick_rates[settings.tick];
 	gamma_set(settings.brightness);
-}
-
-int settings_level_step(int axis, int level, int d)
-{
-	for (int i = 0; i < QL_LEVELS; i++) {
-		level = (level + QL_LEVELS + d) % QL_LEVELS;
-		if (settings_level_mask[axis] & (1 << level))
-			return level;
-	}
-	return level;
 }
 
 /* ------------------------------------------------------------- the rows -- */

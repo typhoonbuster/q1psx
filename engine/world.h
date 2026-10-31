@@ -7,8 +7,7 @@
  * (QMM1) into the level arena, maps their UVs onto the loaded set's tiles
  * and rewrites the world's link fields into absolute pointers for the asm
  * renderer: the nodes' children and face blocks, the leaves' marks and PVS
- * rows, the brush models' roots. Each of the three files comes at the level
- * of its own quality axis (formats/qlevels.h).
+ * rows, the brush models' roots.
  */
 
 #ifndef Q1PSX_WORLD_H
@@ -17,7 +16,6 @@
 #include <stdint.h>
 
 #include "qgame.h"
-#include "qlevels.h"
 #include "qtex.h"
 #include "qworld.h"
 
@@ -65,8 +63,6 @@ typedef struct {
 	uint32_t       max_bm_depth;
 	uint32_t       bmf_arena_recs, bmf_arena_verts;   /* the brush models' cut arena, the
 	                                                     cook's (formats/qworld.h; bmfrag.c) */
-	int8_t         level[QL_AXES];  /* the levels loaded: textures, geometry, the
-	                                   map's models (QL_*)                    */
 	/* the VRAM the map's textures take (the streamed skins get the rest,
 	   engine/stream.c): the 4-bit set's rows of each 4-bit page (x 320 +
 	   64 p, y 0) */
@@ -82,15 +78,12 @@ _Static_assert(__builtin_offsetof(world_t, hull2_root) == 88, "p_defs.inc W_HULL
 #endif
 
 extern world_t world;
-extern const char *const level_name[QL_LEVELS];   /* "low" .. "ultra" */
 
-/* Find which Quake maps the disc carries (<MAP>_G<n>.WLD, with its
-   <MAP>_T<n>.TX4 and <MAP>_M<n>.MDL); returns how many. Call once after
-   cd_init. */
+/* Find which Quake maps the disc carries (a directory of \LVL named as
+   the map: its <MAP>_G0.WLD, <MAP>_T2.TX4, <MAP>_M0.MDL...); returns how
+   many. Call once after cd_init. */
 int         world_scan_maps(void);
 int         world_num_maps(void);
-int         world_level_mask(int axis);   /* QL_TEXTURES .. QL_MODELS: bit n, the
-                                             disc's maps come at level n of it */
 const char *world_map_name(int map);   /* "START", "E1M1", ... */
 int         world_find_map(const char *name);   /* by name, any case; -1 if absent */
 int         world_registered(void);    /* the disc carries the registered episodes */
@@ -100,12 +93,11 @@ int         world_registered(void);    /* the disc carries the registered episod
    in between; it may draw and flip a frame (a loading bar). */
 typedef void (*world_progress_fn)(uint32_t done, uint32_t total);
 
-/* Load map `map` (0 .. world_num_maps() - 1): its textures at level `tex`
-   (the 4-bit set, <MAP>_T<n>.TX4), its world at geometry level `geo`, its
-   own models at model level `models`; resets the level arena. 1 on
-   success, 0 if missing or too big for the arena. `progress` may be NULL
-   (the reads then block). */
-int world_load(int map, int tex, int geo, int models, world_progress_fn progress);
+/* Load map `map` (0 .. world_num_maps() - 1): its textures (the 4-bit
+   set, <MAP>_T2.TX4), its world (<MAP>_G0.WLD), its own models
+   (<MAP>_M0.MDL); resets the level arena. 1 on success, 0 if missing or
+   too big for the arena. `progress` may be NULL (the reads then block). */
+int world_load(int map, world_progress_fn progress);
 
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);

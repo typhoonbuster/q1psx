@@ -1,9 +1,8 @@
 /*
  * q1psx — the game data (formats/qgame.h): weapon and projectile models, the
- * explosion sprite, the HUD pictures. Loaded at boot from GAME_0.DAT (the
- * one model level, low: docs/porting-notes.md §52): its images go to VRAM
- * (the pages above the map's, its own CLUT), its tables and geometry to the
- * game arena.
+ * explosion sprite, the HUD pictures. Loaded at boot from GAME_0.DAT: its
+ * images go to VRAM (the pages above the map's, its own CLUT), its tables
+ * and geometry to the game arena.
  */
 
 #ifndef Q1PSX_GDATA_H
@@ -28,14 +27,13 @@ typedef struct {
 	const qg_free  *free;      /* what the images leave of the game's pages
 	                              (the streamed skins' room), and its count */
 	uint32_t        num_free;
-	int             level;     /* the models' level (formats/qlevels.h)    */
 } gdata_t;
 
 extern gdata_t gdata;
 
-/* Load GAME_<level>.DAT (before any map: it uses the level arena as a
-   staging area). 1 on success. */
-int gdata_load(int level);
+/* Load GAME_0.DAT (before any map: it uses the level arena as a staging
+   area). 1 on success. */
+int gdata_load(void);
 
 /* the view model's frame being drawn, expanded (engine/rlist.c rl_view_gun:
    formats/qgame.h qg_view): the largest view model's vertices */

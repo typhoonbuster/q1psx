@@ -1,6 +1,6 @@
 /*
  * q1psx — cooked texture set "QTX7" (architecture.md §7), one per map
- * (<MAP>_T2.TX4 on the disc, formats/qlevels.h). Written by `qcook`, read
+ * (<MAP>_T2.TX4 on the disc). Written by `qcook`, read
  * by engine/world.c.
  *
  * The cook packs every texture tile of the map into whole 4bpp texture
@@ -65,15 +65,17 @@ typedef struct {
 } qw_tex;                  /* 8 bytes */
 
 /* Where the world's texture coordinates land in this set. A world file's
-   UVs are in texels of the finest texture level: on an axis that wraps (a
-   power of two: the texture window folds it) a virtual 0..255 coordinate,
-   otherwise from the tile's corner. At load each one becomes
+   UVs are in texels of the finest layout (formats/qworld.h): on an axis
+   that wraps (a power of two: the texture window folds it) a virtual
+   0..255 coordinate, otherwise from the tile's corner. At load each one
+   becomes
      u' = u0 + ((u * su + rnd) >> 15)        (and v' alike)
-   su = 32768 at the finest level; a level at half the resolution has
-   16384. u0, v0: the tile's corner in its page on an axis that does not
-   wrap, 0 on one that does (a model's skin: its own corner, inside its
-   border). rnd: 16384 rounds (a miptex: the cook rounds a world texel),
-   0 truncates (a skin: the cook divides a skin texel). */
+   su = 32768 where the set keeps a texture's texels; 16384 where it
+   halves them (a side over 128 texels, a squeezed model's texture). u0,
+   v0: the tile's corner in its page on an axis that does not wrap, 0 on
+   one that does (a model's skin: its own corner, inside its border). rnd:
+   16384 rounds (a miptex: the cook rounds a world texel), 0 truncates (a
+   skin: the cook divides a skin texel). */
 typedef struct {
 	uint8_t  u0, v0;
 	uint16_t su, sv;
@@ -86,9 +88,8 @@ typedef struct {
    of their own; the engine copies the frame of the moment into it (a
    frame every 0.2 s; the alternates while a brush model listed has its
    frame set: a pressed button, a toggled wall). Tiles in texels of the
-   8-bit pages (page p at x 320 + 128 (p % 5), y 256 (p / 5); in the 4-bit
-   set, x 320 + 64 p, y 0, the same texels), with their texture-table index
-   (the 4-bit set's CLUT for it, 16 a row from (0, 480)). */
+   map's 4-bit pages (page p at x 320 + 64 p, y 0), with their
+   texture-table index (its qw_tex: the CLUT). */
 #define QW_ANIM_FRAMES 10
 #define QW_ANIM_MODELS 8
 typedef struct {

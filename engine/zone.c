@@ -270,7 +270,7 @@ int zone_on(void)
 	return zh != 0;
 }
 
-Q_COLD int zone_map_start(const uint8_t *f, const char *map, int tex)
+Q_COLD int zone_map_start(const uint8_t *f, const char *map)
 {
 	zone_abort();
 	const qw_zone_header *h = (const qw_zone_header *) (f + sizeof(qw_header));
@@ -281,7 +281,7 @@ Q_COLD int zone_map_start(const uint8_t *f, const char *map, int tex)
 	}
 	char name[32];
 	uint32_t lba, size;
-	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_Z%d.ZON;1", map, map, tex);
+	q_snprintf(name, sizeof name, "\\LVL\\%s\\%s_Z2.ZON;1", map, map);
 	if (!cd_find(name, &lba, &size)) {
 		printf("zone: no %s on the disc\n", name);
 		return 0;

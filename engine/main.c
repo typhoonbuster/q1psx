@@ -387,8 +387,7 @@ Q_COLD static void load_level_main(int map)
 	music_level(world_map_name(map));           /* (its copy of the track) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
-	world_ok = world_load(map, settings.level[QL_TEXTURES], settings.level[QL_GEOMETRY],
-	                      settings.level[QL_MODELS], LOAD_PROGRESS);
+	world_ok = world_load(map, LOAD_PROGRESS);
 	mem_level_cap(mem_level_bytes());
 	if (world_ok) {
 		r_bind_world();
@@ -478,14 +477,10 @@ static void draw_overlay(void)
 	if (pad.analog)                    /* raw, before the dead zone */
 		q_snprintf(sticks, sizeof sticks, "\nsticks L %4d %4d  R %4d %4d", pad.lx, pad.ly, pad.rx, pad.ry);
 
-	char levels[24] = "no world";               /* textures, geometry, models */
-	if (world_ok)
-		q_snprintf(levels, sizeof levels, "T%d G%d M%d", world.level[QL_TEXTURES], world.level[QL_GEOMETRY],
-		         world.level[QL_MODELS]);
 	int n = q_snprintf(line, sizeof line,
-	         "q1psx  %s %s  ~%u fps\n"
+	         "q1psx  %s%s  ~%u fps\n"
 	         "frame %6u cyc  gpu wait %u  arena %u KB\n",
-	         world_map_name(map_index), levels,
+	         world_map_name(map_index), world_ok ? "" : " no world",
 	         vid_stats.vbl ? 60 / vid_stats.vbl : 60,
 	         prof_stage[PROF_FRAME], vid_stats.sync_cycles, mem_level_used() / 1024);
 #if Q1PSX_PROFILE   /* the renderer's counters / stage timers (release: none) */
@@ -1589,8 +1584,7 @@ static void bench_maps(void)
 			printf("bench map %s FAILED to load\n", world_map_name(m));
 			continue;
 		}
-		printf("bench map %s geometry %s arena %u KB\n", world_map_name(m), level_name[world.level[QL_GEOMETRY]],
-		       mem_level_used() / 1024);
+		printf("bench map %s arena %u KB\n", world_map_name(m), mem_level_used() / 1024);
 		bench_zone_ram(world_map_name(m));
 		if (Q1PSX_BENCH_RESIDENCY) {
 			stream_log = 0;
@@ -3867,12 +3861,10 @@ int main(void)
 	printf("q1psx\n");
 
 	world_scan_maps();
-	for (int a = 0; a < QL_AXES; a++)
-		settings_level_mask[a] = world_level_mask(a);
 	settings_defaults();
 	apply_settings();
-	gdata_load(settings.level[QL_MODELS]);
-	stream_init(settings.level[QL_MODELS]);
+	gdata_load();
+	stream_init();
 	dl_init();
 	game_init();
 	printf("mem: game arena %u of %u B\n", (unsigned) mem_game_used(), (unsigned) MEM_GAME_BYTES);
