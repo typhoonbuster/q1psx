@@ -8,8 +8,10 @@
  *               [--tex4 <map>_t<N>.tx4 --chunks <out_z<N>.zon>]...
  *
  * The tables (one text file a map: analysis/export.py's docstring gives
- * the format) are derived from Quake's data: they stay out of the repo,
- * local.env names their directory (scripts/cook.sh). They list each zone's
+ * the format) are made outside the repo from Quake's maps; the cut in use
+ * sits in the repo's zones/auto_1536_s3, the one scripts/cook.sh takes
+ * unless Q1PSX_ZONE_TABLES names another (docs/porting-notes.md §118:
+ * numbers only). They list each zone's
  * records (the world records' visibility ids) and, for each leaf, its zone
  * and the three nearest other zones by walking distance. `--resident`: the
  * zones a camera leaf wants at once (its own and the nearest): the slots

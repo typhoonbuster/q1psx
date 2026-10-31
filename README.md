@@ -65,6 +65,15 @@ Details and fish notes: [`third_party/README.md`](third_party/README.md).
 The build cooks the Quake data it finds (`QUAKE_PAK0`, and `QUAKE_PAK1` for
 the registered episodes, in `local.env`) into the disc's files.
 
+The levels stream by zones (`docs/porting-notes.md` §57): the cook cuts
+each map by the zone tables in `zones/`, made by the level-chunks analysis
+outside the repo (numbers only). By default it takes `zones/auto_1536_s3`
+(§93) with three chunk slots, and keeps 98 % of every sound's energy
+(§87). `local.env` or the command line (which wins) may set others:
+`Q1PSX_ZONE_TABLES` (another folder, or `none`: every map whole),
+`Q1PSX_ZONE_SLOTS`, `QCOOK_SOUND_KEEP`. The build cooks again when the
+cook's settings change (`scripts/cook.sh`'s header lists them; §118).
+
 ```bash
 cmake --preset default .      # configure (toolchain = $PSN00BSDK_LIBS/cmake/sdk.cmake)
 cmake --build ./build         # -> build/q1psx.bin + build/q1psx.cue
@@ -112,6 +121,7 @@ duckstation-qt -batch build/q1psx.cue
 | `tools/` | PC asset-conversion tools ("cooking") |
 | `iso/` | `mkpsxiso` config, boot files |
 | `scripts/` | `fetch_shareware.sh`, build/test helpers |
+| `zones/` | The zone tables the cook cuts the levels by: numbers only, from the analysis outside the repo (`docs/porting-notes.md` §57, §93, §118) |
 | `third_party/` | Install instructions for external dependencies |
 | `reference/` | Clones of `id-Software/Quake`, `quake-rerelease-qc`, `PSn00bSDK` (not versioned, read-only) |
 

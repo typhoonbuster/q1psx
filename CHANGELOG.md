@@ -2534,3 +2534,14 @@ followed by R0-R4.
   (`Q1PSX_DLIGHT_MINLIGHT`, 0: Quake's look): its faintest edge is not
   drawn, its reach 32 units shorter; the fight −1.73 %, the rocket
   launcher's view −4.05 % (48: −2.49 / −8.54 %, 64: −3.24 / −10.54 %).
+- **The zone tables in the repo, the cook's settings by default** (§118,
+  provisional number, 2026-10-31). The cut in use (§93's `auto_1536_s3`)
+  and its four-slot twin sit in `zones/`, byte for byte the analysis'
+  export: numbers only. The cook takes the cut in use by default
+  (`Q1PSX_ZONE_TABLES`; `none`: every map whole; a missing folder now
+  stops the cook), with three slots (`Q1PSX_ZONE_SLOTS`) and 98 % of
+  every sound's energy (`QCOOK_SOUND_KEEP`); `local.env` or the command
+  line may set others, and CMake's draw-distance check reads the same
+  default. With `local.env` holding only the Quake paths, the cook gives
+  the same bytes (`GAME_0.DAT`'s finale names carry stack leftovers that
+  vary from cook to cook, as before).

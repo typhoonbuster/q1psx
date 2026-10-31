@@ -15506,3 +15506,62 @@ DLIGHT_MINLIGHT=0`, master's frames), one run each:
 The same models drawn in every window, the same 17 maps zoned. The
 branch's merge into master was approved with its defaults (the merge on,
 its light bound 16, the floor 32) after the test images (2026-10-31).
+
+## §118 — The zone tables in the repo, the cook's settings by default (2026-10-31)
+
+The cook's zone tables (§57) stayed outside the repo with the rest of what
+is derived from Quake's data: each checkout's `local.env` named the
+analysis' folder (`quakespasm-q1psx/zones/auto_1536_s3/`, the
+cut of §93), the chunk slots (3) and the sounds' share of energy (98,
+§87.2). That rule is lifted for these tables alone; the paks, the
+BSPs, the textures and the renders stay out.
+
+- **`zones/`** holds two cuts of the analysis' export (`analysis/export.py`),
+  byte for byte its files: `auto_1536_s3`, the cut in use (the PVS need
+  within 1536 units + 32, a cap per level for three slots: 17 maps zoned),
+  and `auto_1536_s4` (the same for four slots: every map whole). One
+  `<map>.zones` text file a map, 32 a cut, 1.9 and 1.6 MB: numbers only
+  (each zone's records by their visibility ids and its bytes, each leaf's
+  zone and its three nearest by walking distance).
+- **The defaults** (scripts/cook.sh, after `local.env`; the command line's
+  value still wins over `local.env`'s):
+  - `Q1PSX_ZONE_TABLES`: `zones/auto_1536_s3`, a path from the repo's
+    root (an absolute one as before). `none` or an empty value cooks every
+    map whole, what an unset value did until now. A value that is not a
+    folder stops the cook; it used to cook every map whole without a word.
+  - `Q1PSX_ZONE_SLOTS`: 3, as before.
+  - `QCOOK_SOUND_KEEP`: 98, qcook's own default since §87.2 (the script's
+    header said 95). The script exports it, so `cooked/settings.txt`
+    records 98 whether it is set or not.
+  - CMake's check of the tables' cut against the draw distance (§95) reads
+    the same default, then `local.env`'s value (an empty one too), then the
+    configure's environment's.
+- **The re-cook tracking** is unchanged: `cooked/settings.txt` records the
+  tables' real path, a hash of their contents and the slots, and a build
+  cooks again when one of them changes. A checkout whose `local.env` named
+  the analysis' folder cooks once more on its next build, to the same
+  bytes. A CMake cache would keep an old default in an existing build
+  folder: the default is a plain variable, and the cook resolves the
+  settings itself at every build.
+- **Checked** (TESTING 11.97): master 8a169cc's cook with the old
+  `local.env` against a release build of the branch whose `local.env`
+  holds only the Quake paths. 308 of the 309 cooked files are byte for
+  byte the same; `settings.txt` differs in the tables' path alone. The
+  309th, `GAME_0.DAT`, differs from one cook to the next on any branch:
+  `tools/qcook/game.c` builds the finales' map names in `fin_block
+  blocks[16]` on the stack, uninitialised, and copies all twelve bytes of
+  each name into the file, the stack's leftovers after its NUL too (54
+  bytes in 7 records; four runs of one qcook gave four files). Those
+  bytes zeroed, the two cooks' files are the same. The engine reads the
+  names up to their NUL: the game is not affected. Overrides on the
+  command line reach the cook: `Q1PSX_ZONE_SLOTS=4` (1 map of 32 zoned
+  with the three-slot cut), `Q1PSX_ZONE_TABLES=zones/auto_1536_s4
+  Q1PSX_ZONE_SLOTS=4` (none, as that cut says), `none` (no tables in the
+  settings), a missing folder (the cook stops); a configure with
+  `Q1PSX_ZONE_TABLES=zones/pvs_1024_64` in its environment is refused at
+  the 1536 draw distance. A second build with nothing changed does not
+  cook; back to the defaults, the cook gives the default files again.
+- **Left:** `GAME_0.DAT`'s leftovers (`blocks` zeroed before use would
+  make the file the same from cook to cook). The other worktrees'
+  `local.env` files still name the analysis' folder, which wins over the
+  default until those lines go.
