@@ -1,6 +1,7 @@
 #include <stdio.h>
 
 #include "dlight.h"
+#include "gamma.h"
 #include "game.h"
 #include "hud.h"
 #include "q_fmt.h"
@@ -34,6 +35,7 @@ void settings_defaults(void)
 	settings.music   = 10;
 	settings.fps_cap = 0;                       /* 60: no cap */
 	settings.tick    = 1;                       /* the world at 30 ticks a second */
+	settings.brightness = 0;                    /* Quake's v_gamma 1 */
 }
 
 void settings_apply(void)
@@ -55,6 +57,7 @@ void settings_apply(void)
 	game_world_hz = tick_rates[settings.tick];
 	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 	r_set_options(Q1PSX_DRAWDIST, R_FLAT_FAR);
+	gamma_set(settings.brightness);
 }
 
 int settings_level_step(int axis, int level, int d)

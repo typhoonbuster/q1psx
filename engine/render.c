@@ -364,6 +364,7 @@ uint8_t r_vis_row[256];     /* the camera leaf's PVS row expanded (r_world.s vis
                                marking reads it byte by byte; formats/qworld.h qw_leaf vis,
                                docs/porting-notes.md §90.9); the cook keeps rows under 256 */
 int32_t r_part_z;
+int32_t r_draw_z = 0x7fffffff;
 
 static int opt_dist, opt_flat;
 static int32_t mark_cam[3];                  /* the camera at the last marking */
@@ -437,6 +438,7 @@ void r_set_options(int dist, int flat)
 		r_fogtab[i] = (uint8_t) (!dist || z <= fz ? 128 : z >= dz ? 0 : 128 * (dz - z) / (dz - fz));
 	}
 	r_part_z = dist ? (fz + dz) / 2 : 0;
+	r_draw_z = dist ? dz : 0x7fffffff;
 	r_state.mark_r = (dist * 161 / 100 + R_MARK_MOVE) * QW_VSCALE;   /* (1.61: a frustum
 	                    corner's distance over its depth, 1 / 0.6247 for the 240 rows) */
 	for (unsigned i = 0; i < sizeof dcull / sizeof dcull[0]; i++) {

@@ -295,7 +295,8 @@ static void script_poll(void)
 }
 #endif
 
-static void pad_vblank(void)
+/* (the vblank's interrupt: engine/vid.c vid_vblank calls it first) */
+void pad_vblank(void)
 {
 	if (!driver_on)
 		return;
@@ -344,8 +345,7 @@ Q_COLD void pad_init(void)
 	attempts = 1;
 	int analog = pad_force_analog();         /* (not in the printf: the release has none) */
 	printf("pad: analog mode %s\n", analog ? "on" : "not set (digital pad, or no answer)");
-	VSyncCallback(pad_vblank);
-	driver_start();
+	driver_start();                          /* (polled from the next vblank on) */
 }
 
 static void snap_to_pad(const volatile pad_snap *s, pad_t *p)

@@ -4,6 +4,7 @@
 #include <psxgpu.h>
 
 #include "cd.h"
+#include "gamma.h"
 #include "gdata.h"
 #include "q_fmt.h"
 #include "world.h"
@@ -47,8 +48,11 @@ Q_COLD int gdata_load(int level)
 
 	/* images to VRAM: the CLUT row, then the pages' used rows */
 	const qtex_rect *r = (const qtex_rect *) (f + h->ofs_rects);
-	for (uint32_t i = 0; i < h->num_rects; i++)
+	for (uint32_t i = 0; i < h->num_rects; i++) {
+		if (r[i].x == QG_CLUT_X && r[i].y == QG_CLUT_Y && r[i].w == 256 && r[i].h == 1)
+			gamma_keep_game(f + r[i].data_ofs);  /* (the palette as cooked: the Brightness) */
 		vram_upload(f + r[i].data_ofs, &r[i]);   /* (world.c: LoadImage's DMA rounding) */
+	}
 	DrawSync(0);
 
 	/* tables and geometry to the game arena */

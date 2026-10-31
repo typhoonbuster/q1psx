@@ -7,6 +7,7 @@
 #include "gdata.h"
 #include "mem.h"
 #include "qmenu.h"
+#include "gamma.h"
 #include "ui.h"
 #include "vid.h"
 
@@ -217,7 +218,10 @@ Q_COLD int ui_conback_load(void)
 		return 0;
 	}
 	RECT clut = { QCB_CLUT_X, QCB_CLUT_Y, 256, 1 };
-	LoadImage(&clut, (const uint32_t *) (f + h->ofs_clut));
+	if (gamma_level())                           /* (the Options' Brightness) */
+		gamma_upload(f + h->ofs_clut, QCB_CLUT_X, QCB_CLUT_Y, 256, 1);
+	else
+		LoadImage(&clut, (const uint32_t *) (f + h->ofs_clut));
 	RECT pix = { QCB_VRAM_X, QCB_VRAM_Y, (int16_t) (h->w / 2), (int16_t) h->h };
 	LoadImage(&pix, (const uint32_t *) (f + h->ofs_pixels));   /* (64-byte units: no stray words) */
 	DrawSync(0);

@@ -14650,6 +14650,371 @@ stream's cook takes 3.2 s (2.8 before).
   monster): a `scripts/dlcheck.sh` reference saved before must be saved
   again.
 
+## §111 — The vblank's wait given back: a late frame no longer waits for the next vblank (2026-10-31)
+
+- **The question**: §106's fight spent 16 % of its samples in the SDK's
+  wait for the vblank (`_default_vsync_halt`). `vid_flip` waited for the
+  previous frame's drawing (`DrawSync(0)`), then always for the next
+  vblank (`VSync(0)`, then the cap's share), and only then showed the
+  buffer the GPU had finished (`PutDispEnv`) and started the GPU on the
+  list just built (`DrawOTagEnv`): a frame already late still waited for
+  the next vblank, half a vblank on average in a fight of 3 to 4 vblanks
+  a frame. The CPU should begin the next frame at once and the flip
+  happen at the vblank without it, with no tearing, no arena written
+  while the GPU has yet to read it, the caps' pacing kept, the warp's
+  control fed as before, the pad's interrupt poll and the per-vblank
+  tick ring as they are.
+
+### 111.1 The flip at the vblank
+
+- **The vblank's interrupt** (`vid_vblank`, the SDK's `VSyncCallback`,
+  after its own count; the pad's poll begun first, `pad_vblank`, §81.2,
+  no longer the callback itself): the buffer started last is shown once
+  the GPU is done with it (the SDK's queue empty and the GPU idle:
+  `DrawSync`'s test, without its wait) and the cap's share of vblanks has
+  passed since the last buffer shown; a buffer built meanwhile, waiting
+  for it, is started there, into the buffer just hidden. Only GP1(05h),
+  the display's start, is written (the first of `PutDispEnv`'s four
+  words: the display's ranges and mode, the same for both buffers, are
+  set once, `vid_init`'s `PutDispEnv` of buffer 1, the first frame's
+  buffer 0 then started at once).
+- **`vid_flip`**, the frame built: `DrawSync(0)` as before (the previous
+  frame's list read: its arena is the next frame's, and every upload the
+  frame queued, the stream's `LoadImage`s, done), then
+  - the previous frame on display already (the interrupt showed it: this
+    frame missed its share), this frame's buffer is free: its list starts
+    at once, the interrupt shows it once drawn, and the next frame begins
+    at once, no vblank waited for;
+  - else (on time) this frame waits for the vblank that shows the
+    previous one, the interrupt starting its list there, and the next
+    frame begins at that vblank: the cap's pacing, as before.
+- **What holds**: a frame's list starts before `vid_flip` returns, so
+  whatever the next frame queues (the stream's uploads) comes after it
+  in the SDK's queue, as before, and the arena the next frame writes is
+  the one the previous frame's list was read from; the static chains a
+  frame links (the 2D gun's frames and CLUT, §45) are relinked two
+  frames later at the soonest, after a `DrawSync(0)`, as before; a
+  buffer is shown at a vblank only, and its list starts only while the
+  other buffer is on display (late: the previous frame shown already;
+  on time: in the interrupt, right after the show): no tearing.
+- **The interrupt's work**: the show (one GP1 word) and, on time, the
+  list's start: `DrawOTagEnv` with the SDK's queue empty starts the DMA
+  at once (`EnqueueDrawOp` masks the interrupts by IRQ_MASK and gives
+  the mask back: the CPU's own interrupt bit stays off in the handler,
+  no nesting); the DMA's end runs the queue as before (the SPU's DMAs,
+  the CD's, untouched). The interrupts' stack: 524 bytes never reached,
+  as before. `vid_flip`'s critical section (IRQ_MASK cleared) covers the
+  test and the start or the wait's setting: the interrupt cannot show
+  the previous frame between them.
+- **A frame shown sooner**: a late frame is shown at the first vblank
+  after it is drawn (§106's wait: about half a vblank sooner, with the
+  frame after it begun at once); a frame on time is shown at the same
+  vblank as before.
+
+### 111.2 The pacing and the game's time
+
+- Frames within their share are paced as before: each begins at a
+  vblank, a share after the last, and shown a share after the last (60:
+  every vblank; 45: 1, 1, 2 in turn; 30: every second one).
+- A frame that misses its share is shown for an uneven number of
+  vblanks (a frame of 1.3 vblanks: 1 or 2 in turn, 46 fps where it ran
+  at 30), as with the 45 fps cap; the 30 fps cap stays for a steady
+  pacing while the frames fit in two vblanks.
+- The game's time is §30's: a frame takes the polls since the last
+  frame's start, one tick each (the ring unchanged); a late frame's next
+  one begins between two vblanks and takes the polls that came, so the
+  ticks a frame shows and the vblanks it is shown for differ by one now
+  and then where the frames are late (the 45 fps cap's unevenness).
+
+### 111.3 The stats; the warp's control
+
+- `vid_stats.vbl`: the vblanks from a frame's start to the next one's
+  (the polls the next one takes): the overlay's fps, the benches' `vbl=`,
+  the walk's polls.
+- `vid_stats.vbl_whole`: the warp's control's input (`r_warp_feedback`,
+  §79.2): the frame's vblanks as it took them waiting for the vblank,
+  its share when on time, else its time (from the last frame's start)
+  rounded up to vblanks. The control raises, lowers and gives up (its
+  `more`: aim at a vblank more from the floor) for the same frames as
+  before. Giving up now costs frames a second where it cost none (a frame
+  just over a vblank at 32 px, shown at ~57 fps, drawn at the floor in
+  about 1.5 vblanks: ~40 fps), and the control keeps the warp's look
+  first, as before (§79.2; the warp must not distract).
+
+### 111.4 Measured
+
+PCSX-Redux in fast forward, the base master d7de758 with the bench's
+measures (the fight's vblanks a frame over each window of 300 frames;
+`bench pace`), against the branch:
+
+- **§106's fight** (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0 SKILL=2
+  VIEW=1780,1803,-304,204,0`): 3.53 -> 3.02 vblanks a frame on average
+  (17.0 -> 19.9 fps, +17 %), each window -11 to -18 % (4.32 -> 3.84 in
+  the first, 3.16 -> 2.66 in the last); the same game in each window
+  (the monsters alive, the streamed models drawn; the frames' own cycles
+  within 0.03 %); the samples 384 726 -> 323 316 (-16.0 %: the minute of
+  fight played in 16 % less time), the SDK's wait (16.0 %) gone, the
+  waits left 0.4 % (as before).
+- **The same on master 6ff9264** (§114's shared budget and §115's light
+  merged in; master's vid.c, vid.h, pad.c and pad.h with the bench's
+  measures against the merged branch): 3.50 -> 2.95 vblanks a frame (17.1
+  -> 20.3 fps, -15.6 %), each window -11 to -18 %, the same game in each
+  (the frames' cycles within 0.05 %); the samples 380 993 -> 315 540
+  (-17.2 %; the SDK's wait 17.1 % there). §114's lighter frames (the
+  drawing -3.6 %) moved master's fight by 1 % alone (3.53 -> 3.50 vblanks
+  a frame: what they saved was mostly waited away at the vblank); with
+  the flip they show. The 128 views identical to master's (a `m373`
+  reference); the release's arena 1 351 984 bytes.
+- **The game bench** (`BENCH_GAME=1`): the guns' views 2.00 -> 1.56-1.68
+  vblanks a frame (their frames 0.88-0.93 M cycles), the rocket
+  launcher's 3.00 -> 2.31, the lightning gun's 2.00 -> 1.87, the HUDs'
+  2.00 -> 1.81; the walk at 60 Hz 1.72 -> 1.33 vblanks a frame (frames
+  at one vblank 140 -> 254 of 300, at two 156 -> 45), at 30 Hz 1.50 ->
+  1.15 (153 -> 257 at one); its 23 dumps (the guns, the HUDs, the menus,
+  the water) identical.
+- **The pacing** (`bench pace`, 60 frames, nothing drawn): within their
+  share 60, 80 and 120 vblanks at 60, 45 and 30 fps, each buffer shown
+  for its share, as before; missing it (1.3 shares) 120 -> 78 vblanks at
+  60 (shown for 1 or 2: 43 / 17), 140 -> 104 at 45, 180 -> 156 at 30
+  (2 or 3: 26 / 34).
+- **The 128 views** (`BENCH_MAPS=1 HASHONLY=1`, `scripts/dlcheck.sh`
+  saved on the base): the display lists identical; their cycles +0.04 %
+  (86 views slower, 40 faster, -1 320 to +2 060 cycles: the pad's
+  interrupts land elsewhere in a frame begun sooner after its vblank).
+- **The game's own path** (`BENCH_MAPS=1 PLAY=1 MAP=E1M1`): the loading
+  screens, then 30 frames as in play (the pad's polls, the ticks, the
+  HUD, the sound, the music): through; E1M1's views past a vblank at
+  1.37 to 1.81 vblanks a frame (their work between one and two vblanks:
+  2 with the old flip).
+- **The RAM** (the release's objects): vid.c +344 bytes of code, +28 of
+  BSS; pad.c -12.
+
+### 111.5 The bench's measures
+
+- The fight's lines (`MONSTERS=3`) give each window's vblanks a frame
+  (`VSync`'s count over its 300 frames, the lines' own time left out),
+  where they gave the last frame's alone.
+- The game bench ends with `bench pace` lines: under each cap, 60 frames
+  whose work fits in their share (0.8 of it) and 60 that miss it (1.3),
+  nothing drawn: the vblanks they took and how long each buffer was
+  shown (`vid_shown_for`, counted where a buffer is shown, bench builds
+  only).
+
+### 111.6 Left
+
+- DuckStation (TESTING 11.90): no tearing in a fight and in
+  quick turns, the caps' pacing (45 and 30 within their share), the pad
+  (a press, the walk's speed, the menu's cursor), the sound and the
+  music, the streaming (the monsters' skins in at a fight, a level's
+  zones), the loading screens. The branch was tested on DuckStation
+  before its merge into master (2026-10-31).
+- PCSX-Redux draws at once: the GPU's own time (DuckStation's, a
+  console's) shows a late frame later, at the first vblank after its
+  drawing; a frame whose previous one is drawn after its vblank (the GPU
+  the slower: §78 measured it the faster) still waits for the next one.
+- A real console: GP1(05h) written at the vblank's start (the interrupt)
+  rather than after `VSync` returned; the same register, earlier in the
+  blanking.
+- The warp's `more` (111.3) trades frames a second for the floor's look
+  now: a call left open, whether a frame just over a vblank should keep
+  the 32 px warp instead.
+
+## §114 — The monsters' shared detail budget (2026-10-31)
+
+(The number is provisional: §111-§113 are the levers' branches, not
+merged.)
+
+- **The request**: the compromise that keeps the bodies readable and
+  coherent, chosen from the shared-budget LOD's proof of concept. That
+  is an HTML page outside the repo: it draws the cooked bodies band by
+  band as the engine does, reads `STREAM_0.DAT` at run time and holds no
+  data of its own. The result goes in a release to play before
+  any merge.
+- **What the page showed**:
+  - The starting rule pulls a near body straight to L: a body's band is
+    `max(d, L)`, d its depth's band, L a level the bodies in view share
+    (the least level whose total fits the budget, a floor at most).
+    Example: a shambler at 68 units goes from band 1 to band 10.
+  - The error that rule adds: band b's collapses are within 2 px at 64 b
+    units (§110), about 0.8 b world units, so 128 b / d px at depth d.
+    The shambler above shows up to 19 px of error: unreadable.
+  - The fix is a cap: a body's band at most k times its depth's band, so
+    its error at most k times today's (3 px at a band's start: §88's
+    bands of 42.7 units, z >> 8 in the view's units).
+- **The choice** (the page's `tune.mjs`, the cooked tables alone): 300
+  random fights a size, 64-900 units from the eye, the 13 kinds without
+  the bosses. Triangles saved against the distance alone, and the error
+  added on the bodies raised:
+
+  | budget, floor, cap | 10 / 14 / 20 / 26 bodies | error added, worst / mean |
+  |---|---|---|
+  | 800, 16, none | 2.4 / 23.3 / 45.6 / 46.5 % | 32 / 7.5 px |
+  | 800, 16, k 2 | 2.3 / 20.1 / 29.1 / 29.1 % | 6.0 / 4.8 px |
+  | 800, 16, k 1.5 | 1.9 / 15.5 / 19.5 / 19.6 % | 4.5 / 4.0 px |
+  | 800, 16, k 1.25 | 1.4 / 9.9 / 11.9 / 11.8 % | 3.7 / 3.5 px |
+  | **600, 16, k 1.5** | 12.2 / 19.6 / 19.5 / 19.6 % | 4.5 / 4.0 px |
+
+  k = 1.5 keeps the error within 4.5 px, near the worst §110 leaves
+  today (2.8 px at 64 b units, 4.2 px at the engine's band starts). The
+  budget only decides how often the bodies are raised, never how far.
+  600 vertices was chosen on the fight below; the page and the release
+  default to it.
+- **The engine** (engine/rlist.c, `rl_model_stream`, `rl_begin`):
+  - The settings: CMake `Q1PSX_LOD_BUDGET` (600 expanded vertices a
+    frame; 0: none, the code compiled out), `Q1PSX_LOD_FLOOR` (16),
+    `Q1PSX_LOD_CAP` (384, k = 1.5 in 256ths); `scripts/bench.sh` takes
+    `LODBUDGET`, `LODFLOOR` and `LODCAP`.
+  - A body's band d is taken from its depth as before. Then `lod_count`:
+    - its cap c = z x `Q1PSX_LOD_CAP` >> 16 (z its depth in the view's
+      units, d = z >> 8; at least d);
+    - its band max(d, min(L, c)), L the frame's level;
+    - it adds to the frame's sums what each level would draw of it, as
+      expanded vertices (the band's `num_verts`: the cooked qst_lod, no
+      new data): the base, its depth's band; the levels between d and its
+      cap, theirs; past its cap, its cap's (a difference array);
+    - a body wholly past the draw distance (`r_draw_z`, render.c) is not
+      counted.
+  - `rl_begin` (`lod_level`) finds the least level within the budget
+    from the last frame's sums. L moves one band a frame toward it, and
+    goes down only once a lower level fits within 7/8 of the budget:
+    - a crowd turning into view is raised one band a frame;
+    - no level flickers at the budget's edge.
+  - About 150 bytes of BSS (the release's arena 1 352 416 B). The bench's
+    fight prints a `mon lod` line a window: the level, the bodies raised.
+- **Measured**: §106's fight (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0
+  SKILL=2 VIEW=1780,1803,-304,204,0`), against the budget off
+  (`LODBUDGET=0`: master's bands, the code compiled out), window by
+  window. The game is the same: the same models drawn and monsters alive
+  in each window.
+
+  | | budget 600 (the default) | budget 800 |
+  |---|---|---|
+  | drawing (12 windows) | -3.57 % (13.38 M -> 12.90 M cycles) | -0.40 % |
+  | windows at work | 7 | 3 |
+  | those windows | -3.6 to -8.1 % | -0.2 to -3.0 % |
+  | the idle windows (its sums) | +0.1 % | +0.1 % |
+  | level a frame | 1-14 on average, 16 at most | about 6, 8 at most |
+  | bodies raised a frame | 3.9 to 7.7 | about 4.5 |
+  | samples | -1.09 % | |
+  | models left out for the packets' room | 203 -> 1 | 203 -> 22 |
+
+  The models left out (`r_model_skipped`) are monsters not drawn at all
+  in master's busiest window, for want of packet room.
+- **For a test**: the release (`cmake --preset release`) carries the
+  600-vertex budget; `-DQ1PSX_LOD_BUDGET=0` builds without it. To be
+  seen in play on DuckStation: a big fight's near and mid-range
+  monsters, no part lost, the bodies' detail changing one band at a
+  time.
+
+## §115 — The monsters lit as Quake lights them (2026-10-31)
+
+(The number is provisional, like §114's.)
+
+- **The report**: the maps were brightened to 1.66 (the cook's
+  `LIGHT_GAIN`, §79), but the monsters seemed left as they were. Very
+  dark, they could not be seen in places; E4M2 is the darkest.
+- **The gain is every map's**: `scripts/cook.sh` passes `--light-gain`
+  to every map's cook. The monsters' light (a leaf's, `qw_leaf.light`)
+  was made from the faces' gained vertex lights.
+- **Why the monsters fell behind the walls** (a scratch tool on the
+  paks; for every monster's spawn point, before the gain):
+  - **The light's source.** Quake lights a model with R_LightPoint
+    (r_light.c): the lightmap where a line straight down from its origin
+    first meets a lit face, the floor under it. The cook took the
+    average of the leaf's faces, the walls and ceilings in it. Quake's
+    is 1.04-1.27 times brighter (median per map):
+
+    | map | Quake's light, median | the leaf average, median | Quake / port, median |
+    |---|---|---|---|
+    | E1M1 | 81 | 72 | 1.24 |
+    | E2M7 | 49 | 42 | 1.18 |
+    | E4M2 | 38 | 34 | 1.24 |
+    | E4M3 | 45 | 36 | 1.19 |
+
+  - **The shading.** Quake shades an alias model from its light up to
+    twice it on the side the light comes from (r_alias.c: ambient +
+    shade x cos, both the model's light below 96). The port's light
+    table (`gdata.dots`, tools/qcook/game.c) spans 1 to 1.5 times.
+  - Against the walls at 1.66 times Quake's, the bodies came out about
+    30 % darker than Quake drew them beside the same walls.
+- **The fix**:
+  - The cook (tools/qcook/world.c):
+    - a leaf's light is now Quake's R_LightPoint, ported
+      (`light_point_rec`: the front side first, the node's faces at the
+      crossing within Quake's CalcSurfaceExtents, then the back side;
+      sky and liquids skipped);
+    - it is averaged over the points of a 3 x 3 x 3 grid in the leaf's
+      box that lie in the leaf, at the cook's gain;
+    - a leaf no line reaches keeps the faces' average.
+    - The monsters' leaves are covered at 95-100 %. Their light (median
+      before the gain) comes out at Quake's own: E1M1 80 (Quake 81),
+      E4M2 42 (38), E4M3 45 (45). The cook's log prints a line a map.
+  - The engine (engine/rlist.c `rl_model_stream`):
+    - the streamed models' light (the monsters, their heads, the items'
+      models; not the flat ones) is multiplied by 4/3 before its bound,
+      which puts the lit side at Quake's twice;
+    - the game's models and the gun keep the table's span, because the
+      2D gun's pictures are cooked at it.
+- **Checked**: E1M1's monsters' frames (`MONSTERS=1 MAP=E1M1`), before
+  and after, side by side. The grunt and the dog in the dark corners,
+  nearly black before, now stand out; the grunt near has Quake's lit
+  side. The cycles are unchanged (the light is a value a body).
+
+## §116 — The Options menu's Brightness (2026-10-31)
+
+(The number is provisional, like §114's and §115's.)
+
+- **The request**: a brightness slider in the options, for the darkest
+  levels (E4M2).
+- **Quake's**: the Options menu's Brightness (menu.c `M_Options_Draw`,
+  `M_AdjustSliders`) moves `v_gamma` from 1 down to 0.5, a twentieth a
+  step. `BuildGammaTable` (view.c) takes the palette through
+  255 x ((i + 0.5) / 255.5) ^ gamma: it lifts the dark colours most and
+  white not at all.
+- **On the PlayStation** (engine/gamma.c): every texel is drawn through a
+  CLUT, so the CLUTs take the same curve on their 5-bit channels. The
+  eleven tables are computed on the host (each channel to 8 bits, through
+  `BuildGammaTable`, back to 5 bits) and held as constants.
+  - Which CLUTs:
+    - the map's textures' (VRAM rows 481-502: the world, its brush
+      models, the sky, the liquids, the far walls drawn flat);
+    - the game's palette (row 504: the monsters, the items, the gun, the
+      status bar's pictures);
+    - the console's (row 480).
+    - The menu's 4-bit pictures (rows 505-506), the 2D gun's CLUTs (its
+      packets) and the particles' colours keep theirs.
+  - Each upload of one of those goes through the current level's table
+    (engine/world.c `vram_upload`, ui.c), a row at a time from a
+    640-byte buffer. Black with its STP bit clear, the GPU's transparent
+    texel, stays so.
+  - A change sends the map's and the game's CLUTs again through the new
+    level's table, from copies of them as cooked:
+    - the map's are kept after its texture tables, 1.3-3.2 KB a map;
+    - the game's palette is kept in a 512-byte array.
+    - Reading the rows back from VRAM instead was tried on the host and
+      dropped: a 5-bit table merges neighbours near white, and a colour
+      drifted by up to 2 steps after a few moves of the slider.
+  - Nothing changes in a frame's work. The release's level arena is
+    1 352 416 -> 1 349 888 B (the code, the palette's copy, the row's
+    buffer), less the map's copy while it plays.
+- **The menu**: Brightness, Quake's row, between Reset to defaults and
+  the volumes; its slider at (1 - `v_gamma`) / 0.5; `settings.brightness`
+  0-10, 0 by default (Quake's 1); Reset to defaults puts it back.
+- **Checked**:
+  - on the host (engine/gamma.c with a VRAM in an array): ten moves of
+    the slider, the CLUTs at each level exactly the table's image of the
+    cooked colours, at 0 the cooked colours again, the transparent texels
+    and the STP bits kept;
+  - in the game bench (`BENCH_GAME=1`), its walk through the release menu
+    now moves the slider 5 steps and back:
+    - the CLUTs go to level 5, then back to 0;
+    - the map's kept CLUTs hash as START's cooked ones do (FNV
+      `dd8a42d1`);
+    - the walk goes on as before.
+  - The release builds with it.
+  - The colours on screen are to be judged on DuckStation:
+    PCSX-Redux runs without a GPU here.
+
 ## §113 — Two small CPU levers: the coplanar faces merged in the cook, lighter dynamic lights (2026-10-31)
 
 The fourth lever after §106's profile (the vblank wait and the slow

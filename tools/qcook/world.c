@@ -1978,6 +1978,116 @@ static int point_contents(const bsp_t *b, int node, const double p[3])
 	return b->leaves[-1 - node].contents;
 }
 
+/* The light a model in a leaf takes: Quake's R_LightPoint (r_light.c), the
+   lightmap of the first lit face a line from a point straight down 2048
+   units meets (RecursiveLightPoint: the front side first, the node's faces
+   at the crossing, then the back side), its styles summed at their normal
+   brightness as the faces' vertices take them (face_light_at), averaged
+   over the points of a 3 x 3 x 3 grid inside the leaf's box that are in
+   the leaf; -1: none met. The faces' extents are
+   Quake's CalcSurfaceExtents (model.c). */
+typedef struct { int tmin[2], ext[2]; } face_ext;
+static face_ext *fext;
+
+static void face_extents(const bsp_t *b)
+{
+	fext = xcalloc((size_t) b->num_faces, sizeof *fext);
+	for (int f = 0; f < b->num_faces; f++) {
+		const bsp_face *bf = &b->faces[f];
+		const bsp_texinfo *tx = &b->texinfo[bf->texinfo];
+		double mn[2] = { 1e30, 1e30 }, mx[2] = { -1e30, -1e30 };
+		for (int i = 0; i < bf->numedges; i++) {
+			int e = b->surfedges[bf->firstedge + i];
+			const float *v = b->verts + 3 * (e >= 0 ? b->edges[2 * e] : b->edges[2 * -e + 1]);
+			for (int k = 0; k < 2; k++) {
+				double val = v[0] * tx->vecs[k][0] + v[1] * tx->vecs[k][1] + v[2] * tx->vecs[k][2] + tx->vecs[k][3];
+				if (val < mn[k]) mn[k] = val;
+				if (val > mx[k]) mx[k] = val;
+			}
+		}
+		for (int k = 0; k < 2; k++) {
+			int b0 = (int) floor(mn[k] / 16), b1 = (int) ceil(mx[k] / 16);
+			fext[f].tmin[k] = b0 * 16;
+			fext[f].ext[k]  = (b1 - b0) * 16;
+		}
+	}
+}
+
+static int light_point_rec(const bsp_t *b, int node, const double s[3], const double e[3])
+{
+	if (node < 0)
+		return -1;                                /* a leaf: nothing met */
+	const bsp_node  *n  = &b->nodes[node];
+	const bsp_plane *pl = &b->planes[n->planenum];
+	double front = pl->n[0] * s[0] + pl->n[1] * s[1] + pl->n[2] * s[2] - pl->dist;
+	double back  = pl->n[0] * e[0] + pl->n[1] * e[1] + pl->n[2] * e[2] - pl->dist;
+	int side = front < 0;
+	if ((back < 0) == side)
+		return light_point_rec(b, n->child[side], s, e);
+	double frac = front / (front - back), mid[3];
+	for (int k = 0; k < 3; k++)
+		mid[k] = s[k] + (e[k] - s[k]) * frac;
+	int r = light_point_rec(b, n->child[side], s, mid);
+	if (r >= 0)
+		return r;
+	for (int i = 0; i < n->numfaces; i++) {
+		int f = n->firstface + i;
+		const bsp_face    *bf = &b->faces[f];
+		const bsp_texinfo *tx = &b->texinfo[bf->texinfo];
+		if (tx->flags & 1)                         /* (TEX_SPECIAL: Quake's SURF_DRAWTILED) */
+			continue;
+		double ss = mid[0] * tx->vecs[0][0] + mid[1] * tx->vecs[0][1] + mid[2] * tx->vecs[0][2] + tx->vecs[0][3];
+		double tt = mid[0] * tx->vecs[1][0] + mid[1] * tx->vecs[1][1] + mid[2] * tx->vecs[1][2] + tx->vecs[1][3];
+		if (ss < fext[f].tmin[0] || tt < fext[f].tmin[1])
+			continue;
+		int ds = (int) (ss - fext[f].tmin[0]), dt = (int) (tt - fext[f].tmin[1]);
+		if (ds > fext[f].ext[0] || dt > fext[f].ext[1])
+			continue;
+		if (bf->lightofs < 0 || !b->lighting)
+			return 0;
+		int w = (fext[f].ext[0] >> 4) + 1, h = (fext[f].ext[1] >> 4) + 1, sum = 0;
+		size_t at = (size_t) bf->lightofs + (size_t) (dt >> 4) * w + (ds >> 4);
+		for (int k = 0; k < 4 && bf->styles[k] != 255; k++, at += (size_t) w * h)
+			if (at < b->light_len)
+				sum += b->lighting[at];
+		return sum;
+	}
+	return light_point_rec(b, n->child[!side], mid, e);
+}
+
+static int point_leaf(const bsp_t *b, const double p[3])
+{
+	int node = 0;
+	while (node >= 0) {
+		const bsp_node  *n  = &b->nodes[node];
+		const bsp_plane *pl = &b->planes[n->planenum];
+		node = n->child[pl->n[0] * p[0] + pl->n[1] * p[1] + pl->n[2] * p[2] - pl->dist < 0];
+	}
+	return -1 - node;
+}
+
+static int leaf_light_point(const bsp_t *b, int leaf)
+{
+	const bsp_leaf *bl = &b->leaves[leaf];
+	int sum = 0, n = 0;
+	for (int i = 1; i <= 3; i++)                  /* (a 3 x 3 x 3 grid inside its box) */
+		for (int j = 1; j <= 3; j++)
+			for (int k = 1; k <= 3; k++) {
+				double p[3] = { bl->mins[0] + (bl->maxs[0] - bl->mins[0]) * i / 4.0,
+				                bl->mins[1] + (bl->maxs[1] - bl->mins[1]) * j / 4.0,
+				                bl->mins[2] + (bl->maxs[2] - bl->mins[2]) * k / 4.0 };
+				double e[3] = { p[0], p[1], p[2] - 2048 };
+				if (point_leaf(b, p) != leaf)
+					continue;
+				int r = light_point_rec(b, 0, p, e);
+				if (r >= 0) {
+					sum += r;
+					n++;
+				}
+			}
+	return n ? sum / n : -1;
+}
+
 static void bbox(const int16_t mins[3], const int16_t maxs[3], int16_t c[3], int16_t h[3])
 {
 	for (int k = 0; k < 3; k++) {
@@ -2388,9 +2498,15 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	free(pair_next);
 	nodes[b->num_nodes].faces[0] = (uint32_t) o.stream.len;   /* sentinel: end of the stream */
 
-	/* leaves. Their light (models in the leaf are lit with it): the average
-	   vertex light of the leaf's faces; a leaf without lit faces (open air)
-	   takes its nearest ancestor's subtree average. */
+	/* leaves. Their light (models in the leaf are lit with it): Quake's
+	   R_LightPoint in the leaf at the cook's gain (leaf_light_point: the
+	   floor's light under it, as Quake lights a model); where no line meets
+	   a lit face, the average vertex light of the leaf's faces, or for a
+	   leaf without lit faces (open air) its nearest ancestor's subtree
+	   average. */
+	face_extents(b);
+	long lp_sum = 0, lp_old = 0;
+	int lp_n = 0, lp_empty = 0, lp_empty_n = 0;
 	qw_leaf *leaves = xcalloc((size_t) b->num_leaves, sizeof *leaves);
 	uint32_t *lsum = xcalloc((size_t) b->num_leaves, 4), *lcnt = xcalloc((size_t) b->num_leaves, 4);
 	uint32_t *nsum = xcalloc((size_t) b->num_nodes, 4), *ncnt = xcalloc((size_t) b->num_nodes, 4);
@@ -2427,7 +2543,24 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 			cnt = ncnt[n];
 		}
 		l->light = (uint8_t) (cnt ? sum / cnt : 128);
+		int lp = i ? leaf_light_point(b, i) : -1;
+		if (bl->contents == QW_CONTENTS_EMPTY) {
+			lp_empty++;
+			lp_empty_n += lp >= 0;
+		}
+		if (lp >= 0) {
+			long g = lround(lp * light_gain);
+			lp_old += l->light;
+			l->light = (uint8_t) (g > 255 ? 255 : g);
+			lp_sum += l->light;
+			lp_n++;
+		}
 	}
+	printf("qcook: leaf light: %d of %d leaves (%d of the %d empty) by Quake's R_LightPoint, their mean %ld "
+	       "(the faces' average %ld)\n", lp_n, b->num_leaves, lp_empty_n, lp_empty, lp_n ? lp_sum / lp_n : 0,
+	       lp_n ? lp_old / lp_n : 0);
+	free(fext);
+	fext = NULL;
 	free(lsum); free(lcnt); free(nsum); free(ncnt);
 
 	/* The brush models' leaves (Quake numbers them after the world's, whose
