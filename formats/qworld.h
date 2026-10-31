@@ -23,11 +23,10 @@
  *     the CLUT, tpage and texture-window words) and the map from these UVs
  *     to its own tiles (qtex_uvmap), which the loader applies once. Pieces
  *     are grouped into "face records" of <= 63 vertices.
- *   - The ultra level also cuts the faces on a grid of QL_LIGHT_GRID
- *     texels (their vertex light follows the lightmap more closely), and
- *     every level cuts the brush models' on one of QL_BM_LIGHT_GRID; the
- *     low level leaves the T-junctions unrepaired (fewer polygons, a crack
- *     may show where a face's edge meets another's vertex).
+ *   - The brush models' faces whose corner lights miss their lightmap are
+ *     cut on a grid of QL_BM_LIGHT_GRID texels; the T-junctions are left
+ *     unrepaired (fewer polygons, a crack may show where a face's edge
+ *     meets another's vertex).
  *   - A face record is drawn when its face_id was stamped this frame by a
  *     visible leaf's marksurfaces (Quake's visframe scheme).
  *   - Brush models (Quake's submodels *1.., doors, plats, buttons, walls):

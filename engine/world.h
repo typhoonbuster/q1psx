@@ -1,7 +1,7 @@
 /*
  * q1psx — loaded world (formats/qworld.h + qtex.h + qgame.h).
  *
- * world_load() uploads the map's texture pages to VRAM (the QTX6 / QTX7 file
+ * world_load() uploads the map's texture pages to VRAM (the QTX7 file
  * is transient but for its tables: the texture words, the UV maps, the
  * animated textures), then loads the QWVF world and the map's own models
  * (QMM1) into the level arena, maps their UVs onto the loaded set's tiles

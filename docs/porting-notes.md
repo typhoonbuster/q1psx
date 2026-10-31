@@ -15878,3 +15878,61 @@ remove:
   the Graphics pages as before; the C engine's START frames master's C
   engine's; the release's level arena 1369008 → 1370768 B (+1760:
   `.text` −1692, the data −68); the default preset builds.
+
+### 119.6 The cook's leftovers, the medium textures, the 2D gun
+
+Removed (2026-10-31), from the same list:
+
+- **What the cook made for no disc** (one level an axis since §52):
+  - the geometry above low: the T-junctions' repair and the finer grid
+    of the vertex light (`tools/qcook/world.c` `tj_repair`, the light
+    grid; `qcook map --geometry`);
+  - the models above low: the triangles' reduction by level
+    (`reduce_mdl` makes the low models alone);
+  - the 8-bit texture sets (QTX6, `qcook map --tex`, their slots' tpage
+    and CLUT words), with `tools/pktview`'s reading of them and
+    `tools/pktview/wldref.c`, their world renderer;
+  - the guns' skins at Quake's resolution where the screen spreads them
+    (`qcook game --textures high`: no disc had them, every gun's skin is
+    at half);
+  - the debug and A / B knobs: `QCOOK_GUNS`, `QCOOK_GUNDUMP`,
+    `QCOOK_NOHAND`, `QCOOK_NOLOD`, `QCOOK_NOFMAP`, `QCOOK_IMAGES`,
+    `QCOOK_NO_DISC_SOUNDS`, `QCOOK_DECIM_DEBUG`.
+
+  The cook's files are byte for byte the same.
+- **The medium textures**: `Q1PSX_TEXTURES`, the `release-medium` preset,
+  the cook's medium sets (`<map>_t1.tx4`, `<map>_z1.zon`: 49 files fewer),
+  the bench's `TEXTURES=`; `formats/qlevels.h`: the textures high alone.
+- **The 2D gun** (§45, §47): `Q1PSX_WEAPON`; in the engine, its draw
+  (`engine/game.c` `ws_draw`, `game_ws_sync`, `game_draw_viewmodel`), its
+  tables (`engine/gdata.c`), the stream's lent block that held its
+  packets (`stream_lend`, `stream_lent`), `cd_last_lba`, and the ordering
+  table's bucket for it (4 → 3, the same order); in the cook, its frames'
+  renderer, their colours and packets and the VRAM slot they were copied
+  to; pktview's CPU-to-VRAM copies and fills; in the format
+  (`formats/qgame.h`, QGM9 → QGMA), the header's six fields,
+  `qg_wsprite`, `qg_wframe`, `QG_WCLUT_*` and `QG_WS_L0`. GAME_0.DAT
+  397952 → 306528 bytes (the boot reads 89 KB less). The slot gone, the
+  game's pages are packed anew: 109 of the 112 pictures and four
+  projectiles' skins (the spikes', the grenade's, the missile's) sit
+  elsewhere, the guns' where they were; the pages' used rows 844 → 798,
+  the streamed skins' free room 67577 → 71255 texels (page 9's largest
+  free rectangle 256 × 176 → 256 × 224), where the streamed models now
+  land elsewhere too.
+- **`iso/hello.txt`** (the disc's test file of R2.1, the root's
+  `HELLO.TXT`) and **`tools/.gitkeep`**.
+- **Kept**: `QCOOK_MERGE` (the cook's unmerged pass, which the zones'
+  tables are translated through, runs with it at 0).
+- **Checked** (TESTING 11.103): the cook's 261 files' md5 before and
+  after: GAME_0.DAT alone differs. The display lists differ only in the
+  game data's texture words (its images placed anew), so the pictures
+  were compared: pktview's renders of START's 12 views and of the game
+  bench's 28 dumps (the menus' warp fixed for the test) are pixel for
+  pixel those of the branch before the change; of the 128 spawn views, 50
+  hashes changed, no view's packet count, and E4M3's 12 views
+  (`BENCH_MAPS=1 MAP=E4M3`: the map whose spawn views changed most; 8 of
+  them differ in texture words) rendered on master and on the branch are
+  the same pixels; the C engine's START frames rendered against master's
+  C engine's: the same pixels. The release's level arena 1370768 → 1371072
+  B (+304: `.text` −220, the data −76; the load overlay −124); the
+  default preset builds.

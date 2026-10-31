@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 #
 # Build the asset cooker and cook the Quake data into ./cooked/ (never
-# committed). Every map ships with its 4-bit textures at medium and high
-# (the build takes one: CMake's Q1PSX_TEXTURES), its low geometry, its low
-# models (formats/qlevels.h; docs/porting-notes.md §52).
+# committed). Every map ships with its 4-bit textures at high, its low
+# geometry, its low models (formats/qlevels.h; docs/porting-notes.md §52,
+# §119).
 #
 # Env / local.env:
 #   QUAKE_PAK0   required — Quake (id1) pak0.pak (episode 1, shareware)
@@ -36,11 +36,11 @@
 # A cook writes what its output depends on, besides the cooker's sources
 # (CMake tracks those), to cooked/settings.txt: the settings above, the paks,
 # the zone tables' and the music's contents, qcook's own switches
-# (QCOOK_NOHAND, QCOOK_HAND, QCOOK_NOFMAP, QCOOK_SOUND_KEEP: the share of
+# (QCOOK_HAND, QCOOK_SOUND_KEEP: the share of
 # its energy every sound keeps, each cooked at the lowest rate that does,
 # in percent; default 98, 100 or 0 its own rate; docs/porting-notes.md
 # §87; QCOOK_LOD_PX: the monsters' level of detail's tolerance in pixels,
-# 2 by default, QCOOK_NOLOD=1 none, the vertices in today's order, §88;
+# 2 by default, §88;
 # QCOOK_ANIM_TOL: every body's
 # animations thinned to that many units (a frame its neighbours' average
 # makes well enough left out, tools/qcook/game.c ANIM_THIN, §97; 0 none);
@@ -55,15 +55,15 @@
 # local.env or on the command line, or a cook another build directory made
 # with other settings (they share cooked/).
 #
-# Output, per map (formats/qlevels.h: 0 low, 1 medium, 2 high):
-#   cooked/id1/<map>_t<N>.tx4   QTX7 4-bit textures (1, 2)        -> disc <MAP>_T<N>.TX4
+# Output, per map (formats/qlevels.h: 0 low, 2 high):
+#   cooked/id1/<map>_t2.tx4     QTX7 4-bit textures, high         -> disc <MAP>_T2.TX4
 #   cooked/id1/<map>_g0.wld     QWVH world, low geometry          -> disc <MAP>_G0.WLD
 #   cooked/id1/<map>_m0.mdl     QMM1 its own models, low          -> disc <MAP>_M0.MDL
 #   cooked/id1/<map>.snd        QSB2 its sound bank               -> disc <MAP>.SND
 #   cooked/id1/<map>.sndset     the level's sound set: `spu`/`ram`/`disc` a sound (qcook section reads it)
 # and with Q1PSX_ZONE_TABLES, a map split into zones (formats/qworld.h):
 #   cooked/id1/<map>_g0.skl     QWZI its skeleton                 -> disc <MAP>_G0.WLD
-#   cooked/id1/<map>_z<N>.zon   QZN1 its chunks, textures N (1, 2) -> disc <MAP>_Z<N>.ZON
+#   cooked/id1/<map>_z2.zon     QZN1 its chunks, textures high    -> disc <MAP>_Z2.ZON
 # the game data (the guns, the projectiles, the HUD; formats/qgame.h):
 #   cooked/id1/game_0.dat       QGM8, low                         -> disc GAME_0.DAT
 # the release menu's (formats/qsound.h, formats/qmenu.h):
@@ -138,7 +138,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	else
 		echo "music: none"
 	fi
-	echo "qcook: QCOOK_NOHAND=${QCOOK_NOHAND:-} QCOOK_HAND=${QCOOK_HAND:-} QCOOK_NOFMAP=${QCOOK_NOFMAP:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_NOLOD=${QCOOK_NOLOD:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-} QCOOK_MERGE=${QCOOK_MERGE:-} QCOOK_MERGE_ERR=${QCOOK_MERGE_ERR:-}"
+	echo "qcook: QCOOK_HAND=${QCOOK_HAND:-} QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-} QCOOK_MUSIC_RING_KB=${QCOOK_MUSIC_RING_KB:-} QCOOK_LOD_PX=${QCOOK_LOD_PX:-} QCOOK_ANIM_TOL=${QCOOK_ANIM_TOL:-} QCOOK_MERGE=${QCOOK_MERGE:-} QCOOK_MERGE_ERR=${QCOOK_MERGE_ERR:-}"
 }
 if [ "${1:-}" = --stale ]; then
 	stamp=${2:?--stale needs the file the cook depends on}
@@ -186,13 +186,13 @@ cook_one() {   # map axis level (t / g / m, 0..2)
 	name=$(echo low medium high ultra | cut -d' ' -f$(($3 + 1)))
 	case $2 in
 	t) what="--textures $name --tex4 $out.tx4" ;;
-	g) what="--geometry $name --world $out.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset"
+	g) what="--world $out.wld --sounds cooked/id1/$1.snd --sndset cooked/id1/$1.sndset"
 	   if [ "$FMAP" = 1 ] && [ -f "$Q1PSX_ZONE_TABLES/$1.zones" ]; then   # (the zones' tables name the
 		                                 #  records of a cook without the merge: each record's faces,
 		                                 #  to translate them, below)
 		what="$what --fmap $LOGS/$1_$2$3.fmap"
 		QCOOK_MERGE=0 tools/qcook/qcook map --pak "$pak" --palette-pak "$QUAKE_PAK0" --map "maps/$1.bsp" \
-		              --geometry $name --world "$LOGS/$1_$2$3.unmerged.wld" --fmap "$LOGS/$1_$2$3.unmerged.fmap" \
+		              --world "$LOGS/$1_$2$3.unmerged.wld" --fmap "$LOGS/$1_$2$3.unmerged.fmap" \
 		              --light-gain "${LIGHT_GAIN:-1.66}" > "$LOGS/$1_$2$3.unmerged.log" 2>&1 \
 		|| { echo "cook FAILED: $1 $2$3 (unmerged)"; cat "$LOGS/$1_$2$3.unmerged.log"; return 1; }
 	   fi ;;
@@ -213,12 +213,12 @@ export -f cook_one
 export QUAKE_PAK0 QUAKE_PAK1 LOGS LIGHT_GAIN FMAP Q1PSX_ZONE_TABLES
 
 for m in $MAPS; do
-	for n in 1 2; do echo "$m t $n"; done         # textures: medium, high (the build takes one)
+	echo "$m t 2"                                 # textures: high
 	echo "$m g 0"                                 # geometry: low
 	echo "$m m 0"                                 # models: low
 done | xargs -P "$(nproc)" -n 3 bash -c 'cook_one "$0" "$1" "$2"'
 
-echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures medium and high, the geometry and the models low -> $ROOT/cooked/"
+echo "cooked $(echo $MAPS | wc -w) maps: the 4-bit textures high, the geometry and the models low -> $ROOT/cooked/"
 
 # each map's own file of the streamed assets (docs/porting-notes.md §84):
 # the pool's directory, the assets its entities bring, the nearest to the
@@ -236,8 +236,8 @@ for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c 'section_o
 cat "$LOGS"/*_s.log | grep '^qcook: ' | sed 's|^qcook: .*/|section: |' || true
 
 # the world's zones (docs/porting-notes.md §57): each map with a table split
-# into its skeleton and its chunks at both texture levels (their UVs on that
-# set's tiles: after the textures' jobs), or left whole where that saves no
+# into its skeleton and its chunks (their UVs on the texture set's tiles:
+# after the textures' jobs), or left whole where that saves no
 # RAM (the cook says which); Q1PSX_ZONE_SLOTS the chunks resident at once
 # (3: the camera's zone and its two nearest; 4: its three nearest; 5: and the
 # last one left, kept)
@@ -248,7 +248,6 @@ if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 	    't="$Q1PSX_ZONE_TABLES/{}.zones"; [ -f "$t" ] || exit 0
 	     fm=""; [ "$FMAP" = 1 ] && fm="--fmap $LOGS/{}_g0.unmerged.fmap $LOGS/{}_g0.fmap"   # (QCOOK_MERGE)
 	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}_g0.wld --tables "$t" $fm --skeleton cooked/id1/{}_g0.skl \
-	         --tex4 cooked/id1/{}_t1.tx4 --chunks cooked/id1/{}_z1.zon \
 	         --tex4 cooked/id1/{}_t2.tx4 --chunks cooked/id1/{}_z2.zon > "$LOGS/{}_z.log" 2>&1 \
 	     || { echo "cook FAILED: zones {}"; cat "$LOGS/{}_z.log"; exit 1; }'
 	echo "zones: $(ls cooked/id1/*_g0.skl 2>/dev/null | wc -l) of $(echo $MAPS | wc -w) maps split ($Q1PSX_ZONE_TABLES)"

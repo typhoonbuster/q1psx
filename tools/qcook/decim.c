@@ -17,8 +17,7 @@
  * halves meet off the seam or the outline touches itself stays; no
  * triangle turns over or flattens in any frame, no edge gets three
  * triangles. Cheapest first, until `keep` of the triangles are left or the
- * next costs more than max_err squared (QCOOK_DECIM_DEBUG=1: why it
- * stopped, on stderr).
+ * next costs more than max_err squared.
  */
 
 #include <math.h>
@@ -331,22 +330,8 @@ int decimate(const dmesh *m, int (*tri)[4], int n, double keep, double max_err)
 		for (int i = 0; i < nc && pick < 0 && cands[i].cost <= max_err * max_err; i++)
 			if (collapse_ok(m, (const int (*)[4]) tri, &A, cands[i].u, cands[i].v))
 				pick = i;
-		if (pick < 0) {
-			if (getenv("QCOOK_DECIM_DEBUG")) {
-				int nlock = 0, nseam = 0, nborder = 0, nok = 0;
-				for (int v = 0; v < nv; v++) {
-					nlock += lock[v];
-					nseam += m->seam && m->seam[v];
-					nborder += border[v] > 0;
-				}
-				for (int i = 0; i < nc; i++)
-					nok += collapse_ok(m, (const int (*)[4]) tri, &A, cands[i].u, cands[i].v);
-				fprintf(stderr, "decim: stop at %d of %d: %d candidates (%d allowed), cheapest %.3g, "
-				        "max %.3g; %d verts locked, %d seam, %d border\n", left, n, nc, nok,
-				        nc ? cands[0].cost : 0.0, max_err * max_err, nlock, nseam, nborder);
-			}
+		if (pick < 0)
 			break;
-		}
 		int bu = cands[pick].u, bv = cands[pick].v;
 		/* u onto v: the edge's triangles go, u's others take v */
 		for (int i = 0; i < A.count[bu]; i++) {

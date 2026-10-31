@@ -5,12 +5,10 @@
  * the release build's Options / Graphics menu (engine/menu.c) change them,
  * at once (settings_apply).
  *
- * The rest is the build's (CMakeLists.txt), never a menu's:
- *   the textures   Q1PSX_TEXTURES, high or medium: the disc's one set, 4-bit
- *   the geometry   low
- *   the models     low (the guns rebuilt by hand: tools/qcook)
- *   the gun        Q1PSX_WEAPON, 3d or 2d (Q1PSX_WEAPON_2D)
- * and fixed: the 3D view at 320 x 240, the draw distance 1536 world units
+ * The rest is every build's, never a menu's: the disc's one set of
+ * textures, 4-bit, at high; the geometry and the models low (the guns
+ * rebuilt by hand: tools/qcook), the gun its 3D model; the 3D view at
+ * 320 x 240, the draw distance 1536 world units
  * (render.h R_DRAW_DIST), the walls past 512 units flat-shaded
  * (R_FLAT_FAR_UNITS), the effects' particles the port's high counts
  * (engine/game.c), the dithering on (engine/vid.c).
@@ -23,9 +21,6 @@
 
 #include "qlevels.h"
 
-#ifndef Q1PSX_WEAPON_2D
-#define Q1PSX_WEAPON_2D 0        /* 1: the gun's frames as pictures (formats/qgame.h) */
-#endif
 #define SETTINGS_WARP_FLOOR 4    /* px: the dynamic warp control's least threshold at the
                                     default anti-warping (the bench's T) */
 

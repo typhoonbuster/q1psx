@@ -291,7 +291,7 @@ static double tri_area2(const vkey *a, const vkey *b, const vkey *c)
 }
 
 /* Ear clipping of a convex piece that has collinear vertices on its boundary
-   (T-junction vertices, its own or inserted by tj_repair): clip the corner
+   (T-junction vertices, its own): clip the corner
    with the largest triangle each time. Every boundary vertex stays on the
    outline, so a neighbour that has it meets this piece edge for edge. A fan
    would pair up collinear corners into zero-area triangles and draw the
@@ -657,15 +657,12 @@ static int face_miptex(const bsp_t *b, int f)
 /* ------------------------------------------------- pieces + T-junctions -- */
 
 /* Every drawn face is cut on its texture-repeat grid first (face_pieces),
-   for the whole map, so that T-junctions can be repaired before records are
-   built: a vertex lying on another piece's edge (a cut of one face along its
-   neighbour's edge, qbsp's own leftovers) leaves a crack on screen, because
-   the two sides of that edge are not drawn between the same vertices.
-   tj_repair inserts such vertices into the edges they lie on. */
+   for the whole map, before records are built. A vertex lying on another
+   piece's edge (a cut of one face along its neighbour's edge, qbsp's own
+   leftovers: a T-junction) is left as it is: a crack may show there. */
 typedef struct {
 	int    face;
 	int    model;           /* the Quake model the face belongs to        */
-	int    fixed;           /* T-junction vertices inserted               */
 	double s_off, t_off;    /* the cell's corner, Quake texels            */
 	poly_t pl;
 	int    dead;            /* merged into another piece (QCOOK_MERGE)    */
@@ -677,9 +674,7 @@ static piece_t *pc_list;
 static int     *face_model;              /* [num_faces]: the model of each face */
 static int      pc_num, pc_cap;
 static int     *pc_first, *pc_count;   /* per face */
-static uint32_t tj_inserted, tj_pieces;
 
-static int light_grid;                   /* the ultra level's extra cuts, texels (0: none) */
 static int bm_grid_faces;                /* the brush models' faces cut on their light grid (§96) */
 
 /* the coplanar faces merged (QCOOK_MERGE, docs/porting-notes.md §113) */
@@ -754,11 +749,11 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 	   UV), from an origin on a repetition boundary so the virtual
 	   coordinate keeps the texture's phase; the face's own origin, so it
 	   is cut as little as possible. Another axis: the VRAM tile (one
-	   repetition) on the global grid. The light grid (ultra) cuts the
-	   cells again every QL_LIGHT_GRID texels from their corner (luxel
-	   boundaries: a texture's size is a multiple of 16), the UVs still
-	   from the cell's corner, so the vertex light follows the lightmap
-	   closer. (On the global grid instead: start +52 % polygons, not +37.)
+	   repetition) on the global grid. A brush model's face whose corner
+	   lights miss its lightmap (§96) is cut again every QL_BM_LIGHT_GRID
+	   texels from the cell's corner (luxel boundaries: a texture's size is
+	   a multiple of 16), the UVs still from the cell's corner, so the
+	   vertex light follows the lightmap closer.
 	   A face of a merged cluster (QCOOK_MERGE) takes the cluster's origin,
 	   so that its faces' pieces in a cell can be merged. */
 	const double W  = s->win_x ? 256.0 * m->w / s->rep_w : (double) m->w;
@@ -783,9 +778,8 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 			/* the light grid's lines inside the cell (none: the cell whole) */
 			double cs0 = s0 + i * W, cs1 = cs0 + W, ct0 = t0 + j * H, ct1 = ct0 + H;
 			double gs0 = cs0, gs1 = cs1, gt0 = ct0, gt1 = ct1;
-			double G = light_grid;
-			if (face_model[f] && bm_grid)   /* (a brush model's face the vertex lights misrepresent: every level) */
-				G = QL_BM_LIGHT_GRID;
+			double G = face_model[f] && bm_grid ? QL_BM_LIGHT_GRID : 0;   /* (a brush model's face the
+			                                                                 vertex lights misrepresent) */
 			if (G > 0) {                 /* (the cell's sub-cells the face reaches) */
 				gs0 = cs0 + floor(((smin > cs0 ? smin : cs0) - cs0) / G) * G;
 				gt0 = ct0 + floor(((tmin > ct0 ? tmin : ct0) - ct0) / G) * G;
@@ -813,7 +807,6 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 					piece_t *p = &pc_list[pc_num++];
 					p->face  = f;
 					p->model = face_model[f];
-					p->fixed = 0;
 					p->s_off = cs0;
 					p->t_off = ct0;
 					p->pl    = pc;
@@ -827,148 +820,10 @@ static void face_pieces(const bsp_t *b, const tex_set *ts, int f)
 	}
 }
 
-/* quantized vertex positions (the pool's: QW_VSCALE units) on a grid, per
-   model: a brush model's edges only take its own vertices (it moves) */
-typedef struct { int32_t q[3]; int model; } qv_t;
-#define TJ_CELL  256                     /* grid cell, quantized units (64 world units) */
-#define TJ_HSIZE (1 << 16)
-
-static qv_t *tj_v;
-static int   tj_nv, tj_cap;
-static int  *tj_head, *tj_next;           /* hash of cells -> vertex chains */
-
-static uint32_t tj_cell_hash(int32_t cx, int32_t cy, int32_t cz)
-{
-	uint32_t h = (uint32_t) cx * 73856093u ^ (uint32_t) cy * 19349663u ^ (uint32_t) cz * 83492791u;
-	return h & (TJ_HSIZE - 1);
-}
-
-static int32_t tj_quant(double v)
+/* a vertex position quantized to the pool's units (QW_VSCALE) */
+static int32_t vert_quant(double v)
 {
 	return (int32_t) lround(v * QW_VSCALE);
-}
-
-static int32_t tj_floordiv(int32_t a, int32_t b)
-{
-	return a >= 0 ? a / b : -((-a + b - 1) / b);
-}
-
-/* add a quantized vertex once */
-static void tj_add(const double p[3], int model)
-{
-	int32_t q[3] = { tj_quant(p[0]), tj_quant(p[1]), tj_quant(p[2]) };
-	uint32_t h = tj_cell_hash(tj_floordiv(q[0], TJ_CELL), tj_floordiv(q[1], TJ_CELL), tj_floordiv(q[2], TJ_CELL));
-	for (int i = tj_head[h]; i >= 0; i = tj_next[i])
-		if (tj_v[i].q[0] == q[0] && tj_v[i].q[1] == q[1] && tj_v[i].q[2] == q[2] &&
-		    tj_v[i].model == model)
-			return;
-	if (tj_nv == tj_cap) {
-		tj_cap  = tj_cap ? 2 * tj_cap : 16384;
-		tj_v    = realloc(tj_v, (size_t) tj_cap * sizeof *tj_v);
-		tj_next = realloc(tj_next, (size_t) tj_cap * sizeof *tj_next);
-		if (!tj_v || !tj_next)
-			die("out of memory (T-junctions)");
-	}
-	memcpy(tj_v[tj_nv].q, q, sizeof q);
-	tj_v[tj_nv].model = model;
-	tj_next[tj_nv] = tj_head[h];
-	tj_head[h] = tj_nv++;
-}
-
-/* Insert into every piece edge the map's vertices lying on it (within half
-   a world unit of the segment, strictly between its ends), in order. Their
-   texture coordinates come from the face's own mapping at their quantized
-   position, so the pool shares them with the neighbour. */
-static void tj_repair(const bsp_t *b)
-{
-	tj_head = xmalloc(TJ_HSIZE * sizeof *tj_head);
-	for (int i = 0; i < TJ_HSIZE; i++)
-		tj_head[i] = -1;
-	for (int i = 0; i < pc_num; i++)
-		for (int k = 0; k < pc_list[i].pl.n && !pc_list[i].dead; k++)
-			tj_add(pc_list[i].pl.v[k].p, pc_list[i].model);
-
-	int *stamp = xmalloc((size_t) tj_nv * sizeof *stamp);
-	for (int i = 0; i < tj_nv; i++)
-		stamp[i] = -1;
-	int edge_id = 0;
-
-	for (int pi = 0; pi < pc_num; pi++) {
-		piece_t *pc = &pc_list[pi];
-		if (pc->dead)
-			continue;
-		const bsp_texinfo *ti = &b->texinfo[b->faces[pc->face].texinfo];
-		poly_t out;
-		out.n = 0;
-		for (int e = 0; e < pc->pl.n; e++) {
-			const pvert *va = &pc->pl.v[e], *vb = &pc->pl.v[(e + 1) % pc->pl.n];
-			if (out.n < MAXPV)
-				out.v[out.n++] = *va;
-			int32_t qa[3] = { tj_quant(va->p[0]), tj_quant(va->p[1]), tj_quant(va->p[2]) };
-			int32_t qb[3] = { tj_quant(vb->p[0]), tj_quant(vb->p[1]), tj_quant(vb->p[2]) };
-			double D[3] = { qb[0] - qa[0], qb[1] - qa[1], qb[2] - qa[2] };
-			double L2 = D[0] * D[0] + D[1] * D[1] + D[2] * D[2];
-			if (L2 < 16)                   /* shorter than a world unit */
-				continue;
-			double L = sqrt(L2);
-
-			/* candidates: the cells along the segment and their neighbours */
-			struct { double t; int v; } hit[MAXPV];
-			int nhit = 0;
-			edge_id++;
-			int steps = (int) (L / (TJ_CELL / 2)) + 1;
-			for (int st = 0; st <= steps; st++) {
-				double f = (double) st / steps;
-				int32_t c0 = tj_floordiv((int32_t) lround(qa[0] + f * D[0]), TJ_CELL);
-				int32_t c1 = tj_floordiv((int32_t) lround(qa[1] + f * D[1]), TJ_CELL);
-				int32_t c2 = tj_floordiv((int32_t) lround(qa[2] + f * D[2]), TJ_CELL);
-				for (int dx = -1; dx <= 1; dx++)
-				for (int dy = -1; dy <= 1; dy++)
-				for (int dz = -1; dz <= 1; dz++)
-					for (int v = tj_head[tj_cell_hash(c0 + dx, c1 + dy, c2 + dz)]; v >= 0; v = tj_next[v]) {
-						if (stamp[v] == edge_id || tj_v[v].model != pc->model)
-							continue;
-						stamp[v] = edge_id;
-						const int32_t *q = tj_v[v].q;
-						double d[3] = { q[0] - qa[0], q[1] - qa[1], q[2] - qa[2] };
-						double t = (d[0] * D[0] + d[1] * D[1] + d[2] * D[2]) / L2;
-						if (t * L < 2 || (1 - t) * L < 2)
-							continue;          /* an end (or beyond) */
-						double cx = d[1] * D[2] - d[2] * D[1], cy = d[2] * D[0] - d[0] * D[2],
-						       cz = d[0] * D[1] - d[1] * D[0];
-						if ((cx * cx + cy * cy + cz * cz) / L2 > 4.0)
-							continue;          /* > half a world unit off the line */
-						if (nhit < MAXPV) {
-							hit[nhit].t = t;
-							hit[nhit].v = v;
-							nhit++;
-						}
-					}
-			}
-			for (int x = 1; x < nhit; x++)       /* in order along the edge */
-				for (int y = x; y > 0 && hit[y].t < hit[y - 1].t; y--) {
-					double tt = hit[y].t; int vv = hit[y].v;
-					hit[y].t = hit[y - 1].t; hit[y].v = hit[y - 1].v;
-					hit[y - 1].t = tt; hit[y - 1].v = vv;
-				}
-			for (int x = 0; x < nhit && out.n < MAXPV; x++) {
-				pvert *nv = &out.v[out.n++];
-				for (int k = 0; k < 3; k++)
-					nv->p[k] = tj_v[hit[x].v].q[k] / (double) QW_VSCALE;
-				nv->s = nv->p[0] * ti->vecs[0][0] + nv->p[1] * ti->vecs[0][1] + nv->p[2] * ti->vecs[0][2] + ti->vecs[0][3];
-				nv->t = nv->p[0] * ti->vecs[1][0] + nv->p[1] * ti->vecs[1][1] + nv->p[2] * ti->vecs[1][2] + ti->vecs[1][3];
-				tj_inserted++;
-			}
-			if (nhit)
-				pc->fixed = 1;
-		}
-		if (pc->fixed) {
-			pc->pl = out;
-			tj_pieces++;
-		}
-	}
-	free(stamp);
-	free(tj_head);
 }
 
 /* ------------------------------------------------- coplanar faces merged -- */
@@ -1162,7 +1017,7 @@ static double area2(const poly_t *pl, int ax)        /* signed, twice */
 static int same_point(const pvert *a, const pvert *c)
 {
 	for (int k = 0; k < 3; k++)
-		if (tj_quant(a->p[k]) != tj_quant(c->p[k]))
+		if (vert_quant(a->p[k]) != vert_quant(c->p[k]))
 			return 0;
 	return 1;
 }
@@ -1658,7 +1513,7 @@ typedef struct { int32_t q[3]; int model, users, runs, keep; } mg_vert;
 
 static mg_vert *mg_find(mg_vert *h, uint32_t mask, const pvert *v, int model)
 {
-	int32_t q[3] = { tj_quant(v->p[0]), tj_quant(v->p[1]), tj_quant(v->p[2]) };
+	int32_t q[3] = { vert_quant(v->p[0]), vert_quant(v->p[1]), vert_quant(v->p[2]) };
 	uint32_t at = ((uint32_t) q[0] * 73856093u ^ (uint32_t) q[1] * 19349663u ^ (uint32_t) q[2] * 83492791u ^
 	               (uint32_t) model * 2654435761u) & mask;
 	for (;; at = (at + 1) & mask) {
@@ -2189,10 +2044,9 @@ static int clip_share(const bsp_t *b, int *roots, int nroots, qw_clipnode *out)
 	return count;
 }
 
-void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *out_path)
+void world_build(const bsp_t *b, const tex_set *ts, const char *out_path)
 {
 	const bsp_model *wm = &b->models[0];
-	light_grid = geo_level == QL_ULTRA ? QL_LIGHT_GRID : 0;
 	bm_grid_faces = 0;
 	if (b->num_models > 254)
 		die("%d models: more than 254", b->num_models);
@@ -2200,8 +2054,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	ent_list ents;
 	ents_parse(b, &ents);
 
-	/* every drawn face cut into pieces (the world's and the brush models'),
-	   T-junctions repaired within each model */
+	/* every drawn face cut into pieces (the world's and the brush models') */
 	pc_first = xmalloc((size_t) b->num_faces * sizeof *pc_first);
 	pc_count = xmalloc((size_t) b->num_faces * sizeof *pc_count);
 	face_model = xmalloc((size_t) b->num_faces * sizeof *face_model);
@@ -2315,8 +2168,6 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 		merge_check(b, ts);
 		merge_drop(b, ts);
 	}
-	if (geo_level != QL_LOW)                 /* (low: fewer polygons, a crack may show) */
-		tj_repair(b);
 	int root = wm->headnode[0];
 
 	/* each model's hull-0 tree (reach[n] = model + 1): the world's is
@@ -2982,8 +2833,7 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 	       o.records, o.pieces, o.quads, o.tris, o.verts,
 	       o.records ? (double) o.verts / o.records : 0.0, o.npool, o.faces_split,
 	       h.max_depth, nviews);
-	printf("qcook:   T-junctions: %u vertices inserted into %u pieces; %u pieces ear-clipped%s\n",
-	       tj_inserted, tj_pieces, o.pieces_eared, geo_level == QL_LOW ? " (not repaired: low)" : "");
+	printf("qcook:   %u pieces ear-clipped\n", o.pieces_eared);
 	if (merge_on) {
 		mg_pieces = mg_into = 0;
 		for (int i = 0; i < pc_num; i++)
@@ -2994,8 +2844,6 @@ void world_build(const bsp_t *b, const tex_set *ts, int geo_level, const char *o
 		printf("qcook:   merge: %u pieces merged into %u; %u vertices dropped from the straight runs, "
 		       "%u slivers left out\n", mg_pieces, mg_into, mg_dropped, mg_dead);
 	}
-	if (light_grid)
-		printf("qcook:   light grid: cut every %d texels\n", light_grid);
 	if (bm_grid_faces)
 		printf("qcook:   brush models' light grid: %d faces cut every %d texels\n", bm_grid_faces, QL_BM_LIGHT_GRID);
 	if (has_spawn)

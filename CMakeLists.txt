@@ -144,7 +144,7 @@ target_compile_definitions(q1psx PRIVATE Q1PSX_PROFILE=${_q1psx_profile})
 target_compile_options(q1psx PRIVATE
 	$<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,R_PROFILE=${_q1psx_profile}>)
 
-# The release build (presets "release", "release-medium"): Quake's own menu
+# The release build (preset "release"): Quake's own menu
 # over the game (engine/menu.c), no debug overlay, no map menu, no cheats.
 # The menus' code at -Os (a menu's pace; every KB of code is RAM:
 # docs/porting-notes.md §60); the loads and spawns elsewhere: Q_COLD
@@ -160,24 +160,9 @@ if(Q1PSX_RELEASE)
 			$<$<COMPILE_LANGUAGE:C>:-include ${PROJECT_SOURCE_DIR}/engine/noprint.h>)
 	endif()
 endif()
-# The build's choices (docs/porting-notes.md §52, engine/settings.h), every
-# build's alike: the textures the disc carries (4-bit; the geometry and the
-# models are low on every disc), the gun. The draw distance is fixed
-# (1536 units: engine/render.h R_DRAW_DIST, §119).
-set(Q1PSX_TEXTURES "high" CACHE STRING "The textures on the disc: high or medium (4-bit)")
-set_property(CACHE Q1PSX_TEXTURES PROPERTY STRINGS high medium)
-if(NOT Q1PSX_TEXTURES MATCHES "^(high|medium)$")
-	message(FATAL_ERROR "Q1PSX_TEXTURES: high or medium, not ${Q1PSX_TEXTURES}")
-endif()
-set(Q1PSX_WEAPON "3d" CACHE STRING "The gun: 3d (its model) or 2d (its frames as pictures)")
-set_property(CACHE Q1PSX_WEAPON PROPERTY STRINGS 3d 2d)
-if(Q1PSX_WEAPON STREQUAL "2d")
-	target_compile_definitions(q1psx PRIVATE Q1PSX_WEAPON_2D=1)
-elseif(Q1PSX_WEAPON STREQUAL "3d")
-	target_compile_definitions(q1psx PRIVATE Q1PSX_WEAPON_2D=0)
-else()
-	message(FATAL_ERROR "Q1PSX_WEAPON: 3d or 2d, not ${Q1PSX_WEAPON}")
-endif()
+# Every build alike (docs/porting-notes.md §52, §119, engine/settings.h):
+# the 4-bit textures at high, the geometry and the models low, the 3D gun,
+# the draw distance 1536 units (engine/render.h R_DRAW_DIST).
 
 # The dynamic lights' block hook: the asm (engine/r_world.s dl_block_asm) or
 # its C reference (engine/dlight.c dl_block); both must give the same frames.
@@ -413,7 +398,7 @@ file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
 if(NOT _cooked)
 	message(STATUS "q1psx: no cooked assets yet (the build cooks them: scripts/cook.sh)")
 else()
-	message(STATUS "q1psx: the textures ${Q1PSX_TEXTURES}, the gun ${Q1PSX_WEAPON}")
+	message(STATUS "q1psx: cooked assets in cooked/")
 endif()
 
 set(_music "")
@@ -432,7 +417,7 @@ set(_cd_xml ${CMAKE_CURRENT_BINARY_DIR}/cd_image.xml)
 add_custom_command(
 	OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/q1psx.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx.cue
 	COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DOUT=${_cd_xml}
-	        -DTEXTURES=${Q1PSX_TEXTURES} -DMUSIC=${_disc_music} -DPAK0=${_pak0_path}
+	        -DMUSIC=${_disc_music} -DPAK0=${_pak0_path}
 	        -DSDK_VERSION=${PSN00BSDK_VERSION} -P ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake
 	COMMAND ${MKPSXISO} -y -q -o q1psx.bin -c q1psx.cue ${_cd_xml}
 	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/iso/iso.xml

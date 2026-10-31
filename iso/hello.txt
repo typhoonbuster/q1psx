@@ -1,5 +1,0 @@
-q1psx CD-ROM test file (phase 2.3)
-If the engine can read this line off the disc, CdSearchFile + CdRead work.
-line-3-marker
-line-4-marker
-END

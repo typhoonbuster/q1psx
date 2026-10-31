@@ -2,12 +2,11 @@
  * q1psx — asset cooker (host tool).
  *
  *   qcook map   --pak <pak0.pak> --map maps/start.bsp
- *               [--textures high --tex <out.tex> [--tex4 <out.tx4>]]
- *               [--geometry high --world <out.wld>] [--sounds <out.snd>]
- *               [--models high --mdl <out.mdl>]   (tools/qcook/sound.c, items.c)
+ *               [--textures high --tex4 <out.tx4>]
+ *               [--world <out.wld>] [--sounds <out.snd>]
+ *               [--models low --mdl <out.mdl>]    (tools/qcook/sound.c, items.c)
  *   qcook check <file.wld>
- *   qcook game  --pak <pak0.pak> [--textures medium|high] --out <prefix>
- *                                                   (tools/qcook/game.c)
+ *   qcook game  --pak <pak0.pak> --out <prefix>     (tools/qcook/game.c)
  *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
  *                                                     (tools/qcook/stream.c)
  *   qcook zones --world <map>_g0.wld --tables <map>.zones --skeleton <out.skl>
@@ -97,11 +96,10 @@ int level_find(const char *name, int mask, const char *axis)
 }
 
 const tex_level_t tex_levels[QL_LEVELS] = {
-	/* shift  max rep                                                         */
-	{   2,      32 },   /* low:    1/4 res                                     */
-	{   1,      64 },   /* medium: 1/2 res                                     */
-	{   0,     128 },   /* high:   native (<= 128)                             */
-	{   0,     256 },   /* ultra:  native: the layout the world is cut for     */
+	/*              shift  max rep                                            */
+	[QL_LOW]   = {   2,      32 },   /* 1/4 res                               */
+	[QL_HIGH]  = {   0,     128 },   /* native (<= 128)                       */
+	[QL_ULTRA] = {   0,     256 },   /* native: the layout the world is cut for */
 };
 
 /* ------------------------------------------------------------------- pak -- */
@@ -343,9 +341,7 @@ static int cmd_map(int argc, char **argv)
 	const char *pak_path = arg(argc, argv, "--pak", NULL);
 	const char *map      = arg(argc, argv, "--map", NULL);
 	const char *tex_name = arg(argc, argv, "--textures", "high");
-	const char *geo_name = arg(argc, argv, "--geometry", "low");
 	const char *mdl_name = arg(argc, argv, "--models", "low");
-	const char *out_tex  = arg(argc, argv, "--tex", NULL);
 	const char *out_tex4 = arg(argc, argv, "--tex4", NULL);
 	const char *out_wld  = arg(argc, argv, "--world", NULL);
 	const char *out_mdl  = arg(argc, argv, "--mdl", NULL);
@@ -354,12 +350,11 @@ static int cmd_map(int argc, char **argv)
 	const char *out_sset = arg(argc, argv, "--sndset", NULL);   /* (with --sounds: the level's sound set, §86) */
 	light_gain           = atof(arg(argc, argv, "--light-gain", "1.66"));
 	world_fmap           = arg(argc, argv, "--fmap", NULL);
-	if (!pak_path || !map || (!out_tex && !out_tex4 && !out_wld && !out_mdl))
-		die("usage: qcook map --pak <pak> --map <name> [--textures l [--tex <out>] [--tex4 <out>]]"
-		    " [--geometry l --world <out>] [--models l --mdl <out>] [--palette-pak <pak0>]");
+	if (!pak_path || !map || (!out_tex4 && !out_wld && !out_mdl))
+		die("usage: qcook map --pak <pak> --map <name> [--textures l --tex4 <out>]"
+		    " [--world <out>] [--models l --mdl <out>] [--palette-pak <pak0>]");
 
 	int tex_level = level_find(tex_name, QL_TEXTURE_MASK, "texture");
-	int geo_level = level_find(geo_name, QL_GEOMETRY_MASK, "geometry");
 	int mdl_level = level_find(mdl_name, QL_MODEL_MASK, "model");
 
 	long pak_len;
@@ -389,9 +384,9 @@ static int cmd_map(int argc, char **argv)
 	tex_extra *extra;
 	int        nextra;
 	items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, 0, &extra, &nextra);
-	tex_build(&canon, NULL, &bsp, extra, nextra, pal, QL_ULTRA, NULL, NULL, 1, 0);
+	tex_build(&canon, NULL, &bsp, extra, nextra, pal, QL_ULTRA, NULL, 1, 0);
 
-	if (out_tex || out_tex4) {
+	if (out_tex4) {
 		printf("qcook: textures at %s\n", level_name[tex_level]);
 		/* the pages full: the models' textures squeezed level by level,
 		   then the same without the textures' animation (their frames and
@@ -399,7 +394,7 @@ static int cmd_map(int argc, char **argv)
 		for (int attempt = 0; ; attempt++) {
 			int anims = attempt <= ITEMS_SQUEEZE_MAX, squeeze = anims ? attempt : attempt - ITEMS_SQUEEZE_MAX - 1;
 			items_prepare(&bsp, pak, pak_len, pal_pak ? ppak : NULL, ppak_len, pal, squeeze, &extra, &nextra);
-			if (tex_build(&ts, &canon, &bsp, extra, nextra, pal, tex_level, out_tex, out_tex4, anims,
+			if (tex_build(&ts, &canon, &bsp, extra, nextra, pal, tex_level, out_tex4, anims,
 			              attempt < 2 * ITEMS_SQUEEZE_MAX + 1))
 				break;
 			if (attempt == ITEMS_SQUEEZE_MAX)
@@ -426,8 +421,7 @@ static int cmd_map(int argc, char **argv)
 		}
 	if (!out_wld)
 		return 0;
-	printf("qcook: geometry at %s\n", level_name[geo_level]);
-	world_build(&bsp, &canon, geo_level, out_wld);
+	world_build(&bsp, &canon, out_wld);
 	return world_check(out_wld);
 }
 
@@ -455,11 +449,11 @@ int main(int argc, char **argv)
 	fprintf(stderr,
 	        "usage:\n"
 	        "  qcook map --pak <pak> --map <maps/x.bsp> [--palette-pak <pak0>] [--light-gain g]\n"
-	        "            [--textures low|medium|high|ultra --tex <out.tex> [--tex4 <out.tx4>]]\n"
-	        "            [--geometry low|high|ultra --world <out.wld>] [--sounds <out.snd>]\n"
+	        "            [--textures high --tex4 <out.tx4>]\n"
+	        "            [--world <out.wld>] [--sounds <out.snd>]\n"
 	        "            [--models low|medium|high --mdl <out.mdl>]\n"
 	        "  qcook check <file.wld>\n"
-	        "  qcook game --pak <pak0.pak> [--textures medium|high] --out <prefix>   (<prefix>_<n>.dat per model level)\n"
+	        "  qcook game --pak <pak0.pak> --out <prefix>   (<prefix>_<n>.dat per model level)\n"
 	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
 	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n"

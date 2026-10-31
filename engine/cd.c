@@ -655,13 +655,6 @@ int cd_exists(const char *name, uint32_t *size)
 	return cd_find(name, NULL, size);
 }
 
-static uint32_t last_lba;
-
-uint32_t cd_last_lba(void)
-{
-	return last_lba;
-}
-
 void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll)
 {
 	uint32_t lba, bytes;
@@ -669,7 +662,6 @@ void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll)
 		printf("cd: %s not found\n", name);
 		return NULL;
 	}
-	last_lba = lba;
 
 	uint32_t sectors = (bytes + SECTOR - 1) / SECTOR;
 	uint32_t *buf = mem_level_alloc(sectors * SECTOR);

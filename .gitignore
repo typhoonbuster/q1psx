@@ -35,8 +35,6 @@ rogue/
 /build-release-c/
 /build-release-ultra/
 /build-release-spu/
-/build-release-medium/
-/build-release-2d/
 *.o
 *.a
 *.elf

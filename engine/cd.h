@@ -27,7 +27,6 @@ typedef void (*cd_poll_fn)(uint32_t bytes_done);
    runs in the background and `poll` is called until it is done; NULL
    blocks. */
 void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll);
-uint32_t cd_last_lba(void);      /* the last file cd_load found: its first sector */
 
 /* The drive, shared by the map's loads, the streamed assets, the SPU
    music and the world's chunks (docs/porting-notes.md §57). psxcd's

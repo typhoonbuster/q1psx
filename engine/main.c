@@ -89,7 +89,6 @@ static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
 	r_set_warp(Q1PSX_BENCH_WARPDYN ? R_WARP_DYNAMIC : R_WARP_FIXED, Q1PSX_BENCH_T, Q1PSX_BENCH_TMAX);
-	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
 #else
 	settings_apply();
@@ -401,7 +400,6 @@ Q_COLD static void load_level_main(int map)
 		ents_trim();                            /* (the edicts' unused end back: the stream's) */
 		bmf_reserve();                          /* (their pieces' room, the cook's: before
 		                                           the stream's) */
-		game_ws_sync();                         /* (the 2D gun's packets asked for: first) */
 		stream_map_start(STREAM_KEEP);          /* the arena's rest: the streamed assets */
 		bmf_load();                             /* (the drawn ones cut where they stand) */
 		snd_map_start();                        /* (before any residency pass: it turns the
@@ -421,7 +419,6 @@ Q_COLD static void load_level_main(int map)
 		stream_preload();                       /* what the spawn's surroundings want */
 		stream_load_done();                     /* (the overlay's room: the pool's from here;
 		                                           nothing of the overlay runs past this) */
-		game_ws_sync();                         /* (the 2D gun's packets, read: linked) */
 		anim_reset();
 		hud_invalidate();                       /* (the loading screen drew over the bars) */
 		music_play(snd_cd_track());
@@ -580,9 +577,8 @@ static void run_frame(int interactive, int dump)
 	PLAY_STEP("render");
 #ifdef Q1PSX_BENCH
 	if (dump) {
-		anim_invalidate();                  /* a dump shows the textures' frames, the */
-		hud_invalidate();                   /* whole HUD and the 2D gun's texels (pktview */
-		game_ws_invalidate();               /* sees only dumped frames) */
+		anim_invalidate();                  /* a dump shows the textures' frames and the */
+		hud_invalidate();                   /* whole HUD (pktview sees only dumped frames) */
 	}
 #endif
 	frame_work();

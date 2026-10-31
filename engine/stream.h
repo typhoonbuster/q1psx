@@ -119,17 +119,6 @@ typedef struct {
 const stream_sound_t *stream_sound(int a);
 int  stream_is_sound(int a);
 
-/* The pool's end lent to a block read from the disc outside the assets
-   (the 2D gun's packets, engine/game.c game_ws_sync): stream_lend asks for
-   `sectors` sectors at `lba`, for every map from the next one's start (the
-   room given before anything else of the stream's, the block read with
-   the preload); stream_lent gives the block once it is read (NULL before,
-   and when the arena could not spare it) and the count of its reads (a
-   new read, maybe at the same place: its contents as on the disc again).
-   The block never moves. */
-void     stream_lend(int32_t lba, int sectors);
-uint8_t *stream_lent(uint32_t *reads);
-
 /* the SPU music's (engine/music.c): the drive or the staging buffer busy
    with an asset's read (or the drive with a world chunk's: engine/zone.c);
    the staging buffer (STAGE_SECTORS of 2048 bytes: the music's refills

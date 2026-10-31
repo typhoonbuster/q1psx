@@ -2603,3 +2603,14 @@ followed by R0-R4.
   minlight, the zones on the disc and the music's ring are fixed at the
   values every build used; their CMake settings and bench knobs are gone.
   The display lists are the same; the release's level arena +1760 B.
+- **The cook's leftovers, the medium textures, the 2D gun** (§119.6,
+  provisional number, 2026-10-31). The cook no longer makes what no
+  disc carries: the geometry and the models above low, the 8-bit texture
+  sets (and pktview's `wldref`), the guns' skins at Quake's resolution,
+  its debug and A / B knobs. The medium textures (`Q1PSX_TEXTURES`, the
+  `release-medium` preset) and the 2D gun (`Q1PSX_WEAPON`: its engine
+  code, the stream's lent block, its cook, its part of GAME.DAT, QGM9 →
+  QGMA) are gone, and the disc's `HELLO.TXT` and `tools/.gitkeep`.
+  GAME_0.DAT is 89 KB smaller and its images packed anew: the display
+  lists' texture words move, the pictures are the same pixels; the
+  release's level arena +304 B.

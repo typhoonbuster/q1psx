@@ -25,17 +25,6 @@ typedef struct {
 	const qg_aux   *aux;       /* [QGA_COUNT]: 4-bit pictures (ui.h)       */
 	const qg_finale *finales;  /* the episodes' end texts, and their count */
 	uint32_t        num_finales;
-	const qg_wsprite *wsprites;  /* [QG_WEAPONS]: the 2D weapons            */
-	const qg_wframe  *wframes;   /* their frames                             */
-	uint32_t          num_wframes;
-	uint8_t          *wpix;      /* their packets (links made absolute), in
-	                                RAM only while the 2D gun is drawn (the
-	                                stream's pool lends them its end:
-	                                game_ws_sync), NULL otherwise          */
-	int32_t           ws_lba;    /* the packets' first sector on the disc    */
-	uint16_t          ws_sectors, ws_skew;   /* their sectors; their first
-	                                byte's place in the first              */
-	qg_pic            wslot;     /* the VRAM slot a frame is copied to       */
 	const qg_free  *free;      /* what the images leave of the game's pages
 	                              (the streamed skins' room), and its count */
 	uint32_t        num_free;
@@ -47,10 +36,6 @@ extern gdata_t gdata;
 /* Load GAME_<level>.DAT (before any map: it uses the level arena as a
    staging area). 1 on success. */
 int gdata_load(int level);
-
-/* The 2D weapons' packets just read to `block` (ws_sectors sectors from
-   ws_lba): their links made absolute; where they start (block + ws_skew). */
-uint8_t *gdata_ws_link(uint8_t *block);
 
 /* the view model's frame being drawn, expanded (engine/rlist.c rl_view_gun:
    formats/qgame.h qg_view): the largest view model's vertices */

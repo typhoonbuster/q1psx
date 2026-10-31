@@ -1,12 +1,11 @@
 /*
- * qcook — textures: palette -> CLUT, one tile per used miptex (one texture
- * repetition at the level's resolution), packed into whole 8bpp texture
- * pages, each power-of-two axis aligned for the GPU texture window, a
- * one-texel gutter past each other axis, written as a QTX6 file
- * (formats/qtex.h) with the map's texture table: the slots' words, how the
- * world's UVs (cooked for the finest level's layout) land on this set's
- * tiles, the animated textures' tiles. Optionally the same pages in 4bpp,
- * each texture quantized to its own 16 colours (QTX7).
+ * qcook — textures: one tile per used miptex (one texture repetition at the
+ * level's resolution), packed into whole texture pages, each power-of-two
+ * axis aligned for the GPU texture window, a one-texel gutter past each
+ * other axis, written in 4bpp, each texture quantized to its own 16 colours,
+ * as a QTX7 file (formats/qtex.h) with the map's texture table: the slots'
+ * words, how the world's UVs (cooked for the finest level's layout) land on
+ * this set's tiles, the animated textures' tiles.
  */
 
 #include <math.h>
@@ -104,11 +103,6 @@ static long pack_first_fit(const pack_item *it, int n, int *at, int *page_h)
 static int is_pow2(int v)
 {
 	return v > 0 && !(v & (v - 1));
-}
-
-static uint16_t gpu_tpage(int vx, int vy)   /* 8bpp, no semi-transparency */
-{
-	return (uint16_t) (((vx & 0x3ff) >> 6) | ((vy >> 8) << 4) | (1 << 7));
 }
 
 static uint16_t gpu_tpage4(int vx, int vy)  /* 4bpp, no semi-transparency */
@@ -498,8 +492,8 @@ static void write_tex4(const tex_set *ts, const tex_set *canon, const bsp_t *b, 
 /* ------------------------------------------------------------- build -- */
 
 int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra *extra,
-              int nextra, const uint8_t palette[768], int level, const char *out_path,
-              const char *out4_path, int anims, int may_fail)
+              int nextra, const uint8_t palette[768], int level, const char *out4_path, int anims,
+              int may_fail)
 {
 	const tex_level_t *lv = &tex_levels[level];
 	memset(ts, 0, sizeof *ts);
@@ -565,7 +559,7 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 			continue;
 		a.src = a.nframes ? a.frames[0] : a.alt[0];
 		ts->anims[ts->num_anims++] = a;
-		if (out_path || out4_path)
+		if (out4_path)
 			printf("qcook: animated %s: %d frames, %d alternates, %dx%d\n", mi->name + 2, a.nframes, a.nalt,
 			       mi->w, mi->h);
 	}
@@ -668,7 +662,7 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		it->aligned = s->win_x && s->win_y;
 	}
 	free(animated);
-	if (!out_path && !out4_path) {          /* the layout alone */
+	if (!out4_path) {                        /* the layout alone */
 		for (int n = 0; n < nitems; n++)
 			ts->slots[items[n].idx].present = 1;
 		free(items);
@@ -726,16 +720,12 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 		const bsp_miptex *m = SLOT_MIPTEX(items[n].idx);
 		const tex_extra  *x = SLOT_EXTRA(items[n].idx);
 		int skin = x && x->skin;
-		int px = QTEX_PAGE_X0 + (page % QTEX_PAGE_COLS) * (PAGE_TEX / 2);
-		int py = (page / QTEX_PAGE_COLS) * PAGE_TEX;
 		s->present = 1;
 		s->u0      = best_at[items[n].idx] & 0xff;
 		s->v0      = (best_at[items[n].idx] >> 8) & 0xff;
 		s->page    = page;
 		s->tile_w  = s->rep_w;
 		s->tile_h  = s->rep_h;
-		s->tpage   = gpu_tpage(px, py);
-		s->clut    = gpu_clut(QTEX_CLUT_X, QTEX_CLUT_Y);
 		/* GP0 E2h: texcoord = (texcoord & ~(mask * 8)) | ((offset & mask) * 8) */
 		uint32_t mx = s->win_x ? ((uint32_t) (256 - s->rep_w) >> 3) & 31 : 0;
 		uint32_t my = s->win_y ? ((uint32_t) (256 - s->rep_h) >> 3) & 31 : 0;
@@ -759,65 +749,6 @@ int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra
 	free(best_at);
 	ts->pages_used = pages_used;
 
-	/* QTX6, the 8-bit set (no disc carries it since docs/porting-notes.md
-	   §52: written only when asked): header, one rect per used page (only
-	   the used rows), the tables, the pixels */
-	if (out_path) {
-		tex_words *words = xcalloc((size_t) total + 1, sizeof *words);
-		for (int i = 0; i < total; i++) {
-			words[i].clut  = ts->slots[i].clut;
-			words[i].tpage = ts->slots[i].tpage;
-		}
-		buf_t tables;
-		memset(&tables, 0, sizeof tables);
-		tables_build(&tables, ts, canon, b, words);
-		free(words);
-
-		FILE *f = fopen(out_path, "wb");
-		if (!f)
-			die("cannot write %s", out_path);
-
-		qtex_header h;
-		memset(&h, 0, sizeof h);
-		memcpy(h.magic, QTEX_MAGIC, 4);
-		h.num_rects = (uint32_t) ts->pages_used;
-		for (int i = 0; i < 256; i++) {
-			int r = palette[i * 3], g = palette[i * 3 + 1], bl = palette[i * 3 + 2];
-			uint16_t c = (uint16_t) ((r >> 3) | ((g >> 3) << 5) | ((bl >> 3) << 10));
-			h.clut[i] = c ? c : 0x8000;     /* 0x0000 would be transparent */
-		}
-		h.num_slots = (uint32_t) canon->num;
-		h.ofs_slots = (uint32_t) (sizeof h + (size_t) ts->pages_used * sizeof(qtex_rect));
-		h.num_anims = (uint32_t) ts->num_anims;
-		h.ofs_anims = h.ofs_slots + (uint32_t) canon->num * (uint32_t) (sizeof(qw_tex) + sizeof(qtex_uvmap));
-		fwrite(&h, sizeof h, 1, f);
-
-		uint32_t ofs = h.ofs_slots + (uint32_t) tables.len;
-		ofs = (ofs + 63u) & ~63u;                            /* (64: the GPU DMA's 16-word unit) */
-		for (int p = 0; p < ts->pages_used; p++) {
-			qtex_rect r;
-			r.x = (uint16_t) (QTEX_PAGE_X0 + (p % QTEX_PAGE_COLS) * (PAGE_TEX / 2));
-			r.y = (uint16_t) ((p / QTEX_PAGE_COLS) * PAGE_TEX);
-			r.w = PAGE_TEX / 2;
-			r.h = (uint16_t) page_h[p];
-			r.data_ofs = ofs;
-			fwrite(&r, sizeof r, 1, f);
-			ofs += (uint32_t) r.w * r.h * 2;       /* 256 * h bytes: 32-multiple */
-		}
-		fwrite(tables.p, 1, tables.len, f);
-		free(tables.p);
-		long here = ftell(f);
-		static const uint8_t zero[64];
-		fwrite(zero, 1, (size_t) (((here + 63) & ~63L) - here), f);
-		for (int p = 0; p < ts->pages_used; p++)
-			fwrite(pages + (size_t) p * PAGE_TEX * PAGE_TEX, 1,
-			       (size_t) page_h[p] * PAGE_TEX, f);
-		long file_len = ftell(f);
-		fclose(f);
-
-		printf("qcook: %s — %d tiles in %d pages (%d animated textures), %u texel bytes, file %ld B\n",
-		       out_path, nitems, ts->pages_used, ts->num_anims, ts->bytes, file_len);
-	}
 	#undef SLOT_MIPTEX
 	#undef SLOT_EXTRA
 

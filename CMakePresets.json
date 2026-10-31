@@ -22,18 +22,7 @@
 			"binaryDir":     "${sourceDir}/build-release",
 			"cacheVariables": {
 				"Q1PSX_PROFILE":  "OFF",
-				"Q1PSX_RELEASE":  "ON",
-				"Q1PSX_TEXTURES": "high",
-				"Q1PSX_WEAPON":   "3d"
-			}
-		},
-		{
-			"name":          "release-medium",
-			"inherits":      "release",
-			"displayName":   "Release build with the medium textures",
-			"binaryDir":     "${sourceDir}/build-release-medium",
-			"cacheVariables": {
-				"Q1PSX_TEXTURES": "medium"
+				"Q1PSX_RELEASE":  "ON"
 			}
 		},
 		{

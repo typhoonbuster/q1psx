@@ -1052,9 +1052,7 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 	   among the ones in (engine/snd.c snd_tele_fog), a powerup's sounds are
 	   wanted from the artifact's approach on (engine/items.c); so are the
 	   registered game's kinds' (§100: their kind wanted with its model, by
-	   its nearest member's distance, engine/monsters.c);
-	   QCOOK_NO_DISC_SOUNDS=1: in RAM as before. */
-	int disc_ok = !getenv("QCOOK_NO_DISC_SOUNDS");
+	   its nearest member's distance, engine/monsters.c). */
 	size_t swap = 32 * 1024, spu_budget = 0, in_spu = 0, in_ram = 0, in_disc = 0;
 	int nram = 0, ndisc = 0;
 	for (int pass = 0; pass < 6; pass++) {
@@ -1066,7 +1064,7 @@ void sound_build(const bsp_t *b, const uint8_t *pak, long pak_len, const uint8_t
 			bank_sound *sn = &sounds[order[k]];
 			size_t bytes = sound_bytes(sn);
 			int out = sn->cls > 0 && in_spu + bytes > spu_budget;   /* (the always set never leaves the SPU) */
-			sn->disc = out && disc_ok && (sn->cls == 4 || powerup_sound(sn->name) || sn->late_kind);
+			sn->disc = out && (sn->cls == 4 || powerup_sound(sn->name) || sn->late_kind);
 			sn->ram = out && !sn->disc;
 			if (!out) {
 				in_spu += bytes;

@@ -1,9 +1,9 @@
 /*
- * q1psx — cooked game data "QGM9": the models, sprites and HUD pictures the
+ * q1psx — cooked game data "QGMA": the models, sprites and HUD pictures the
  * engine needs on every map. Written by `qcook game`, one file per model
  * level (GAME_<n>.DAT on the disc, formats/qlevels.h: the models'
  * triangles differ, the pictures and skins do not), loaded at boot by
- * engine/gdata.c, its models again when the level changes.
+ * engine/gdata.c.
  *
  * Models
  *   A Quake MDL becomes a set of face records in the world's format
@@ -21,19 +21,6 @@
  *   Sprites are models too: one record (a quad in the view plane, x right,
  *   y down) per frame, drawn alone (QGF_SPRITE).
  *
- * The 2D weapons (Graphics: "Draw weapon: 2D")
- *   Every view model frame as a picture, rendered by the cook as the eye
- *   sees it (the status bar's viewport, the gun at rest), at half the
- *   screen's resolution (as the view models' skins), its colour scaled for
- *   the light by the engine: one 255-colour CLUT per weapon (index 0
- *   transparent). The engine copies the frame on screen into one slot of
- *   the game's pages (qg_header wslot) and the weapon's CLUT to
- *   (QG_WCLUT_X, QG_WCLUT_Y) through the display list, and draws one quad
- *   twice the size. Both are stored as ready display-list packets (a tag
- *   word, GP0(A0h) to the slot, the texels; a frame's chain ends with
- *   GP0(01h), the texture cache cleared): the engine makes their links
- *   absolute at the load and hangs a chain in the ordering table as it is.
- *
  * VRAM
  *   The texture pages the maps leave free (qtex.h QTEX_MAP_PAGES and up) and
  *   one 256-colour CLUT: the Quake palette with index 255 transparent (the
@@ -49,16 +36,12 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGM9"   /* (QGM8 until §53: the view models in vertex units;
+#define QGAME_MAGIC "QGMA"   /* (QGM9 until §119: the 2D weapons' tables and packets;
+                                QGM8 until §53: the view models in vertex units;
                                 QGM7 until §47: a frame's whole texels, a chain each) */
 
 #define QG_CLUT_X   0
 #define QG_CLUT_Y   504          /* below the 4bpp texture CLUT rows (480..488) */
-
-#define QG_WCLUT_X  0
-#define QG_WCLUT_Y  507          /* the 2D weapon's CLUT: two free rows under the aux
-                                    CLUTs, 507 and 508, in turn at each weapon (the
-                                    GPU's CLUT cache never keeps the last one's) */
 
 #define QG_LIGHT_YAWS 16         /* light tables: one per 22.5 degrees of yaw */
 #define QG_NORMALS   162         /* Quake's vertex normals (anorms.h)         */
@@ -179,40 +162,6 @@ typedef struct {
 	uint16_t w, h;               /* texels                                       */
 } qg_pic;                        /* 8 bytes */
 
-/* The 2D weapons: per weapon (QGM_V_AXE .. QGM_V_LIGHT), its frames (the
-   model's, in its order) and its CLUT's packet; per frame, where it goes
-   on the screen at the gun's rest pose and its texels' chain (half
-   resolution, a transparent margin, rows of w bytes, w even): GP0(02h)
-   filling its rows of the slot with 0 (the transparent index; the slot
-   starts on 32 texels, the GPU's fill unit) then GP0(A0h) copying its
-   opaque spans, or GP0(A0h) copying the whole frame, whichever is
-   smaller; GP0(01h) last. Frames of the same texels share a chain (the
-   same ofs). A packet's tag links to the next one's offset in the pixel
-   block, the chain's last to 0xffffff. */
-#define QG_WEAPONS     8
-#define QG_WS_L0       86        /* the light the frames are shaded at: the
-                                    engine's colour is light x 128 / QG_WS_L0 */
-typedef struct {
-	uint16_t first, count;       /* its frames in the frame table               */
-	uint16_t anchor;             /* the gun's depth at rest (frame 0's vertices'
-	                                mean), 1/16 units: the bob's scale           */
-	uint16_t pad;
-	uint32_t ofs_clut;           /* its CLUT's packet in the pixel block         */
-} qg_wsprite;                    /* 12 bytes */
-
-typedef struct {
-	int16_t  x, y;               /* its top-left, screen pixels from the
-	                                projection's centre (160, 96: the status
-	                                bar's viewport, the gun 2 units up)         */
-	uint8_t  w, h;               /* texels, the last column and row transparent
-	                                (drawn without them, twice the size: the
-	                                GPU never reads past the frame's texels);
-	                                0: the frame is drawn 3D (larger than 80)   */
-	uint16_t pad;
-	uint32_t ofs;                /* its texels' first packet in the pixel block */
-	uint32_t ofs_last;           /* and its last (GP0(01h))                     */
-} qg_wframe;                     /* 16 bytes */
-
 /* The aux pictures: the intermission's and the menu's (gfx/ lumps) and the
    console font (gfx.wad conchars), 4bpp with 16 colours each, in the two
    4-bit pages of the last VRAM column (x 960: QG_AUX_X, y 0 and 256); their
@@ -247,7 +196,7 @@ typedef struct {
 } qg_aux;                        /* 12 bytes */
 
 typedef struct {
-	char     magic[4];           /* "QGM8"                                       */
+	char     magic[4];           /* "QGMA"                                       */
 	uint32_t num_rects, ofs_rects;   /* qtex_rect[]: the CLUT row, then the pages' used rows */
 	uint32_t num_models, ofs_models; /* qg_model[QGM_COUNT]                      */
 	uint32_t num_pics, ofs_pics;     /* qg_pic[QGP_COUNT]                        */
@@ -263,10 +212,6 @@ typedef struct {
 	                                among the rects)                             */
 	uint32_t num_finales, ofs_finales, len_finales;   /* qg_finale[num_finales]
 	                                then their texts (the block's len bytes)     */
-	uint32_t ofs_wsprites;       /* qg_wsprite[QG_WEAPONS]                       */
-	uint32_t num_wframes, ofs_wframes;   /* qg_wframe[num_wframes]               */
-	uint32_t ofs_wpix, len_wpix; /* the 2D weapons' packets: texels and CLUTs   */
-	qg_pic   wslot;              /* the VRAM slot a frame is copied to (u even) */
 	uint32_t level;              /* the model level (formats/qlevels.h)          */
 	uint32_t len_geo_max;        /* the largest geometry block of all the levels'
 	                                files: the engine's room for any of them     */

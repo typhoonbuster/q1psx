@@ -52,7 +52,6 @@ void settings_apply(void)
 	snd_set_cd_volume(settings.music);
 	vid_set_fps_cap(fps_caps[settings.fps_cap]);
 	game_world_hz = tick_rates[settings.tick];
-	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 	gamma_set(settings.brightness);
 }
 

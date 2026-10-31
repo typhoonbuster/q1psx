@@ -296,8 +296,7 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 		                                             + shade x cos, both its light); the light
 		                                             table (gdata.dots) spans 1 to 1.5 times:
 		                                             x 4/3, the lit side at Quake's twice (the
-		                                             game's models and the gun keep the table's:
-		                                             the 2D gun's pictures are cooked at it) */
+		                                             game's models and the gun keep the table's) */
 	if (light > 170) light = 170;
 	if (light < 0) light = 0;
 	e->light = (uint32_t) light;

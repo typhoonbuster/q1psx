@@ -116,22 +116,9 @@ static res_t    res[MAX_RES];
 
 static uint8_t *pool, *pool_end, *pool_top;   /* the RAM pool (bump, compacted) */
 
-/* The pool's end lent outside the assets: a block read from the disc (the
-   2D gun's packets, Q1PSX_WEAPON_2D builds: engine/game.c game_ws_sync).
-   Asked for once, it is given at each map's start before the stream's own
-   buffers (the 2D gun as sure of its room as when it lived in the game
-   arena) and read with the preload. Its bytes stay past pool_end:
-   compaction never moves them (its packets' links are absolute). */
-enum { L_NONE, L_WANT, L_SHORT, L_ROOM, L_IN };
-static int32_t  lend_lba;
-static uint32_t lend_bytes;      /* asked for: whole sectors                     */
-static uint8_t *lend_at;         /* given: at pool_end, lend_bytes long          */
 static uint8_t *pool_end_load;   /* the pool's end while the load overlay sits in
                                     its top (§90.7; 0: none): stream_load_done's */
 extern uint8_t  __load_start[];  /* the overlay (engine/q1psx.ld)                 */
-static uint8_t  lend_state;      /* L_*; L_SHORT: the pool could not spare it
-                                    (asked again at the next map's start)       */
-static uint32_t lend_reads;      /* the block's reads: a new one to link again   */
 
 static vrect_t  regions[MAX_REGIONS];
 static int      num_regions;
@@ -1595,9 +1582,6 @@ void stream_abort(void)
 		cd_busy();
 		reading = -1;
 	}
-	lend_at = 0;                              /* (asked for again at the map's start) */
-	if (lend_state != L_NONE)
-		lend_state = L_WANT;
 	if (sread.a >= 0 || swap_a >= 0) {
 		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (no DMA left reading the stage, the block) */
 		sread.a = swap_a = -1;
@@ -1626,8 +1610,8 @@ Q_COLD void stream_map_start(uint32_t keep)
 		assets[a].stuck   = ST_NONE;
 	}
 	memset(&stream_stats, 0, sizeof stream_stats);
-	/* a lent block first, then the expanded frames' cache, the staging
-	   buffer, the pool; the lent block after the pool, at its end */
+	/* the RAM sounds' block, the expanded frames' cache, the staging
+	   buffer, the pool */
 	ram_block = 0;
 	if (ram_sectors) {                        /* the level's RAM sounds, one read (§86) */
 		uint32_t mark = mem_level_mark();
@@ -1640,23 +1624,18 @@ Q_COLD void stream_map_start(uint32_t keep)
 			mem_level_release(mark);
 		}
 	}
-	uint32_t room = mem_level_bytes() - mem_level_used(), lend = 0;
-	if (lend_state == L_WANT) {
-		lend = room >= lend_bytes + keep + 64 ? lend_bytes : 0;
-		lend_state = lend ? L_ROOM : L_SHORT;
-	}
-	uint8_t *cache = room - lend >= MDL_CACHE ? mem_level_alloc(MDL_CACHE) : 0;
+	uint32_t room = mem_level_bytes() - mem_level_used();
+	uint8_t *cache = room >= MDL_CACHE ? mem_level_alloc(MDL_CACHE) : 0;
 	if (cache)
 		room -= MDL_CACHE;
 	mdl_reset(cache, MDL_CACHE);
-	stage = room - lend >= STAGE_SECTORS * QST_SECTOR ? mem_level_alloc(STAGE_SECTORS * QST_SECTOR) : 0;
+	stage = room >= STAGE_SECTORS * QST_SECTOR ? mem_level_alloc(STAGE_SECTORS * QST_SECTOR) : 0;
 	if (stage)
 		room -= STAGE_SECTORS * QST_SECTOR;
-	uint32_t left = room - lend > keep + 64 ? (room - lend - keep - 64) & ~15u : 0;
-	pool = left + lend ? mem_level_alloc(left + lend) : 0;
+	uint32_t left = room > keep + 64 ? (room - keep - 64) & ~15u : 0;
+	pool = left ? mem_level_alloc(left) : 0;
 	pool_top = pool;
 	pool_end = pool ? pool + left : 0;
-	lend_at  = lend && pool ? pool_end : 0;
 	/* the load overlay sits in the pool's top until the load's end: the
 	   preload's reads stop under it (stream_load_done gives the rest) */
 	pool_end_load = 0;
@@ -1671,10 +1650,9 @@ Q_COLD void stream_map_start(uint32_t keep)
 #endif
 	stream_stats.ram_size = left;
 	regions_build();
-	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions; %u KB lent; %d sounds in RAM (%u KB)\n",
+	printf("stream: pools %u KB of RAM, %u K texels of VRAM in %d regions; %d sounds in RAM (%u KB)\n",
 	       (unsigned) left / 1024, (unsigned) stream_stats.vram_texels / 1024, num_regions,
-	       (unsigned) (lend_at ? lend : 0) / 1024, ram_block ? ram_sounds : 0,
-	       (unsigned) (ram_block ? ram_sectors * QST_SECTOR / 1024 : 0));
+	       ram_block ? ram_sounds : 0, (unsigned) (ram_block ? ram_sectors * QST_SECTOR / 1024 : 0));
 }
 
 /* the uploads the GPU took: the images' pixels go, the blocks may move */
@@ -1689,19 +1667,6 @@ static void trims(void)
 		r->tmp = 0;
 		r->tmp_size = 0;
 	}
-}
-
-void stream_lend(int32_t lba, int sectors)
-{
-	lend_lba   = lba;
-	lend_bytes = sectors > 0 ? (uint32_t) sectors * QST_SECTOR : 0;
-	lend_state = lend_bytes ? L_WANT : L_NONE;
-}
-
-uint8_t *stream_lent(uint32_t *reads)
-{
-	*reads = lend_reads;
-	return lend_state == L_IN ? lend_at : 0;
 }
 
 /* the RAM sounds' swaps (§86) beside the drive's reads, a world chunk's,
@@ -1869,11 +1834,6 @@ void stream_preload_at(const int32_t org[3])
 Q_COLD void stream_preload(void)
 {
 	work_free = 1;                            /* (the load's: no cap; the next frame sets it) */
-	if (lend_state == L_ROOM &&               /* the lent block (the map's start gave it room) */
-	    read_sectors(lend_lba, (int) (lend_bytes / QST_SECTOR), lend_at, CDW_FILE, 0)) {
-		lend_state = L_IN;
-		lend_reads++;
-	}
 	if (!num_assets || !pool)
 		return;
 #ifdef Q1PSX_BENCH

@@ -1,36 +1,42 @@
 /*
- * q1psx — cooked texture set "QTX6" (architecture.md §7), one per map and
- * texture level (formats/qlevels.h). Written by `qcook`, read by
- * engine/world.c.
+ * q1psx — cooked texture set "QTX7" (architecture.md §7), one per map
+ * (<MAP>_T2.TX4 on the disc, formats/qlevels.h). Written by `qcook`, read
+ * by engine/world.c.
  *
- * The cook packs every texture tile of the map into whole 8bpp texture pages
- * and ships each page as one VRAM rectangle, so the engine just DMAs the
- * rectangles and frees the file. A tile's axis that does not wrap (its
- * texture's size there is not a power of two) has a gutter: the texel
- * column / row past the tile's end repeats its first, for the GPU reads it
- * along a polygon's far edge (its texture coordinates are rounded to the
- * nearest texel: docs/porting-notes.md §71). The set also carries the
- * map's texture table: each slot's CLUT, tpage and texture-window words
- * (qw_tex, which the renderer reads), how the world's texture coordinates
- * land on its tile (qtex_uvmap), and the animated textures' tiles
- * (qw_anim). The world file is the same for every texture level
- * (formats/qworld.h): its polygons' UVs are cooked for the finest level,
- * and the loader maps them onto this set's tiles once, at load.
+ * The cook packs every texture tile of the map into whole 4bpp texture
+ * pages and ships each page as one VRAM rectangle, so the engine just DMAs
+ * the rectangles and frees the file. Each texture is quantized to its own
+ * 16 colours. A tile's axis that does not wrap (its texture's size there
+ * is not a power of two) has a gutter: the texel column / row past the
+ * tile's end repeats its first, for the GPU reads it along a polygon's far
+ * edge (its texture coordinates are rounded to the nearest texel:
+ * docs/porting-notes.md §71). The set also carries the map's texture
+ * table: each slot's CLUT, tpage and texture-window words (qw_tex, which
+ * the renderer reads), how the world's texture coordinates land on its
+ * tile (qtex_uvmap), and the animated textures' tiles (qw_anim). The world
+ * file's polygons' UVs are cooked for the finest layout (formats/
+ * qworld.h), and the loader maps them onto this set's tiles once, at load.
  *
  * VRAM layout (halfword coordinates):
  *   framebuffers   (0,0)-(319,479)
- *   CLUT           (0,480), 256 entries (Quake palette)
- *   texture pages  x = 320, 448, 576, 704, 832 (128 halfwords = 256 8bpp
- *                  texels each), y = 0 and 256 -> 10 pages: 0..5 for the
- *                  map, 6..9 for the game data (models' skins, HUD;
- *                  formats/qgame.h, its CLUT at (0,504))
+ *   CLUTs          16 entries per texture (texture index i) at
+ *                  x = 16 * (i % 20), y = 481 + i / 20: under the
+ *                  framebuffers (x < 320), where no texture page reaches
+ *                  (the second row's pages, from x 320, go down to row
+ *                  511), rows 481 .. 502 at most; the game data's palette
+ *                  row 504, its aux pictures' CLUTs rows 505 ..
+ *                  (formats/qgame.h)
+ *   texture pages  the map's at x = 320 + 64 * p, y = 0 (64 halfwords =
+ *                  256 4bpp texels); the page grid (QTEX_PAGE_*): x = 320,
+ *                  448, 576, 704, 832, y = 0 and 256, 10 pages: 0..5 the
+ *                  map's room, 6..9 the game data's (formats/qgame.h)
  *   debug font     x >= 960
  *
  * Little-endian; host and R3000 agree, no swapping.
  *
  * Layout:
- *   qtex_header
- *   qtex_rect[num_rects]
+ *   qtex4_header
+ *   qtex_rect[num_rects]     the CLUT block first, then the pages
  *   qw_tex[num_slots], qtex_uvmap[num_slots]     at ofs_slots
  *   qw_anim[num_anims]                           at ofs_anims
  *   pixel data (each rect: w*h halfwords at data_ofs, 64-byte aligned)
@@ -41,10 +47,6 @@
 
 #include <stdint.h>
 
-#define QTEX_MAGIC "QTX6"
-
-#define QTEX_CLUT_X     0
-#define QTEX_CLUT_Y   480
 #define QTEX_PAGE_X0  320    /* first page column, halfwords        */
 #define QTEX_PAGE_COLS  5    /* page columns at x = 320 + 128 * i   */
 #define QTEX_PAGE_ROWS  2    /* page rows at y = 0, 256             */
@@ -104,19 +106,6 @@ typedef struct {
 } qw_anim;                     /* 272 bytes */
 
 typedef struct {
-	char     magic[4];       /* "QTX6"                                  */
-	uint32_t num_rects;
-	uint16_t clut[256];      /* PS1 BGR555; pure black is 0x8000 (0x0000
-	                            would be transparent)                    */
-	uint32_t num_slots;      /* the texture table (= the world's num_tex) */
-	uint32_t ofs_slots;      /* qw_tex[num_slots] then qtex_uvmap[num_slots] */
-	uint32_t num_anims;      /* qw_anim[num_anims] (0 when the level's pages
-	                            had no room for the frames: the faces show
-	                            their first)                             */
-	uint32_t ofs_anims;
-} qtex_header;
-
-typedef struct {
 	uint16_t x, y, w, h;     /* VRAM rectangle, halfword units           */
 	uint32_t data_ofs;       /* from file start; w*h*2 bytes, 64-aligned
 	                            (the GPU DMA's 16-word unit; the cook
@@ -124,25 +113,6 @@ typedef struct {
 	                            loader pads a copy of older files) */
 } qtex_rect;
 
-/* "QTX7": the same texture set in 4bpp (the menu's 4-bit textures), one per
-   map and texture level next to its QTX6 (<MAP>_T<N>.TX4 on the disc).
-   Every tile sits at the same texel position in the same page as in the
-   QTX6, so the UV maps and texture windows are the same; each texture is
-   quantized to its own 16 colours, so its table's CLUT and tpage words are
-   the 4-bit ones.
-     pages  x = 320 + 64 * p, y = 0 (64 halfwords = 256 4bpp texels)
-     CLUTs  16 entries per texture (texture index i) at x = 16 * (i % 20),
-            y = 481 + i / 20: under the framebuffers (x < 320), where no
-            texture page reaches (the second row's pages, from x 320, go
-            down to row 511), rows 481 .. 502 at most
-   The CLUT area, x 0 .. 319 of rows 480 .. 511: the Quake palette (QTX6)
-   row 480, the 4-bit CLUTs rows 481 .. 502, the game data's palette row
-   504, its aux pictures' CLUTs rows 505 .. (formats/qgame.h).
-   Layout:
-     qtex4_header
-     qtex_rect[num_rects]     the CLUT block first, then the pages
-     qw_tex[num_slots], qtex_uvmap[num_slots], qw_anim[num_anims]   as QTX6
-     pixel data               as in QTX6 */
 #define QTEX4_MAGIC          "QTX7"
 #define QTEX4_PAGE_X0        320
 #define QTEX4_CLUT_Y         481
@@ -152,7 +122,7 @@ typedef struct {
 typedef struct {
 	char     magic[4];       /* "QTX7"                                   */
 	uint32_t num_rects;
-	uint32_t num_slots, ofs_slots;   /* as QTX6's                        */
+	uint32_t num_slots, ofs_slots;   /* qw_tex then qtex_uvmap           */
 	uint32_t num_anims, ofs_anims;
 } qtex4_header;
 

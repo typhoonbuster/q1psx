@@ -11,9 +11,7 @@
  *                 their way to VRAM).
  *
  *   game arena    the game data every map needs (the weapon and projectile
- *                 models' geometry: engine/gdata.c), filled once at boot
- *                 (the 2D gun's packets are not: engine/game.c
- *                 game_ws_sync).
+ *                 models' geometry: engine/gdata.c), filled once at boot.
  *
  * The packet arenas live in vid.c; the QuakeC arena (Phase 7) will take
  * part of the level arena's current size.
@@ -53,21 +51,19 @@
                                           loads (below it, a lower geometry level):
                                           the arena's size before §45, so the room
                                           the game arena gave goes to what follows
-                                          the world (the stream's pool, the 2D
-                                          gun's packets), not to a larger world */
+                                          the world (the stream's pool), not to a
+                                          larger world */
 #define MEM_GAME_BYTES  (92 * 1024)    /* (90 KB until the registered game's six
                                           monsters: the stream's directory 162 ->
                                           224 assets, 56 B each in the engine's
                                           table; the boot's tables: 85 KB, "mem: game
-                                          arena" at boot, 86 KB with the 2D gun's
-                                          tables; 115 KB until §53, the guns' frames
+                                          arena" at boot; 115 KB until §53, the guns' frames
                                           then Quake's own vertex words, 100 KB until
                                           §54, their hidden triangles gone: 25 KB left
                                           the arena, kept as the stack's margin (for
                                           now); 224 KB
-                                          while it held the 2D gun's packets, now lent
-                                          by the stream's pool when that gun is
-                                          chosen) */
+                                          while it held the 2D gun's packets, until
+                                          §45; that gun gone since §119) */
 
 /* Code that runs once a level or at a menu's pace (the loads, the spawns,
    a level's start and end): compiled for size, out of the hot code's way

@@ -1,12 +1,12 @@
 /*
  * pktview — render a q1psx display-list dump to PNG images (host tool).
  *
- *   pktview <bench.log> <textures.tex|.tx4> <out-prefix> [game.dat [stream.dat]]
+ *   pktview <bench.log> <textures.tx4> <out-prefix> [game.dat [stream.dat]]
  *
  * The bench build prints, for one frame per scenario, "D <name>" (the views'
  * names are "view <n>"), "V <rows>" (the 3D viewport's height) and the
  * frame's packets in GPU draw order ("P <hex words>"), then "E". pktview
- * rebuilds VRAM from the QTX3 or QTX4 texture file (CLUTs + pages), and from
+ * rebuilds VRAM from the map's 4-bit texture set (QTX7: CLUTs + pages), and from
  * the game data's images (GAME.DAT: models' skins, the HUD) when given, and
  * rasterises the packets the way the PS1 GPU does — affine texture mapping
  * in screen space, no depth buffer, painter's order — into
@@ -138,25 +138,15 @@ static void load_tex(const char *path)
 	if (fread(d, 1, (size_t) len, f) != (size_t) len) { fprintf(stderr, "pktview: short read\n"); exit(1); }
 	fclose(f);
 
-	uint32_t nrects, first;
-	if (!memcmp(d, QTEX_MAGIC, 4)) {             /* 8bpp: the CLUT in the header */
-		qtex_header h;
-		memcpy(&h, d, sizeof h);
-		memcpy(&vram[QTEX_CLUT_Y][QTEX_CLUT_X], h.clut, sizeof h.clut);
-		nrects = h.num_rects;
-		first  = sizeof h;
-	} else if (!memcmp(d, QTEX4_MAGIC, 4)) {     /* 4bpp: CLUTs are a rect */
-		qtex4_header h;
-		memcpy(&h, d, sizeof h);
-		nrects = h.num_rects;
-		first  = sizeof h;
-	} else {
-		fprintf(stderr, "pktview: not a QTX6 / QTX7 file\n");
+	qtex4_header h;                              /* (its CLUTs are a rect) */
+	if ((size_t) len < sizeof h || memcmp(d, QTEX4_MAGIC, 4)) {
+		fprintf(stderr, "pktview: not a %s file\n", QTEX4_MAGIC);
 		exit(1);
 	}
-	for (uint32_t i = 0; i < nrects; i++) {
+	memcpy(&h, d, sizeof h);
+	for (uint32_t i = 0; i < h.num_rects; i++) {
 		qtex_rect r;
-		memcpy(&r, d + first + i * sizeof r, sizeof r);
+		memcpy(&r, d + sizeof h + i * sizeof r, sizeof r);
 		const uint16_t *px = (const uint16_t *) (d + r.data_ofs);
 		for (int y = 0; y < r.h; y++)
 			memcpy(&vram[r.y + y][r.x], px + y * r.w, r.w * 2u);
@@ -475,42 +465,13 @@ static void tile(const uint32_t *w, int n, int tw, int th, int semi)
 	polys_drawn++;
 }
 
-/* a CPU to VRAM copy in progress (GP0(A0h), its texels in this packet and
-   the next ones: the 2D gun's slot, formats/qgame.h): where the next
-   halfword goes, how many are left */
-static int cpu_x, cpu_y, cpu_x0, cpu_w, cpu_left;
-
-static void cpu_words(const uint32_t *w, int n)
-{
-	for (int i = 0; i < n && cpu_left > 0; i++)
-		for (int k = 0; k < 2 && cpu_left > 0; k++, cpu_left--) {
-			vram[cpu_y & 511][cpu_x & 1023] = (uint16_t) (w[i] >> (16 * k));
-			if (++cpu_x == cpu_x0 + cpu_w) {
-				cpu_x = cpu_x0;
-				cpu_y++;
-			}
-		}
-}
-
 static void packet(const uint32_t *w, int n)
 {
-	if (cpu_left > 0) {                  /* (the copy's texels go on) */
-		cpu_words(w, n);
-		return;
-	}
 	while (n > 1 && w[0] >> 24 == 0x01) {   /* the texture cache's clear: nothing here */
 		w++;
 		n--;
 	}
 	uint32_t code = w[0] >> 24;
-	if (code == 0xa0 && n >= 3) {        /* CPU to VRAM */
-		cpu_x = cpu_x0 = (int) (w[1] & 1023);
-		cpu_y = (int) ((w[1] >> 16) & 511);
-		cpu_w = (int) (w[2] & 0xffff);
-		cpu_left = cpu_w * (int) (w[2] >> 16);
-		cpu_words(w + 3, n - 3);
-		return;
-	}
 
 	if ((code & 0xf8) == 0xe0) {         /* environment commands, one per word (and the
 	                                        texture cache's clear); a primitive after them */
@@ -535,16 +496,6 @@ static void packet(const uint32_t *w, int n)
 		}
 		if (i < n)
 			packet(w + i, n - i);
-		return;
-	}
-	if (code == 0x02 && n >= 3) {        /* a fill (the 2D gun's slot): 16-halfword units */
-		int fx = (int) (w[1] & 0x3f0), fy = (int) ((w[1] >> 16) & 511);
-		int fw = (int) (((w[2] & 0x3ff) + 15) & ~15u), fh = (int) ((w[2] >> 16) & 511);
-		uint32_t c = w[0];
-		uint16_t v = (uint16_t) ((c >> 3 & 31) | (c >> 11 & 31) << 5 | (c >> 19 & 31) << 10);
-		for (int y = 0; y < fh; y++)
-			for (int x = 0; x < fw; x++)
-				vram[(fy + y) & 511][(fx + x) & 1023] = v;
 		return;
 	}
 	if (code == 0x80 && n >= 4) {        /* VRAM to VRAM (the animated textures' frames) */
@@ -610,7 +561,7 @@ static void packet(const uint32_t *w, int n)
 int main(int argc, char **argv)
 {
 	if (argc < 4 || argc > 6) {
-		fprintf(stderr, "usage: pktview <bench.log> <textures.tex> <out-prefix> [game.dat [stream.dat]]\n");
+		fprintf(stderr, "usage: pktview <bench.log> <textures.tx4> <out-prefix> [game.dat [stream.dat]]\n");
 		return 2;
 	}
 	crc_init();
@@ -665,8 +616,7 @@ int main(int argc, char **argv)
 			if (rows > 0 && rows <= H)
 				clip_y1 = rows - 1;
 		} else if (view && line[0] == 'P' && line[1] == ' ') {
-			uint32_t w[256];                  /* (a linked packet's most: 255 words,
-			                                     the 2D gun's texel copies) */
+			uint32_t w[256];                  /* (a linked packet's most: 255 words) */
 			int n = 0;
 			char *s = line + 1;
 			while (n < 256) {

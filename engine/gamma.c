@@ -13,8 +13,8 @@
  *     change sends them again through the new level's table (a 5-bit
  *     table merges neighbours near white, so a colour read back from VRAM
  *     could not be taken back exactly);
- *   - the menu's pictures (rows 505-506), the 2D gun's CLUTs and the
- *     particles' colours keep theirs.
+ *   - the menu's pictures (rows 505-506) and the particles' colours keep
+ *     theirs.
  * Black with its STP bit clear (0x0000) is the GPU's transparent texel and
  * stays so. Nothing changes in a frame's work.
  */

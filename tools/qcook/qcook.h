@@ -2,7 +2,7 @@
  * q1psx — asset cooker (host tool), shared declarations.
  *
  *   qcook.c   command line, pak access, BSP lump parsing, the levels
- *   tex.c     palette -> CLUT, texture tiles, VRAM page packing, QTX6 output
+ *   tex.c     texture tiles, VRAM page packing, 4-bit CLUTs, QTX7 output
  *   world.c   face splitting, face records, nodes/leaves/PVS, QWVF output
  *   game.c    models, sprites, HUD pictures -> QGM6 (formats/qgame.h)
  *   items.c   the map's own models -> QMM1 (formats/qgame.h)
@@ -247,8 +247,6 @@ typedef struct {
 	int      gut_x, gut_y;   /* 1 on an axis that does not wrap: the texel
 	                            column / row past the tile's end repeats its
 	                            first (the gutter, docs/porting-notes.md §71) */
-	uint16_t tpage;          /* GPU tpage word (8bpp)                     */
-	uint16_t clut;           /* GPU CLUT word                             */
 	uint32_t window;         /* GP0 E2h texture-window command            */
 	uint8_t  flags;          /* QWF_* derived from the name               */
 } tex_slot;
@@ -289,18 +287,16 @@ typedef struct {
 } tex_extra;
 
 /* The map's texture set at a level: every slot sized (the miptex, the
-   extras after them, the animations' display slots last). With out_path
+   extras after them, the animations' display slots last). With out4_path
    NULL that is all (the layout the world and the map's models are cut
    and mapped for: the finest level's, `canon` NULL). Otherwise the tiles
-   are packed into the map's pages and written as a QTX6 set to out_path
-   and, when out4_path is not NULL, the same tiles in 4bpp (QTX7, 16
-   colours per texture) to out4_path; their tables map the layout `canon`
-   onto this set (formats/qtex.h qtex_uvmap). 1 when done; 0 when the
-   tiles overflow the map's pages and may_fail (nothing written), else it
-   dies. */
+   are packed into the map's pages and written in 4bpp (QTX7, 16 colours
+   per texture) to out4_path; their tables map the layout `canon` onto
+   this set (formats/qtex.h qtex_uvmap). 1 when done; 0 when the tiles
+   overflow the map's pages and may_fail (nothing written), else it dies. */
 int tex_build(tex_set *ts, const tex_set *canon, const bsp_t *b, const tex_extra *extra,
-              int nextra, const uint8_t palette[768], int level, const char *out_path,
-              const char *out4_path, int anims, int may_fail);
+              int nextra, const uint8_t palette[768], int level, const char *out4_path, int anims,
+              int may_fail);
 
 /* ------------------------------------------------------ the map's models -- */
 
@@ -342,7 +338,7 @@ int decimate(const dmesh *m, int (*tri)[4], int n, double keep, double max_err);
 extern double light_gain;   /* vertex light scale (qcook --light-gain), 1 = Quake */
 extern const char *world_fmap;   /* qcook map --fmap: each world record's Quake faces written
                                     there (the zones' tables translated, QCOOK_MERGE) */
-void world_build(const bsp_t *b, const tex_set *canon, int geo_level, const char *out_path);
+void world_build(const bsp_t *b, const tex_set *canon, const char *out_path);
 
 /* `qcook check`: reload a QWV2 file and verify every invariant. */
 int  world_check(const char *path);

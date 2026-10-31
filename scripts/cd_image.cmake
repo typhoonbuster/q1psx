@@ -4,7 +4,7 @@
 # background) go on the disc at the first build. (Listed at CMake's
 # configure step, they would miss that build: the cook runs after it.)
 #
-#   cmake -DROOT=<source dir> -DOUT=<xml> -DTEXTURES=high|medium -DMUSIC=0|1
+#   cmake -DROOT=<source dir> -DOUT=<xml> -DMUSIC=0|1
 #         [-DPAK0=<pak0.pak>] -DSDK_VERSION=<v> -P scripts/cd_image.cmake
 #
 # The disc's layout (docs/porting-notes.md §84): the root's files (the
@@ -12,7 +12,7 @@
 # assets STREAM_0.DAT, the menu's bank), then one directory a level, its
 # files in the order the engine's load reads them, so that a load is one
 # sweep of the head and every read in play a hop within the level's
-# section: its sound bank, its 4-bit textures at the build's level, its
+# section: its sound bank, its 4-bit textures, its
 # world (a map the cook split takes its skeleton as
 # <MAP>_G0.WLD and its chunks as <MAP>_Z<N>.ZON, §57), its own models, its
 # own file of the streamed assets (<MAP>_S0.DAT), and with MUSIC its copy
@@ -23,11 +23,7 @@
 # with SYSTEM.CNF and the executable in it. iso.xml's slots: @ROOT_ENTRIES@,
 # @LEVEL_DIRS@ (inside <dir name="LVL">), @MUSIC_ENTRIES@, @PAK0_ENTRY@.
 
-if(TEXTURES STREQUAL "medium")
-	set(_tex_level 1)
-else()
-	set(_tex_level 2)
-endif()
+set(_tex_level 2)                        # (the textures high: formats/qlevels.h)
 set(_cooked_dir ${ROOT}/cooked)
 
 set(ROOT_ENTRIES "")
