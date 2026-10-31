@@ -63,7 +63,7 @@
 #
 # The code is kept small for the instruction cache (§81.5): the edge test,
 # a corner's load, a line's midpoints and a line's projection are
-# subroutines (tess_edge, tess_corner, tess_line, tess_proj: a0-a3, v0,
+# subroutines (tess_lvl, tess_corner, tess_line, tess_proj: a0-a3, v0,
 # v1, t0-t7, t9, at between them as each says).
 
 	.set noreorder
@@ -137,10 +137,10 @@ r_tess_stat:                             # the frame's (R_PROFILE): polygons cut
 	lh      $t0, 4(\a)                   # z
 	lh      $t1, 4(\b)
 	sh      $a1, 2(\m)
-	sh      $zero, 6(\m)
 	addu    $t0, $t0, $t1
 	sra     $t0, $t0, 1
-	sh      $t0, 4(\m)
+	andi    $t0, $t0, 0xffff
+	sw      $t0, 4(\m)                   # (its pad 0: one store)
 	lhu     $t0, TP_U(\a)                # u, v (x 256)
 	lhu     $t1, TP_U(\b)
 	lhu     $a1, TP_V(\a)
@@ -156,11 +156,10 @@ r_tess_stat:                             # the frame's (R_PROFILE): polygons cut
 	addiu   $a1, $a1, 128
 	andi    $a1, $a1, 0xff00
 	or      $t0, $t0, $a1
-	sw      $t0, TP_UVW(\m)
-	lhu     $t0, TP_C(\a)                # the light
+	lhu     $at, TP_C(\a)                # the light
 	lhu     $t1, TP_C(\b)
-	nop
-	addu    $t0, $t0, $t1
+	sw      $t0, TP_UVW(\m)
+	addu    $t0, $at, $t1
 	srl     $t0, $t0, 1
 	sh      $t0, TP_C(\m)
 	sll     $t1, $t0, 8                  # grey: c | c << 8 | c << 16
@@ -170,19 +169,73 @@ r_tess_stat:                             # the frame's (R_PROFILE): polygons cut
 	sw      $t0, TP_GC(\m)
 .endm
 
-# TRANGE xy, nxt: a corner's packed xy (t7 = its x, sign-extended) within
-# the GTE's range, else the slow path's clip; the next corner's x into t7
-# on the way out. Clobbers t7, v0.
-.macro TRANGE xy, nxt
-	sra     $t7, $t7, 16                 # x
-	sra     $v0, \xy, 16                 # y
-	addiu   $t7, $t7, 1023               # within -1023 .. 1022 (r_slow.c): past
-	sltiu   $t7, $t7, 2046               #  them the GTE saturated it
-	beqz    $t7, tess_near
-	addiu   $v0, $v0, 1023
+# TRANGE xy, y [, x]: a corner's packed xy as x (into xy itself, or x) and
+# y, each within the GTE's range, else the slow path's clip (the last
+# branch's delay slot is the caller's). Clobbers at, v0.
+.macro TRANGE xy, y, x
+	sra     \y, \xy, 16                  # y
+.ifb \x
+	sll     \xy, \xy, 16
+	sra     \xy, \xy, 16                 # x
+	addiu   $at, \xy, 1023               # within -1023 .. 1022 (r_slow.c): past
+.else
+	sll     \x, \xy, 16                  #  them the GTE saturated it
+	sra     \x, \x, 16
+	addiu   $at, \x, 1023
+.endif
+	sltiu   $at, $at, 2046
+	beqz    $at, tess_near
+	addiu   $v0, \y, 1023
 	sltiu   $v0, $v0, 2046
 	beqz    $v0, tess_near
-	sll     $t7, \nxt, 16
+.endm
+
+# EDGE xa, ya, za, xb, yb, zb, k [, max]: the level edge (a, b) needs (the
+# header's rule) into k, which the caller cleared (max = 1: k raised to it,
+# a level of an edge before); the test at level 0 here, the slow path's own
+# (|ds| |dz| <= T2 (za + zb), |dx| + |dy| <= SPAN): most edges pass it,
+# k left alone; the levels past it in tess_lvl (KMAX + 1: finer than
+# KMAX). t6 = T2. Clobbers at, v0, v1, a3, t7, t9, ra.
+.macro EDGE xa, ya, za, xb, yb, zb, k, max=0
+	subu    $at, \xa, \xb                # dx
+	subu    $v0, \ya, \yb                # dy
+	bgez    $at, 1f
+	subu    $v1, \za, \zb                # dz
+	subu    $at, $zero, $at              # |dx|
+1:	bgez    $v0, 2f
+	addu    $t9, \za, \zb                # za + zb
+	subu    $v0, $zero, $v0              # |dy|
+2:	mult    $t6, $t9                     # T2 (za + zb): the bound at level 0
+	bgez    $v1, 3f
+	addu    $a3, $at, $v0                # |dx| + |dy|: the span
+	subu    $v1, $zero, $v1              # |dz|
+3:	sltu    $t7, $at, $v0                # the octagon: max + 3/8 min of |dx|, |dy|
+	beqz    $t7, 4f
+	move    $t7, $v0                     # (min |dy|, |dx| the max)
+	move    $t7, $at                     # min |dx|,
+	move    $at, $v0                     #  max |dy|
+4:	sll     $v0, $t7, 1
+	addu    $v0, $v0, $t7
+	mflo    $t9                          # T2 (za + zb)
+	srl     $v0, $v0, 3
+	addu    $at, $at, $v0                # |ds|
+	multu   $at, $v1                     # |ds| |dz|
+	sltiu   $v0, $a3, SPAN + 1           # 1: within the span
+	move    $v1, \za                     # (tess_lvl's)
+	mflo    $t7                          # |ds| |dz|
+	sltu    $at, $t9, $t7                # 1: the warp over the bound
+	sltu    $at, $at, $v0                # 1: neither: level 0
+	bnez    $at, 5f
+	move    $v0, \zb                     # (tess_lvl's)
+	jal     tess_lvl_1                   # past level 0: v0 = the level
+	slt     $at, $v0, $v1                # (tess_lvl's first)
+.if \max
+	slt     $at, \k, $v0
+	beqz    $at, 5f
+	nop
+.endif
+	move    \k, $v0
+5:
 .endm
 
 # TBOUNDS: the cells' registers: v0 = clut << 16, v1 = tpage << 16, a1 =
@@ -260,69 +313,87 @@ tess_poly:
 	move    $t6, $t5                     # a triangle: its third corner is the grid's fourth
 1:
 	# the corners' depths and screen positions: one too near or off the
-	# GTE's range goes to the slow path (its near clip)
-	lw      $t0, SP_SZ($t3)
-	lw      $t1, SP_SZ($t4)
-	lw      $t2, SP_SZ($t5)
-	lw      $t9, SP_SZ($t6)
-	slt     $at, $t0, $v1
+	# GTE's range goes to the slow path (its near clip). The edges below
+	# take every register: the corners' cache addresses wait in slow_poly's
+	# lists (SP_PLA, SP_PLB: free until it runs), the record, the polygon
+	# and its corner count in draw_records' saves (r_world.s RECLOOP); the
+	# corners as x, y, z: 0 in s0-s2, 1 in s3-s5, 2 in t0-t2, 3 in t3-t5
+	lw      $s2, SP_SZ($t3)              # z0
+	lw      $s5, SP_SZ($t4)              # z1
+	lw      $t2, SP_SZ($t5)              # z2
+	lw      $t9, SP_SZ($t6)              # z3
+	slt     $at, $s2, $v1
 	bnez    $at, tess_near
-	slt     $at, $t1, $v1
-	bnez    $at, tess_near
+	slt     $v0, $s5, $v1
+	bnez    $v0, tess_near
 	slt     $at, $t2, $v1
 	bnez    $at, tess_near
-	slt     $at, $t9, $v1
-	bnez    $at, tess_near
-	lw      $t0, SP_SXY($t3)
-	lw      $t1, SP_SXY($t4)
-	lw      $t2, SP_SXY($t5)
-	lw      $t9, SP_SXY($t6)
-	sll     $t7, $t0, 16
+	slt     $v0, $t9, $v1
+	bnez    $v0, tess_near
+	lw      $s0, SP_SXY($t3)             # xy0
+	lw      $s3, SP_SXY($t4)             # xy1
+	lw      $t0, SP_SXY($t5)             # xy2
+	lw      $t7, SP_SXY($t6)             # xy3
+	sw      $t3, SP_PLA+0($t8)
+	sw      $t4, SP_PLA+4($t8)
+	sw      $t5, SP_PLA+8($t8)
+	sw      $t6, SP_PLB+0($t8)
+	TRANGE  $s0, $s1
+	TRANGE  $s3, $s4
 	TRANGE  $t0, $t1
-	TRANGE  $t1, $t2
-	TRANGE  $t2, $t9
-	TRANGE  $t9, $zero
+	TRANGE  $t7, $t4, $t3
+	move    $t5, $t9                     # z3
+	lw      $t6, SP_T2($t8)              # T2 (EDGE's)
 
-	# the levels (tess_edge): along the rows the top and bottom edges'
-	# greatest (ku, s3), down the columns the left and right ones' (kv,
-	# s4); the diagonal the GPU draws, corners 1-2, raises the larger of
-	# the two to its own
-	lw      $s2, SP_T4($t8)              # 2 T2 (tess_edge's)
-	move    $v0, $t3
-	jal     tess_edge
-	move    $v1, $t4
-	move    $s3, $t9                     # ku: the top edge's
-	move    $v0, $t5
-	jal     tess_edge
-	move    $v1, $t6
-	slt     $at, $s3, $t9
-	beqz    $at, 2f
-	move    $v0, $t3
-	move    $s3, $t9                     # the bottom edge's, more
-2:	jal     tess_edge
-	move    $v1, $t5
-	move    $s4, $t9                     # kv: the left edge's
-	move    $v0, $t4
-	jal     tess_edge
-	move    $v1, $t6
-	slt     $at, $s4, $t9
-	beqz    $at, 3f
-	move    $v0, $t4
-	move    $s4, $t9                     # the right edge's, more
-3:	jal     tess_edge
-	move    $v1, $t5
-	slt     $at, $s3, $s4                # ku < kv: the columns' axis is the larger
-	bnez    $at, 4f
-	slt     $v0, $s4, $t9                # (kv < kd, for 4)
-	slt     $v0, $s3, $t9                # ku < kd
-	beqz    $v0, 5f
+	# the levels (EDGE): along the rows the top and bottom edges' greatest
+	# (ku, a0), down the columns the left and right ones' (kv, a1); the
+	# diagonal the GPU draws, corners 1-2 (kd, a2), raises the larger of
+	# the two to its own. A triangle (its corner 3 is corner 2): its bottom
+	# edge is a point, its right edge the diagonal
+	move    $a0, $zero
+	move    $a1, $zero
+	move    $a2, $zero
+	EDGE    $s0, $s1, $s2, $s3, $s4, $s5, $a0      # top: 0-1
+	EDGE    $s0, $s1, $s2, $t0, $t1, $t2, $a1      # left: 0-2
+	EDGE    $s3, $s4, $s5, $t0, $t1, $t2, $a2      # the diagonal: 1-2
+	lw      $v0, SP_SAVE+32($t8)         # (draw_records' t0: 4 or 3)
+	li      $at, 3
+	bne     $v0, $at, .Ltp_quad
+	slt     $at, $a1, $a2
+	beqz    $at, .Ltp_levels             # a triangle: kv the left edge's or the
+	nop                                  #  diagonal's, ku the top's
+	b       .Ltp_levels
+	move    $a1, $a2
+.Ltp_quad:
+	EDGE    $t0, $t1, $t2, $t3, $t4, $t5, $a0, 1   # bottom: 2-3
+	EDGE    $s3, $s4, $s5, $t3, $t4, $t5, $a1, 1   # right: 1-3
+	slt     $at, $a0, $a1                # ku < kv: the columns' axis is the larger
+	bnez    $at, .Ltp_kv
+	slt     $v0, $a1, $a2                # (kv < kd, for .Ltp_kv)
+	slt     $v0, $a0, $a2                # ku < kd
+	beqz    $v0, .Ltp_levels
 	nop
-	b       5f
-	move    $s3, $t9
-4:	beqz    $v0, 5f
+	b       .Ltp_levels
+	move    $a0, $a2
+.Ltp_kv:
+	beqz    $v0, .Ltp_levels
 	nop
-	move    $s4, $t9
-5:	addu    $t0, $s3, $s4
+	move    $a1, $a2
+.Ltp_levels:
+	move    $s3, $a0                     # ku
+	move    $s4, $a1                     # kv
+	lw      $a0, SP_SAVE+4($t8)          # the record, the polygon, its corner count
+	lw      $a1, SP_SAVE+16($t8)
+	lw      $a2, SP_SAVE+32($t8)
+	sltiu   $at, $s3, KMAX + 1           # a level past KMAX: the slow path's own
+	beqz    $at, tess_fine               #  subdivision
+	sltiu   $at, $s4, KMAX + 1
+	beqz    $at, tess_fine
+	lw      $t3, SP_PLA+0($t8)           # the corners' cache addresses back
+	lw      $t4, SP_PLA+4($t8)
+	lw      $t5, SP_PLA+8($t8)
+	lw      $t6, SP_PLB+0($t8)
+	addu    $t0, $s3, $s4
 	sltiu   $at, $t0, TESS_CAP + 1
 	beqz    $at, tess_capped             # past the cap: the slow path
 	addiu   $at, $s6, 12                 # (the arena's bound, as a cell's)
@@ -558,76 +629,42 @@ tess_done:
 	jr      $ra
 	nop
 
-# tess_edge: the level the edge between the corners at cache addresses
-# v0 and v1 needs (the header's rule) into t9; past KMAX, tess_fine (the
-# whole polygon's). s2 = 2 T2. Clobbers t0-t2, t7, v0, v1, at.
-	ICSEC   tess_edge
-tess_edge:
-	lw      $t0, SP_SXY($v0)
-	lw      $t1, SP_SXY($v1)
-	lw      $t2, SP_SZ($v0)
-	lw      $t7, SP_SZ($v1)
-	sll     $v0, $t0, 16
-	sll     $v1, $t1, 16
-	subu    $v0, $v0, $v1
-	sra     $v0, $v0, 16                 # dx
-	sra     $t0, $t0, 16
-	sra     $t1, $t1, 16
-	subu    $t1, $t0, $t1                # dy
-	subu    $t9, $t2, $t7                # dz
-	sra     $at, $v0, 31
-	xor     $v0, $v0, $at
-	subu    $v0, $v0, $at                # |dx|
-	sra     $at, $t1, 31
-	xor     $t1, $t1, $at
-	subu    $t1, $t1, $at                # |dy|
-	sra     $at, $t9, 31
-	xor     $t9, $t9, $at
-	subu    $t9, $t9, $at                # |dz|
-	slt     $at, $t7, $t2                # zm: the nearer end's depth
-	subu    $at, $zero, $at
-	xor     $t7, $t7, $t2
-	and     $t7, $t7, $at
-	xor     $t2, $t2, $t7
-	mult    $s2, $t2                     # 2 T2 zm (while the octagon is summed)
-	addu    $v1, $v0, $t1                # |dx| + |dy| (the span)
-	slt     $at, $v0, $t1                # the octagon: max + 3/8 min of |dx|, |dy|
-	subu    $at, $zero, $at
-	xor     $t7, $v0, $t1
-	and     $t7, $t7, $at
-	xor     $t0, $v0, $t7                # max
-	xor     $t7, $t1, $t7                # min
-	sll     $at, $t7, 1
-	addu    $at, $at, $t7
-	srl     $at, $at, 3
-	addu    $t0, $t0, $at                # |ds|
-	mflo    $t1                          # 2 T2 zm
-	srl     $at, $s2, 1                  # T2
-	li      $t7, SPAN
-	multu   $t0, $t9                     # |ds| x |dz|
+# tess_lvl: the level an edge that fails level 0 needs (EDGE's: t7 = |ds|
+# |dz|, t9 = T2 (za + zb), a3 = |dx| + |dy|, v1 = za, v0 = zb; t6 = T2):
+# the first m with |ds| |dz| <= 4^m 2 T2 zm + 2^m T2 |dz| (zm the nearer
+# end's depth: 2 T2 zm + T2 |dz| is T2 (za + zb)) and |dx| + |dy| <= 2^m
+# SPAN (the span halved instead, rounded up), into v0; KMAX + 1 past KMAX.
+# EDGE enters at tess_lvl_1, its first instruction done. Clobbers at, v1,
+# a3, t9.
+	ICSEC   tess_lvl
+tess_lvl:
+	slt     $at, $v0, $v1                # zb < za
+tess_lvl_1:
+	beqz    $at, 1f
+	sll     $v1, $v1, 1                  # 2 za
+	sll     $v1, $v0, 1                  # 2 zb: 2 zm
+1:	mult    $t6, $v1                     # 2 T2 zm (T2 as rs: the short multiply)
+	li      $v0, 1                       # m
+	addiu   $a3, $a3, 1
+	srl     $a3, $a3, 1                  # the span at level 1 (halved, rounded up)
+	mflo    $v1                          # 2 T2 zm
+	subu    $t9, $t9, $v1                # T2 |dz|
+	sll     $v1, $v1, 2                  # the bounds at level 1
+	sll     $t9, $t9, 1
+2:	addu    $at, $v1, $t9                # the bound at level m
+	sltu    $at, $at, $t7                # 1: the warp over it
+	bnez    $at, 3f
+	sltiu   $at, $a3, SPAN + 1           # 1: within the span at level m
+	bnez    $at, 4f                      # both: level m
 	nop
-	nop
-	mflo    $t0
-	nop
-	nop
-	mult    $at, $t9                     # T2 |dz|
-	move    $t9, $zero                   # m
-	nop
-	mflo    $t2
-4:	addu    $at, $t1, $t2                # the bound at this level
-	sltu    $at, $at, $t0                # the warp over the threshold?
-	sltu    $v0, $t7, $v1                # the edge over the span?
-	or      $at, $at, $v0
-	beqz    $at, 6f
-	sll     $t1, $t1, 2                  # (the next level's bounds; harmless when done)
-	addiu   $t9, $t9, 1
-	sll     $t2, $t2, 1
-	sltiu   $at, $t9, KMAX + 1
-	bnez    $at, 4b
-	sll     $t7, $t7, 1
-	b       tess_fine                    # finer than KMAX: the slow path
-	nop
-6:	jr      $ra
+3:	addiu   $v0, $v0, 1                  # the next level
+	sll     $v1, $v1, 2
+	sll     $t9, $t9, 1
+	addiu   $a3, $a3, 1
+	sltiu   $at, $v0, KMAX + 1
+	bnez    $at, 2b
+	srl     $a3, $a3, 1
+4:	jr      $ra
 	nop
 
 # tess_corner: the polygon's corner at cache address v0 into grid point
@@ -746,26 +783,21 @@ tess_full:                               # the arena full: this polygon's rest g
 	b       tess_done
 	sw      $t0, SP_FULL($t8)
 
+# To the slow path (a0, a1, a2 as received): into slow_poly past its saves,
+# ra and s0-s5 in the same slots already (tess_poly's), its first load in
+# the jump's slot
 	ICSEC   tess_near
 tess_near:                               # a corner too near or off range: the slow path's clip
 	TSTAT   2
-	b       tess_slow
-	nop
+	j       slow_poly_1
+	lw      $t7, SP_T2($t8)
 	ICSEC   tess_fine
 tess_fine:                               # finer than KMAX: the slow path's own subdivision
 	TSTAT   3
-	b       tess_slow
-	nop
+	j       slow_poly_1
+	lw      $t7, SP_T2($t8)
 	ICSEC   tess_capped
 tess_capped:                             # past the cap: the slow path's own subdivision
 	TSTAT   5
-tess_slow:
-	lw      $ra, SP_SPRA($t8)
-	lw      $s0, SP_SV+0($t8)
-	lw      $s1, SP_SV+4($t8)
-	lw      $s2, SP_SV+8($t8)
-	lw      $s3, SP_SV+12($t8)
-	lw      $s4, SP_SV+16($t8)
-	lw      $s5, SP_SV+20($t8)
-	j       slow_poly                    # (a0, a1, a2 as received)
-	nop
+	j       slow_poly_1
+	lw      $t7, SP_T2($t8)
