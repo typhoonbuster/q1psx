@@ -22,6 +22,7 @@
 #include "bmfrag.h"
 #include "cd.h"
 #include "ents.h"
+#include "gamma.h"
 #include "game.h"
 #include "gdata.h"
 #include "hud.h"
@@ -2380,6 +2381,18 @@ static void bench_menu(void)
 	bench_menu_key(PAD_TRIANGLE, 0);                  /* back to the main menu */
 	bench_menu_key(PAD_DOWN, 0);                      /* (to Options) */
 	bench_menu_key(PAD_CROSS, "moptions");
+	int kept_rects;
+	uint32_t kept = gamma_kept_hash(&kept_rects);
+	printf("gamma kept: %d map CLUT rects, FNV %08x\n", kept_rects, (unsigned) kept);
+	bench_menu_key(PAD_DOWN, 0);                      /* (to Brightness) */
+	for (int i = 0; i < 5; i++)
+		bench_menu_key(PAD_RIGHT, 0);                 /* v_gamma 0.75: the CLUTs sent again */
+	printf("brightness %d: the CLUTs at level %d\n", settings.brightness, gamma_level());
+	bench_menu_key(PAD_RIGHT, "moptions_bright");
+	for (int i = 0; i < 6; i++)
+		bench_menu_key(PAD_LEFT, 0);                  /* (back to v_gamma 1) */
+	printf("brightness %d: the CLUTs at level %d\n", settings.brightness, gamma_level());
+	bench_menu_key(PAD_UP, 0);                        /* (back to Reset) */
 	bench_menu_key(PAD_UP, 0);                        /* (the greyed ones: to Graphics) */
 	bench_menu_key(PAD_CROSS, "mgraphics");
 	bench_menu_key(PAD_RIGHT, "mgraphics_fx");        /* the effects high: their hint */

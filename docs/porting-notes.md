@@ -14790,3 +14790,58 @@ merged.)
   and after, side by side. The grunt and the dog in the dark corners,
   nearly black before, now stand out; the grunt near has Quake's lit
   side. The cycles are unchanged (the light is a value a body).
+
+## §116 — The Options menu's Brightness (2026-10-31)
+
+(The number is provisional, like §114's and §115's.)
+
+- **The request**: a brightness slider in the options, for the darkest
+  levels (E4M2).
+- **Quake's**: the Options menu's Brightness (menu.c `M_Options_Draw`,
+  `M_AdjustSliders`) moves `v_gamma` from 1 down to 0.5, a twentieth a
+  step. `BuildGammaTable` (view.c) takes the palette through
+  255 x ((i + 0.5) / 255.5) ^ gamma: it lifts the dark colours most and
+  white not at all.
+- **On the PlayStation** (engine/gamma.c): every texel is drawn through a
+  CLUT, so the CLUTs take the same curve on their 5-bit channels. The
+  eleven tables are computed on the host (each channel to 8 bits, through
+  `BuildGammaTable`, back to 5 bits) and held as constants.
+  - Which CLUTs:
+    - the map's textures' (VRAM rows 481-502: the world, its brush
+      models, the sky, the liquids, the far walls drawn flat);
+    - the game's palette (row 504: the monsters, the items, the gun, the
+      status bar's pictures);
+    - the console's (row 480).
+    - The menu's 4-bit pictures (rows 505-506), the 2D gun's CLUTs (its
+      packets) and the particles' colours keep theirs.
+  - Each upload of one of those goes through the current level's table
+    (engine/world.c `vram_upload`, ui.c), a row at a time from a
+    640-byte buffer. Black with its STP bit clear, the GPU's transparent
+    texel, stays so.
+  - A change sends the map's and the game's CLUTs again through the new
+    level's table, from copies of them as cooked:
+    - the map's are kept after its texture tables, 1.3-3.2 KB a map;
+    - the game's palette is kept in a 512-byte array.
+    - Reading the rows back from VRAM instead was tried on the host and
+      dropped: a 5-bit table merges neighbours near white, and a colour
+      drifted by up to 2 steps after a few moves of the slider.
+  - Nothing changes in a frame's work. The release's level arena is
+    1 352 416 -> 1 349 888 B (the code, the palette's copy, the row's
+    buffer), less the map's copy while it plays.
+- **The menu**: Brightness, Quake's row, between Reset to defaults and
+  the volumes; its slider at (1 - `v_gamma`) / 0.5; `settings.brightness`
+  0-10, 0 by default (Quake's 1); Reset to defaults puts it back.
+- **Checked**:
+  - on the host (engine/gamma.c with a VRAM in an array): ten moves of
+    the slider, the CLUTs at each level exactly the table's image of the
+    cooked colours, at 0 the cooked colours again, the transparent texels
+    and the STP bits kept;
+  - in the game bench (`BENCH_GAME=1`), its walk through the release menu
+    now moves the slider 5 steps and back:
+    - the CLUTs go to level 5, then back to 0;
+    - the map's kept CLUTs hash as START's cooked ones do (FNV
+      `dd8a42d1`);
+    - the walk goes on as before.
+  - The release builds with it.
+  - The colours on screen are to be judged on DuckStation:
+    PCSX-Redux runs without a GPU here.
