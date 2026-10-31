@@ -2642,3 +2642,25 @@ followed by R0-R4.
   zoned no map) and the slots' setting (three). The cooked files are the
   same (`settings.txt` aside); the display lists are the same; the
   release's level arena +48 B.
+- **The game's presentation and its last features** (§120, provisional
+  number, 2026-11-01). Quake's
+  loading plaque at every map's load over the last frame, with a bar
+  (the console font's slider track and separator line, from the drive's
+  meter) and the level's name, the disc in the corner; the boot's screen
+  (the console's background, the plaque, the bar: `CONBACK.DAT` `QCB2`
+  carries them, and the version number written in as WinQuake does). The
+  memory card in slot 1, driven on SIO0 (`engine/card.c`): one block,
+  Quake's twelve slots and an autosave at each new level, each a level's
+  start (map, skill, runes, the parms it was entered with), the
+  settings; Load and Save in the single player menu, the card's messages,
+  the format. Quake's game options page as New Game (the skill, the
+  episode, the level). The PlayStation Mouse in port 2 (Use Mouse, Mouse
+  Speed, Invert Mouse, Swap Mouse Buttons: the mouse aims, fires and
+  jumps, the pad's two halves move and change the weapon alike), the
+  DualShock's vibration (shots, wounds, the death, explosions), the
+  crosshair, Customize controls (read only), the level's name at its
+  start, the menu when the pad is pulled out. Fixed: the d-pad changed
+  the weapon as it walked; the intermission's stats came over a zone not
+  in yet (its camera's zone now read before them). `GAME.DAT` `QGMB` →
+  `QGMC`. The 128 spawn views' display lists are master's; the release's
+  level arena −19152 B.

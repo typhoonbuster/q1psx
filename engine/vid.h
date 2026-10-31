@@ -105,6 +105,10 @@ void  vid_shift(const int v[3], int contrast);
 void *vid_hud_block(int previous);             /* this buffer's (0) or the other's (1) */
 
 void  vid_flip(void);                          /* (the stack's guard checked: mem_stack_ok) */
+void  vid_draw_over(void);                     /* this frame's packets drawn over the frame
+                                                  on display, no flip, no clear (the loading
+                                                  screen's bar); the arena begun again */
+void  vid_resync(void);                        /* after a long stop: the frame times from now */
 void  vid_fatal(void);                         /* a red screen, the game stopped */
 /* the frame rate cap: 60 (none), 45, 30 or 15 frames a second. A frame is
    shown no sooner than its share of vblanks after the last (45: 1, 1, 2 in

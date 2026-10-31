@@ -234,10 +234,20 @@ int cd_poll(void)
 	return left;
 }
 
+/* the loading screen's meter (cd.h) */
+uint32_t       cd_meter;
+cd_meter_fn    cd_meter_hook;
+static uint32_t meter_n;                      /* the sectors of the read in flight */
+
 int cd_read_sync(void)
 {
 	int r = CdReadSync(0, 0);
 	cd_busy();                                /* (it just ended: settling from now) */
+	if (cd_meter_hook) {
+		cd_meter += meter_n;
+		meter_n = 0;
+		cd_meter_hook(cd_meter);
+	}
 #ifdef Q1PSX_BENCH
 	if (rd.active) {
 		if (r >= 0)
@@ -294,6 +304,7 @@ int cd_read_start(int32_t lba, uint32_t sectors, void *dst, int who, int tag)
 	(void) tag;
 	if (!cd_seek(lba) || !CdReadRetry((int) sectors, (uint32_t *) dst, CdlModeSpeed, 3))
 		return 0;
+	meter_n = sectors;
 #ifdef Q1PSX_BENCH
 	if (rd.active)                            /* (an owner's read ended, not polled yet) */
 		end_read(1);
@@ -670,14 +681,18 @@ void *cd_load(const char *name, uint32_t *size, cd_poll_fn poll)
 
 	int left = -1;
 	if (cd_read_start((int32_t) lba, sectors, buf, CDW_FILE, 0)) {
-		if (poll) {
+		if (poll || cd_meter_hook) {
 			/* CdReadSync(1) returns the sectors still to come, and must be
 			   called regularly for CdReadRetry to retry a failed read */
-			while ((left = cd_poll()) > 0)
-				poll((sectors - (uint32_t) left) * SECTOR);
+			while ((left = cd_poll()) > 0) {
+				if (poll)
+					poll((sectors - (uint32_t) left) * SECTOR);
+				if (cd_meter_hook)
+					cd_meter_hook(cd_meter + sectors - (uint32_t) left);
+			}
 		}
 		int done = cd_read_sync();           /* (the Pause after it too) */
-		if (!poll)
+		if (!poll && !cd_meter_hook)
 			left = done;
 	}
 	if (left < 0) {

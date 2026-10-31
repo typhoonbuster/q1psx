@@ -33,6 +33,13 @@ typedef struct {
 	                    (the dynamic warp control's floor and cap, settings.c) */
 	int brightness;  /* the Options' Brightness, 0-10: Quake's v_gamma 1 down
 	                    to 0.5 on the CLUTs (engine/gamma.c)                 */
+	int mouse;       /* the PlayStation Mouse played with when it answers (port 2
+	                    polled: engine/pad.h pad_port2)                      */
+	int mouse_speed; /* Quake's sensitivity x 2: 2 .. 22 (1 .. 11, 3 by default) */
+	int invert_mouse;   /* m_pitch < 0                                       */
+	int swap_mouse;  /* the buttons swapped: the right one fires (the mouse in the
+	                    left hand)                                            */
+	int vibration;   /* the DualShock's motors (engine/rumble.c)             */
 } settings_t;
 
 extern settings_t settings;
@@ -44,6 +51,12 @@ extern const int num_tick_rates;
 
 void settings_defaults(void);
 void settings_apply(void);
+
+/* the settings as the memory card keeps them (engine/card.h CARD_SETTINGS
+   bytes), and back (each value checked: one out of its range stays as it
+   is); not applied */
+void settings_pack(uint8_t *b);
+void settings_unpack(const uint8_t *b);
 
 /* The rows both menus show (engine/menu.c's Graphics page, the debug map
    menu), in their order: */

@@ -34,7 +34,9 @@
 
 #include "qworld.h"
 
-#define QGAME_MAGIC "QGMB"   /* (QGMA in §119.6: the model level's two words; QGM9
+#define QGAME_MAGIC "QGMC"   /* (QGMB until §120: no loading plaque, Load / Save /
+                                Customize titles, memory card icon; QGMA in §119.6: the
+                                model level's two words; QGM9
                                 until §119.6: the 2D weapons' tables and packets;
                                 QGM8 until §53: the view models in vertex units;
                                 QGM7 until §47: a frame's whole texels, a chain each) */
@@ -182,8 +184,12 @@ enum {
 	QGA_TTL_SGL = QGA_MENUDOT1 + 6, QGA_SP_MENU, QGA_P_OPTION,
 	QGA_BOX_TL, QGA_BOX_ML, QGA_BOX_BL, QGA_BOX_TM, QGA_BOX_MM, QGA_BOX_MM2, QGA_BOX_BM,
 	QGA_BOX_TR, QGA_BOX_MR, QGA_BOX_BR,
-	QGA_DISC,                    /* the armour slot under invulnerability (Sbar)   */
-	QGA_COUNT                    /* (vidmodes, loading and pause: no room left) */
+	QGA_DISC,                    /* the armour slot under invulnerability (Sbar), the
+	                                loads' disc (Draw_BeginDisc)                    */
+	QGA_LOADING,                 /* the loading plaque (SCR_DrawLoading)          */
+	QGA_P_LOAD, QGA_P_SAVE,      /* the Load and Save menus' titles               */
+	QGA_TTL_CSTM,                /* the controls page's title                     */
+	QGA_COUNT
 };
 
 typedef struct {
@@ -214,7 +220,19 @@ typedef struct {
 	uint32_t num_free, ofs_free; /* qg_free[num_free]: what the images leave of
 	                                the game's pages (the streamed skins' room,
 	                                engine/stream.c)                           */
+	uint32_t ofs_icon;           /* qg_icon: the memory card file's icon        */
 } qg_header;
+
+/* The save file's icon on a memory card (engine/card.c): the status bar's
+   face (gfx.wad FACE1, its middle 20 x 20 texels averaged down to 16 x 16
+   and its colours to 16), as a memory card's icon frame wants it: 4 bits
+   a pixel, the left one in the low nibble, and its 16-colour CLUT (no
+   entry transparent). */
+#define QG_ICON_BYTES (16 * 16 / 2)
+typedef struct {
+	uint16_t clut[16];
+	uint8_t  px[QG_ICON_BYTES];
+} qg_icon;                       /* 160 bytes */
 
 /* A free rectangle of the game's pages, as the packer left them (maximal
    rectangles: they overlap one another; a skin placed in one must not

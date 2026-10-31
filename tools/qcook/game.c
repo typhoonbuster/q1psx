@@ -2482,6 +2482,9 @@ static const aux_spec AUX[] = {
 	{ "gfx/box_bm.lmp", QGA_BOX_BM, 0, 0 }, { "gfx/box_tr.lmp", QGA_BOX_TR, 0, 0 },
 	{ "gfx/box_mr.lmp", QGA_BOX_MR, 0, 0 }, { "gfx/box_br.lmp", QGA_BOX_BR, 0, 0 },
 	{ "#disc", QGA_DISC, 0, 0 },
+	{ "gfx/loading.lmp", QGA_LOADING, 0, 0 },
+	{ "gfx/p_load.lmp", QGA_P_LOAD, 0, 0 },     { "gfx/p_save.lmp", QGA_P_SAVE, 0, 0 },
+	{ "gfx/ttl_cstm.lmp", QGA_TTL_CSTM, 0, 0 },
 };
 #define NUM_AUX (int) (sizeof AUX / sizeof AUX[0])
 
@@ -2722,6 +2725,89 @@ static void aux_prepare(const uint8_t *pak, long pak_len)
 		die("aux pictures: the two 4-bit pages are full");
 	printf("qcook: %d aux pictures, %ld K texels in two 4-bit pages (%d + %d rows)\n", QGA_COUNT,
 	       total / 1024, apage_rows[0], apage_rows[1]);
+}
+
+/* ------------------------------------------------------- the card icon -- */
+
+/* The memory card file's icon (formats/qgame.h qg_icon): the status bar's
+   face, its middle 20 x 20 texels averaged down to 16 x 16 (each icon
+   pixel the 1.25 x 1.25 texels it covers, by their areas), its colours
+   reduced to 16 by k-means (weighted by use, the farthest-first seeds of
+   aux_quantize). */
+static void icon_build(qg_icon *ic)
+{
+	uint32_t size;
+	int type;
+	const uint8_t *d = wad_lump("FACE1", &size, &type);
+	if (type != 0x42 || size < 8 + 24 * 24 || rdi(d) != 24 || rdi(d + 4) != 24)
+		die("gfx.wad: FACE1 is not the 24 x 24 face");
+	d += 8;
+	double px[256][3];
+	for (int y = 0; y < 16; y++)
+		for (int x = 0; x < 16; x++) {
+			double acc[3] = { 0, 0, 0 }, wsum = 0;
+			for (int sy = 0; sy < 20; sy++)
+				for (int sx = 0; sx < 20; sx++) {
+					/* the overlap of texel (sx, sy) with the icon pixel's square */
+					double ox = fmin(sx + 1, (x + 1) * 1.25) - fmax(sx, x * 1.25);
+					double oy = fmin(sy + 1, (y + 1) * 1.25) - fmax(sy, y * 1.25);
+					if (ox <= 0 || oy <= 0)
+						continue;
+					const uint8_t *c = &palette[d[(sy + 1) * 24 + sx + 2] * 3];
+					for (int k = 0; k < 3; k++)
+						acc[k] += c[k] * ox * oy;
+					wsum += ox * oy;
+				}
+			for (int k = 0; k < 3; k++)
+				px[y * 16 + x][k] = acc[k] / wsum;
+		}
+	double cen[16][3];
+	int seed[16], ns = 1;
+	seed[0] = 0;
+	while (ns < 16) {                                /* farthest-first seeds */
+		double bd = -1;
+		int bi = 0;
+		for (int i = 0; i < 256; i++) {
+			double md = 1e30;
+			for (int s2 = 0; s2 < ns; s2++) {
+				double dd = 0;
+				for (int k = 0; k < 3; k++)
+					dd += (px[i][k] - px[seed[s2]][k]) * (px[i][k] - px[seed[s2]][k]);
+				if (dd < md) md = dd;
+			}
+			if (md > bd) { bd = md; bi = i; }
+		}
+		seed[ns++] = bi;
+	}
+	for (int c = 0; c < 16; c++)
+		for (int k = 0; k < 3; k++)
+			cen[c][k] = px[seed[c]][k];
+	int map[256];
+	for (int it = 0; it < 40; it++) {
+		double sum[16][3] = { { 0 } }, n[16] = { 0 };
+		for (int i = 0; i < 256; i++) {
+			double bd = 1e30;
+			int bi = 0;
+			for (int c = 0; c < 16; c++) {
+				double dd = 0;
+				for (int k = 0; k < 3; k++)
+					dd += (px[i][k] - cen[c][k]) * (px[i][k] - cen[c][k]);
+				if (dd < bd) { bd = dd; bi = c; }
+			}
+			map[i] = bi;
+			for (int k = 0; k < 3; k++)
+				sum[bi][k] += px[i][k];
+			n[bi]++;
+		}
+		for (int c = 0; c < 16; c++)
+			if (n[c] > 0)
+				for (int k = 0; k < 3; k++)
+					cen[c][k] = sum[c][k] / n[c];
+	}
+	for (int c = 0; c < 16; c++)
+		ic->clut[c] = rgb15((int) lround(cen[c][0]), (int) lround(cen[c][1]), (int) lround(cen[c][2]));
+	for (int i = 0; i < 256; i += 2)
+		ic->px[i / 2] = (uint8_t) (map[i] | map[i + 1] << 4);
 }
 
 /* ------------------------------------------------------- a map's models -- */
@@ -4166,6 +4252,12 @@ int cmd_game(int argc, char **argv)
 			}
 		printf("qcook: %u free rectangles in the game's pages (%u K texels, overlapping)\n", h.num_free,
 		       texels / 1024);
+	}
+	{	/* the memory card file's icon */
+		qg_icon ic;
+		icon_build(&ic);
+		h.ofs_icon = (uint32_t) f.len;
+		gput(&f, &ic, sizeof ic);
 	}
 	galign(&f, 32);
 

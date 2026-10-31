@@ -11,6 +11,7 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "rumble.h"
 #include "mem.h"
 #include "monsters.h"
 #include "prof.h"
@@ -466,6 +467,7 @@ static void explosion_sprite(const int32_t org[3], const qw_leaf *leaf)
 static void explode_at(const int32_t org[3])
 {
 	const qw_leaf *leaf = leaf_at(org);
+	rumble_blast(org);
 	particle_explosion(org, leaf);
 	snd_start(ENT_TEMP, 0, S_R_EXP3, org, 255, ATTN_NORM);
 	dlight_t *dl = dl_alloc(0, game_tick_count);     /* TE_EXPLOSION's light */
@@ -854,6 +856,7 @@ static void player_die(void)
 	pl.super_damage_finished = pl.radsuit_finished = 0;
 	pl.dead       = 1;
 	pl.death_tick = game_tick_count;
+	rumble_pulse(0xff, 40);
 	pl.weaponframe = 0;
 	pl.anim       = 0;
 	/* MOVETYPE_TOSS off the ground, the velocity kept, a kick up when not
@@ -954,6 +957,7 @@ static void t_damage_x256(int damage, const int32_t inflictor[3])
 		return;
 	}
 	pl.health -= take;
+	rumble_hit(take);
 	if (pl.health <= 0) {
 		player_die();
 		return;
@@ -1191,6 +1195,7 @@ static void w_fire_axe(void)
 	if (hit && hit->takedamage) {                    /* SpawnBlood, 20 */
 		particle_effect(org, leaf_at(org), 73, 40);
 		ent_damage(hit, ent_player, ent_player, 20);
+		rumble_buzz(4);
 		return;
 	}
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_AXHIT2, pl.pm.pos, 255, ATTN_NORM);   /* hit wall: TE_GUNSHOT */
@@ -1326,6 +1331,7 @@ static void w_fire_shotgun(void)
 {
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_GUNCOCK, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(2);
+	rumble_pulse(0x70, 5);
 	pl.ammo[AMMO_SHELLS]--;
 	int32_t dir[3];
 	w_aimed(dir);
@@ -1340,6 +1346,7 @@ static void w_fire_super_shotgun(void)
 	}
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_SHOTGN2, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(4);
+	rumble_pulse(0xa0, 8);
 	pl.ammo[AMMO_SHELLS] -= 2;
 	int32_t dir[3];
 	w_aimed(dir);
@@ -1451,6 +1458,7 @@ static void w_fire_spikes(int ox)
 			org[k] = pl.pm.pos[k] + (k == 2 ? 16 * SUB : 0);
 		launch_spike(org, dir, 1);
 		pl.punch = -DEG(2);
+		rumble_buzz(4);
 		return;
 	}
 	if (pl.ammo[AMMO_NAILS] < 1) {
@@ -1465,6 +1473,7 @@ static void w_fire_spikes(int ox)
 		org[k] = pl.pm.pos[k] + (k == 2 ? 16 * SUB : 0) + ox * SUB * r[k] / 4096;
 	launch_spike(org, dir, 0);
 	pl.punch = -DEG(2);
+	rumble_buzz(3);
 }
 
 static void w_fire_grenade(void)
@@ -1474,6 +1483,7 @@ static void w_fire_grenade(void)
 	pl.ammo[AMMO_ROCKETS]--;
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_GRENADE, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(2);
+	rumble_pulse(0x80, 6);
 	proj_t *p = proj_new(PJ_GRENADE);
 	if (!p) return;
 	/* v_forward x 600 + v_up x 200 + crandom () x v_right x 10 + crandom ()
@@ -1506,6 +1516,7 @@ static void w_fire_rocket(void)
 	pl.ammo[AMMO_ROCKETS]--;
 	snd_start(ENT_PLAYER, CHAN_WEAPON, S_SGUN1, pl.pm.pos, 255, ATTN_NORM);
 	pl.punch = -DEG(2);
+	rumble_pulse(0x90, 8);
 	proj_t *p = proj_new(PJ_ROCKET);
 	if (!p) return;
 	int32_t dir[3];
@@ -1601,6 +1612,7 @@ static void w_fire_lightning(void)
 		pl.t_width = game_tick_count + TICKS(60);
 	}
 	pl.punch = -DEG(2);
+	rumble_buzz(7);
 	pl.ammo[AMMO_CELLS]--;
 	for (int k = 0; k < 3; k++) {
 		org[k] = pl.pm.pos[k] + (k == 2 ? 16 * SUB : 0);
@@ -2136,6 +2148,36 @@ Q_COLD void game_spawn_level(void)
 	spawn_at(org, yaw);
 	parms_apply();
 	level_begin();
+	hud_level_title(world.title);                 /* (the server's info: the level's name) */
+}
+
+void game_level_start(game_start_t *s)
+{
+	memset(s, 0, sizeof *s);
+	s->items  = level_parms.items;
+	s->health = (int16_t) level_parms.health;
+	s->armor  = (int16_t) level_parms.armor;
+	for (int i = 0; i < AMMO_COUNT; i++)
+		s->ammo[i] = (int16_t) level_parms.ammo[i];
+	s->armortype   = (uint8_t) level_parms.armortype;
+	s->weapon      = (uint8_t) level_parms.weapon;
+	s->skill       = (uint8_t) game_skill;
+	s->serverflags = (uint8_t) game_serverflags;
+}
+
+void game_restore_start(const game_start_t *s)
+{
+	memset(&parms, 0, sizeof parms);
+	parms.valid  = 1;
+	parms.items  = s->items;
+	parms.health = s->health;
+	parms.armor  = s->armor;
+	for (int i = 0; i < AMMO_COUNT; i++)
+		parms.ammo[i] = s->ammo[i];
+	parms.armortype  = s->armortype;
+	parms.weapon     = s->weapon < W_COUNT ? s->weapon : W_SHOTGUN;
+	game_skill       = s->skill < 4 ? s->skill : 1;
+	game_serverflags = s->serverflags;
 }
 
 /* respawn in single player: the level from its start ("restart"), the
@@ -2336,6 +2378,7 @@ static void check_water_jump(pmove_cmd_t *pc)
 void game_tick(const game_cmd_t *cmd)
 {
 	game_tick_count++;
+	rumble_tick();                                /* (the pad's motors: engine/rumble.c) */
 	pl.fire_was = pl.fire;
 	pl.fire     = cmd->fire;
 

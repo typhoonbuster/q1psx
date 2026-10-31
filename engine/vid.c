@@ -392,6 +392,32 @@ void vid_flip(void)
 	begin_buffer(back);
 }
 
+/* The frame's packets drawn over the frame on display, which stays there
+   (no flip, no clear: the loading screen's bar, engine/loading.c); its
+   arena begun again. The last frame built is waited for first (drawn and
+   shown). */
+void vid_draw_over(void)
+{
+	if (ovl_head)
+		addPrims(&vid_frame.ot[OT_OVERLAY], ovl_head, ovl_tail);
+	DrawSync(0);
+	while (ahead || waiting)                 /* (the last frame shown: the vblank's) */
+		;
+	DRAWENV env = buf[back ^ 1].draw;        /* (the shown buffer: the other one) */
+	env.isbg = 0;
+	DrawOTagEnv(&buf[back].ot[VID_OT_LEN - 1], &env);
+	DrawSync(0);
+	begin_buffer(back);
+}
+
+/* After a long stop (a load): the next frame's times measured from now,
+   not from the last flip */
+void vid_resync(void)
+{
+	ret_vbl = vbl_count;
+	ret_t   = prof_now();
+}
+
 /* Print this frame's display list (draw order) to stdout for tools/pktview:
    one "P <hex words...>" line per packet, then "E". Bench builds only. The
    "H" line: the payloads' hash, in order; the "Q" line: the packets as a

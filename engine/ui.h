@@ -39,5 +39,14 @@ void ui_fade(void);
 int  ui_conback_load(void);
 void ui_conback(void);
 void ui_conback_forget(void);
+int  ui_conback_ready(void);         /* in VRAM (no map's textures over it) */
+
+/* The loading screen's pieces (engine/loading.c): the plaque
+   (gfx/loading.lmp) at (x, y), a glyph of the bar (conchars 128, 129, 130,
+   29, 30 or 31) at (x, y), its first w columns (1-8); from the game data's
+   aux pictures once they are in VRAM, from the console background's boot
+   strip before (formats/qmenu.h) */
+void ui_loading_plaque(int x, int y);
+void ui_bar_glyph(int x, int y, int c, int w, int shade);
 
 #endif

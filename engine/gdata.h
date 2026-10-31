@@ -22,6 +22,7 @@ typedef struct {
 	                              per draw: it is writable)                */
 	uint16_t        clut;      /* GPU CLUT word of the game palette        */
 	const qg_aux   *aux;       /* [QGA_COUNT]: 4-bit pictures (ui.h)       */
+	const qg_icon  *icon;      /* the memory card file's icon (card.c)     */
 	const qg_finale *finales;  /* the episodes' end texts, and their count */
 	uint32_t        num_finales;
 	const qg_free  *free;      /* what the images leave of the game's pages

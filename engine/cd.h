@@ -65,6 +65,15 @@ void  cd_read_cut(void);
 int   cd_read_now(int32_t lba, uint32_t sectors, void *dst, int who, int tag);
 void  cd_busy(void);              /* (a command just sent outside these: the drive settles from now) */
 
+/* The loading screen's meter (engine/loading.c): while cd_meter_hook is
+   set, cd_meter counts the sectors of every read cd_read_sync ends, and
+   the hook is called after each with the count, and during a cd_load's
+   read with the sectors in so far added (as often as it polls: the hook
+   paces itself). */
+typedef void (*cd_meter_fn)(uint32_t sectors);
+extern uint32_t    cd_meter;
+extern cd_meter_fn cd_meter_hook;
+
 #ifdef Q1PSX_BENCH
 /* The bench's journal and drive model (docs/porting-notes.md §83).
      cd_log    1: a `cd` line per read when it ends: who, its tag (the zone,

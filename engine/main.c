@@ -20,6 +20,7 @@
 
 #include "bench.h"
 #include "bmfrag.h"
+#include "card.h"
 #include "cd.h"
 #include "ents.h"
 #include "gamma.h"
@@ -27,6 +28,7 @@
 #include "gdata.h"
 #include "hud.h"
 #include "level.h"
+#include "loading.h"
 #include "anim.h"
 #include "menu.h"
 #include "dlight.h"
@@ -43,6 +45,7 @@
 #include "prof.h"
 #include "render.h"
 #include "rlist.h"
+#include "rumble.h"
 #include "settings.h"
 #include "stream.h"
 #include "ui.h"
@@ -119,17 +122,65 @@ static void stick(int *x, int *y)
      analog pad   left stick walk / strafe (speed follows the stick), right
                   stick look (up / down inverted, finer near the centre);
                   R2 / Square fire, L2 / Cross jump, R1 / L1 next / previous
-                  weapon, Triangle walk, Circle level the view, d-pad a
-                  weapon group: up shotguns and axe, right nailguns, down
-                  launchers, left lightning;
+                  weapon, Triangle walk, Circle level the view, the d-pad
+                  walk / strafe at full speed (it selected weapon groups
+                  too until 2026-10-31: a move changed the weapon);
      digital pad  the same buttons; d-pad walk / turn, and with Triangle
                   held strafe / look up and down (Quake's +strafe, +klook);
+     mouse        with a PlayStation Mouse (the Options' Use Mouse, §120):
+                  the mouse turns and looks (Quake's IN_MouseMove: m_yaw and
+                  m_pitch 0.022 degrees a count, times the sensitivity; Invert
+                  Mouse its pitch), its left button fires, the right one
+                  jumps (swapped: Swap Mouse Buttons); the pad, held in
+                  either hand, is the same on both sides: the d-pad and the
+                  face buttons walk and strafe (up / Triangle forward, down /
+                  Cross back, left / Square and right / Circle sideways),
+                  either stick likewise at its speed, L1 / R1 the next weapon,
+                  L2 / R2 the previous one;
      SELECT + Cross noclip, SELECT + Square respawn; START the debug
      overlay; SELECT + START the map menu (run_frame).
    A DualShock is switched to analog mode by pad_init (engine/pad.c), so
    the digital scheme is for digital pads only.
    Turning and looking advance per physics tick (one per poll), so their
    speed does not depend on the frame rate. */
+static int mouse_yaw256, mouse_pitch256;   /* the mouse's turns' fractions, 1/256 units */
+
+static void mouse_cmd(game_cmd_t *cmd, const pad_t *p, int *yaw, int *pitch)
+{
+	uint16_t h = p->held;
+	int fwd = 0, side = 0;
+	if (h & (PAD_UP | PAD_TRIANGLE))    fwd  =  PM_AXIS;
+	if (h & (PAD_DOWN | PAD_CROSS))     fwd  = -PM_AXIS;
+	if (h & (PAD_LEFT | PAD_SQUARE))    side = -PM_AXIS;
+	if (h & (PAD_RIGHT | PAD_CIRCLE))   side =  PM_AXIS;
+	if (p->analog && !fwd && !side) {    /* the stick deflected the most */
+		int lx = p->lx, ly = p->ly, rx = p->rx, ry = p->ry;
+		stick(&lx, &ly);
+		stick(&rx, &ry);
+		if (rx * rx + ry * ry > lx * lx + ly * ly) {
+			lx = rx;
+			ly = ry;
+		}
+		fwd  = -ly;
+		side = lx;
+	}
+	cmd->fwd  = fwd;
+	cmd->side = side;
+	cmd->weapon_next = (p->pressed & (PAD_L1 | PAD_R1)) != 0;
+	cmd->weapon_prev = (p->pressed & (PAD_L2 | PAD_R2)) != 0;
+	uint8_t fire = settings.swap_mouse ? PAD_MOUSE_RIGHT : PAD_MOUSE_LEFT;
+	cmd->fire = (p->mheld & fire) != 0;
+	cmd->jump = (p->mheld & (PAD_MOUSE_LEFT | PAD_MOUSE_RIGHT) & ~fire) != 0;
+	/* 0.022 degrees x sensitivity (mouse_speed / 2) a count, in 1/256 of
+	   the binary degree (4096 a turn): 0.022 x 4096 / 360 / 2 x 256 = 32 */
+	mouse_yaw256   -= p->mdx * settings.mouse_speed * 32;
+	mouse_pitch256 += p->mdy * settings.mouse_speed * 32 * (settings.invert_mouse ? -1 : 1);
+	*yaw   += mouse_yaw256 / 256;
+	*pitch += mouse_pitch256 / 256;
+	mouse_yaw256   %= 256;
+	mouse_pitch256 %= 256;
+}
+
 static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 {
 	const int turn = 46, look = 34;          /* buttons: ~4 and ~3 degrees per tick */
@@ -150,7 +201,10 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 	}
 
 	int yaw = 0, pitch = 0;
-	if (p->analog) {
+	if (settings.mouse && p->mouse) {
+		if (!sel)
+			mouse_cmd(cmd, p, &yaw, &pitch);
+	} else if (p->analog) {
 		yaw   -= stick_turn * rx * (rx < 0 ? -rx : rx) / (PM_AXIS * PM_AXIS);
 		pitch -= stick_look * ry * (ry < 0 ? -ry : ry) / (PM_AXIS * PM_AXIS);   /* inverted */
 		cmd->fwd  = -ly;                                /* stick up = forward */
@@ -166,10 +220,6 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 			cmd->weapon_prev = (p->pressed & PAD_L1) != 0;
 			cmd->walk   = (p->held & PAD_TRIANGLE) != 0;
 			cmd->centre = (p->pressed & PAD_CIRCLE) != 0;
-			if (p->pressed & PAD_UP)    cmd->weapon_group = 0;
-			if (p->pressed & PAD_RIGHT) cmd->weapon_group = 1;
-			if (p->pressed & PAD_DOWN)  cmd->weapon_group = 2;
-			if (p->pressed & PAD_LEFT)  cmd->weapon_group = 3;
 		}
 	} else {
 		if (p->held & PAD_TRIANGLE) {                  /* +strafe, +klook */
@@ -247,28 +297,25 @@ static void ui_rect(int x, int y, int w, int h, int r, int g, int b)
 	vid_link(OT_OVERLAY, t);
 }
 
-/* One frame of the loading screen: the map, the level, a bar and the
-   percentage (texture file + world file, in bytes read from the CD). */
-Q_COLD static void loading_screen(uint32_t done, uint32_t total)
-{
-	enum { BX = 40, BY = 116, BW = 240, BH = 10 };
-	char line[48];
-	int  fill = total ? (int) (done * BW / total) : 0;   /* < 2 MB: no overflow */
+/* The loading screens (engine/loading.h): the bench measures, with no
+   screen (but its PLAY runs') */
+#if defined(Q1PSX_BENCH) && !Q1PSX_BENCH_PLAY
+#define LOAD_SCREEN 0
+#else
+#define LOAD_SCREEN 1
+#endif
 
-	q_snprintf(line, sizeof line, "loading %s", world_map_name(load_map));
-	vid_text(BX, BY - 16, line);
-	q_snprintf(line, sizeof line, "%3d %%", total ? (int) (done * 100 / total) : 0);
-	vid_text(BX + BW - 40, BY + BH + 8, line);
-	ui_rect(BX + 1, BY + 1, fill > BW - 2 ? BW - 2 : fill, BH - 2, 230, 170, 60);  /* bar */
-	ui_rect(BX, BY, BW, BH, 70, 74, 90);                                        /* frame */
-	vid_flip();
+/* a file of the level's directory: its sectors (cd_find answers from the
+   directory's cache: no read), 0 if it is not there */
+static uint32_t level_file_sectors(const char *dir, const char *map, const char *suffix)
+{
+	char name[40];
+	uint32_t size;
+	q_snprintf(name, sizeof name, "%s\\%s%s;1", dir, map ? map : "", suffix);
+	return cd_find(name, NULL, &size) ? (size + CD_SECTOR - 1) / CD_SECTOR : 0;
 }
 
-#if defined(Q1PSX_BENCH) && !Q1PSX_BENCH_PLAY
-#define LOAD_PROGRESS NULL         /* the bench measures; no screen */
-#else
-#define LOAD_PROGRESS loading_screen
-#endif
+static uint32_t load_stream_est;   /* the streamed assets' preload, estimated (sectors) */
 
 /* the level arena's bytes the streamed assets leave free (a transient
    load's room: vram_upload's padded copies) */
@@ -370,8 +417,23 @@ Q_COLD static int load_level(int map)
 	                                               (docs/porting-notes.md §84) */
 	q_snprintf(dir, sizeof dir, "\\LVL\\%s", world_map_name(map));
 	cd_cache_dir(dir);
+	if (LOAD_SCREEN) {                          /* the load's sectors: its whole files, the
+		                                           zones' preload (120 sectors: 91 to 156 on
+		                                           the zoned maps), seven eighths of its
+		                                           streamed assets' file (what the preload
+		                                           reads of it: 65 to 99 %; the drive's
+		                                           journal over the 32 maps) */
+		const char *mn = world_map_name(map);
+		load_stream_est = level_file_sectors(dir, mn, "_S.DAT") * 7 / 8;
+		loading_begin(level_file_sectors(dir, 0, "LOAD.BIN") + level_file_sectors(dir, mn, ".SND") +
+		              level_file_sectors(dir, mn, ".TX4") + level_file_sectors(dir, mn, ".WLD") +
+		              level_file_sectors(dir, mn, ".MDL") + (level_file_sectors(dir, mn, ".ZON") ? 120 : 0) +
+		              load_stream_est);
+	}
 	ovl_load(dir);                              /* the load's code (§90.7): the rest runs from it */
 	load_level_main(map);
+	if (LOAD_SCREEN)
+		loading_end();
 #ifdef Q1PSX_BENCH
 	if (world_ok)
 		bench_level_wants();
@@ -387,7 +449,7 @@ Q_COLD static void load_level_main(int map)
 	music_level(world_map_name(map));           /* (its copy of the track) */
 	snd_load_bank(world_map_name(map));         /* (through the level arena, first) */
 	mem_level_cap(MEM_LEVEL_WORLD);             /* (the world's room as before §45) */
-	world_ok = world_load(map, LOAD_PROGRESS);
+	world_ok = world_load(map, NULL);           /* (the loading screen: the drive's meter) */
 	mem_level_cap(mem_level_bytes());
 	if (world_ok) {
 		r_bind_world();
@@ -407,14 +469,15 @@ Q_COLD static void load_level_main(int map)
 		                                           voices; until then they are the file's,
 		                                           20 bytes each: a garbage reach of 0 on
 		                                           E2M7 divided by zero) */
-		if (zone_on()) {                        /* a zoned world: the spawn's zone and its
+		int32_t eye[3];
+		for (int k = 0; k < 3; k++)
+			eye[k] = (world.has_spawn ? world.spawn[k] : 0) * CLIP_SUB;
+		eye[2] += 22 * CLIP_SUB;                 /* (the view's height) */
+		if (zone_on())                          /* a zoned world: the spawn's zone and its
 		                                           nearest read, that zone made current */
-			int32_t eye[3];
-			for (int k = 0; k < 3; k++)
-				eye[k] = (world.has_spawn ? world.spawn[k] : 0) * CLIP_SUB;
-			eye[2] += 22 * CLIP_SUB;             /* (the view's height) */
 			zone_preload(eye);
-		}
+		if (LOAD_SCREEN)
+			loading_rest(load_stream_est);
 		stream_preload();                       /* what the spawn's surroundings want */
 		stream_load_done();                     /* (the overlay's room: the pool's from here;
 		                                           nothing of the overlay runs past this) */
@@ -515,6 +578,55 @@ static int play_trace;                     /* the play bench: the first frames' 
 #define PLAY_STEP(s) ((void) 0)
 #endif
 
+/* A map's load asked for (a level's exit, the menu's New Game or Load):
+   the frame drawn next carries the loading plaque over it (Quake's
+   SCR_BeginLoadingPlaque: the last frame with the plaque), the load runs
+   once it is flipped (do_load) */
+enum { LOAD_NONE, LOAD_CHANGE, LOAD_BEGIN, LOAD_SAVED };
+static struct { int kind, map, skill, slot; } load_req;
+
+#if Q1PSX_RELEASE
+/* a new level's start onto the memory card's autosave slot (engine/card.h:
+   the card read first, its other slots kept); no card, a full or an
+   unformatted one: nothing */
+Q_COLD static void autosave(void)
+{
+	int r = card_load();
+	if (r != CARD_OK && r != CARD_NO_FILE)
+		return;
+	card_slot_t *s = &card_save.slot[0];
+	memset(s, 0, sizeof *s);
+	q_snprintf(s->map, sizeof s->map, "%s", world_map_name(map_index));
+	game_level_start(&s->start);
+	card_store();
+}
+#endif
+
+Q_COLD static void do_load(void)
+{
+	int kind = load_req.kind, m = load_req.map;
+	load_req.kind = LOAD_NONE;
+	rumble_stop();
+	if (kind == LOAD_CHANGE) {
+		game_save_parms();                    /* SetChangeParms */
+	} else if (kind == LOAD_BEGIN) {
+		game_skill = load_req.skill;          /* (the skill cvar, "map": no rune yet) */
+		game_serverflags = 0;
+		game_new_parms();
+	} else {
+		game_restore_start(&card_save.slot[load_req.slot].start);
+	}
+	map_index = m;
+	if (!load_level(m))
+		return;
+	game_spawn_level();
+#if Q1PSX_RELEASE
+	release_in_game = 1;
+	if (kind == LOAD_CHANGE)
+		autosave();                           /* (on the loading screen still) */
+#endif
+}
+
 static void run_frame(int interactive, int dump)
 {
 #ifdef Q1PSX_BENCH
@@ -534,13 +646,18 @@ static void run_frame(int interactive, int dump)
 		pad_t ticks[PAD_MAX_TICKS];
 		int nticks = pad_frame(ticks, PAD_MAX_TICKS);
 #if Q1PSX_RELEASE
+		static int pad_gone;                  /* frames the pad has not answered */
+		pad_gone = pad.connected ? 0 : pad_gone + 1;
 		if (menu_active()) {                  /* the world paused under the menu */
 			menu_key(&pad);
 			nticks = 0;
-		} else if (pad.pressed & PAD_START) {
-			menu_open();                      /* togglemenu */
+		} else if ((pad.pressed & PAD_START) || (pad_gone >= 3 && release_in_game && world_ok)) {
+			menu_open();                      /* togglemenu; the pad pulled out: the
+			                                     game paused under the menu */
 			nticks = 0;
 		}
+		if (menu_active())
+			rumble_stop();
 #else
 		if ((pad.held & (PAD_SELECT | PAD_START)) == (PAD_SELECT | PAD_START) &&
 		    (pad.pressed & (PAD_SELECT | PAD_START))) {
@@ -555,17 +672,24 @@ static void run_frame(int interactive, int dump)
 		if (world_ok)                         /* (none before the release's New Game) */
 			player_update(ticks, nticks);
 	}
-	if (interactive) {                      /* a trigger_changelevel's map, between frames */
+	if (level_camera_pending && world_ok) {   /* the intermission begun: its camera's zone
+	                                             read before its first frame (the last one
+	                                             on the screen meanwhile), then its music */
+		level_camera_pending = 0;
+		zone_require(level_camera);
+		if (level_camera_track)
+			music_play(level_camera_track);
+	}
+	if (interactive) {                      /* a trigger_changelevel's map: loaded after
+		                                           this frame, which shows the plaque */
 		char next[16];
 		if (level_change_wanted(next)) {
 			int m = world_find_map(next);
 			if (m < 0) {
 				printf("level: %s is not on this disc\n", next);
 			} else {
-				game_save_parms();
-				map_index = m;
-				if (load_level(m))
-					game_spawn_level();
+				load_req.kind = LOAD_CHANGE;
+				load_req.map  = m;
 			}
 		}
 	}
@@ -592,6 +716,8 @@ static void run_frame(int interactive, int dump)
 #endif
 		if (menu_shown)
 			menu_draw();                    /* M_Draw: over everything */
+		if (load_req.kind)                  /* SCR_BeginLoadingPlaque: over the frame */
+			loading_overlay(menu_level_name(world_map_name(load_req.map)));
 		uint32_t t2 = prof_now();
 		PLAY_STEP("snd");
 		snd_update(cam.pos, cam.yaw, cam.pitch, cam.roll, game_tick_count);
@@ -619,6 +745,8 @@ static void run_frame(int interactive, int dump)
 	uint32_t share = (uint32_t) vid_frame_vbl();
 	vid_flip();
 	r_warp_feedback(prof_stage[PROF_FRAME] + prof_stage[PROF_OVERLAY], vid_stats.vbl_whole, share);
+	if (load_req.kind)                      /* the plaque on the screen: the load */
+		do_load();
 #if Q1PSX_BENCH_PLAY
 	if (play_trace > 0) { printf("play step done\n"); play_trace--; }
 #endif
@@ -725,16 +853,9 @@ static void mapmenu_frame(void)
 		in_menu = 0;                             /* back to the loaded map */
 		return;
 	}
-	if (n && (pad.pressed & (PAD_CROSS | PAD_START))) {
-		map_index = menu_sel;
-		if (load_level(map_index)) {
-			game_spawn();
-			in_menu  = 0;
-			menu_msg = "";
-			return;
-		}
-		menu_msg = "could not load that map";
-	}
+	int load = n && (pad.pressed & (PAD_CROSS | PAD_START));
+	if (load)
+		map_index = menu_sel;                    /* (loaded once this frame shows its plaque) */
 
 	char line[48];
 	q_snprintf(line, sizeof line, "Q1PSX maps (%d)  in game: SELECT+START", n);
@@ -750,7 +871,18 @@ static void mapmenu_frame(void)
 		vid_text(24, 20, "no cooked map on the disc");
 	opt_draw();
 	vid_text(16, 228, menu_msg[0] ? menu_msg : "L2/R2 option  L1/R1 value  X load  O back");
+	if (load)
+		loading_overlay(menu_level_name(world_map_name(map_index)));
 	vid_flip();
+	if (load) {
+		if (load_level(map_index)) {
+			game_spawn();
+			in_menu  = 0;
+			menu_msg = "";
+			return;
+		}
+		menu_msg = "could not load that map";
+	}
 }
 
 #endif /* !Q1PSX_BENCH */
@@ -1445,8 +1577,58 @@ static void bench_zone_ram(const char *map)
 
 #ifndef Q1PSX_BENCH_ZONES
 #define Q1PSX_BENCH_ZONES 0   /* 1: the zones' walk (ZONES=1 scripts/bench.sh); 2: every map's,
-                                 the whole ones too (their sounds) */
+                                 the whole ones too (their sounds); 3: the intermission's
+                                 camera (bench_intermission) */
 #endif
+
+/* ZONES=3: on each zoned map (MAP=: one), its exit taken (the player on its
+   trigger_changelevel, the ticks to execute_changelevel), then the first
+   frame drawn: the intermission camera's zone must be the current one by
+   then (main.c run_frame: zone_require before the frame, the stats never
+   over a zone not in), its read done before the frame ("zone intermission"
+   lines: the camera's zone, the one drawn, the reads) */
+static void ents_place_at(const edict_t *e, int dz);
+static edict_t *ents_first(int cls, int (*ok)(const edict_t *));
+
+static void bench_intermission(void)
+{
+	stream_log = 0;
+	for (int m = 0; m < world_num_maps(); m++) {
+		if (Q1PSX_BENCH_MAP[0] && strcmp(world_map_name(m), Q1PSX_BENCH_MAP))
+			continue;
+		if (!load_level(m) || !zone_on())
+			continue;
+		game_spawn();
+		game_active = 1;
+		zone_sync = 0;
+		for (int i = 0; i < 4; i++)
+			run_frame(0, 0);
+		edict_t *cl = ents_first(QE_TRIGGER_CHANGELEVEL, 0);
+		if (!cl) {
+			printf("zone intermission %s: no exit\n", world_map_name(m));
+			continue;
+		}
+		game_cmd_t cmd;
+		memset(&cmd, 0, sizeof cmd);
+		cmd.weapon_group = -1;
+		ents_place_at(cl, 0);
+		int t = 0;
+		for (; t < 120 && !level_intermission; t++)
+			game_tick(&cmd);
+		if (!level_intermission) {               /* (START's gates: NO_INTERMISSION) */
+			printf("zone intermission %s: its exit takes no intermission\n", world_map_name(m));
+			continue;
+		}
+		uint32_t loads = zone_stats.loads, sync = zone_stats.sync_loads, late = zone_stats.late_frames;
+		int want = zone_of_leaf(zone_bench_leaf(level_camera));
+		game_view(cam.pos, &cam.yaw, &cam.pitch, &cam.roll);
+		run_frame(0, 0);
+		printf("zone intermission %s: after %d ticks, the camera's zone %d, the one drawn %d, %u reads before "
+		       "the frame, %u late frames in it%s\n", world_map_name(m), t, want, zone_current(),
+		       (unsigned) (zone_stats.loads - loads + zone_stats.sync_loads - sync),
+		       (unsigned) (zone_stats.late_frames - late), want == zone_current() ? "" : " WRONG");
+	}
+}
 
 /* The zones' walk (ZONES=1 scripts/bench.sh, docs/porting-notes.md §57):
    on each zoned map (MAP=: that one), the eye taken from the player's
@@ -2275,17 +2457,32 @@ static void bench_menu_key(uint16_t buttons, const char *dump)
 
 static void bench_menu(void)
 {
-	static const menu_hooks_t hooks = { 0, bench_yes, 0 };
+	static const menu_hooks_t hooks = { 0, 0, 0, bench_yes, bench_yes, 0 };
 	menu_init(&hooks);
 	menu_open();
 	menu_shown = 1;
 	bench_menu_key(0, "mmain");
-	bench_menu_key(PAD_CROSS, "msingle");             /* Single Player */
-	bench_menu_key(PAD_CROSS, "mnewgame");            /* New Game: "Are you sure" */
-	bench_menu_key(PAD_CIRCLE, 0);                    /* no */
+	bench_menu_key(PAD_CROSS, "msingle");             /* Single Player: New Game, Load, Save */
+	bench_menu_key(PAD_CROSS, "mgameopts");           /* New Game: the game options' page */
+	bench_menu_key(PAD_DOWN, 0);                      /* (to the skill) */
+	bench_menu_key(PAD_RIGHT, 0);                     /* hard */
+	bench_menu_key(PAD_DOWN, 0);                      /* (to the episode) */
+	bench_menu_key(PAD_RIGHT, 0);                     /* Doomed Dimension */
+	bench_menu_key(PAD_DOWN, 0);                      /* (to the level) */
+	bench_menu_key(PAD_RIGHT, "mgameopts_e1m2");
+	for (int i = 0; i < 3; i++)
+		bench_menu_key(PAD_UP, 0);                    /* (to begin game) */
+	bench_menu_key(PAD_CROSS, "mnewgame");            /* begin game in a game: "Are you sure" */
+	bench_menu_key(PAD_CIRCLE, 0);                    /* no: the page again */
+	bench_menu_key(PAD_TRIANGLE, 0);                  /* back to the single player menu */
 	bench_menu_key(PAD_TRIANGLE, 0);                  /* back to the main menu */
 	bench_menu_key(PAD_DOWN, 0);                      /* (to Options) */
 	bench_menu_key(PAD_CROSS, "moptions");
+	bench_menu_key(PAD_CROSS, "mkeys");               /* Customize controls: the pad's */
+	bench_menu_key(PAD_RIGHT, "mkeys2");
+	bench_menu_key(PAD_RIGHT, "mkeys3");
+	bench_menu_key(PAD_CIRCLE, 0);                    /* (back to the options) */
+	bench_menu_key(PAD_DOWN, 0);                      /* (to Reset) */
 	int kept_rects;
 	uint32_t kept = gamma_kept_hash(&kept_rects);
 	printf("gamma kept: %d map CLUT rects, FNV %08x\n", kept_rects, (unsigned) kept);
@@ -2297,8 +2494,8 @@ static void bench_menu(void)
 	for (int i = 0; i < 6; i++)
 		bench_menu_key(PAD_LEFT, 0);                  /* (back to v_gamma 1) */
 	printf("brightness %d: the CLUTs at level %d\n", settings.brightness, gamma_level());
-	bench_menu_key(PAD_UP, 0);                        /* (back to Reset) */
-	bench_menu_key(PAD_UP, 0);                        /* (the greyed ones: to Graphics) */
+	for (int i = 0; i < 3; i++)
+		bench_menu_key(PAD_UP, 0);                    /* (Reset, Customize, round to Graphics) */
 	bench_menu_key(PAD_CROSS, "mgraphics");
 	for (int i = 0; i < SET_WARP; i++)
 		bench_menu_key(PAD_DOWN, 0);                  /* (to Anti-warping) */
@@ -2317,6 +2514,80 @@ static void bench_menu(void)
 	menu_shown = 0;
 	apply_settings();                                 /* the bench's own again */
 	hud_set_style(HUD_ORIGINAL);
+	for (int i = 0; i < 2; i++)                       /* the loading plaque over the frame */
+		run_frame(0, 0);
+	load_req.kind = LOAD_CHANGE;                      /* (drawn, not loaded: the request
+	                                                     dropped before the flip) */
+	load_req.map  = map_index;
+	frame_work();
+	hud_draw();
+	loading_overlay(menu_level_name("e1m3"));
+	load_req.kind = LOAD_NONE;
+	printf("D mloading\n");
+	vid_dump(0);
+	vid_flip();
+}
+
+#ifndef Q1PSX_BENCH_CARD
+#define Q1PSX_BENCH_CARD 0
+#endif
+
+/* CARD=1: the memory card in slot 1 (engine/card.c): read, the save file
+   written with made-up slots, read back and compared, written again over
+   itself; then the Load and Save menus drawn from it. CARD=2 formats the
+   card first. ("card" lines; dumps mload, msave) */
+static void bench_card(void)
+{
+	int r = card_load();
+	printf("card: first read %d\n", r);
+	if (r == CARD_UNFORMATTED || Q1PSX_BENCH_CARD == 2) {
+		printf("card: format %d\n", card_format());
+		printf("card: read after the format %d\n", card_load());
+	}
+	memset(&card_save, 0, sizeof card_save);
+	static const char *const maps[4] = { "E1M3", "START", "E1M7", "E1M2" };
+	static const uint8_t at[4] = { 0, 1, 5, 12 };
+	for (int i = 0; i < 4; i++) {
+		card_slot_t *s = &card_save.slot[at[i]];
+		q_snprintf(s->map, sizeof s->map, "%s", maps[i]);
+		s->start.items  = IT_SHOTGUN | IT_AXE | (i ? IT_NAILGUN : 0);
+		s->start.health = (int16_t) (100 - 7 * i);
+		s->start.ammo[AMMO_SHELLS] = (int16_t) (25 + i);
+		s->start.weapon = W_SHOTGUN;
+		s->start.skill  = (uint8_t) (i & 3);
+	}
+	settings.mouse_speed = 9;                          /* (a setting off its default) */
+	r = card_store();
+	printf("card: store %d\n", r);
+	card_save_t kept = card_save;
+	r = card_load();
+	printf("card: read back %d: %s\n", r, memcmp(&kept, &card_save, sizeof kept) ? "DIFFERENT" : "the same");
+	card_save.slot[3] = card_save.slot[0];
+	card_save.slot[3].start.health = 42;
+	r = card_store();
+	kept = card_save;                                 /* (as stored: its sum and settings) */
+	printf("card: store again %d\n", r);
+	r = card_load();
+	printf("card: read back again %d: %s\n", r, memcmp(&kept, &card_save, sizeof kept) ? "DIFFERENT" : "the same");
+	uint8_t packed[CARD_SETTINGS];
+	settings_defaults();
+	settings_unpack(card_save.settings);
+	settings_pack(packed);
+	printf("card: settings back: mouse speed %d (%s)\n", settings.mouse_speed,
+	       memcmp(packed, card_save.settings, sizeof packed) ? "DIFFERENT" : "the same");
+	apply_settings();
+	static const menu_hooks_t hooks = { 0, 0, 0, bench_yes, bench_yes, 0 };
+	menu_init(&hooks);
+	menu_open();
+	menu_shown = 1;
+	game_active = 1;
+	bench_menu_key(PAD_CROSS, 0);                     /* Single Player */
+	bench_menu_key(PAD_DOWN, 0);                      /* (to Load) */
+	bench_menu_key(PAD_CROSS, "mload");               /* the card read: its slots */
+	bench_menu_key(PAD_TRIANGLE, 0);
+	bench_menu_key(PAD_DOWN, 0);                      /* (to Save) */
+	bench_menu_key(PAD_CROSS, "msave");
+	menu_shown = 0;
 }
 
 /* what a game tick costs (the tick rate question): walking, then firing
@@ -3647,6 +3918,12 @@ static void run_bench(void)
 
 	printf("bench start\n");
 	zone_sync = 1;                              /* (a view's zone read before its frame) */
+	if (Q1PSX_BENCH_CARD) {
+		bench_card();
+		bench_done();
+		for (;;)
+			run_frame(0, 0);
+	}
 	if (Q1PSX_BENCH_CAPTURE) {
 		zone_sync = 0;                          /* (the zones read as in play) */
 		bench_capture();
@@ -3655,7 +3932,10 @@ static void run_bench(void)
 			run_frame(0, 0);
 	}
 	if (Q1PSX_BENCH_ZONES) {
-		bench_zones();
+		if (Q1PSX_BENCH_ZONES == 3)
+			bench_intermission();
+		else
+			bench_zones();
 		bench_done();
 		for (;;)
 			run_frame(0, 0);
@@ -3799,37 +4079,59 @@ static void run_bench(void)
 /* ---------------------------------------------------------------- main -- */
 
 #if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
-/* the release menu's hooks: "map start" with a new game's parms */
-static void release_start_map(void)
+/* the release menu's hooks (engine/menu.h): the game options' "map" with
+   a new game's parms at its skill; a memory card slot's level; the
+   current level's start into a slot (Host_Savegame_f's messages) */
+static void release_begin_game(int map, int skill)
 {
-	int m = world_find_map("START");
-	map_index = m >= 0 ? m : 0;
-	game_new_parms();
-	if (load_level(map_index))
-		game_spawn_level();
+	load_req.kind  = LOAD_BEGIN;
+	load_req.map   = map;
+	load_req.skill = skill;
 }
 
-static void release_new_game(void)
+static void release_load_game(int slot)
 {
-	release_start_map();
-	release_in_game = 1;
+	int m = world_find_map(card_save.slot[slot].map);
+	if (m < 0) {
+		hud_notify("ERROR: that level is not on this disc.");
+		return;
+	}
+	load_req.kind = LOAD_SAVED;
+	load_req.map  = m;
+	load_req.slot = slot;
+}
+
+static void release_save_game(int slot)
+{
+	hud_notify("Saving game to the memory card...");
+	int r = card_load();                       /* (the card read again: another may be in) */
+	if (r == CARD_OK || r == CARD_NO_FILE) {
+		card_slot_t *s = &card_save.slot[slot];
+		memset(s, 0, sizeof *s);
+		q_snprintf(s->map, sizeof s->map, "%s", world_map_name(map_index));
+		game_level_start(&s->start);
+		r = card_store();
+	}
+	hud_notify(r == CARD_OK ? "done." : "ERROR: couldn't save to the memory card.");
 }
 
 static int release_started(void) { return release_in_game; }
 
+static int release_can_save(void)
+{
+	return release_in_game && world_ok && !level_intermission && !pl.dead;
+}
+
 static int release_no_world(void) { return !world_ok; }
 
-/* The release's boot: Quake starts its demo loop under the menu (quake.rc
-   "startdemos demo1 demo2 demo3"); the port has no demos and loads no map
-   until New Game, so its screen is Quake's with neither (con_forcedup): the
-   console's background, the menu over it (M_Draw), and the music of the
-   first demo, CD track 2, which demo1.dem forces (the menu's bank,
-   MAPS/MENU.SND: its clicks and that track; tools/qcook/menu.c) */
-static void release_title(void)
+/* the boot's reads (the loading screen's meter): the game data, the
+   menu's bank, the directories and the streamed assets' table */
+static uint32_t boot_sectors(void)
 {
-	snd_load_bank("MENU");
-	ui_conback_load();
-	music_play(snd_cd_track());
+	uint32_t a = 0, b = 0;
+	cd_find("\\GAME.DAT;1", NULL, &a);
+	cd_find("\\MENU.SND;1", NULL, &b);
+	return (a + b) / CD_SECTOR + 16;
 }
 #endif
 
@@ -3854,6 +4156,17 @@ int main(void)
 	prof_init();
 	cd_init();
 	ovl_load("");                          /* the boot's inits below and the loads' code (§90.7) */
+#if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
+	/* The release's boot: Quake starts its demo loop under the menu (quake.rc
+	   "startdemos demo1 demo2 demo3"); the port has no demos and loads no map
+	   until New Game, so its screen is Quake's with neither (con_forcedup):
+	   the console's background, the menu over it (M_Draw), and the music of
+	   the first demo, CD track 2, which demo1.dem forces (the menu's bank,
+	   MENU.SND: its clicks and that track; tools/qcook/menu.c). The
+	   background is read first: the boot's loading screen on it */
+	if (ui_conback_load())
+		loading_boot(boot_sectors());
+#endif
 	snd_init();
 	music_init();
 	r_init();
@@ -3862,6 +4175,11 @@ int main(void)
 
 	world_scan_maps();
 	settings_defaults();
+#if Q1PSX_RELEASE && !defined(Q1PSX_BENCH)
+	if (card_load() == CARD_OK && card_save.magic[0])   /* the settings the memory card keeps
+	                                                       (a file of another version: none) */
+		settings_unpack(card_save.settings);
+#endif
 	apply_settings();
 	gdata_load();
 	stream_init();
@@ -3876,10 +4194,13 @@ int main(void)
 		player_spawn();
 	run_bench();
 #elif Q1PSX_RELEASE
-	static const menu_hooks_t hooks = { release_new_game, release_started, release_no_world };
+	static const menu_hooks_t hooks = { release_begin_game, release_load_game, release_save_game,
+	                                    release_started, release_can_save, release_no_world };
 	menu_init(&hooks);
 	game_active = 1;
-	release_title();                           /* (no map before New Game) */
+	snd_load_bank("MENU");                     /* (no map before New Game) */
+	loading_end();
+	music_play(snd_cd_track());
 	menu_open();
 	for (;;)
 		run_frame(1, 0);

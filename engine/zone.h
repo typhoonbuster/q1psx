@@ -65,6 +65,11 @@ int  zone_on(void);
    (1/8 units) and its nearest read at once, that zone made current */
 void zone_preload(const int32_t eye[3]);
 
+/* between frames, a camera moved at once (the intermission's): the zone
+   of the leaf holding `eye` (1/8 units) read at once if it is not in (a
+   read in flight waited for), and made current */
+void zone_require(const int32_t eye[3]);
+
 /* once a frame between frames, before stream_frame: see above */
 void zone_frame(void);
 

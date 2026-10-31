@@ -36,6 +36,7 @@
 .set PP_I,      1
 .set PP_N,      2
 .set PP_T,      4
+.set PP_SEL,    6
 .set PP_RX,     8
 .set PP_TX,     17
 
@@ -136,9 +137,11 @@ q_irq:
 	lbu     $a1, PP_N($a0)
 	lbu     $v0, PP_TX($v0)              # tx[i + 1]
 	addiu   $a1, $a1, -1
-	beq     $v1, $a1, 1f                 # the last byte goes: its answer by
-	li      $a1, 0x0813                  # the receive interrupt (no /ACK
-	li      $a1, 0x1013                  # follows it), the others by /ACK
+	xor     $v1, $v1, $a1                # 0: the last byte goes: its answer by
+	lhu     $a1, PP_SEL($a0)             # the receive interrupt (no /ACK
+	bnez    $v1, 1f                      # follows it), the others by /ACK;
+	ori     $a1, $a1, 0x1013             # the port's select kept (0x2000:
+	xori    $a1, $a1, 0x1800             # port 2, §120): 0x1013 -> 0x0813
 1:	sh      $a1, SIO_CTRL($at)           # (the port's flag cleared)
 	sb      $v0, SIO_DATA($at)           # the next byte
 .if IRQTIME

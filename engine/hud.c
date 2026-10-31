@@ -534,6 +534,25 @@ void hud_notify(const char *s)
 	}
 }
 
+/* CL_ParseServerInfo's print: two empty lines, the separator (\35, 35 x
+   \36, \37), an empty line, then the level's name in the bronze letters
+   ("%c%s\n", 2: colored text); the last four in the notify area */
+Q_COLD void hud_level_title(const char *title)
+{
+	char line[NOTIFY_WIDTH + 1];
+	for (int k = 0; k < 5; k++) {
+		int n = 0;
+		if (k == 2) {
+			for (; n < 37; n++)
+				line[n] = (char) (n == 0 ? 29 : n == 36 ? 31 : 30);
+		} else if (k == 4) {
+			for (; title && title[n] && n < NOTIFY_WIDTH; n++)
+				line[n] = (char) (title[n] | 0x80);
+		}
+		notify_line(line, n);
+	}
+}
+
 void hud_level_start(void)
 {
 	seen_items = 0;
@@ -673,6 +692,11 @@ void hud_draw(void)
 			item_gettime[j] = game_tick_count;
 	seen_items = pl.items;
 
+	/* the crosshair (crosshair 1): the console font's '+' at the 3D view's
+	   centre, the projection's (Quake puts the character's corner there,
+	   4 px off; centred here, as QuakeSpasm does) */
+	ui_begin();
+	ui_char(VID_W / 2 - 4, r_viewport_rows() / 2 - 4, '+', 128);
 	draw_notify();
 	if (game_tick_count <= center_until) {
 		ui_begin();

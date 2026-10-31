@@ -31,6 +31,9 @@ void hud_centerprint_clear(void);
 /* Con_Printf's lines in the notify area (Con_DrawNotify): the last 4 at the
    top of the screen, 3 s each (sprint: "You got the Shotgun") */
 void hud_notify(const char *s);
+/* the level's name as Quake prints it at a level's start (CL_ParseServerInfo:
+   a separator, the name in bronze) */
+void hud_level_title(const char *title);
 
 /* a level's start (the client's state cleared: every item counts as just
    picked up, the inventory's weapons flash; no message left) */

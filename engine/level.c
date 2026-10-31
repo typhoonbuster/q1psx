@@ -25,6 +25,8 @@ int32_t     level_finale_tick;
 int32_t     level_start_tick;
 int32_t     level_camera[3];
 int         level_camera_angles[3];
+int         level_camera_pending;
+int         level_camera_track;
 int         game_serverflags;
 int         game_skill = 1;
 
@@ -68,6 +70,8 @@ void level_finale_begin(const edict_t *pos)
 	memcpy(level_camera, pos->origin, sizeof level_camera);
 	for (int k = 0; k < 3; k++)
 		level_camera_angles[k] = DEG(pos->mangle[k]);
+	level_camera_pending = 1;                    /* (its zone read first: main.c) */
+	level_camera_track   = 0;
 	hud_centerprint_clear();
 }
 
@@ -85,6 +89,7 @@ void level_begin(void)
 	style0[1] = 0;
 	level_start_tick   = game_tick_count;
 	change_wanted      = 0;
+	level_camera_pending = 0;
 }
 
 int level_change_wanted(char name[16])
@@ -127,7 +132,6 @@ Q_COLD void execute_changelevel(edict_t *self)
 	level_intermission    = 1;
 	intermission_exittime = ent_time + 2 * GAME_HZ;
 	level_completed_ticks = game_tick_count - level_start_tick;
-	music_play(3);                                   /* SVC_CDTRACK 3 */
 	edict_t *pos = find_intermission();
 	if (pos) {
 		memcpy(level_camera, pos->origin, sizeof level_camera);
@@ -142,6 +146,9 @@ Q_COLD void execute_changelevel(edict_t *self)
 		level_camera_angles[0] = level_camera_angles[2] = 0;
 		level_camera_angles[1] = pl.pm.yaw;
 	}
+	level_camera_pending = 1;                        /* the camera's zone read before the
+	                                                    stats show (main.c), then */
+	level_camera_track   = 3;                        /* SVC_CDTRACK 3 */
 	hud_centerprint_clear();
 	printf("level: intermission, %d secrets of %d, %d s\n", ent_found_secrets, ent_total_secrets,
 	       level_completed_ticks / GAME_HZ);

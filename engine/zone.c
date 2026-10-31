@@ -359,6 +359,30 @@ Q_COLD void zone_preload(const int32_t eye[3])
 	memset(&zone_stats, 0, sizeof zone_stats);
 }
 
+/* a camera moved at once (the intermission's, the finale's): the zone of
+   the leaf holding `eye` (1/8 units) read now if it is not in, a read in
+   flight waited for first, and made current; its nearest come as in play */
+Q_COLD void zone_require(const int32_t eye[3])
+{
+	if (!zh)
+		return;
+	uint32_t set = zone_rt.leaf_set[leaf_at(eye)];
+	if (set >= zh->num_sets)
+		return;                                   /* (the eye in solid: the zone kept) */
+	int z = zsets[set].zone, s = slot_of(z);
+	if (s >= 0 && s == reading)
+		read_done(cd_read_sync() >= 0);           /* (its own read in flight) */
+	s = slot_of(z);
+	if (s < 0 || !slots[s].ready) {               /* (none, or placed for the drive) */
+		uint8_t want[WANT];
+		wanted(set, want);
+		s = load_now(z, want, 0);
+	}
+	if (s >= 0 && s != cur_slot)
+		make_current(s);
+	want_set = set;
+}
+
 /* ------------------------------------------------------- the frame -- */
 
 void zone_enter(uint32_t set)

@@ -16067,3 +16067,255 @@ scripts and settings nothing reads:
   119.8's C engine's. The release's level arena 1372256 → 1372304 B
   (+48: `.text` −32, the zones' two slots −16; the dead functions were
   the linker's to drop already); the default preset builds.
+
+## §120 — The game's presentation and its last features (2026-11-01, provisional number)
+
+The game as a disc of its time would present it: a boot that shows it is
+loading, Quake's loading plaque at every map, the saves on the memory
+card, Quake's level select, the PlayStation Mouse, the DualShock's
+vibration, the crosshair, a page of the controls, the level's name at its
+start; and two fixes (the d-pad changed the weapon, the intermission's
+zone came in under its stats). Nothing in the renderer or the engine's
+hot paths changes: the 128 spawn views' display lists are master's.
+
+### 120.1 The loading screens
+
+**A map's load** is Quake's `SCR_BeginLoadingPlaque`: the last frame stays
+on the screen with the loading plaque over it (`SCR_DrawLoading`:
+`gfx/loading.lmp` centred above the status bar's 48 rows, at (88, 84))
+and the disc in the top right corner (`Draw_BeginDisc`: `disc` at
+(296, 0)). The port adds a bar under the plaque, the console font's slider
+track (conchars 128, 129 x 16, 130: the plaque's 144 pixels) filled with
+the console's separator line (29, 30 ..., 31), and the level's name in
+the bronze letters under the bar (Quake's menu names, `menu_level_name`).
+`engine/loading.c`:
+
+- A load is asked for (a level's exit, the menu's New Game or Load:
+  `main.c` `load_req`); the frame drawn next is the game's as it is (the
+  intermission's stats, the world, the console's background under the
+  title menu) with the overlay over it (`loading_overlay`), flipped as
+  any other; the load runs once it is on the screen (`do_load`), as
+  Quake's plaque comes up before the map command runs.
+- The bar's progress is drawn over the frame on display, without a flip
+  or a clear (`engine/vid.c` `vid_draw_over`: the packets built in the
+  back buffer's arena, drawn with the shown buffer's environment, `isbg`
+  off), each time it grows a pixel.
+- The progress is the drive's: `engine/cd.c` counts the sectors of every
+  read `cd_read_sync` ends while the meter is on (`cd_meter`,
+  `cd_meter_hook`), and a `cd_load`'s sectors as they come. The load's
+  estimate comes from its directory's cache (no read): its whole files
+  (`LOAD.BIN`, `.SND`, `.TX4`, `.WLD`, `.MDL`), 120 sectors for a zoned
+  map's preload, seven eighths of its streamed assets' file
+  (`<MAP>_S.DAT`: the preload reads 65 to 99 % of it, 88 % on average,
+  the drive's journal over the 32 maps: `CDLOG=1 BENCH_MAPS=1`; its
+  zones 91 to 156 sectors). The streamed assets' preload starts the rest
+  of the bar at their own estimate (`loading_rest`): the bar keeps its
+  place, fills the rest at the new pace, never goes back, and ends full.
+- The first frame after the load is timed from the load's end
+  (`vid_resync`), not from the last flip.
+
+**The boot** shows the console's background with the plaque and the bar
+from its first second (it was black until the menu): `CONBACK.DAT` is
+read first (`QCB1` → `QCB2`), right after the load overlay, and carries
+the boot's pictures as the game data's aux pictures are not in VRAM
+yet: the plaque (through the background's CLUT: `Draw_Pic` is opaque)
+and the bar's six glyphs (through a glyph CLUT, the palette with index 0
+transparent, at the map's first texture CLUT row, (0, 481): no map is
+loaded at boot), in a strip under the background (320, 200). The bar
+follows the boot's reads (the game data, the menu's bank, the
+directories), the frame redrawn and flipped; the game data in, the
+aux pictures take over (`ui_loading_plaque`, `ui_bar_glyph`). The memory
+card's settings are read during the boot (120.2).
+
+**The version number** is written into the console's background at the
+cook, as `Draw_ConsoleBackground` writes it (`Draw_CharToConback`: row
+186, ending 11 texels from the right edge, each font texel that is not 0
+written + 0x60): `(PlayStation) 1.09`, in WinQuake's `(WinQuake) 1.09`
+place.
+
+The aux pictures gain `gfx/loading.lmp`, the Load and Save menus' titles
+(`gfx/p_load.lmp`, `gfx/p_save.lmp`) and the controls page's
+(`gfx/ttl_cstm.lmp`): 33 pictures, 102 K texels in the two 4-bit pages
+(the comment that the plaque found no room was older than the 2D gun's
+removal). `GAME.DAT` `QGMB` → `QGMC` (the four pictures, the memory card's
+icon).
+
+### 120.2 The memory card
+
+The game's save file lives on the card in slot 1, in one block, the BIOS's
+format (psx-spx "Memory Card Data Format"): block 0's directory entry
+(`BASLUS-99999QUAKE`, 2000h bytes), then the block: its title frame
+("SC", one icon frame, the title in Shift-JIS, `ＱＵＡＫＥ` and the
+autosave's map, the icon's CLUT), the icon frame (the status bar's face,
+`FACE1`, its middle 20 x 20 texels averaged down to 16 x 16 and its
+colours to 16 by the cook: `formats/qgame.h` `qg_icon`) and four data
+frames (`engine/card.h` `card_save_t`, 448 bytes: the settings, 24 bytes,
+`settings_pack`; the autosave's slot and Quake's twelve, 32 bytes each).
+
+- **What a slot keeps**: the start of the level it was saved in
+  (`engine/game.h` `game_start_t`: the parms the level was entered with,
+  `DecodeLevelParms`' parm1-9, the skill, the runes). Loading it plays
+  the level again from its start with that inventory, as a death does
+  (`game_restart_level`'s parms). Quake's own save keeps the whole server
+  (every edict, as text): far more than a block, and every entity's
+  state to restore.
+- **The autosave** is written at each new level's start, a
+  `trigger_changelevel`'s map, on the loading screen once the level is in
+  (the card read first: its other slots kept); no card, a full or an
+  unformatted one: nothing. A new game, a loaded game write nothing.
+- **Save** (the single player menu, `M_Save_Draw`) takes the current
+  level's start into one of the twelve slots, the card read again first
+  (another card may be in); the menu closes and the notify area says
+  what Quake's console says (`Host_Savegame_f`: "Saving game to the
+  memory card...", "done." or an error). It cannot be taken where Quake's
+  `M_Menu_Save_f` refuses it (no game, the intermission, a dead player):
+  its entry is greyed.
+- **Load** (`M_Load_Draw`) lists the autosave, then the twelve slots, each
+  with its level's name and skill (`M_ScanSaves`' comment; "--- UNUSED
+  SLOT ---"); a slot loads under the plaque (120.1).
+- **The settings** go with every write, and when the options are left
+  changed (if the card holds the game's file: read first, its slots
+  kept); the boot reads them back. A file of another version, or a
+  damaged one, is left alone at the boot and replaced by the next write.
+- **The card's states** each have their message (no card, an
+  unformatted one, a full one, no save of the game's, a read that
+  failed); Save on an unformatted card offers the format (Cross: yes,
+  Circle: no), block 0 written as the BIOS writes it (the header, every
+  block free, no broken sector, the write test frame).
+
+The card is driven directly on SIO0 (`engine/card.c`): the BIOS's card
+functions (`InitCARD`, `_card_read`, the `bu00:` device) need the
+kernel's interrupt chains, which `engine/irq.s` bypasses (§81.1). A
+frame's read is 81h, 'R', its address: two acks, the address confirmed,
+128 bytes, their checksum, 'G'; a write is 81h, 'W', its address, the
+128 bytes, their checksum: two acks and 'G' (4Eh a bad checksum, FFh a
+bad sector), then a vblank for the card's own write. A Sony card answers
+a read's seventh byte after ~31000 cycles (psx-spx): the exchange's /ACK
+wait allows ~150000. The exchange is the pad's, generalized
+(`engine/pad.c` `pad_sio_exchange`, either port), the interrupt-driven
+poll suspended meanwhile (`pad_suspend`, `pad_resume`); each frame is
+tried three times. A save writes six frames (seven with a new file's
+directory entry), a read reads 20: about 0.1-0.3 s, the music's ring
+covering it.
+
+`CARD=1 scripts/bench.sh` checks it on PCSX-Redux's card (the file
+written with made-up slots, read back and compared, written over itself
+and compared again, the settings unpacked again; the Load and Save menus
+drawn from it); run it with `HOME` set to a scratch directory: the
+emulator then makes its settings and its cards anew there, and the card
+it writes is not one in use. `CARD=2` formats the card first.
+
+### 120.3 The menus
+
+- **New Game** opens Quake's game options page (`M_GameOptions_Draw`,
+  its single player rows): begin game, the skill (`Easy` to `Nightmare
+  difficulty`), the episode and the level, from menu.c's own tables
+  (`levels`, `episodes`; the deathmatch arena left out); an episode is
+  offered when its first level is on the disc (the shareware disc:
+  Welcome to Quake and Doomed Dimension, as Quake's `registered` count).
+  Begin game with the defaults loads START as New Game did; another
+  level starts with a new game's parms at the skill, no rune (the `map`
+  command's `serverflags = 0`). In a game, begin game asks "Are you sure"
+  first. Title: `gfx/ttl_sgl.lmp` (`p_multi.lmp` is the multiplayer's).
+- **Load and Save**: 120.2. The single player menu shows its three
+  entries (`sp_menu.lmp`, whole in VRAM already).
+- **Options** (`M_Options_Draw`'s order): Customize controls, Reset to
+  defaults, Brightness, Mouse Speed (`sensitivity` 1 to 11 by halves, 3
+  by default), CD Music Volume, Sound Volume, Invert Mouse, Use Mouse
+  (WinQuake's windowed mode row: here the PlayStation Mouse; a hint says
+  whether one answers in port 2), Swap Mouse Buttons, Vibration,
+  Graphics. The checkboxes are `M_DrawCheckbox`'s "on" / "off".
+- **Customize controls** is `M_Keys_Draw` read only (the controls are
+  fixed): each action and its buttons, for the analog pad, the digital
+  pad and the mouse with the pad (left and right switch between them;
+  the layout in use first), Quake's own names where it has them
+  (attack, change weapon, jump / swim up, walk forward, backpedal...).
+- The menus take the pad alone (a mouse plugged in or not).
+
+### 120.4 The PlayStation Mouse
+
+With Use Mouse on, port 2 is polled after port 1, from port 1's last
+interrupt (`engine/pad.c`: `pad_port2`; `engine/irq.s`' short way keeps
+the port's select, `PP_SEL`, CTRL bit 13); the snapshot is taken once
+both are in: the pad from the first port that holds one, the mouse
+likewise (a mouse in port 1 and the pad in port 2 work too). The
+mouse's answer is id 12h, its buttons in the word's bits 10 (right) and
+11 (left), active low, its motion in the next two bytes, signed (psx-spx
+"Mouse"). A mouse holds /ACK low until it is first accessed: the boot
+polls port 2 once (`pad_configure(1)`). With the setting off, port 2 is
+not polled: the poll is master's.
+
+When the mouse answers, the game takes it (`main.c` `mouse_cmd`): it turns
+and looks (Quake's `IN_MouseMove`: `m_yaw`, `m_pitch` 0.022 degrees a
+count, times the sensitivity, the pitch negated by Invert Mouse; the
+fractions carried), its left button fires and the right one jumps (Swap
+Mouse Buttons for a mouse in the left hand). The pad is held in the
+other hand, either one, and its two halves are the same: the d-pad and
+the face buttons walk and strafe (up / Triangle forward, down / Cross
+back, left / Square and right / Circle sideways), either stick likewise
+at its speed (the one deflected most), L1 / R1 the next weapon, L2 / R2
+the previous one; START the menu.
+
+### 120.5 The vibration
+
+The pad's configuration (`pad_configure`: config mode, analog locked)
+now also maps the DualShock's motors (0x4D: the small one to bit 0 of the
+poll's fourth byte, the large one to the fifth), which every poll of the
+pad's port sends (`pad_motor_small`, `pad_motor_large`; a Dual Analog
+ignores them). `engine/rumble.c` turns the game's events into pulses run
+at the player's ticks: each gun's shot (the shotgun a short pulse, the
+super shotgun, the grenade and the rocket launchers stronger ones, the
+nailguns and the lightning gun the small motor's buzz, the axe's hit), a
+wound (its strength and length from `T_Damage`'s take), the death, an
+explosion within 256 units (stronger the nearer). The large motor gets
+0x60 at least (under ~0x50 it does not start, psx-spx). The Options'
+Vibration turns it off; the menu and the loads stop it.
+
+### 120.6 Quake's details
+
+- **The crosshair** (`crosshair 1`): the console font's '+' at the 3D
+  view's centre, the projection's (`r_viewport_rows () / 2`: 96 above
+  the original status bar, 120 with the Quake II PSX layout). Quake draws
+  the character's corner at the centre, the cross 4 pixels off; it is
+  centred here, as QuakeSpasm does. Not under the intermission's stats.
+- **The level's name** at a level's start, as `CL_ParseServerInfo` prints
+  it (two empty lines, the separator, an empty line, the worldspawn's
+  message in bronze): the last four in the notify area for 3 s
+  (`hud_level_title`), at each start and after a death, whose restart
+  reloads the level in Quake.
+- **The pad pulled out** in a game opens the menu (three frames without
+  an answer), the game paused under it, as console games do.
+
+### 120.7 Two fixes
+
+- **The d-pad no longer changes the weapon**: with an analog pad it
+  walked and selected the weapon groups at once (up the shotguns, right
+  the nailguns...). It only walks now; the weapons are R1 / L1 (and
+  the mouse's shoulders). `game.c`'s `w_group` (the groups) is left
+  without a caller: a candidate for removal.
+- **The intermission waits for its camera's zone**: on a zoned map the
+  intermission's spot is often in another zone than the player's, and its
+  chunk came in under the stats (late frames: the old zone drawn).
+  `execute_changelevel` (and the finale's start) now only marks the
+  camera pending (`level_camera_pending`); before the frame,
+  `main.c` reads the camera's zone at once if it is not in
+  (`engine/zone.c` `zone_require`: a read in flight waited for, the
+  chunk made current; the last frame on the screen meanwhile), then
+  plays the intermission's track (SVC_CDTRACK 3). `ZONES=3
+  scripts/bench.sh` takes each zoned map's exit and checks that the
+  first frame's zone is the camera's.
+
+### 120.8 The cost
+
+The release's level arena 1372304 → 1353152 B (−19152 B: the stream's
+pool), by object (`mipsel-none-elf-size`): the menus +6.9 KB (the new
+pages and their strings, `-Os`), the card 3.0 KB (448 B of it the save),
+`main.c` +2.0 KB (the loads' requests, the hooks, the boot), the pad
++1.3 KB, the loading screens 1.0 KB, the UI's boot strip 0.8 KB, the
+vibration 0.8 KB, the zones' wait 0.8 KB, the game, the HUD, the
+settings and the video 0.4-0.6 KB each. `engine/card.c` and
+`engine/loading.c` are compiled at `-Os` with the menus. The frames' hot
+paths are unchanged: the 128 spawn views' display lists are master
+6267338's (`scripts/dlcheck.sh`, `BENCH_MAPS=1 HASHONLY=1`), their
+cycles +0.02 % in all (the pad's short way keeps the port's select: an
+instruction and a load more a byte, with Use Mouse off).

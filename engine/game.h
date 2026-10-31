@@ -209,4 +209,19 @@ void game_new_parms(void);
 void game_spawn_level(void);
 void game_restart_level(void);
 
+/* A level's start as the memory card keeps it (engine/card.c): the parms
+   the level was entered with (DecodeLevelParms' parm1-9), the skill and
+   the runes (serverflags). game_level_start: the current level's;
+   game_restore_start: the next spawn's (game_spawn_level), the skill and
+   the runes set at once */
+typedef struct {
+	uint32_t items;
+	int16_t  health, armor;
+	int16_t  ammo[AMMO_COUNT];
+	uint8_t  armortype, weapon;
+	uint8_t  skill, serverflags;
+} game_start_t;                                    /* 20 bytes */
+void game_level_start(game_start_t *s);
+void game_restore_start(const game_start_t *s);
+
 #endif

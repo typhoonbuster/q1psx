@@ -20,6 +20,13 @@ extern int32_t     level_finale_tick;       /* when it started coming out */
 extern int32_t     level_start_tick;
 extern int32_t     level_camera[3];         /* the intermission's eye, 1/8 units */
 extern int         level_camera_angles[3];  /* pitch, yaw, roll, binary degrees */
+/* the intermission or the finale begun in this frame's ticks: main.c reads
+   its camera's zone before the frame is drawn (engine/zone.h zone_require,
+   the last frame on the screen meanwhile), then plays CD track
+   level_camera_track (0: the music as it is) and clears the flag: the
+   stats never show over a zone that is not in yet */
+extern int         level_camera_pending;
+extern int         level_camera_track;
 extern int         game_serverflags;        /* the runes taken (items.qc item_sigil) */
 extern int         game_skill;              /* 0 easy .. 3 nightmare (trigger_setskill) */
 

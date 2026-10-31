@@ -163,6 +163,13 @@ void ui_fade(void)
 
 static int conback_in;           /* in VRAM: no map's textures over it yet */
 
+/* LoadImage of `bytes` at `src`, w x h halfwords at (x, y) */
+static void upload(const uint8_t *src, int x, int y, int w, int h)
+{
+	RECT r = { (int16_t) x, (int16_t) y, (int16_t) w, (int16_t) h };
+	LoadImage(&r, (const uint32_t *) src);
+}
+
 Q_COLD int ui_conback_load(void)
 {
 	conback_in = 0;
@@ -171,18 +178,19 @@ Q_COLD int ui_conback_load(void)
 	const uint8_t *f = cd_load("\\CONBACK.DAT;1", &size, NULL);
 	const qcb_header *h = (const qcb_header *) f;
 	if (!f || size < sizeof *h || memcmp(h->magic, QCB_MAGIC, 4) || h->w != 320 || h->h != 200 ||
-	    h->ofs_clut + 512 > size || h->ofs_pixels + (uint32_t) h->w * h->h > size) {
+	    h->ofs_clut + 512 > size || h->ofs_glyph_clut + 512 > size || h->ofs_pixels + (uint32_t) h->w * h->h > size ||
+	    h->ofs_boot + QCB_BOOT_W * QCB_BOOT_H > size) {
 		printf("ui: no console background on the disc\n");
 		mem_level_reset();
 		return 0;
 	}
-	RECT clut = { QCB_CLUT_X, QCB_CLUT_Y, 256, 1 };
 	if (gamma_level())                           /* (the Options' Brightness) */
 		gamma_upload(f + h->ofs_clut, QCB_CLUT_X, QCB_CLUT_Y, 256, 1);
 	else
-		LoadImage(&clut, (const uint32_t *) (f + h->ofs_clut));
-	RECT pix = { QCB_VRAM_X, QCB_VRAM_Y, (int16_t) (h->w / 2), (int16_t) h->h };
-	LoadImage(&pix, (const uint32_t *) (f + h->ofs_pixels));   /* (64-byte units: no stray words) */
+		upload(f + h->ofs_clut, QCB_CLUT_X, QCB_CLUT_Y, 256, 1);
+	upload(f + h->ofs_glyph_clut, QCB_GLYPH_CLUT_X, QCB_GLYPH_CLUT_Y, 256, 1);
+	upload(f + h->ofs_pixels, QCB_VRAM_X, QCB_VRAM_Y, h->w / 2, h->h);   /* (64-byte units: no stray words) */
+	upload(f + h->ofs_boot, QCB_BOOT_X, QCB_BOOT_Y, QCB_BOOT_W / 2, QCB_BOOT_H);
 	DrawSync(0);
 	mem_level_reset();
 	conback_in = 1;
@@ -194,12 +202,17 @@ void ui_conback_forget(void)
 	conback_in = 0;
 }
 
+int ui_conback_ready(void)
+{
+	return conback_in;
+}
+
 /* Draw_ConsoleBackground (vid.height): its 200 rows stretched over the
    screen's 240 (Quake's v = y * 200 / conheight), the columns as they are;
    in three strips, a texture page being 256 texels wide and a UV at most
    255: texels 0-127, 128-255 and 256-319, each from a page whose first
-   column is the strip's. Raw texels (no shading, so no dithering). (Quake
-   also writes its version number into the picture's corner: not drawn.) */
+   column is the strip's. Raw texels (no shading, so no dithering). The
+   version number is in the picture (the cook wrote it in, as Quake does). */
 void ui_conback(void)
 {
 	if (!conback_in)
@@ -218,4 +231,39 @@ void ui_conback(void)
 		p->tpage = (uint16_t) getTPage(1, 0, QCB_VRAM_X + s * 64, QCB_VRAM_Y);
 	}
 	cur_tpage = -1;                       /* (the strips' pages are the GPU's now) */
+}
+
+/* the boot strip's (formats/qmenu.h): a part of it, 8 bits, its CLUT */
+static void boot_sprite(int x, int y, int u, int v, int w, int h, int glyph, int shade)
+{
+	set_tpage(getTPage(1, 0, QCB_BOOT_X, 0));
+	uint32_t *s = vid_ovl_alloc(sizeof (SPRT));
+	if (!s)
+		return;
+	uint32_t clut = glyph ? getClut(QCB_GLYPH_CLUT_X, QCB_GLYPH_CLUT_Y) : getClut(QCB_CLUT_X, QCB_CLUT_Y);
+	s[1] = 0x64000000u | (uint32_t) shade * 0x010101u;
+	s[2] = (uint32_t) y << 16 | ((uint32_t) x & 0xffffu);
+	s[3] = clut << 16 | (uint32_t) (QCB_BOOT_Y + v) << 8 | (uint32_t) u;
+	s[4] = (uint32_t) h << 16 | ((uint32_t) w & 0xffffu);
+}
+
+void ui_loading_plaque(int x, int y)
+{
+	if (gdata.aux)
+		ui_aux(QGA_LOADING, x, y);
+	else if (conback_in)
+		boot_sprite(x, y, 0, 0, 144, 24, 0, 128);
+}
+
+void ui_bar_glyph(int x, int y, int c, int w, int shade)
+{
+	if (w <= 0)
+		return;
+	if (gdata.aux) {
+		const qg_aux *a = &gdata.aux[c & 128 ? QGA_CONCHARS2 : QGA_CONCHARS];
+		sprite(a, x, y, a->u + (c & 15) * 8, a->v + ((c >> 4) & 7) * 8, w, 8, shade);
+		return;
+	}
+	if (conback_in)                       /* (the strip's glyphs: 128, 129, 130, 29, 30, 31) */
+		boot_sprite(x, y, QCB_GLYPHS_U + (c & 128 ? c - 128 : c - 26) * 8, 0, w, 8, 1, shade);
 }

@@ -84,7 +84,7 @@ Two presets (the `bench` preset is `scripts/bench.sh`'s):
 | Preset | Directory | What it is |
 |---|---|---|
 | `default` | `build/` | The development build: a map menu (SELECT + START), the debug overlay (START) |
-| `release` | `build-release/` | Quake's own menu (START), no debug tools |
+| `release` | `build-release/` | Quake's own menu (START), saves on the memory card in slot 1, no debug tools |
 
 Every build alike (`docs/porting-notes.md` §52, §119): the 4-bit textures
 at high, the 3D gun, the 3D view at 320×240, the draw distance at 1536
@@ -95,6 +95,14 @@ are low on every disc; the guns are Quake's rebuilt by hand
 anti-warping (low, default, medium, high, ultra), the dynamic lights, the
 frame rate cap (60, 45, 30) and the tick rate (60, 30). The music is Quake's CD tracks streamed
 by the SPU (22.05 kHz, the menu's theme 32 kHz).
+
+The release saves on the memory card in slot 1 (one block: Quake's twelve
+slots, an autosave at each new level, the settings; a slot keeps the start
+of its level), offers Quake's level select (New Game: the skill, the
+episode, the level), takes a PlayStation Mouse in port 2 (Options: Use
+Mouse; the mouse aims and fires, the pad in the other hand moves) and
+vibrates a DualShock (Options: Vibration); Options > Customize controls
+lists every button (`docs/porting-notes.md` §120).
 
 ```bash
 cmake --preset release && cmake --build ./build-release

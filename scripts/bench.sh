@@ -124,7 +124,13 @@
 #         disc layout. MEMLOG=1 logs the level arena: a "memlog" line per
 #         block taken or given back, with its caller's return address
 #         (addr2line -e build-bench/q1psx.elf): a map's RAM block by block
-#         (docs/porting-notes.md §90).
+#         (docs/porting-notes.md §90). CARD=1 checks the memory card in
+#         slot 1 (engine/card.c): the save file written, read back and
+#         compared ("card" lines), then the Load and Save menus drawn from
+#         it (dumps mload, msave); CARD=2 formats the card first. It writes
+#         the emulator's memory card: run it with HOME set to a scratch
+#         directory (PCSX-Redux's settings and cards are then made anew
+#         there).
 #         Every view prints a "lod view" line (the level of detail by the
 #         vertices' order, docs/porting-notes.md §88): the streamed models
 #         drawn, those cut to a band; MONSTERS=4 a "clear frames" line: the
@@ -223,6 +229,7 @@ VRAMCHK=${VRAMCHK:-0}
 CDLOG=${CDLOG:-0}
 CDMODEL=${CDMODEL:-0}
 MEMLOG=${MEMLOG:-0}
+CARD=${CARD:-0}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" \
       -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
@@ -235,6 +242,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
       -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" \
+      -DQ1PSX_BENCH_CARD="$CARD" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \
 	|| { echo "bench: build failed (see $OUT/build.log)"; tail -n 20 "$OUT/build.log"; exit 1; }
@@ -259,6 +267,7 @@ grep -A2 'MISMATCH' "$OUT/bench.log" | head -n 30 || true
 [ "$MOVERS" = 1 ] && [ -z "$MAP" ] && exit 0
 [ "$MONSTERS" != 0 ] && { grep '^\(mon\|stream\)' "$OUT/bench.log" | head -n 400 || true; }   # (head: SIGPIPE)
 [ "$MONSTERS" = 2 ] && exit 0
+[ "$CARD" != 0 ] && { grep '^card' "$OUT/bench.log" || true; }
 [ "$VIEWS" = 0 ] || { [ "$BENCH_MAPS" = 1 ] && [ -z "$MAP" ]; } || [ "$HASHONLY" = 1 ] && exit 0
 [ "$ENTS" = 1 ] && MAP=E1M1          # (its dumps: e1m1's textures, the first map)
 [ "$MONSTERS" != 0 ] && MAP=${MAP:-E1M1}

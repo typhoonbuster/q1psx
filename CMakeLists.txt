@@ -147,9 +147,10 @@ target_compile_options(q1psx PRIVATE
 # The release build (preset "release"): Quake's own menu
 # over the game (engine/menu.c), no debug overlay, no map menu, no cheats.
 # The menus' code at -Os (a menu's pace; every KB of code is RAM:
-# docs/porting-notes.md §60); the loads and spawns elsewhere: Q_COLD
-# (engine/mem.h)
-set_source_files_properties(engine/menu.c engine/settings.c PROPERTIES COMPILE_OPTIONS -Os)
+# docs/porting-notes.md §60), the memory card's and the loading screens'
+# too; the loads and spawns elsewhere: Q_COLD (engine/mem.h)
+set_source_files_properties(engine/menu.c engine/settings.c engine/card.c engine/loading.c
+                            PROPERTIES COMPILE_OPTIONS -Os)
 
 option(Q1PSX_RELEASE "Quake's menu, no debug tools" OFF)
 if(Q1PSX_RELEASE)
@@ -239,10 +240,11 @@ set(Q1PSX_BENCH_ZONES 0 CACHE STRING "1: the zones' walk: every zoned map walked
 set(Q1PSX_BENCH_CDLOG 0 CACHE STRING "1: the drive's journal: a cd line per read (who, where, when; engine/cd.h)")
 set(Q1PSX_BENCH_CDMODEL 0 CACHE STRING "1: every read ends no sooner than a real drive would end it (DuckStation's seek model; engine/cd.c)")
 set(Q1PSX_BENCH_MEMLOG 0 CACHE STRING "1: the level arena's log: a memlog line per block taken or given back, with its caller (engine/mem.c)")
+set(Q1PSX_BENCH_CARD 0 CACHE STRING "1: the memory card's check: the save file written, read back and compared, the Load and Save menus drawn from it (engine/card.c); 2: the card formatted first")
 if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
 		Q1PSX_BENCH_CDLOG=${Q1PSX_BENCH_CDLOG} Q1PSX_BENCH_CDMODEL=${Q1PSX_BENCH_CDMODEL}
-		Q1PSX_BENCH_MEMLOG=${Q1PSX_BENCH_MEMLOG}
+		Q1PSX_BENCH_MEMLOG=${Q1PSX_BENCH_MEMLOG} Q1PSX_BENCH_CARD=${Q1PSX_BENCH_CARD}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_IRQTIME=${Q1PSX_BENCH_IRQTIME}
 		Q1PSX_BENCH_SLOWSTAT=${Q1PSX_BENCH_SLOWSTAT}

@@ -1,9 +1,15 @@
+#include <string.h>
+
+#include "card.h"
 #include "dlight.h"
 #include "gamma.h"
 #include "game.h"
 #include "hud.h"
+#include "mem.h"
+#include "pad.h"
 #include "q_fmt.h"
 #include "render.h"
+#include "rumble.h"
 #include "settings.h"
 #include "snd.h"
 #include "vid.h"
@@ -38,6 +44,37 @@ void settings_defaults(void)
 	settings.tick    = 1;                       /* the world at 30 ticks a second */
 	settings.warp    = WARP_DEFAULT;
 	settings.brightness = 0;                    /* Quake's v_gamma 1 */
+	settings.mouse      = 0;
+	settings.mouse_speed = 6;                   /* sensitivity 3 (default.cfg) */
+	settings.invert_mouse = 0;
+	settings.swap_mouse = 0;
+	settings.vibration  = 1;
+}
+
+/* the order the card keeps them in, and each one's values (0 .. max) */
+static int *const packed[] = {
+	&settings.hud, &settings.dlights, &settings.volume, &settings.music, &settings.fps_cap, &settings.tick,
+	&settings.warp, &settings.brightness, &settings.mouse, &settings.mouse_speed, &settings.invert_mouse,
+	&settings.swap_mouse, &settings.vibration,
+};
+#define PACKED (int) (sizeof packed / sizeof packed[0])
+
+Q_COLD void settings_pack(uint8_t *b)
+{
+	memset(b, 0xff, CARD_SETTINGS);
+	for (int i = 0; i < PACKED; i++)
+		b[i] = (uint8_t) *packed[i];
+}
+
+Q_COLD void settings_unpack(const uint8_t *b)
+{
+	const int max[PACKED] = { HUD_STYLES - 1, 1, 10, 10, num_fps_caps - 1, num_tick_rates - 1, WARP_LEVELS - 1,
+	                          GAMMA_LEVELS - 1, 1, 22, 1, 1, 1 };
+	for (int i = 0; i < PACKED; i++)
+		if (b[i] <= max[i])
+			*packed[i] = b[i];
+	if (settings.mouse_speed < 2)
+		settings.mouse_speed = 2;
 }
 
 void settings_apply(void)
@@ -50,6 +87,9 @@ void settings_apply(void)
 	vid_set_fps_cap(fps_caps[settings.fps_cap]);
 	game_world_hz = tick_rates[settings.tick];
 	gamma_set(settings.brightness);
+	pad_port2 = settings.mouse;
+	if (!settings.vibration)
+		rumble_stop();
 }
 
 /* ------------------------------------------------------------- the rows -- */
