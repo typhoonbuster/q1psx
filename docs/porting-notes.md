@@ -15591,7 +15591,11 @@ its light bound 16, the floor 32) after the test images (2026-10-31).
     cycles +18.9 % against the fixed 4 px (38.72 M -> 46.03 M), the views
     at 60 fps 113 -> 111; T ended at 1 px in 55 views, 2 in 34, 3 in 15,
     4 in 24, 4 views taking a vblank more;
-  - the game bench's walk: the next commit.
+  - the game bench's walk through the release menu (`BENCH_GAME=1`): the
+    row's five values in turn, each level's floor and cap as the table
+    has them (default 4..32, medium 4..16, high 4..8, ultra 1..4, low
+    16..48), the page drawn at each with its two hint lines, the menu
+    closed after it as before.
 
 ## §118 — The zone tables in the repo, the cook's settings by default (2026-10-31)
 
