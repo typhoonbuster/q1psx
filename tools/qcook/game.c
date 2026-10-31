@@ -4162,9 +4162,10 @@ static void finales_cook(const uint8_t *pak, long pak_len, gbuf *table, gbuf *te
 		if (strncmp(m, "maps/", 5))
 			continue;
 		fin_block *b = &blocks[nb++];
+		memset(b, 0, sizeof *b);                  /* (the name's tail too: the finales' table
+		                                             takes its 12 bytes, the same every cook) */
 		b->first = i + 2;
 		b->end   = i + 1 + ST_B(i + 1);
-		b->texts = 0;
 		int k = 0;
 		for (const char *p = m + 5; *p && *p != '.' && k < 11; p++)
 			b->map[k++] = (char) (*p >= 'a' && *p <= 'z' ? *p - 32 : *p);

@@ -15651,7 +15651,10 @@ BSPs, the textures and the renders stay out.
   `Q1PSX_ZONE_TABLES=zones/pvs_1024_64` in its environment is refused at
   the 1536 draw distance. A second build with nothing changed does not
   cook; back to the defaults, the cook gives the default files again.
-- **Left:** `GAME_0.DAT`'s leftovers (`blocks` zeroed before use would
-  make the file the same from cook to cook). The other worktrees'
-  `local.env` files still name the analysis' folder, which wins over the
-  default until those lines go.
+- **`GAME_0.DAT` the same from cook to cook** (tools/qcook/game.c
+  `finales_cook`): each finale block is zeroed before its name is written.
+  `qcook game` run eight times gives one file, the old one with its 54
+  leftover bytes zeroed; two full cooks give the same 309 files, and
+  against the cook before the fix only `GAME_0.DAT` differs.
+- **Left:** the other worktrees' `local.env` files still name the
+  analysis' folder, which wins over the default until those lines go.

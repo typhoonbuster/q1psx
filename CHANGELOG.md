@@ -2556,5 +2556,6 @@ followed by R0-R4.
   every sound's energy (`QCOOK_SOUND_KEEP`); `local.env` or the command
   line may set others, and CMake's draw-distance check reads the same
   default. With `local.env` holding only the Quake paths, the cook gives
-  the same bytes (`GAME_0.DAT`'s finale names carry stack leftovers that
-  vary from cook to cook, as before).
+  the same bytes. `GAME_0.DAT` is now the same from cook to cook: its
+  finale names carried the stack's leftovers after their NUL
+  (`tools/qcook/game.c`), different at every cook.
