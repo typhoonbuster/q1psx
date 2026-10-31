@@ -248,7 +248,6 @@ target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ZONE
 option(Q1PSX_BENCH "Build the headless benchmark variant" OFF)
 # the bench's counters in the asm (engine/e_touch.s: the trigger slots tested)
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,ASM_BENCH=$<BOOL:${Q1PSX_BENCH}>>)
-set(Q1PSX_BENCH_EFFECTS 1 CACHE STRING "Effects level the bench runs at (1 medium, 2 high)")
 set(Q1PSX_BENCH_SAMPLE 0 CACHE STRING "1: the bench samples the PC (engine/prof.c) over each view's frames")
 set(Q1PSX_BENCH_VIEWS 1 CACHE STRING "1: bench the render views too; 0: physics checks only")
 set(Q1PSX_BENCH_MAPS 0 CACHE STRING "1: bench every map on the disc (spawn views) instead")
@@ -290,7 +289,6 @@ if(Q1PSX_BENCH)
 	target_compile_definitions(q1psx PRIVATE Q1PSX_BENCH=1
 		Q1PSX_BENCH_CDLOG=${Q1PSX_BENCH_CDLOG} Q1PSX_BENCH_CDMODEL=${Q1PSX_BENCH_CDMODEL}
 		Q1PSX_BENCH_MEMLOG=${Q1PSX_BENCH_MEMLOG}
-		Q1PSX_BENCH_EFFECTS=${Q1PSX_BENCH_EFFECTS}
 		Q1PSX_BENCH_SAMPLE=${Q1PSX_BENCH_SAMPLE}
 		Q1PSX_BENCH_IRQTIME=${Q1PSX_BENCH_IRQTIME}
 		Q1PSX_BENCH_SLOWSTAT=${Q1PSX_BENCH_SLOWSTAT}

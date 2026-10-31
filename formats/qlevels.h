@@ -1,10 +1,10 @@
 /*
- * q1psx — the quality levels: four separate axes, each from low to ultra
+ * q1psx — the quality levels: three separate axes, each from low to ultra
  * (docs/porting-notes.md §39). The cook writes one file per level of the
  * axes that change the cooked data. Since §52 a disc carries one level of
  * each: the textures the build's (medium or high, Q1PSX_TEXTURES), the
- * geometry and the models low; the effects, the engine's own, are medium
- * or high in Graphics:
+ * geometry and the models low (the effects, an axis of the engine's own
+ * until §119, make the port's high counts of particles):
  *
  *   textures   the world's and the map's models' texture resolution
  *              <MAP>_T<n>.TEX / .TX4 (formats/qtex.h)
@@ -14,7 +14,6 @@
  *   models     the alias models' triangles: the projectiles (GAME_<n>.DAT)
  *              and the map's own models, the items' (<MAP>_M<n>.MDL;
  *              formats/qgame.h); the view models stay Quake's
- *   effects    the particles: their counts (the engine alone)
  *
  * A level's number is the same on every axis (2 is high on each); an axis
  * has only the levels listed in its mask.
@@ -29,13 +28,12 @@
 #define QL_ULTRA   3
 #define QL_LEVELS  4
 
-enum { QL_TEXTURES, QL_GEOMETRY, QL_MODELS, QL_EFFECTS, QL_AXES };
+enum { QL_TEXTURES, QL_GEOMETRY, QL_MODELS, QL_AXES };
 
 /* the levels each axis has (bit n: level n) */
 #define QL_TEXTURE_MASK  0x06   /* medium, high             */
 #define QL_GEOMETRY_MASK 0x01   /* low                      */
 #define QL_MODEL_MASK    0x01   /* low                      */
-#define QL_EFFECT_MASK   0x06   /* medium, high             */
 
 /* the ultra geometry's light grid: the faces are cut every this many
    texels as well, so their vertex light follows the lightmap (Quake's

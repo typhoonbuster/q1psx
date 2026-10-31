@@ -61,7 +61,7 @@ static void note_map_file(const char *name, uint32_t lba, uint32_t size)
 
 int world_level_mask(int axis)
 {
-	static const int all[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK, QL_EFFECT_MASK };
+	static const int all[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK };
 	if (axis < 0 || axis >= QL_AXES)
 		return 0;
 	return level_mask[axis] ? level_mask[axis] : all[axis];
@@ -490,7 +490,6 @@ Q_COLD int world_load(int map, int tex, int geo, int models, world_progress_fn p
 	world.level[QL_TEXTURES] = (int8_t) tex;
 	world.level[QL_GEOMETRY] = (int8_t) geo;
 	world.level[QL_MODELS]   = (int8_t) models;
-	world.level[QL_EFFECTS]  = -1;
 
 	printf("world: %s — %u nodes, %u leaves, %u records, %u polys, %u brush models, "
 	       "%u entities, %u models, arena %u KB\n",

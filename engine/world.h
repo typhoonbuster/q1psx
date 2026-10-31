@@ -66,7 +66,7 @@ typedef struct {
 	uint32_t       bmf_arena_recs, bmf_arena_verts;   /* the brush models' cut arena, the
 	                                                     cook's (formats/qworld.h; bmfrag.c) */
 	int8_t         level[QL_AXES];  /* the levels loaded: textures, geometry, the
-	                                   map's models (QL_*; effects: -1)       */
+	                                   map's models (QL_*)                    */
 	/* the VRAM the map's textures take (the streamed skins get the rest,
 	   engine/stream.c): the 4-bit set's rows of each 4-bit page (x 320 +
 	   64 p, y 0) */

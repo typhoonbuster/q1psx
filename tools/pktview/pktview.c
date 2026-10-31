@@ -21,8 +21,7 @@
  *
  * PKTVIEW_BG=r,g,b sets the clear colour (default black). A colour no
  * texture produces (e.g. 255,0,255) makes every pixel no polygon covers
- * stand out: cracks between polygons. PKTVIEW_DITHER=0 renders as the GPU
- * does with dithering off (the menu's option). PKTVIEW_UVROUND=1 rounds a
+ * stand out: cracks between polygons. PKTVIEW_UVROUND=1 rounds a
  * polygon's interpolated texture coordinates to the nearest texel, as the
  * GPU does (it starts them half a texel up: Mednafen's and DuckStation's
  * rasterizers, which follow the hardware), instead of cutting them: a texel
@@ -259,7 +258,6 @@ static const int dither[4][4] = {
 };
 
 static uint32_t twin;   /* current GP0 E2h texture window (0 = none) */
-static int dither_on = 1;   /* PKTVIEW_DITHER=0: the engine's dithering off */
 static int uv_round;        /* PKTVIEW_UVROUND=1: the GPU's texture coordinates */
 
 static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque)
@@ -369,7 +367,7 @@ static void tri(vtx a, vtx b, vtx c, int textured, int raw, int tpage, int clut)
 				}
 			}
 			for (int k = 0; k < 3; k++) {           /* dither, cut to 5 bits */
-				int d = col[k] + (dither_on ? dither[y & 3][x & 3] : 0);
+				int d = col[k] + dither[y & 3][x & 3];
 				d = d < 0 ? 0 : d > 255 ? 255 : d;
 				col[k] = (uint8_t) (d & 0xf8);
 			}
@@ -400,7 +398,7 @@ static void put_pixel(int x, int y, const uint8_t col_in[3])
 		return;
 	uint8_t col[3];
 	for (int k = 0; k < 3; k++) {
-		int d = col_in[k] + (dither_on ? dither[y & 3][x & 3] : 0);
+		int d = col_in[k] + dither[y & 3][x & 3];
 		d = d < 0 ? 0 : d > 255 ? 255 : d;
 		col[k] = (uint8_t) (d & 0xf8);
 	}
@@ -621,9 +619,6 @@ int main(int argc, char **argv)
 	if (argc == 6)
 		load_stream(argv[5]);
 	load_tex(argv[2]);
-	const char *dis = getenv("PKTVIEW_DITHER");
-	if (dis && dis[0] == '0')
-		dither_on = 0;
 	const char *uvr = getenv("PKTVIEW_UVROUND");
 	uv_round = uvr && uvr[0] == '1';
 	const char *occ = getenv("PKTVIEW_OCCL");

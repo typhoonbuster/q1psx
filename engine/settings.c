@@ -9,7 +9,6 @@
 #include "settings.h"
 #include "snd.h"
 #include "vid.h"
-#include "world.h"
 
 const uint8_t fps_caps[]  = { 60, 45, 30 };
 const int num_fps_caps    = (int) sizeof fps_caps;
@@ -30,14 +29,12 @@ static const uint8_t warp_levels[WARP_LEVELS][2] = {
 static const char *const warp_name[WARP_LEVELS] = { "low", "default", "medium", "high", "ultra" };
 
 settings_t settings;
-int settings_level_mask[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK, QL_EFFECT_MASK };
+int settings_level_mask[QL_AXES] = { QL_TEXTURE_MASK, QL_GEOMETRY_MASK, QL_MODEL_MASK };
 
 void settings_defaults(void)
 {
 	for (int a = 0; a < QL_AXES; a++)           /* the disc's (the lowest it has) */
 		settings.level[a] = settings_level_step(a, QL_LEVELS - 1, 1);
-	settings.level[QL_EFFECTS] = QL_MEDIUM;
-	settings.dither  = 1;
 	settings.hud     = HUD_ORIGINAL;
 	settings.dlights = 1;
 	settings.volume  = 7;
@@ -51,13 +48,11 @@ void settings_defaults(void)
 void settings_apply(void)
 {
 #if Q1PSX_PADSCRIPT
-	printf("settings: effects %d dither %d hud %d warp %s dlights %d vol %d music %d fps %d tick %d\n",
-	       settings.level[QL_EFFECTS], settings.dither, settings.hud, warp_name[settings.warp], settings.dlights, settings.volume, settings.music, fps_caps[settings.fps_cap],
+	printf("settings: hud %d warp %s dlights %d vol %d music %d fps %d tick %d\n",
+	       settings.hud, warp_name[settings.warp], settings.dlights, settings.volume, settings.music, fps_caps[settings.fps_cap],
 	       tick_rates[settings.tick]);
 #endif
-	game_set_effects(settings.level[QL_EFFECTS]);
 	r_set_warp(R_WARP_DYNAMIC, warp_levels[settings.warp][0], warp_levels[settings.warp][1]);
-	vid_set_dither(settings.dither);
 	hud_set_style(settings.hud);
 	dl_enabled = settings.dlights;
 	snd_set_volume(settings.volume);
@@ -88,10 +83,6 @@ static int wrap(int v, int d, int n)
 void settings_step(int row, int d)
 {
 	switch (row) {
-	case SET_EFFECTS:
-		settings.level[QL_EFFECTS] = settings_level_step(QL_EFFECTS, settings.level[QL_EFFECTS], d);
-		break;
-	case SET_DITHER:   settings.dither ^= 1; break;
 	case SET_HUD:      settings.hud = wrap(settings.hud, d, HUD_STYLES); break;
 	case SET_WARP:     settings.warp = wrap(settings.warp, d, WARP_LEVELS); break;
 	case SET_DLIGHTS:  settings.dlights ^= 1; break;
@@ -103,8 +94,6 @@ void settings_step(int row, int d)
 void settings_value(int row, char *buf, int size)
 {
 	switch (row) {
-	case SET_EFFECTS:  q_snprintf(buf, size, "%s", level_name[settings.level[QL_EFFECTS]]); break;
-	case SET_DITHER:   q_snprintf(buf, size, "%s", settings.dither ? "on" : "off"); break;
 	case SET_HUD:      q_snprintf(buf, size, "%s", hud_style_name[settings.hud]); break;
 	case SET_WARP:     q_snprintf(buf, size, "%s", warp_name[settings.warp]); break;
 	case SET_DLIGHTS:  q_snprintf(buf, size, "%s", settings.dlights ? "on" : "off"); break;
@@ -121,14 +110,6 @@ void settings_hint(int row, const char *line[2])
 	static const char *const none = "";
 	const char *a = none, *b = none;
 	switch (row) {
-	case SET_EFFECTS:
-		if (settings.level[QL_EFFECTS] == QL_HIGH) { a = "- under 1% slower in fights";       b = "+ fuller sparks and explosions"; }
-		else                                       { a = "The port's lighter particles";      b = "high: fuller sparks, explosions"; }
-		break;
-	case SET_DITHER:
-		if (settings.dither) { a = "Free: the GPU dithers as it draws"; b = "smooth light gradients"; }
-		else                 { a = "no speed gained";                   b = "- banding in the light"; }
-		break;
 	case SET_HUD:
 		if (settings.hud == HUD_ORIGINAL) { a = "+ 192-row 3D view: less to fill";     b = "Quake's status and inventory bars"; }
 		else                              { a = "- full-screen 3D view: more to fill"; b = "Quake II PSX style, more to see"; }

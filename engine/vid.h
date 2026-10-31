@@ -75,7 +75,6 @@ extern uint32_t    vid_shown_for[4];   /* the bench's: buffers shown for 1, 2, 3
 
 void  vid_init(void);
 void  vid_set_bg(int r, int g, int b);
-void  vid_set_dither(int on);                  /* GP0(E1h) bit 9, from the next frame */
 void  vid_set_viewport(int rows);              /* the 3D view's draw area: 240 rows, or
                                                   192 above the original status bar;
                                                   from the next frame */

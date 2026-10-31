@@ -8,8 +8,8 @@
 # Usage:  scripts/dlcheck.sh save   <name>   # record a reference
 #         scripts/dlcheck.sh check  <name>   # compare against it
 #
-# The bench's settings pass through (TEXTURES, GEOMETRY, MODELS, EFFECTS, T,
-# TEX4, PROFILE...). With
+# The bench's settings pass through (TEXTURES, GEOMETRY, MODELS, T, TEX4,
+# PROFILE...). With
 # BENCH_MAPS=1 it covers the 128 spawn views of every map on the disc, by
 # display-list hash only (give it SECS=3000).
 #

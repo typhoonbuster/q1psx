@@ -15785,3 +15785,38 @@ Found while doing 119.1 and removed (the bench's
   - The release: the level arena 1362112 → 1367600 B (+5488: `.text`
     −5400, the data −88), +19488 B against master; the default preset
     builds, no warning left.
+
+### 119.3 The effects at high, the dithering on
+
+Two more of the Graphics page's rows fixed: the effects at
+high, the dithering on.
+
+- **The effects** (§52's medium or high: the particles' counts): every
+  effect makes the port's high count, the count as written (a rocket's or
+  a grenade's trail one particle a tick, an explosion 48, the lava splash
+  an 8 x 8 grid, the teleport splash every other point of Quake's grid).
+  `game_set_effects`, its scale and trail mask and `fx_count` are gone.
+  The effects are no longer a quality axis: `formats/qlevels.h` has three
+  (`QL_EFFECTS`, `QL_EFFECT_MASK` gone; the cook gives the same 310
+  files), and the debug overlay's `E` level, the bench's `EFFECTS=`
+  (`Q1PSX_BENCH_EFFECTS`) and the game bench's step over the row
+  (`mgraphics_fx`) go with it. The game's default was medium: it now
+  makes high's particles (§52: under 1 % slower in fights).
+- **The dithering**: on from `vid_init` (GP0(E1h) bit 9, the draw
+  environment's `dtd`); `vid_set_dither`, `settings.dither`, the debug
+  overlay's "no dither" and pktview's `PKTVIEW_DITHER=0` are gone.
+- The Graphics page and the debug map menu: HUD, Anti-warping, Dynamic
+  lights, Frame rate cap, World tick rate.
+- **Measured** (TESTING 11.100), against master 8274a70 at the high
+  effects (`EFFECTS=2`, a second set of references in the reference
+  worktree):
+  - START's 12 views: identical, −0.28 % (each view −0.11 to −0.38 %).
+  - The 128 spawn views: identical, −0.23 % (every view faster, −0.08 to
+    −0.51 %; 15 past a vblank before and after).
+  - The game bench, the menus' warp control fixed in both trees for the
+    test: 22 of its 29 dumps identical, the fights' particles too; the
+    Graphics pages differ by their rows, and master's step over the
+    effects row (`mgraphics_fx`) has no counterpart.
+  - The release: the level arena 1367600 → 1369008 B (+1408: `.text`
+    −996, `.rodata` −372, the data −40), +20896 B against master; the
+    default preset builds.

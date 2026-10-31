@@ -1,8 +1,8 @@
 /*
  * q1psx — boot + main loop.
  *
- * Normal build: a map menu (every map on the disc, the quality levels, the
- * texture depth, dithering, the affine-warp control and the HUD style),
+ * Normal build: a map menu (every map on the disc, the Graphics page's
+ * settings: the HUD style, the anti-warping...),
  * then the game (engine/game.c: the player, the weapons) over the
  * asm-rendered world with the HUD and the debug overlay; SELECT + START
  * goes back to the menu. Loads show a progress bar.
@@ -74,9 +74,6 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #define Q1PSX_BENCH_T    SETTINGS_WARP_FLOOR   /* the warp threshold the bench renders with,
                                                   fixed, px (T= scripts/bench.sh) */
 #endif
-#ifndef Q1PSX_BENCH_EFFECTS
-#define Q1PSX_BENCH_EFFECTS QL_MEDIUM          /* the effects (EFFECTS= scripts/bench.sh) */
-#endif
 #ifndef Q1PSX_BENCH_SEQCHK
 #define Q1PSX_BENCH_SEQCHK 0                   /* 1: a view by the cooked walk drawn again by the
                                                   tree walk, the stamps compared (SEQCHK= bench.sh) */
@@ -96,9 +93,6 @@ static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
 	r_set_warp(Q1PSX_BENCH_WARPDYN ? R_WARP_DYNAMIC : R_WARP_FIXED, Q1PSX_BENCH_T, Q1PSX_BENCH_TMAX);
-	vid_set_dither(1);
-	settings.level[QL_EFFECTS] = Q1PSX_BENCH_EFFECTS;
-	game_set_effects(Q1PSX_BENCH_EFFECTS);
 	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
 #else
@@ -491,10 +485,10 @@ static void draw_overlay(void)
 	if (pad.analog)                    /* raw, before the dead zone */
 		q_snprintf(sticks, sizeof sticks, "\nsticks L %4d %4d  R %4d %4d", pad.lx, pad.ly, pad.rx, pad.ry);
 
-	char levels[24] = "no world";               /* textures, geometry, models, effects */
+	char levels[24] = "no world";               /* textures, geometry, models */
 	if (world_ok)
-		q_snprintf(levels, sizeof levels, "T%d G%d M%d E%d", world.level[QL_TEXTURES], world.level[QL_GEOMETRY],
-		         world.level[QL_MODELS], settings.level[QL_EFFECTS]);
+		q_snprintf(levels, sizeof levels, "T%d G%d M%d", world.level[QL_TEXTURES], world.level[QL_GEOMETRY],
+		         world.level[QL_MODELS]);
 	int n = q_snprintf(line, sizeof line,
 	         "q1psx  %s %s  ~%u fps\n"
 	         "frame %6u cyc  gpu wait %u  arena %u KB\n",
@@ -512,11 +506,11 @@ static void draw_overlay(void)
 #endif
 	q_snprintf(line + n, sizeof line - n,
 	         "%u B%s\n"
-	         "warp T %d (from %d)  ~%u tris%s\n"
+	         "warp T %d (from %d)  ~%u tris\n"
 	         "pos %d %d %d  sim %u  items %d\n"
 	         "pad %s type %d btn %04x%s",
 	         vid_stats.pkt_bytes, vid_stats.dropped ? " FULL" : "",
-	         r_warp.t_eff, r_warp.t, (unsigned) r_warp.tris, settings.dither ? "" : "  no dither",
+	         r_warp.t_eff, r_warp.t, (unsigned) r_warp.tris,
 	         cam.pos[0] / CLIP_SUB, cam.pos[1] / CLIP_SUB, cam.pos[2] / CLIP_SUB,
 	         prof_stage[PROF_SIM], rl_num_items(),
 	         pad.connected ? "ok" : "--", pad.type, pad.held, sticks);
@@ -687,8 +681,7 @@ static void opt_step(int d)
 
 static void opt_draw(void)
 {
-	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "antiwarp", "dlights", "fps cap",
-	                                             "tick rate" };
+	static const char *const label[SET_ROWS] = { "hud", "antiwarp", "dlights", "fps cap", "tick rate" };
 	char line[48], val[16];
 	for (int o = 0; o < SET_ROWS; o++) {
 		settings_value(o, val, sizeof val);
@@ -2388,8 +2381,6 @@ static void bench_menu(void)
 	bench_menu_key(PAD_UP, 0);                        /* (back to Reset) */
 	bench_menu_key(PAD_UP, 0);                        /* (the greyed ones: to Graphics) */
 	bench_menu_key(PAD_CROSS, "mgraphics");
-	bench_menu_key(PAD_RIGHT, "mgraphics_fx");        /* the effects high: their hint */
-	bench_menu_key(PAD_LEFT, 0);                      /* (medium again) */
 	for (int i = 0; i < SET_WARP; i++)
 		bench_menu_key(PAD_DOWN, 0);                  /* (to Anti-warping) */
 	static const char *const warp_page[] = {          /* default, then each level round */

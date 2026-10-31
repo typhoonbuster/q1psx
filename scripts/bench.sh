@@ -3,13 +3,12 @@
 # Build the benchmark variant (CMake preset "bench" -> build-bench/) and run it
 # headless; print the "bench ..." lines.
 #
-# Usage:  [TEXTURES=high|medium] [EFFECTS=1|2] [T=px] [WEAPON=3d|2d]
+# Usage:  [TEXTURES=high|medium] [T=px] [WEAPON=3d|2d]
 #         [VIEWS=0|1] [BENCH_MAPS=0|1] [BENCH_GAME=0|1] [PROFILE=0|1]
 #         scripts/bench.sh [max-seconds]
 #         TEXTURES is the build's texture level (the disc's one set, 4-bit;
-#         default high); the geometry and the models are low on every disc;
-#         EFFECTS the effects' level (1 medium, the default, 2 high;
-#         formats/qlevels.h; docs/porting-notes.md §52).
+#         default high); the geometry and the models are low on every disc
+#         (formats/qlevels.h; docs/porting-notes.md §52).
 #         T is the affine-warp threshold, fixed (default 4 px: the game's
 #         dynamic control's floor). WEAPON=2d builds the 2D gun (3d by
 #         default).
@@ -211,7 +210,6 @@ BENCH_GAME=${BENCH_GAME:-0}
 # writes the console at ~5 KB/s: the game scenario's 15 dumps need ~6 minutes
 SECS=${1:-$([ "$BENCH_GAME" = 1 ] && echo 420 || echo 60)}
 TEXTURES=${TEXTURES:-high}
-EFFECTS=${EFFECTS:-1}
 T=${T:-4}
 WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
@@ -268,7 +266,7 @@ MUSIC_RING=${MUSIC_RING:-6}
 MUSIC_REFILL=${MUSIC_REFILL:-2}
 MUSIC_SEEK=${MUSIC_SEEK:-100}
 cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" \
-      -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
+      -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
       -DQ1PSX_BENCH_BMF="$((1 - NOBMF))" \

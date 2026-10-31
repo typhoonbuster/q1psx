@@ -2580,3 +2580,13 @@ followed by R0-R4.
   four empty buckets (8 → 4, the same order); the grid's per-map choice
   (`Q1PSX_TESS_MAPS`, `TESS=`: on every map, the call assembled); a
   missing `<stdio.h>`. The display lists are the same; the release's level arena +5488 B (+19488 B with §119.1).
+- **The effects at high, the dithering on** (§119.3, provisional number,
+  2026-10-31). Two more
+  Graphics rows fixed: every effect makes the port's high count of
+  particles (the game's default was medium), and the effects are no
+  longer a quality axis (`formats/qlevels.h`: three; the bench's
+  `EFFECTS=` gone); the dithering is always on (`vid_set_dither`,
+  pktview's `PKTVIEW_DITHER=0` gone). The Graphics page keeps the HUD,
+  the anti-warping, the dynamic lights, the frame rate cap and the tick
+  rate. The display lists are master's at `EFFECTS=2` but the Graphics
+  pages; the release's level arena +1408 B (+20896 B with §119.1-2).
