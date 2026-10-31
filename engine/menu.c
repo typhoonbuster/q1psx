@@ -8,7 +8,6 @@
  * engine/ui.c at Quake's coordinates on its 320 x 240 screen.
  */
 
-#include <stdio.h>
 #include <string.h>
 
 #include "game.h"
@@ -68,9 +67,6 @@ void menu_open(void)
 {
 	m_state = M_MAIN;
 	m_entersound = 1;
-#if Q1PSX_PADSCRIPT
-	printf("menu: open\n");
-#endif
 }
 
 /* ------------------------------------------------------------- drawing -- */
@@ -249,9 +245,6 @@ static void main_key(int k)
 
 static void new_game(void)
 {
-#if Q1PSX_PADSCRIPT
-	printf("menu: new game\n");
-#endif
 	m_state = M_NONE;
 	if (hooks.new_game)
 		hooks.new_game();
@@ -394,10 +387,6 @@ void menu_key(const pad_t *p)
 	int k = pad_key(p);
 	if (k == K_NONE)
 		return;
-#if Q1PSX_PADSCRIPT
-	printf("menu: state %d key %d (main %d sp %d options %d graphics %d)\n", m_state, k, m_main_cursor,
-	       m_singleplayer_cursor, options_cursor, graphics_cursor);
-#endif
 	switch (m_state) {
 	case M_MAIN:         main_key(k); break;
 	case M_SINGLEPLAYER: singleplayer_key(k); break;

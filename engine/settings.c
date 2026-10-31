@@ -1,5 +1,3 @@
-#include <stdio.h>
-
 #include "dlight.h"
 #include "gamma.h"
 #include "game.h"
@@ -47,11 +45,6 @@ void settings_defaults(void)
 
 void settings_apply(void)
 {
-#if Q1PSX_PADSCRIPT
-	printf("settings: hud %d warp %s dlights %d vol %d music %d fps %d tick %d\n",
-	       settings.hud, warp_name[settings.warp], settings.dlights, settings.volume, settings.music, fps_caps[settings.fps_cap],
-	       tick_rates[settings.tick]);
-#endif
 	r_set_warp(R_WARP_DYNAMIC, warp_levels[settings.warp][0], warp_levels[settings.warp][1]);
 	hud_set_style(settings.hud);
 	dl_enabled = settings.dlights;

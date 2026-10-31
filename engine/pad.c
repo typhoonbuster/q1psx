@@ -147,8 +147,6 @@ pad_poll_t pad_poll = {
 _Static_assert(__builtin_offsetof(pad_poll_t, t) == 4 && __builtin_offsetof(pad_poll_t, rx) == 8 &&
                __builtin_offsetof(pad_poll_t, tx) == 17, "irq.s's PP_* offsets");
 
-#if !Q1PSX_PADSCRIPT
-
 static void snap_poll(volatile pad_snap *s);
 
 /* (interrupts off) the poll ended: its answer into pad_buf, then the ring */
@@ -213,7 +211,6 @@ static void poll_start(void)
 	SIO_DATA(0) = pad_poll.tx[0];
 	pad_poll.t = (uint16_t) TIMER_VALUE(2);
 }
-#endif
 
 /* the poll's answer (pad_buf) as a snapshot. stat 0 = data valid. Every
    pad type carries the button word at the same place (digital, analog,
@@ -236,80 +233,14 @@ static void snap_poll(volatile pad_snap *s)
 	}
 }
 
-#if Q1PSX_PADSCRIPT
-/* the release build's scripted check (CMake Q1PSX_PADSCRIPT): the pad's
-   polls replaced by presses at given vblanks */
-static const struct { uint16_t from, to, buttons; } pad_script[] = {
-	/* (the boot's loads take their vblanks: the presses come late, and a
-	   press during a load is lost, as a player's would be) */
-	{ 1500, 1504, PAD_CROSS },     /* Single Player */
-	{ 1560, 1564, PAD_CROSS },     /* New Game (START reloaded) */
-	{ 2100, 2160, PAD_UP },        /* a second's walk */
-	{ 2220, 2224, PAD_START },     /* the menu */
-	{ 2280, 2284, PAD_DOWN },      /* (to Options) */
-	{ 2340, 2344, PAD_CROSS },     /* Options */
-	{ 2400, 2404, PAD_UP },        /* (to Graphics) */
-	{ 2460, 2464, PAD_CROSS },     /* Graphics: the textures */
-	{ 2520, 2524, PAD_RIGHT },     /* textures: low (the release disc's after high) */
-	{ 2580, 2584, PAD_DOWN },
-	{ 2640, 2644, PAD_LEFT },      /* map geometry: low */
-	{ 2700, 2704, PAD_DOWN },
-	{ 2760, 2764, PAD_LEFT },      /* models: medium */
-	{ 2820, 2824, PAD_DOWN },
-	{ 2880, 2884, PAD_RIGHT },     /* effects: ultra (at once) */
-	{ 2940, 2944, PAD_DOWN }, { 3000, 3004, PAD_DOWN }, { 3060, 3064, PAD_DOWN },
-	{ 3120, 3124, PAD_RIGHT },     /* warp: dynamic */
-	{ 3180, 3184, PAD_DOWN }, { 3240, 3244, PAD_DOWN },
-	{ 3300, 3304, PAD_RIGHT },     /* HUD: q2 psx (the budget skipped: greyed) */
-	{ 3360, 3364, PAD_DOWN },
-	{ 3420, 3424, PAD_CROSS },     /* dynamic lights: off */
-	{ 3480, 3484, PAD_DOWN },
-	{ 3540, 3544, PAD_RIGHT },     /* draw weapon: 2D */
-	{ 3600, 3604, PAD_DOWN },
-	{ 3660, 3664, PAD_RIGHT },     /* draw distance: 2048 */
-	{ 3720, 3724, PAD_DOWN },
-	{ 3780, 3784, PAD_RIGHT },     /* flat shading: far */
-	{ 3840, 3844, PAD_START }, { 3900, 3904, PAD_START }, { 3960, 3964, PAD_START },   /* out: no load */
-	{ 4020, 4140, PAD_R2 },        /* two seconds of fire */
-	{ 4200, 4204, PAD_START },     /* the menu again (its cursor on Options) */
-	{ 4230, 4234, PAD_UP },
-	{ 4260, 4264, PAD_CROSS },     /* Single Player */
-	{ 4320, 4324, PAD_CROSS },     /* New Game: "Are you sure" */
-	{ 4380, 4384, PAD_CROSS },     /* yes: START at the levels chosen */
-};
-static uint32_t script_vbl;
-
-static void script_poll(void)
-{
-	uint16_t b = 0;
-	for (unsigned i = 0; i < sizeof pad_script / sizeof pad_script[0]; i++)
-		if (script_vbl >= pad_script[i].from && script_vbl < pad_script[i].to)
-			b |= pad_script[i].buttons;
-	script_vbl++;
-	uint8_t *p = pad_buf[0];
-	p[0] = 0;                              /* data valid, a DualShock (analog), active low */
-	p[1] = 0x73;
-	p[2] = (uint8_t) ~b;
-	p[3] = (uint8_t) (~b >> 8);
-	p[4] = p[5] = p[6] = p[7] = 0x80;      /* the sticks centred */
-}
-#endif
-
 /* (the vblank's interrupt: engine/vid.c vid_vblank calls it first) */
 void pad_vblank(void)
 {
 	if (!driver_on)
 		return;
-#if Q1PSX_PADSCRIPT
-	script_poll();
-	uint32_t h = ring_head;
-	snap_poll(&ring[h & (PAD_RING - 1)]);
-	ring_head = h + 1;
-#else
 	if (pad_poll.busy)
 		poll_end();                        /* the last one, as far as it went */
 	poll_start();
-#endif
 }
 
 static void driver_start(void)
@@ -318,10 +249,8 @@ static void driver_start(void)
 	SIO_MODE(0) = 0x000d;                  /* 8 bits, no parity, x1 */
 	SIO_BAUD(0) = 0x0088;                  /* 250 kbps */
 	SIO_CTRL(0) = 0x0010;
-#if !Q1PSX_PADSCRIPT
 	pad_poll.busy = 0;
 	InterruptCallback(IRQ_SIO0, poll_isr);
-#endif
 	driver_on = 1;
 }
 
@@ -330,13 +259,11 @@ static void driver_start(void)
 static void driver_stop(void)
 {
 	driver_on = 0;
-#if !Q1PSX_PADSCRIPT
 	FastEnterCriticalSection();
 	InterruptCallback(IRQ_SIO0, 0);
 	pad_poll.busy = 0;
 	SIO_CTRL(0) = 0x0010;
 	FastExitCriticalSection();
-#endif
 }
 
 Q_COLD void pad_init(void)
@@ -362,7 +289,6 @@ static void snap_to_pad(const volatile pad_snap *s, pad_t *p)
 /* A poll still going: wait while its bytes keep coming (the game reads the
    pad soon after the vblank; a poll takes 9 bytes of ~40 us on the
    machine), then end it as it is (no pad: no byte comes). */
-#if !Q1PSX_PADSCRIPT
 #define POLL_WAIT 512                    /* timer 2 ticks since its last byte: ~120 us */
 
 static void poll_wait(void)
@@ -384,14 +310,11 @@ static void poll_wait(void)
 		poll_end();
 	FastExitCriticalSection();
 }
-#endif
 
 int pad_frame(pad_t *ticks, int max)
 {
-#if !Q1PSX_PADSCRIPT
 	if (driver_on)
 		poll_wait();
-#endif
 	uint32_t head = ring_head;
 	if (head - ring_tail > PAD_RING - 2)        /* a long frame (a load): the oldest gone */
 		ring_tail = head - (PAD_RING - 2);

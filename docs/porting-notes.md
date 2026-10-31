@@ -15820,3 +15820,20 @@ high, the dithering on.
   - The release: the level arena 1367600 → 1369008 B (+1408: `.text`
     −996, `.rodata` −372, the data −40), +20896 B against master; the
     default preset builds.
+
+### 119.4 The release flow's scripted pad removed
+
+`Q1PSX_PADSCRIPT` (CMake, off by default) replaced the pad's polls with
+presses at fixed vblanks to walk the release's menus headless
+(`engine/pad.c` `pad_script`, prints in `engine/menu.c` and
+`engine/settings.c`). Its presses still walked the Graphics page as it
+was before §52 (the textures, the geometry, the models, the effects'
+ultra, the draw distance's 2048, the flat shading): on today's page they
+  land on other rows. Found during 119.3, removed; the
+game bench's walk through the release menu (§117) covers the menus. The
+pad's driver keeps its polls by interrupts (§81.2, §101) without the
+guards around them.
+
+- **Checked** (TESTING 11.101): the release's and the default preset's
+  executables byte for byte those of 119.3 (the script was in no build);
+  the bench builds; no warning.

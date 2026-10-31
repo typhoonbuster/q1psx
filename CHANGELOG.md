@@ -2590,3 +2590,8 @@ followed by R0-R4.
   the anti-warping, the dynamic lights, the frame rate cap and the tick
   rate. The display lists are master's at `EFFECTS=2` but the Graphics
   pages; the release's level arena +1408 B (+20896 B with §119.1-2).
+- **The release flow's scripted pad removed** (§119.4, provisional
+  number, 2026-10-31).
+  `Q1PSX_PADSCRIPT` still walked the Graphics page as it was before §52;
+  the option, the script and its prints are gone. The release's and the
+  default preset's executables are byte for byte the same.
