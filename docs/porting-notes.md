@@ -14806,7 +14806,8 @@ measures (the fight's vblanks a frame over each window of 300 frames;
   quick turns, the caps' pacing (45 and 30 within their share), the pad
   (a press, the walk's speed, the menu's cursor), the sound and the
   music, the streaming (the monsters' skins in at a fight, a level's
-  zones), the loading screens.
+  zones), the loading screens. The branch was tested on DuckStation
+  before its merge into master (2026-10-31).
 - PCSX-Redux draws at once: the GPU's own time (DuckStation's, a
   console's) shows a late frame later, at the first vblank after its
   drawing; a frame whose previous one is drawn after its vblank (the GPU
