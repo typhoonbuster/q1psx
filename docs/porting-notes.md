@@ -15209,3 +15209,14 @@ would rarely act; the cost is each light's reach.
   carry the frustum's planes as the walk does: a larger asm change), and
   the lit records' save and restore (their share of the 4.7 % not
   measured apart).
+
+### 113.3 Both, on master 5cf05f5
+
+Master moved during the work (§111, §114, §115, §116); merged into the
+branch, `QCOOK_MERGE=0` still cooks the 32 worlds byte for byte as
+master's own qcook does. Both levers against both off (`QCOOK_MERGE=0
+DLIGHT_MINLIGHT=0`, master's frames), one run each: E2M7's fight's
+drawing 12 858 120 → 12 511 011 cycles (−2.70 %; each window −3.63 to
+−1.12 %, the same models drawn), the 128 views 40 293 952 → 40 076 813
+(−0.54 %; 78 faster, 48 slower; 16 → 15 views past a vblank), the same
+17 maps zoned.
