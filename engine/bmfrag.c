@@ -1487,9 +1487,8 @@ static int32_t clamp16(int32_t v)
    it is in view (bmf_seen finds it by its box meanwhile). */
 __attribute__((noinline)) BMF_COLD static int all_culled(const edict_t *e, int32_t rmax)
 {
-	const int16_t *rows[3] = { r_state.rot, r_state.yrow, r_state.rot + 6 };   /* (the y row
-	                                                 unscaled: render.h yrow) */
-	int32_t c[3], h[3], lo[3], hi[3], amin[3], amax[3], tr[3] = { r_state.tr[0], r_state.ytr, r_state.tr[2] };
+	const int16_t *rows[3] = { r_state.rot, r_state.rot + 3, r_state.rot + 6 };
+	int32_t c[3], h[3], lo[3], hi[3], amin[3], amax[3], tr[3] = { r_state.tr[0], r_state.tr[1], r_state.tr[2] };
 	ent_absbox(e, amin, amax);
 	for (int k = 0; k < 3; k++) {                 /* 1/8 units -> vertex units */
 		c[k] = (amin[k] + amax[k]) >> 2;

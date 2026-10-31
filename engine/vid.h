@@ -27,10 +27,8 @@
    (models and particles included, engine/rlist.h). */
 #define VID_OT_LEN     8
 #define OT_SKY         7     /* (VRAM transfers: the animated textures, the gun's) */
-#define OT_TARGET      5     /* the internal resolution's target set up (vid_res_frame) */
 #define OT_WORLD       4
 #define OT_WEAPON      2     /* the 2D gun: after the world, under the overlay */
-#define OT_STRETCH     1     /* the target stretched over the viewport (vid_res_frame) */
 #define OT_OVERLAY     0
 
 /* A buffer's packet arena: 80 KB (docs/porting-notes.md §90.1; 96 until
@@ -82,14 +80,6 @@ void  vid_set_viewport(int rows);              /* the 3D view's draw area: 240 r
                                                   192 above the original status bar;
                                                   from the next frame */
 int   vid_viewport_rows(void);
-/* The 3D view's internal resolution (render.c r_set_res, docs/porting-notes.md
-   §78): this frame's 3D view (OT_TARGET to OT_STRETCH) draws into a w x h
-   target at the viewport's bottom-right corner, then is stretched over the
-   viewport, before the overlay; xs the stretch's seam (its first columns
-   from texture page 64 up to it: x xs w / 320 whole, past 128 - 320 + w).
-   Once a frame, before the 3D view's packets (none when the arena is
-   full: the frame then draws as native) */
-void  vid_res_frame(int w, int h, int xs);
 void *vid_alloc(int bytes);                    /* NULL when the arena is full */
 void  vid_link(int bucket, void *packet);
 void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */

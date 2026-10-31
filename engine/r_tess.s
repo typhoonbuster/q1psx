@@ -239,17 +239,13 @@ r_tess_stat:                             # the frame's (R_PROFILE): polygons cut
 .endm
 
 # TBOUNDS: the cells' registers: v0 = clut << 16, v1 = tpage << 16, a1 =
-# the width << 16, a0 = the rows << 16 (the off-screen test's bounds).
-# Clobbers t9.
+# the width << 16, a0 = the viewport's rows << 16 (the off-screen test's
+# bounds).
 .macro TBOUNDS
 	lw      $v0, SP_CLUT16($t8)
 	lw      $v1, SP_TPAGE16($t8)
-	lui     $t9, %hi(r_res_w)
-	lw      $a1, %lo(r_res_w)($t9)
-	lui     $t9, %hi(r_res_h)
-	lw      $a0, %lo(r_res_h)($t9)
-	nop
-	sll     $a1, $a1, 16
+	lw      $a0, SP_VH2($t8)
+	lui     $a1, 320
 	sll     $a0, $a0, 16
 .endm
 

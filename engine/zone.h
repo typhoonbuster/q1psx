@@ -33,7 +33,6 @@ typedef struct {
 	uint32_t       leaves;     /* +0  world.leaves, KUSEG (the walk's leaf pointers)    */
 	const uint16_t *leaf_set;  /* +4  [num_leaves]: a leaf's zone set                    */
 	uint32_t       set;        /* +8  the camera leaf's set at the last call (0x10000: none) */
-	uint32_t       mark;       /* +12 the marking zone_mark goes on to (render.c)        */
 } zone_rt_t;
 
 extern zone_rt_t zone_rt;

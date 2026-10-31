@@ -2664,13 +2664,6 @@ static int ws_draw(int wpn, int frame, int32_t bob, int light)   /* 0: draw it 3
 	game_view_angles(&yaw, &pitch, &roll);
 	int k = pitch - pl.pm.pitch;                  /* the camera's pitch over the gun's */
 	int32_t kick16 = -R_SCREEN_H * 16 * r_sin(k) / r_cos(k);
-	if (r_res) {                                  /* the 3D view's target (render.h): its */
-		s12    = s12 * r_res_w / VID_W;           /*  columns, its rows (256 x 224's not */
-		t12    = t12 * r_res_h / (2 * cy);        /*  in proportion), its centre */
-		kick16 = kick16 * r_res_h / (2 * cy);
-		cx     = r_res_w / 2;
-		cy     = r_res_h / 2;
-	}
 	int32_t cr = r_cos(roll), sr = r_sin(roll);
 	int16_t xy[4][2];
 	for (int c = 0; c < 4; c++) {
@@ -2865,17 +2858,10 @@ void game_render_particles(void)
 {
 	if (!gdata.ok)
 		return;
-	if (r_part_z) {                                 /* the draw distance: not in the fog's */
-		for (int i = part_active; i; i = particles[i - 1].next) {   /* far half */
-			const particle_t *p = &particles[i - 1];
-			if (r_view_depth(p->org) <= r_part_z)
-				rl_add_particle(p->leaf, p->org, p->colour);
-		}
-		return;
-	}
 	for (int i = part_active; i; i = particles[i - 1].next) {   /* (R_DrawParticles' order) */
 		const particle_t *p = &particles[i - 1];
-		rl_add_particle(p->leaf, p->org, p->colour);
+		if (r_view_depth(p->org) <= R_PART_Z)         /* the draw distance: not in the */
+			rl_add_particle(p->leaf, p->org, p->colour);   /*  fog's far half */
 	}
 }
 

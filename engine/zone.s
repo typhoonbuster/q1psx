@@ -9,11 +9,10 @@
 #                other than the last call's goes to zone_enter (zone.c, C),
 #                which may make another chunk current, so the vertex pool
 #                the walk keeps in the scratchpad is taken again from
-#                r_state. Then on to the marking render.c chose (zone_rt
-#                mark: mark_pvs or mark_pvs_far), which returns to
-#                mark_done. Clobbers what mark_pvs_far may (t0-t7, t9,
-#                a1-a3, v0, v1, at, hi / lo); keeps a0, ra, the s
-#                registers, fp, t8, gp. The same set: 17 instructions and
+#                r_state. Then on to the marking (r_world.s mark_pvs),
+#                which returns to mark_done. Clobbers what mark_pvs may
+#                (t0-t7, t9, a1-a3, v0, v1, at, hi / lo); keeps a0, ra, the
+#                s registers, fp, t8, gp. The same set: 17 instructions and
 #                the multiply's wait.
 #   zone_patch   C ABI: a chunk's patch words into the world nodes' face
 #                blocks (formats/qworld.h QZP_*): a0 = the first node, a1 =
@@ -34,7 +33,6 @@
 .set ZR_LEAVES,  0       # zone.h zone_rt_t
 .set ZR_LEAFSET, 4
 .set ZR_SET,     8
-.set ZR_MARK,    12
 
 	.section .text.zone_mark, "ax", @progbits
 	.global zone_mark
@@ -53,10 +51,10 @@ zone_mark:                               # (zone_rt is 16-byte aligned: one %hi 
 	sll     $t1, $t1, 1                  #  waits for the product), a halfword a leaf
 	addu    $t2, $t2, $t1
 	lhu     $t2, 0($t2)                  # the leaf's set
-	lw      $t9, %lo(zone_rt + ZR_MARK)($t0)
+	nop
 	bne     $t2, $t4, zm_enter
 	nop
-	jr      $t9                          # the same set: on to the marking
+	j       mark_pvs                     # the same set: on to the marking
 	nop
 zm_enter:
 	addiu   $sp, $sp, -32                # (o32 argument slots, then the kept words)
@@ -70,12 +68,10 @@ zm_enter:
 	lw      $ra, 28($sp)
 	lw      $a0, 24($sp)
 	lw      $gp, 20($sp)
-	lui     $t0, %hi(zone_rt)
-	lw      $t9, %lo(zone_rt + ZR_MARK)($t0)
 	lw      $t1, RS_VERTPOOL($s0)        # (another chunk current: its pool)
 	lui     $t8, 0x1f80                  # (the scratchpad's base, the walk's t8)
 	addiu   $sp, $sp, 32
-	jr      $t9
+	j       mark_pvs
 	sw      $t1, SP_VERTPOOL($t8)
 	.size   zone_mark, . - zone_mark
 

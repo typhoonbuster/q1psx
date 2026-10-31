@@ -43,6 +43,7 @@
 #include "prof.h"
 #include "qworld.h"
 #include "render.h"
+#include "vid.h"
 
 #define VU       6            /* view units per world unit                  */
 #define ZNEAR    (8 * VU)     /* the near clip plane, the world's and the
@@ -73,7 +74,6 @@
 #define SP_OFY      0x3a8     /* the viewport's vertical centre             */
 #define SP_SZCLIP   0x3b0     /* SZ_CLIP, or the view model's               */
 #define SP_ZNEAR    0x3b4     /* ZNEAR, or the view model's                 */
-#define SP_HSHIFT   0x3b8     /* H = 5 << it                                */
 #define SP_VERTPOOL 0x3c0     /* the vertex pool: the map's, a model's      */
 #define SP_CLUT16   0x3d4     /* the record's texture: its clut << 16       */
 #define SP_TPAGE16  0x3d8     /* its tpage << 16                            */
@@ -287,7 +287,7 @@ static int subdivide(r_state_t *s, const sv_t *a, const sv_t *b, const sv_t *c)
 			if (t.v[i].sy < miny) miny = t.v[i].sy;
 			if (t.v[i].sy > maxy) maxy = t.v[i].sy;
 		}
-		if (maxx < 0 || minx >= r_res_w || maxy < 0 || miny >= r_res_h)
+		if (maxx < 0 || minx >= VID_W || maxy < 0 || miny >= (int32_t) s->vh2)
 			continue;                              /* off screen */
 
 		int s01 = 0, s12 = 0, s20 = 0;
@@ -360,8 +360,8 @@ void r_slow(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 	clut16  = SPW(SP_CLUT16);
 	tpage16 = SPW(SP_TPAGE16);
 	t2      = (int32_t) SPW(SP_T2);
-	h       = r_res_table[r_res].mul << SPW(SP_HSHIFT);   /* (the target's: W / 2) */
-	ofx     = r_res_w / 2;
+	h       = R_SCREEN_H;
+	ofx     = VID_W / 2;
 	ofy     = (int32_t) SPW(SP_OFY);
 	znear   = (int32_t) SPW(SP_ZNEAR);
 

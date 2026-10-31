@@ -73,16 +73,9 @@ typedef struct {
 	int32_t  vh2;            /* +204 the viewport's height (240, 192)         */
 	uint32_t nlights;        /* +208 dynamic lights this frame (dlight.c)      */
 	uint32_t lights;         /* +212 their table, 32 bytes each (DL_*)        */
-	int32_t  mark_r;         /* +216 mark_pvs_far's reach, vertex units: a leaf
-	                                 farther on an axis is not marked          */
-	uint32_t fragpool;       /* +220 qw_vert *: the brush models' pieces'
+	uint32_t fragpool;       /* +216 qw_vert *: the brush models' pieces'
 	                                 vertices (bmfrag.c)                       */
-	int16_t  yrow[4];        /* +224 rot's y row, and tr's y below, unscaled:
-	                                 a target whose pixels are not square has
-	                                 rot's scaled (r_set_view); the C's
-	                                 frustum tests read these (C only)        */
-	int32_t  ytr;            /* +232                                          */
-	uint32_t seq;            /* +236 the zone's cooked walk (its words, formats/
+	uint32_t seq;            /* +220 the zone's cooked walk (its words, formats/
 	                                 qworld.h), run in place of the tree walk this
 	                                 frame; 0: the tree walk (zone.c, r_seq_set)  */
 } r_state_t;
@@ -95,25 +88,6 @@ void r_init(void);
    original status bar (192). Sets the GTE's projection centre. */
 void r_set_viewport(int rows);
 int  r_viewport_rows(void);
-
-/* The 3D view's internal resolution (the Graphics page's): below 320 x 240,
-   the world, its models, the particles and the gun are drawn into an
-   r_res_w x r_res_h target at the viewport's bottom right in the frame
-   buffer, which engine/vid.c then stretches over the viewport; the frame
-   buffer, the HUD and the menus stay 320 x 240. The field of view is
-   kept: the GTE's H is half the width (the slow path's product mul <<
-   shift: r_slow.s sp_proj, patched), and a target whose pixels are not
-   square (256 x 224) has the view's y row scaled to its rows' H
-   (r_set_view; the frustum's vertical planes patched to match). h is the
-   rows over the whole screen's 240; over the 192-row viewport, in
-   proportion. docs/porting-notes.md §78. */
-#define R_RES_COUNT 4
-typedef struct { uint16_t w, h; uint8_t mul, shift, seam, pad; } r_res_t;   /* (seam: vid.h) */
-extern const r_res_t r_res_table[R_RES_COUNT];
-extern int r_res;               /* r_res_table's index in use, 0 the native 320 */
-extern int r_res_w, r_res_h;    /* the target (the viewport, native)            */
-extern int r_proj_h;            /* the GTE's H (the C slow path's)              */
-void r_set_res(int i);
 
 /* Camera for the next r_frame(): position in 1/R_POS_SUB world units (the
    player physics' own resolution), angles in binary degrees. */
@@ -187,28 +161,28 @@ extern int r_ui_room;
 void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share);   /* share: the
                                               vblanks the frame rate cap gives this frame */
 
-/* The graphics options (the settings' Draw distance and Flat shading).
-   dist: the draw distance, world units (0: off): the depth where the fog
-   is black (from half of it), a record wholly beyond culled, the PVS's
-   leaves beyond reach not marked, the background black; flat: R_FLAT_*,
-   a far record (or any) drawn in one colour, its average light. Both off,
-   the record loops run as they are: on, the entries into them are patched
-   into their options' copies (r_world.s RECLOOP opt = 1, mark_pvs_far),
-   so an option costs nothing while it is off. */
+/* The draw distance, world units, fixed (docs/porting-notes.md §37, §119):
+   the fog black there, from three quarters of it; a record wholly beyond
+   culled, the PVS's leaves beyond reach not marked (r_world.s mark_pvs),
+   the background black. The asm's thresholds (engine/r_defs.inc R_DRAW_Z,
+   R_FOG_Z, R_MARK_R) are these. In the view's units (world x 6): */
+#define R_DRAW_DIST 1536
+#define R_DRAW_Z    (R_DRAW_DIST * 6)
+#define R_FOG_Z     (R_DRAW_DIST * 9 / 2)
+#define R_PART_Z    ((R_FOG_Z + R_DRAW_Z) / 2)   /* particles deeper are not drawn:
+                                                    where the fog passes half */
+
+/* The flat shading: a world record wholly beyond R_FLAT_FAR_UNITS (or any,
+   R_FLAT_ALL) drawn in one colour, its average light. The game's is
+   R_FLAT_FAR, the record loop as built (r_world.s dr); the bench's FLAT=
+   takes the others (r_set_flat patches the loop: none, its copy drn). */
 enum { R_FLAT_OFF, R_FLAT_FAR, R_FLAT_ALL, R_FLAT_MODES };
 #define R_FLAT_FAR_UNITS 512       /* R_FLAT_FAR: records wholly beyond this depth */
-#define R_SKY_RGB 40, 44, 60       /* the background: a flat "sky" until R3.4 */
-void r_set_options(int dist, int flat);
+void r_set_flat(int flat);
 
-/* particles deeper than this (view units, world x 6) are not drawn: where
-   the fog passes half (0: all drawn); and a point's depth (1/R_POS_SUB
-   world units) */
-extern int32_t r_part_z;
+/* a point's depth in the view's units (its position in 1/R_POS_SUB world
+   units) */
 int32_t r_view_depth(const int32_t pos[3]);
-
-/* the draw distance in the view's units (world x 6; 0x7fffffff: none): a
-   record wholly past it is culled (r_world.s ds_o_dcull's) */
-extern int32_t r_draw_z;
 
 /* asm entry point (engine/r_world.s) */
 void r_render(r_state_t *s);

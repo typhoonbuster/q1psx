@@ -19,6 +19,7 @@
 
 #include "qworld.h"
 #include "render.h"
+#include "vid.h"
 
 #ifndef Q1PSX_TESS_KMAX
 #define Q1PSX_TESS_KMAX 3
@@ -180,7 +181,7 @@ int r_tess(r_state_t *s, const uint8_t *rec, const uint8_t *poly, int nv)
 		return 0;
 	}
 	uint32_t clut16 = SPW(SP_CLUT16), tpage16 = SPW(SP_TPAGE16);
-	uint32_t wide = (uint32_t) r_res_w << 16, rows = (uint32_t) r_res_h << 16;
+	uint32_t wide = (uint32_t) VID_W << 16, rows = (uint32_t) s->vh2 << 16;
 	const uint16_t *uvs  = (const uint16_t *) (poly + 4);
 	if (!ku && !kv) {
 		/* the five edges pass: the polygon unsplit, one packet from the

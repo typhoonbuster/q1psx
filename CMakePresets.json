@@ -18,14 +18,13 @@
 		{
 			"name":          "release",
 			"inherits":      "default",
-			"displayName":   "Release build: Quake's menu, no debug tools; the high textures, the 3D gun, 1536 units of view",
+			"displayName":   "Release build: Quake's menu, no debug tools; the high textures, the 3D gun",
 			"binaryDir":     "${sourceDir}/build-release",
 			"cacheVariables": {
 				"Q1PSX_PROFILE":  "OFF",
 				"Q1PSX_RELEASE":  "ON",
 				"Q1PSX_TEXTURES": "high",
-				"Q1PSX_WEAPON":   "3d",
-				"Q1PSX_DRAWDIST": "1536"
+				"Q1PSX_WEAPON":   "3d"
 			}
 		},
 		{

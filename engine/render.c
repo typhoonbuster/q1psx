@@ -50,10 +50,8 @@ _Static_assert(offsetof(r_state_t, viewmodel)    == 196, "r_state layout");
 _Static_assert(offsetof(r_state_t, vh2)          == 204, "r_state layout");
 _Static_assert(offsetof(r_state_t, nlights)      == 208, "r_state layout");
 _Static_assert(offsetof(r_state_t, lights)       == 212, "r_state layout");
-_Static_assert(offsetof(r_state_t, mark_r)       == 216, "r_state layout");
-_Static_assert(offsetof(r_state_t, fragpool)     == 220, "r_state layout");
-_Static_assert(offsetof(r_state_t, yrow)         == 224, "r_state layout");
-_Static_assert(offsetof(r_state_t, seq)          == 236, "r_state layout");
+_Static_assert(offsetof(r_state_t, fragpool)     == 216, "r_state layout");
+_Static_assert(offsetof(r_state_t, seq)          == 220, "r_state layout");
 _Static_assert(offsetof(qw_leaf, light)          == 27,  "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, visframe)       == 6,   "qw_leaf layout");
 _Static_assert(offsetof(qw_leaf, num_marks)      == 14,  "qw_leaf layout");
@@ -67,7 +65,6 @@ _Static_assert(sizeof(qw_record)                 == 20,  "qw_record layout");
 _Static_assert(offsetof(qw_record, sc)           == 12,  "qw_record layout");
 
 static int bound;
-static void mark_patch(void);
 
 /* ------------------------------------------------------------------ trig -- */
 
@@ -152,24 +149,13 @@ static const uint16_t warp_k16[R_WARP_T_MAX + 1] = {
 	55,
 };
 
-static int32_t yb_num = 1, yb_den = 1;   /* the view's y row x num / den: the rows'
-                                            H over the columns' (256 x 224's; §78) */
-static int32_t yb12 = 4096;              /* the same, x 4096 rounded */
-
-/* T is in the target's pixels: below the native 320 the bound follows H's
-   share, k16 = sqrt(560 x (2H / 320) / T) x 16 = sqrt(448 x 2H / T), H the
-   larger of the columns' and the rows' (256 x 224: the rows' 149.3),
-   rounded as the table is (it is that at H 160) */
 Q_COLD static void warp_apply(int t)
 {
 	if (t < 1) t = 1;
 	if (t > R_WARP_T_MAX) t = R_WARP_T_MAX;
 	r_warp.t_eff     = t;
 	r_state.warp_t2  = 2u * (uint32_t) t;
-	uint32_t w2 = (uint32_t) ((r_res_w * yb_num + yb_den - 1) / yb_den);   /* 2H, up */
-	if (w2 < (uint32_t) r_res_w)
-		w2 = (uint32_t) r_res_w;
-	r_state.warp_k16 = r_res ? (q_isqrt32(448u * 4u * w2 / (uint32_t) t) + 1) / 2 : warp_k16[t];
+	r_state.warp_k16 = warp_k16[t];
 }
 
 void r_set_warp(int mode, int t_px, int t_max)
@@ -283,20 +269,17 @@ void r_warp_feedback(uint32_t frame_cycles, uint32_t vbl, uint32_t share)
 /* ------------------------------------------------------- the cooked walk -- */
 
 /* the world's record loops' three ways out to the tree walk (r_world.s
-   RECLOOP wx: dr and its options' copies) and draw_ents' way back, PC-
+   RECLOOP wx: dr and the bench's copy drn) and draw_ents' way back, PC-
    relative branches, pointed at seq_next while a cooked walk runs */
-extern uint32_t dr_xa[], dr_xb[], dr_xc[], dro1_xa[], dro1_xb[], dro1_xc[], dro2_xa[], dro2_xb[], dro2_xc[];
-extern uint32_t dro3_xa[], dro3_xb[], dro3_xc[], ei_x[], seq_next[], seq_ents_back[];
-static uint32_t *const seq_site[] = {
-	dr_xa, dr_xb, dr_xc, dro1_xa, dro1_xb, dro1_xc, dro2_xa, dro2_xb, dro2_xc, dro3_xa, dro3_xb, dro3_xc, ei_x,
-};
+extern uint32_t dr_xa[], dr_xb[], dr_xc[], drn_xa[], drn_xb[], drn_xc[], ei_x[], seq_next[], seq_ents_back[];
+static uint32_t *const seq_site[] = { dr_xa, dr_xb, dr_xc, drn_xa, drn_xb, drn_xc, ei_x };
 #define SEQ_SITES (int) (sizeof seq_site / sizeof seq_site[0])
 static uint32_t seq_orig[SEQ_SITES];
 #define SEQ_IMM16(w, v)  (((w) & 0xffff0000u) | ((uint32_t) (v) & 0xffffu))
 static int      seq_mode = -1;           /* -1 as built (the tree's), 0 the tree, 1 the cooked walk */
 
 /* the sites as the mode wants them (no cache flush here). A site holding
-   a `j` is the options' (r_set_options puts one in a loop's first word,
+   a `j` is the flat shading's (r_set_flat puts one in dr's first word,
    which is dr_xa's in a build without the profile): left as it is, the
    copy it jumps to has its own sites. draw_ents' way back goes to
    seq_ents_back (the registers a leaf's list clobbers taken back). */
@@ -342,15 +325,15 @@ void r_seq_set(uint32_t seq)
 
 /* the maps that take the regular subdivision (engine/r_tess.s, §92): a
    build setting, CMake Q1PSX_TESS_MAPS: names separated by commas, "all",
-   or nothing. The record loops' calls to the slow path (r_world.s
-   RECLOOP: dr's and its options' copies', `jal`) go to tess_poly on
-   those, to slow_poly on the others, whose frames stay the tree walk's. */
+   or nothing. The world record loops' calls to the slow path (r_world.s
+   RECLOOP: dr's and drn's, `jal`) go to tess_poly on those, to slow_poly
+   on the others, whose frames stay the tree walk's. */
 #ifndef Q1PSX_TESS_MAPS
 #define Q1PSX_TESS_MAPS ""
 #endif
 int r_tess_on;
 #if !Q1PSX_ENGINE_C
-extern uint32_t dr_ts[], dro1_ts[], dro2_ts[], dro3_ts[];
+extern uint32_t dr_ts[], drn_ts[];
 extern void tess_poly(void), slow_poly(void);
 #endif
 
@@ -375,9 +358,9 @@ void r_tess_select(const char *map)
 {
 	r_tess_on = tess_wanted(map);
 #if !Q1PSX_ENGINE_C
-	uint32_t *const site[] = { dr_ts, dro1_ts, dro2_ts, dro3_ts };
+	uint32_t *const site[] = { dr_ts, drn_ts };
 	uint32_t to = (uint32_t) (uintptr_t) (r_tess_on ? tess_poly : slow_poly);
-	for (int i = 0; i < 4; i++)
+	for (int i = 0; i < 2; i++)
 		*site[i] = (3u << 26) | ((to >> 2) & 0x03ffffffu);   /* jal to */
 	FlushCache();
 #endif
@@ -386,45 +369,31 @@ void r_tess_select(const char *map)
 /* --------------------------------------------------------------- options -- */
 
 /* the fogged transform's table (r_world.s XFORM fog): by SZ / 64, a
-   vertex's light factor x 128, from 128 at half the draw distance down to
-   0 at it */
+   vertex's light factor x 128, from 128 at the fog's start (R_FOG_Z) down
+   to 0 at the draw distance (r_init) */
 uint8_t r_fogtab[1024];
 uint8_t r_vis_row[256];     /* the camera leaf's PVS row expanded (r_world.s vis_expand: the
                                marking reads it byte by byte; formats/qworld.h qw_leaf vis,
                                docs/porting-notes.md §90.9); the cook keeps rows under 256 */
-int32_t r_part_z;
-int32_t r_draw_z = 0x7fffffff;
 
-static int opt_dist, opt_flat;
+static int opt_flat = R_FLAT_FAR;            /* the record loop's (r_set_flat) */
 static int32_t mark_cam[3];                  /* the camera at the last marking */
 static uint32_t mark_visframe;
 #define R_MARK_MOVE 64                       /* world units the camera moves before
-                                                mark_pvs_far's marks are redone */
+                                                mark_pvs's marks are redone (its reach's
+                                                margin: r_defs.inc R_MARK_R) */
 
-/* the record loops' entries, their options' copies (dro1: the draw
-   distance, dro2: the flat shading, dro3: both; deo1: the models' draw
-   distance), the patched words (r_world.s) */
-extern uint32_t dr_records[], de_records[], dlr_ret0[], dlr_ret1[], dlr_ret2[], mark_call[];
-extern uint32_t dro1_records[], dro2_records[], dro3_records[], deo1_records[];
-extern uint32_t dro1_lit_ret[], dro2_lit_back[], dro3_lit_ret[];   /* (the draw distance's
-                    copies: a stub first, their far depth lost to the light) */
-extern uint32_t dro1_o_dcull[], dro1_o_fogz[], dro1_o_fogc[], dro2_o_flatz[];
-extern uint32_t dro3_o_dcull[], dro3_o_fogz[], dro3_o_fogc[], dro3_o_flatz[], deo1_o_dcull[], deo1_o_fogz[];
-extern uint32_t ds_o_dcull[], ds_o_fogz[];   /* the monsters' sorted loop: the draw distance's
-                                                tests always (r_world.s dm_sort) */
-extern uint32_t mark_pvs_far[];
+/* the patched words (r_world.s): the world record loop's entry (the
+   bench's copy without the flat shading: drn), the dynamic lights' three
+   ways back into it, its flat shading's threshold, the camera-leaf call */
+extern uint32_t dr_records[], drn_records[], dlr_ret0[], dlr_ret1[], dlr_ret2[], mark_call[];
+extern uint32_t drn_lit_ret[], dr_o_flatz[];
 
-enum { S_DR, S_DE, S_RET0, S_RET1, S_RET2, S_MARK, S_ENTRIES };
-static uint32_t *const entry[S_ENTRIES] = { dr_records, de_records, dlr_ret0, dlr_ret1, dlr_ret2, mark_call };
+enum { S_DR, S_RET0, S_RET1, S_RET2, S_FLATZ, S_MARK, S_ENTRIES };
+static uint32_t *const entry[S_ENTRIES] = { dr_records, dlr_ret0, dlr_ret1, dlr_ret2, dr_o_flatz, mark_call };
 static uint32_t orig[S_ENTRIES];             /* their words as built */
-static uint32_t *const dcull[] = { dro1_o_dcull, dro3_o_dcull, deo1_o_dcull };
-static uint32_t *const fogz[]  = { dro1_o_fogz, dro3_o_fogz, deo1_o_fogz };
-static uint32_t *const fogc[]  = { dro1_o_fogc, dro3_o_fogc };
-static uint32_t *const flatz[] = { dro2_o_flatz, dro3_o_flatz };
-static uint32_t orig_flatz[2];
 
 #define J_TO(op, a)   ((op) | (((uint32_t) (a) >> 2) & 0x03ffffffu))
-#define SLTI(w, imm)  (((w) & 0xffff0000u) | ((uint32_t) (imm) & 0xffffu))
 #define LI(w, v)      (0x24000000u | ((w) & 0x001f0000u) | (uint32_t) (v))   /* addiu rt, $zero, v */
 
 /* the patched words as built, once */
@@ -434,71 +403,36 @@ static void keep_orig(void)
 		return;
 	for (int i = 0; i < S_ENTRIES; i++)
 		orig[i] = *entry[i];
-	for (int i = 0; i < 2; i++)
-		orig_flatz[i] = *flatz[i];
 }
 
-/* The camera-leaf call (r_world.s mark_call): the marking the draw
-   distance takes (mark_pvs, mark_pvs_far), through the zones' hook while a
-   zoned map is loaded (engine/zone.s zone_mark: the leaf's zone made
-   current before the walk, then on to the marking, zone_rt.mark). */
+/* The camera-leaf call (r_world.s mark_call): mark_pvs, through the zones'
+   hook while a zoned map is loaded (engine/zone.s zone_mark: the leaf's
+   zone made current before the walk, then on to mark_pvs). */
 extern uint32_t zone_mark[];
 
 static void mark_patch(void)
 {
 	keep_orig();
-	uint32_t mark = opt_dist ? (uint32_t) mark_pvs_far
-	              : ((uint32_t) mark_call & 0xf0000000u) | (orig[S_MARK] & 0x03ffffffu) << 2;   /* (jal mark_pvs) */
-	zone_rt.mark = mark;
-	*entry[S_MARK] = zone_on() ? J_TO(0x0c000000u, zone_mark) : J_TO(0x0c000000u, mark);
+	*entry[S_MARK] = zone_on() ? J_TO(0x0c000000u, zone_mark) : orig[S_MARK];
 	FlushCache();
 }
 
-void r_set_options(int dist, int flat)
+void r_set_flat(int flat)
 {
 	keep_orig();
-	opt_dist = dist;
 	opt_flat = flat;
-	/* view units (world x 6): the draw distance, the fog's start (its last
-	   quarter: the fogged transform for as few records as can be) */
-	int32_t dz = dist * 6, fz = dist * 9 / 2;
-	for (int i = 0; i < 1024; i++) {
-		int32_t z = i * 64 + 32;
-		r_fogtab[i] = (uint8_t) (!dist || z <= fz ? 128 : z >= dz ? 0 : 128 * (dz - z) / (dz - fz));
-	}
-	r_part_z = dist ? (fz + dz) / 2 : 0;
-	r_draw_z = dist ? dz : 0x7fffffff;
-	r_state.mark_r = (dist * 161 / 100 + R_MARK_MOVE) * QW_VSCALE;   /* (1.61: a frustum
-	                    corner's distance over its depth, 1 / 0.6247 for the 240 rows) */
-	for (unsigned i = 0; i < sizeof dcull / sizeof dcull[0]; i++) {
-		*dcull[i] = SLTI(*dcull[i], dz);
-		*fogz[i]  = SLTI(*fogz[i], fz);      /* the farthest depth: into the fog */
-	}
-	for (unsigned i = 0; i < sizeof fogc / sizeof fogc[0]; i++)
-		*fogc[i] = SLTI(*fogc[i], fz);       /* the centre: in it (drawn flat) */
-	*ds_o_dcull = SLTI(*ds_o_dcull, dist ? dz : 0x7fff);   /* none: at their most (a record */
-	*ds_o_fogz  = SLTI(*ds_o_fogz, dist ? fz : 0x7fff);    /* nearer than 5461 units drawn, unfogged) */
-	for (int i = 0; i < 2; i++)                  /* everywhere: li 0 (never nearer) */
-		*flatz[i] = flat == R_FLAT_ALL ? LI(orig_flatz[i], 0) : SLTI(orig_flatz[i], R_FLAT_FAR_UNITS * 6);
-	int v = (dist ? 1 : 0) | (flat ? 2 : 0);
-	static uint32_t *const recs[4] = { 0, dro1_records, dro2_records, dro3_records };
-	static uint32_t *const back[4] = { 0, dro1_lit_ret, dro2_lit_back, dro3_lit_ret };
-	*entry[S_DR]   = v    ? J_TO(0x08000000u, recs[v]) : orig[S_DR];
-	*entry[S_DE]   = dist ? J_TO(0x08000000u, deo1_records) : orig[S_DE];
-	*entry[S_RET0] = v    ? (orig[S_RET0] & 0xffff0000u) |
-	                        ((((uint32_t) back[v] - ((uint32_t) dlr_ret0 + 4)) >> 2) & 0xffffu) : orig[S_RET0];
-	*entry[S_RET1] = v    ? J_TO(0x08000000u, back[v]) : orig[S_RET1];
-	*entry[S_RET2] = v    ? J_TO(0x08000000u, back[v]) : orig[S_RET2];
-	seq_apply();                                 /* (dr's first word back from the options: the
+	int off = flat == R_FLAT_OFF;                /* drn, its lights' way back its own */
+	uint32_t ret0 = (orig[S_RET0] & 0xffff0000u) |
+	                ((((uint32_t) drn_lit_ret - ((uint32_t) dlr_ret0 + 4)) >> 2) & 0xffffu);
+	*entry[S_DR]    = off ? J_TO(0x08000000u, drn_records) : orig[S_DR];
+	*entry[S_RET0]  = off ? ret0 : orig[S_RET0];
+	*entry[S_RET1]  = off ? J_TO(0x08000000u, drn_lit_ret) : orig[S_RET1];
+	*entry[S_RET2]  = off ? J_TO(0x08000000u, drn_lit_ret) : orig[S_RET2];
+	*entry[S_FLATZ] = flat == R_FLAT_ALL ? LI(orig[S_FLATZ], 0) : orig[S_FLATZ];   /* everywhere: li 0
+	                                                                                  (never nearer) */
+	seq_apply();                                 /* (dr's first word back from FLAT=0: the
 	                                                cooked walk's way out again if one runs) */
 	FlushCache();
-	mark_patch();
-	r_state.force_mark = 1;
-	mark_visframe = 0;
-	if (dist)
-		vid_set_bg(0, 0, 0);                 /* (the fog's colour: what is culled shows it) */
-	else
-		vid_set_bg(R_SKY_RGB);
 }
 
 int32_t r_view_depth(const int32_t pos[3])
@@ -513,135 +447,12 @@ int32_t r_view_depth(const int32_t pos[3])
 
 static int viewport_rows = VID_H;
 
-/* The internal resolutions (docs/porting-notes.md §78): the width, the rows
-   over the whole screen's 240, and the slow path's H = mul << shift, the
-   GTE's half the width (the field of view kept): sp_proj's x 5 as built,
-   x 15 and x 1 patched in its two words, x 25 its second entry. The
-   stretch (vid.c) needs each a share of the screen above 1/2. */
-const r_res_t r_res_table[R_RES_COUNT] = {
-	{ 320, 240, 5, 5, 0, 0 }, { 256, 224, 1, 7, 80, 0 }, { 240, 180, 15, 3, 64, 0 }, { 200, 150, 25, 2, 16, 0 },
-};
-int r_res;
-int r_res_w = VID_W, r_res_h = VID_H;
-int r_proj_h = R_SCREEN_H;
-
-/* The patched words (docs/porting-notes.md §78): the walk's SP_HSHIFT
-   (r_world.s), the off-screen tests' bounds (every POLYS and the sorted
-   models' lui v0, 240 / 320, as pairs; the slow path's), the frustum's
-   vertical planes (r_ysites: 4y / 3z or 8y / 7z), the slow path's x H, y H,
-   centre and entry (r_slow.s sp_proj; the C engine's slow path reads
-   r_proj_h and r_res_w). */
-extern uint32_t r_o_hshift[];
-extern const uint32_t r_far_sites[], r_far_sites_end[], r_ysites[], r_ysites_end[];   /* (pairs: SITE_A, SITE_B) */
-#if !Q1PSX_ENGINE_C
-extern uint32_t sp_o_entry[], sp_o_xmul[], sp_o_ymul[], sp_o_ofx[], sp_o_bounds[], sp_proj_25[];
-static uint32_t sp_entry_word;             /* sp_o_entry's own (its z's load) */
-#endif
-
-#define MIPS_SLL(rd, rt, sa)  (((uint32_t) (rt) << 16) | ((uint32_t) (rd) << 11) | ((uint32_t) (sa) << 6))
-#define MIPS_ADDU(rd, rs, rt) (((uint32_t) (rs) << 21) | ((uint32_t) (rt) << 16) | ((uint32_t) (rd) << 11) | 0x21)
-#define MIPS_SUBU(rd, rs, rt) (((uint32_t) (rs) << 21) | ((uint32_t) (rt) << 16) | ((uint32_t) (rd) << 11) | 0x23)
-#define MIPS_J(to)            (0x08000000u | ((uint32_t) (to) >> 2 & 0x3ffffffu))
-#define IMM16(w, v)           (((w) & 0xffff0000u) | ((uint32_t) (v) & 0xffffu))
-/* a pair of sites in one word (r_world.s FARSITE, YSITE2): the first's
-   address and kind (bits 0-1), the second's distance from it and kind in
-   bits 21-30 (RAM addresses have none there): SITE_NEXT makes the second
-   the first */
-#define SITE_AT(w)            ((uint32_t *) (uintptr_t) ((w) & 0x801ffffcu))
-#define SITE_NEXT(w)          (((w) & 0x801ffffcu) + ((w) >> 21 & 0x3ffu))
-
-/* r x mul (5, 15 or 1) into r, at the scratch ($at, 1): two words, as
-   sp_proj has them for 5 (sll at, r, 2; addu r, r, at) */
-Q_COLD static void mul_words(uint32_t *w, int mul, int r)
-{
-	if (mul == 15) {
-		w[0] = MIPS_SLL(1, r, 4);
-		w[1] = MIPS_SUBU(r, 1, r);
-	} else if (mul == 1) {
-		w[0] = w[1] = 0;                       /* nop, nop */
-	} else {
-		w[0] = MIPS_SLL(1, r, 2);
-		w[1] = MIPS_ADDU(r, r, 1);
-	}
-}
-
-/* the off-screen tests' bounds, the far polygons' and the slow path's
-   triangles': the target's (native: as built, 240 and 320, the whole
-   screen's); the frustum's vertical planes: 3z -+ 4y and 8 r, or 7z -+ 8y
-   and 24 r when the view's y row is scaled (r_world.s YSITE) */
-Q_COLD static void res_patch_bounds(void)
-{
-	int rows = r_res ? r_res_h : VID_H, cols = r_res ? r_res_w : VID_W, an = yb_num != yb_den;
-	for (const uint32_t *p = r_far_sites; p < r_far_sites_end; p++) {
-		uint32_t *lr = SITE_AT(*p), *lc = SITE_AT(SITE_NEXT(*p));
-		*lr = IMM16(*lr, rows);
-		*lc = IMM16(*lc, cols);
-	}
-	static const uint32_t ys_mask[4] = { 31u << 6, 31u << 6, 63u, 31u << 6 | 31u << 16 };
-	static const uint32_t ys_set[2][4] = {
-		{ 2u << 6, 1u << 6, 0x21, 3u << 6 | 11u << 16 },   /* 4y, 3z = z << 1 + z, 8 r = r (t3) << 3 */
-		{ 3u << 6, 3u << 6, 0x23, 4u << 6 | 15u << 16 },   /* 8y, 7z = z << 3 - z, 24 r = rho (t7) << 4 */
-	};
-	for (const uint32_t *p = r_ysites; p < r_ysites_end; p++)
-		for (uint32_t s = *p, i = 0; i < 2; i++, s = SITE_NEXT(s)) {
-			uint32_t *w = SITE_AT(s), k = s & 3u;
-			*w = (*w & ~ys_mask[k]) | ys_set[an][k];
-		}
-#if !Q1PSX_ENGINE_C
-	static const uint8_t col_w[3] = { 0, 1, 3 }, row_w[3] = { 5, 6, 8 };
-	for (int i = 0; i < 3; i++) {
-		sp_o_bounds[col_w[i]] = IMM16(sp_o_bounds[col_w[i]], -cols);
-		sp_o_bounds[row_w[i]] = IMM16(sp_o_bounds[row_w[i]], -rows);
-	}
-#endif
-	FlushCache();
-}
-
-/* The target: the viewport's rows in proportion, at most rows - 16 (its
-   rows within one texture page: vid.c); its pixels' height over their
-   width, the view's y row's scale (1 but for 256 x 224: 7 / 6). */
 Q_COLD void r_set_viewport(int rows)
 {
-	const r_res_t *rs = &r_res_table[r_res];
 	viewport_rows = rows;
-	r_res_w = rs->w;
-	r_res_h = rows;
-	yb_num = yb_den = 1;
-	if (r_res) {
-		r_res_h = (rows * rs->h + VID_H / 2) / VID_H;
-		if (r_res_h > rows - 16)
-			r_res_h = rows - 16;
-		yb_num = VID_W * r_res_h;              /* (r_res_h 160 / rows) / (w / 2) */
-		yb_den = rows * r_res_w;
-		if (yb_num == yb_den || r_ysites == r_ysites_end)
-			yb_num = yb_den = 1;               /* (square, or a build without the sites) */
-	}
-	yb12 = (yb_num * 4096 + yb_den / 2) / yb_den;
-	gte_SetGeomOffset(r_res_w / 2, r_res_h / 2);
-	r_state.ofy = r_res_h / 2;
+	gte_SetGeomOffset(VID_W / 2, rows / 2);
+	r_state.ofy = rows / 2;
 	r_state.vh2 = rows;
-	res_patch_bounds();
-}
-
-Q_COLD void r_set_res(int i)
-{
-	if (i < 0 || i >= R_RES_COUNT)
-		i = 0;
-	r_res = i;
-	const r_res_t *rs = &r_res_table[i];
-	r_proj_h = rs->w / 2;
-	gte_SetGeomScreen(r_proj_h);
-	*r_o_hshift = IMM16(*r_o_hshift, rs->shift);
-#if !Q1PSX_ENGINE_C
-	if (!sp_entry_word)
-		sp_entry_word = *sp_o_entry;
-	*sp_o_entry = rs->mul == 25 ? MIPS_J(sp_proj_25) : sp_entry_word;
-	mul_words(sp_o_xmul, rs->mul, 10);         /* x in t2 */
-	mul_words(sp_o_ymul, rs->mul, 11);         /* y in t3 */
-	*sp_o_ofx = IMM16(*sp_o_ofx, rs->w / 2);
-#endif
-	r_set_viewport(viewport_rows);             /* (the target, the centre, the bounds; FlushCache) */
-	warp_apply(r_warp.t_eff);                  /* (the bound's share of H) */
 }
 
 int r_viewport_rows(void)
@@ -659,6 +470,10 @@ Q_COLD void r_init(void)
 	r_state.items   = (uint32_t) r_items;
 	r_state.lists   = (uint32_t) r_lists;
 	r_set_viewport(VID_H);
+	for (int i = 0; i < 1024; i++) {           /* the fog's factors */
+		int32_t z = i * 64 + 32;
+		r_fogtab[i] = (uint8_t) (z <= R_FOG_Z ? 128 : z >= R_DRAW_Z ? 0 : 128 * (R_DRAW_Z - z) / (R_DRAW_Z - R_FOG_Z));
+	}
 }
 
 void r_bind_world(void)
@@ -688,18 +503,6 @@ void r_bind_world(void)
 	mark_patch();                                /* (through the zones' hook or not) */
 }
 
-/* 256 x 224: the view's y row kept as it is for the C's frustum tests
-   (render.h yrow), then scaled to the rows' H (r_state.cam already set) */
-__attribute__((noinline)) Q_COLD static void y_scale(int16_t r[9])
-{
-	r_state.yrow[0] = r[3];
-	r_state.yrow[1] = r[4];
-	r_state.yrow[2] = r[5];
-	r_state.ytr = -((r[3] * r_state.cam[0] + r[4] * r_state.cam[1] + r[5] * r_state.cam[2]) >> 12);
-	for (int i = 3; i < 6; i++)
-		r[i] = (int16_t) ((r[i] * yb12 + 2048) >> 12);
-}
-
 void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 {
 	int32_t sy = r_sin(yaw), cy = r_cos(yaw), sp = r_sin(pitch), cp = r_cos(pitch);
@@ -720,8 +523,6 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 
 	for (int k = 0; k < 3; k++)                    /* 1/8 units -> vertex units (x4) */
 		r_state.cam[k] = pos[k] * QW_VSCALE / R_POS_SUB;
-	if (yb_num != yb_den)                          /* (pixels not square: the y row to */
-		y_scale(r);                                /*  the rows' H, r_set_viewport) */
 	for (int i = 0; i < 9; i++) {
 		r_state.rot[i]    = r[i];
 		r_state.absrot[i] = (int16_t) (r[i] < 0 ? -r[i] : r[i]);
@@ -730,12 +531,6 @@ void r_set_view(const int32_t pos[3], int yaw, int pitch, int roll)
 	for (int i = 0; i < 3; i++)
 		r_state.tr[i] = -((r[i * 3] * r_state.cam[0] + r[i * 3 + 1] * r_state.cam[1] +
 		                   r[i * 3 + 2] * r_state.cam[2]) >> 12);
-	if (yb_num == yb_den) {                        /* (the C's frustum tests' y row) */
-		r_state.yrow[0] = r[3];
-		r_state.yrow[1] = r[4];
-		r_state.yrow[2] = r[5];
-		r_state.ytr     = r_state.tr[1];
-	}
 }
 
 /* ----------------------------------------------------------------- frame -- */
@@ -770,21 +565,17 @@ void r_frame(void)
 		r_state.force_mark = 1;
 	}
 
-	if (r_res)                                     /* (the target's packets: before the view's) */
-		vid_res_frame(r_res_w, r_res_h, r_res_table[r_res].seam);
 	*(volatile uint32_t *) 0x1f80035cu = 0;        /* SP_WATER (r_defs.inc): no liquid's surface
 	                                                  but a monster's, set and cleared by
 	                                                  draw_model (r_world.s dm_wsort, dm_exit_1) */
 	r_state.ot_world     = (uint32_t) &vid_frame.ot[OT_WORLD];
 	r_state.pkt          = (uint32_t) vid_frame.pkt;
 	r_state.pkt_end      = (uint32_t) (vid_frame.end - QW_MAX_REC_PKT - 48 - r_ui_room);  /* see r_world.s */
-	if (opt_dist) {                                /* mark_pvs_far's marks: again once the
+	for (int k = 0; k < 3; k++) {                  /* mark_pvs's marks: again once the
 	                                                  camera has moved R_MARK_MOVE */
-		for (int k = 0; k < 3; k++) {
-			int32_t d = r_state.cam[k] - mark_cam[k];
-			if (d > R_MARK_MOVE * QW_VSCALE || d < -R_MARK_MOVE * QW_VSCALE)
-				r_state.force_mark = 1;
-		}
+		int32_t d = r_state.cam[k] - mark_cam[k];
+		if (d > R_MARK_MOVE * QW_VSCALE || d < -R_MARK_MOVE * QW_VSCALE)
+			r_state.force_mark = 1;
 	}
 #if Q1PSX_PROFILE
 	r_state.stat_nodes   = r_state.stat_records = r_state.stat_verts = 0;
@@ -809,7 +600,7 @@ void r_frame(void)
 #endif
 	r_render(&r_state);   /* release: no counters, no stage timers */
 #endif
-	if (opt_dist && r_state.visframe != mark_visframe) {   /* marked this frame */
+	if (r_state.visframe != mark_visframe) {       /* marked this frame */
 		mark_visframe = r_state.visframe;
 		for (int k = 0; k < 3; k++)
 			mark_cam[k] = r_state.cam[k];

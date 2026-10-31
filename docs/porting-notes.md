@@ -15658,3 +15658,83 @@ BSPs, the textures and the renders stay out.
   against the cook before the fix only `GAME_0.DAT` differs.
 - **Left:** the other worktrees' `local.env` files still name the
   analysis' folder, which wins over the default until those lines go.
+
+## §119 — The draw distance and the 3D view's resolution fixed (2026-10-31)
+
+The code's clean-up (2026-10-31) starts with two settings
+fixed for good: the draw distance stays at 1536 world units, the
+release's since §37, and the 3D view at 320×240. The internal resolution
+of §78 goes: the GPU never limited a frame (§78 measured 62 % of it at
+most), so its lower targets bought nothing worth their code.
+
+- **The draw distance, built in** (`engine/render.h` `R_DRAW_DIST`,
+  `R_DRAW_Z`, `R_FOG_Z`, `R_PART_Z`; `engine/r_defs.inc` `R_DRAW_Z`,
+  `R_FOG_Z`, `R_FLAT_Z`, `R_MARK_R`):
+  - `Q1PSX_DRAWDIST` (CMake, the release preset, `engine/settings.h`) and
+    the bench's `DRAWDIST=` are gone. CMake still refuses zone tables cut
+    under 1536 units.
+  - `engine/r_world.s`: RECLOOP always has the draw distance (the cull
+    and the fog's tests, `slti` immediates assembled in); its one option
+    is the flat shading. The world's loop `dr` (the game's, flat-shaded
+    past 512 units) and the models' `de` run as built, each in a chain of
+    its own entered by a jump: the walk's light gate branches straight
+    into `dr` (two instructions less a block without a light, one less
+    with one), draw_model's jump into `de` carries its last load in its
+    slot. The I-cache's hot chains keep their order, renamed (`dro3_*` →
+    `dr_*`, `dro3f_*` → `drf_*`, `deo1_*` → `de_*`, `mark_pvs_far` →
+    `mark_pvs`).
+  - Gone: the loops without the distance (`dr` and `de` as they were, the
+    flat shading alone `dro2`) and the marking without its reach (the old
+    `mark_pvs`; the name is now the far marking's). `dro1`, the distance
+    without the flat shading, stays as `drn` for the bench's `FLAT=0`.
+    `engine/zone.s` `zone_mark` jumps to `mark_pvs` (`zone_rt.mark`
+    gone); the marking's reach is an immediate (`r_state.mark_r` gone).
+  - `engine/render.c`: `r_set_options(dist, flat)` is `r_set_flat(flat)`,
+    the bench's alone (the game calls nothing: its loops run as built).
+    The fog's table is filled once (`r_init`); the background is black
+    from `vid_init` (the boot's sky colour, which the options overwrote,
+    is gone); `r_part_z` and `r_draw_z` are constants.
+- **The 3D resolution, removed:**
+  - The Graphics page's row and the debug map menu's (`SET_RES`,
+    `settings.res`), `r_set_res`, `r_res_table`, the target's sizes, the
+    y row's scale for 256×224 (`y_scale`, `r_state.yrow` and `ytr`: the
+    C's frustum tests read `rot` and `tr`), `engine/vid.c`'s target and
+    stretch (`vid_res_frame`, `OT_TARGET`, `OT_STRETCH`, the frame's clear
+    turned off), the dump's `R` line, the bench's `RES=`.
+  - The patched words: `r_world.s` FARSITE (the far polygons' bounds) and
+    YSITE2 (the frustum's vertical planes) and the H shift stored every
+    frame (`SP_HSHIFT`: the scratchpad's word 0x3b8 is free); `r_slow.s`
+    sp_proj's patched multiplier, centre and bounds and its second entry
+    for 200×150. sp_proj's H is 5 << 5 assembled: a load less a projected
+    vertex. `r_tess.s` `TBOUNDS` takes the width as an immediate and the
+    viewport's rows from the scratchpad (`SP_VH2`): three instructions
+    less. The C slow path and grid take the screen's 320 and the
+    viewport's rows (`r_state.vh2`), as they did at 320×240.
+  - `r_state` loses `mark_r`, `yrow` and `ytr`: `fragpool` is at +216,
+    `seq` at +220.
+  - `tools/pktview`: the drawing offset (E5), the mask bit (E6) and the
+    15-bit texels read from the framebuffer, which only the stretch used.
+- **Measured** (TESTING 11.98), `scripts/dlcheck.sh` saved on master
+  8274a70 in a second worktree, every episode cooked in both:
+  - START's 12 views: the display lists identical, the cycles −0.28 %
+    (each view −0.1 to −0.4 %).
+  - The 128 spawn views (`BENCH_MAPS=1 HASHONLY=1`): identical, −0.22 %;
+    every view faster (−0.04 to −0.50 %), 15 past a vblank before and
+    after.
+  - `FLAT=0` (the copy `drn`) against master's `FLAT=0`: identical.
+  - The game bench (`BENCH_GAME=1`): with the menus' warp control fixed
+    (a test's patch in both trees), 22 of its 29 dumps are identical and
+    the 7 Graphics pages differ by the row alone (pktview's pictures:
+    seven rows, the hints one row higher). With the control dynamic, as
+    the game runs it, the Options page's dump differs too: one slow-path
+    triangle cut in two on master, whole here, the threshold reacting to
+    the lighter frames (§55 saw the same with the C engine's slower ones).
+  - The C engine (`ENGINE_C=1`): its frames are master's C engine's, byte
+    for byte. Both differ from the asm's on START's views (17 lines: the
+    C grid emits one quad where the asm emits two triangles): that drift
+    predates this change.
+  - The release: the level arena 1348112 → 1362112 B (+14000: `.text`
+    −13196, `.rodata` −692, the data −112); the default preset builds.
+- **Left:** `FLAT=2` and the dynamic lights inside `drn` were not run;
+  the C engine's drift from the asm is not looked into; the Graphics page
+  on DuckStation is left to check.

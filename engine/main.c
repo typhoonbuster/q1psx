@@ -74,18 +74,11 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #define Q1PSX_BENCH_T    SETTINGS_WARP_FLOOR   /* the warp threshold the bench renders with,
                                                   fixed, px (T= scripts/bench.sh) */
 #endif
-#ifndef Q1PSX_BENCH_DRAWDIST
-#define Q1PSX_BENCH_DRAWDIST Q1PSX_DRAWDIST    /* the draw distance (DRAWDIST= scripts/bench.sh) */
-#endif
 #ifndef Q1PSX_BENCH_FLAT
 #define Q1PSX_BENCH_FLAT R_FLAT_FAR            /* the flat shading (FLAT= scripts/bench.sh) */
 #endif
 #ifndef Q1PSX_BENCH_EFFECTS
 #define Q1PSX_BENCH_EFFECTS QL_MEDIUM          /* the effects (EFFECTS= scripts/bench.sh) */
-#endif
-#ifndef Q1PSX_BENCH_RES
-#define Q1PSX_BENCH_RES  0                     /* the 3D view's resolution, r_res_table's
-                                                  index (RES= scripts/bench.sh) */
 #endif
 #ifndef Q1PSX_BENCH_SEQCHK
 #define Q1PSX_BENCH_SEQCHK 0                   /* 1: a view by the cooked walk drawn again by the
@@ -105,12 +98,11 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 static void apply_settings(void)
 {
 #ifdef Q1PSX_BENCH
-	r_set_res(Q1PSX_BENCH_RES);
 	r_set_warp(Q1PSX_BENCH_WARPDYN ? R_WARP_DYNAMIC : R_WARP_FIXED, Q1PSX_BENCH_T, Q1PSX_BENCH_TMAX);
 	vid_set_dither(1);
 	settings.level[QL_EFFECTS] = Q1PSX_BENCH_EFFECTS;
 	game_set_effects(Q1PSX_BENCH_EFFECTS);
-	r_set_options(Q1PSX_BENCH_DRAWDIST, Q1PSX_BENCH_FLAT);
+	r_set_flat(Q1PSX_BENCH_FLAT);
 	game_draw_viewmodel = Q1PSX_WEAPON_2D ? 2 : 1;
 	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
 #else
@@ -699,7 +691,7 @@ static void opt_step(int d)
 
 static void opt_draw(void)
 {
-	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "3d res", "antiwarp", "dlights", "fps cap",
+	static const char *const label[SET_ROWS] = { "effects", "dither", "hud", "antiwarp", "dlights", "fps cap",
 	                                             "tick rate" };
 	char line[48], val[16];
 	for (int o = 0; o < SET_ROWS; o++) {
@@ -3959,7 +3951,6 @@ int main(void)
 	snd_init();
 	music_init();
 	r_init();
-	vid_set_bg(R_SKY_RGB);    /* flat "sky" until R3.4 */
 
 	printf("q1psx\n");
 

@@ -1,8 +1,8 @@
 /*
  * q1psx — the player's settings (docs/porting-notes.md §52): the effects'
- * level (medium or high), the dithering, the HUD's style, the 3D view's
- * internal resolution (§78), the anti-warping (§117), the dynamic lights,
- * the volumes, the frame rate cap and the game's tick rate. The debug
+ * level (medium or high), the dithering, the HUD's style, the
+ * anti-warping (§117), the dynamic lights, the volumes, the frame rate cap
+ * and the game's tick rate. The debug
  * build's map menu and the release build's Options / Graphics menu
  * (engine/menu.c) change them, at once (settings_apply).
  *
@@ -11,8 +11,8 @@
  *   the geometry   low
  *   the models     low (the guns rebuilt by hand: tools/qcook)
  *   the gun        Q1PSX_WEAPON, 3d or 2d (Q1PSX_WEAPON_2D)
- *   the draw       Q1PSX_DRAWDIST, 1536 or 1024 world units, the walls past
- *   distance       512 units flat-shaded (R_FLAT_FAR)
+ * and fixed: the 3D view at 320 x 240, the draw distance 1536 world units
+ * (render.h R_DRAW_DIST), the walls past 512 units flat-shaded (R_FLAT_FAR).
  */
 
 #ifndef Q1PSX_SETTINGS_H
@@ -22,9 +22,6 @@
 
 #include "qlevels.h"
 
-#ifndef Q1PSX_DRAWDIST
-#define Q1PSX_DRAWDIST 1536      /* the build's draw distance, world units */
-#endif
 #ifndef Q1PSX_WEAPON_2D
 #define Q1PSX_WEAPON_2D 0        /* 1: the gun's frames as pictures (formats/qgame.h) */
 #endif
@@ -37,7 +34,6 @@ typedef struct {
 	                         or QL_HIGH */
 	int dither;
 	int hud;         /* HUD_*                                                */
-	int res;         /* r_res_table's index: the 3D view's resolution (0 320) */
 	int dlights;     /* the dynamic lights                                   */
 	int volume;      /* the sound effects', tenths (Quake's volume 0.7)      */
 	int music;       /* the music's, tenths (bgmvolume 1)                    */
@@ -66,7 +62,7 @@ int  settings_level_step(int axis, int level, int d);   /* the next level the di
 
 /* The rows both menus show (engine/menu.c's Graphics page, the debug map
    menu), in their order: */
-enum { SET_EFFECTS, SET_DITHER, SET_HUD, SET_RES, SET_WARP, SET_DLIGHTS, SET_FPS, SET_TICK, SET_ROWS };
+enum { SET_EFFECTS, SET_DITHER, SET_HUD, SET_WARP, SET_DLIGHTS, SET_FPS, SET_TICK, SET_ROWS };
 
 void settings_step(int row, int d);   /* its value one step on (wrapping); not applied */
 void settings_value(int row, char *buf, int size);   /* its value as the menus write it */

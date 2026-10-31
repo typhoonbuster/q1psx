@@ -45,9 +45,8 @@
 .set RS_VH2,          204
 .set RS_NLIGHTS,      208   # dynamic lights this frame, and their table
 .set RS_LIGHTS,       212   #   (engine/dlight.c rlight_t, 32 bytes each)
-.set RS_MARK_R,       216   # mark_pvs_far's reach, vertex units (render.c)
-.set RS_FRAGPOOL,     220   # the brush models' pieces' vertex pool (bmfrag.c)
-.set RS_SEQ,          236   # the zone's cooked walk for this frame, 0: the tree walk (zone.c)
+.set RS_FRAGPOOL,     216   # the brush models' pieces' vertex pool (bmfrag.c)
+.set RS_SEQ,          220   # the zone's cooked walk for this frame, 0: the tree walk (zone.c)
 .set DL_O,            0     # int32 origin[3], vertex units
 .set DL_RADIUS,       12    # vertex units
 .set DL_MINLIGHT,     16
@@ -186,8 +185,7 @@
 .set SP_ZNEAR,    0x3b4   # the slow path's near plane, SZ units (48 = 8 world
                           # units; the view model: 120, Quake's 5 for it, its
                           # matrix's rows all x4: rlist.c rl_view_gun)
-.set SP_HSHIFT,   0x3b8   # the GTE's H as a shift of 5x: 5 (H = 160; until
-                          # §53 the view model's 3, H = 40)
+                          # (0x3b8 free)
 .set SP_SORTHEAD, 0x3bc   # draw_model, a sorted model: its farthest bucket's
                           # node, where its packets' chain starts
 .set SP_VERTPOOL, 0x3c0   # r_state.vertpool (the map's vertex pool)
@@ -219,6 +217,17 @@
                           # it (START's crucified zombies, 12.5 KB each, filled
                           # the arena and the far rooms went undrawn); render.c's
                           # WARP_ROOM is the same
+.set R_DRAW_Z,    9216    # the draw distance, view units (world x 6: render.h
+                          # R_DRAW_DIST 1536 x 6, R_DRAW_Z): a record wholly
+                          # beyond it is culled, the fog black there
+.set R_FOG_Z,     6912    # the fog's start, three quarters of it (render.h
+                          # R_FOG_Z): a record reaching past it goes through
+                          # the fogged transform (r_fogtab)
+.set R_FLAT_Z,    3072    # the flat shading's start (render.h R_FLAT_FAR_UNITS
+                          # 512 x 6): a world record wholly beyond, drawn flat
+.set R_MARK_R,    10144   # mark_pvs's reach, vertex units: (1536 x 1.61, a
+                          # frustum corner's distance over its depth for the
+                          # 240 rows, + render.c R_MARK_MOVE 64) x 4
 .ifndef R_YSLOPE          # the frustum's vertical slope x4: 4 (240 rows: y <= 3z/4)
 .set R_YSLOPE,    4       # or 5 (the 192-row viewport over the status bar: y <= 3z/5)
 .endif

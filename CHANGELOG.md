@@ -2559,3 +2559,15 @@ followed by R0-R4.
   the same bytes. `GAME_0.DAT` is now the same from cook to cook: its
   finale names carried the stack's leftovers after their NUL
   (`tools/qcook/game.c`), different at every cook.
+- **The draw distance and the 3D view's resolution fixed** (§119,
+  provisional number, 2026-10-31). The draw distance is 1536 units in
+  every build: `Q1PSX_DRAWDIST` and the bench's `DRAWDIST=` are gone, and
+  so are the record loops' and the PVS marking's copies without it; its
+  thresholds are assembled in, and the game patches no code for it. The
+  3D view stays at 320×240: the Graphics page's 3D resolution row goes,
+  with its target and stretch, the slow path's patched projection and
+  second entry, the patched bounds and frustum planes, the bench's `RES=`
+  and pktview's drawing offset and mask bit. The display lists are the
+  same (START's 12 views, the 128 spawn views, `FLAT=0`; the game bench
+  but the Graphics pages, one row shorter), the views 0.04 to 0.5 %
+  faster; the release's level arena +14000 B.

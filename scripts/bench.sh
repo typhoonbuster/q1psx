@@ -12,11 +12,8 @@
 #         formats/qlevels.h; docs/porting-notes.md §52).
 #         T is the affine-warp threshold, fixed (default 4 px: the game's
 #         dynamic control's floor).
-#         DRAWDIST=<world units> builds with that draw distance (the fog,
-#         the culling: docs/porting-notes.md §37; default 1536, the
-#         release's; 0: none); FLAT=0 (none), 1 (far, the default: the
-#         game's) or 2 (all) the flat shading. WEAPON=2d builds the 2D gun
-#         (3d by default).
+#         FLAT=0 (none), 1 (far, the default: the game's) or 2 (all) the
+#         flat shading. WEAPON=2d builds the 2D gun (3d by default).
 #         NOBMF=1 draws the brush models whole in one leaf, not cut by the
 #         world's BSP (engine/bmfrag.c): an A / B. NOBMFCULL=1 cuts a moved
 #         brush model again even when none of it is in view (an A / B: the
@@ -165,10 +162,7 @@
 #         30, the game's default: half of them each tick, engine/ents.c
 #         ents_tick; the player, the movers, the projectiles: 60 either
 #         way; docs/porting-notes.md §72).
-#         RES=<n> renders the 3D view at an internal resolution below the
-#         screen's: engine/render.c r_res_table's index (0 320x240, the
-#         default; 1 256x224, 2 240x180, 3 200x150; docs/porting-notes.md
-#         §78). GPUTIME=1 draws each frame's display list alone, the CPU
+#         GPUTIME=1 draws each frame's display list alone, the CPU
 #         waiting, and adds its time to the lines (gpu=avg/max, CPU
 #         cycles): run the disc on DuckStation, which counts the GPU's time
 #         (PCSX-Redux draws at once: 0). WARPDYN=1 renders the views with
@@ -223,7 +217,6 @@ SECS=${1:-$([ "$BENCH_GAME" = 1 ] && echo 420 || echo 60)}
 TEXTURES=${TEXTURES:-high}
 EFFECTS=${EFFECTS:-1}
 T=${T:-4}
-DRAWDIST=${DRAWDIST:-1536}
 FLAT=${FLAT:-1}
 WEAPON=${WEAPON:-3d}
 NOBMF=${NOBMF:-0}
@@ -259,7 +252,6 @@ SAMPLE=${SAMPLE:-0}
 ZONES=${ZONES:-0}
 CAPTURE=${CAPTURE:-0}
 WORLD_HZ=${WORLD_HZ:-30}
-RES=${RES:-0}
 GPUTIME=${GPUTIME:-0}
 IRQTIME=${IRQTIME:-0}
 SLOWSTAT=${SLOWSTAT:-0}
@@ -281,7 +273,7 @@ MEMLOG=${MEMLOG:-0}
 MUSIC_RING=${MUSIC_RING:-6}
 MUSIC_REFILL=${MUSIC_REFILL:-2}
 MUSIC_SEEK=${MUSIC_SEEK:-100}
-cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" -DQ1PSX_DRAWDIST="$DRAWDIST" \
+cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo ON || echo OFF)" -DQ1PSX_TEXTURES="$TEXTURES" -DQ1PSX_WEAPON="$WEAPON" \
       -DQ1PSX_BENCH_EFFECTS="$EFFECTS" -DQ1PSX_BENCH_VIEWS="$VIEWS" \
       -DQ1PSX_BENCH_MAPS="$BENCH_MAPS" -DQ1PSX_BENCH_GAME="$BENCH_GAME" -DQ1PSX_PROFILE="$PROFILE" \
       -DQ1PSX_BENCH_T="$T" -DQ1PSX_BENCH_HASHONLY="$HASHONLY" \
@@ -291,7 +283,7 @@ cmake --preset bench -B "$OUT" -DQ1PSX_ENGINE_C="$([ "$ENGINE_C" = 1 ] && echo O
       -DQ1PSX_DLIGHT_C="$DLIGHT_C" -DQ1PSX_DLIGHT_MINLIGHT="$DLIGHT_MINLIGHT" -DQ1PSX_BMF_C="$BMF_C" -DQ1PSX_ORDER_C="$ORDER_C" -DQ1PSX_BENCH_PLAY="$PLAY" -DQ1PSX_BENCH_MUSIC="$MUSIC" \
       -DQ1PSX_BENCH_MAP="$MAP" -DQ1PSX_BENCH_VIEW="$VIEW" -DQ1PSX_BENCH_NOENTS="$NOENTS" -DQ1PSX_BENCH_TICKS="$TICKS" -DQ1PSX_BENCH_USE="$USE" -DQ1PSX_BENCH_SKILL="${SKILL:-1}" -DQ1PSX_BENCH_RESIDENCY="$RESIDENCY" \
       -DQ1PSX_BENCH_ENTS="$ENTS" -DQ1PSX_BENCH_MONSTERS="$MONSTERS" -DQ1PSX_BENCH_SAMPLE="$SAMPLE" \
-      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_RES="$RES" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
+      -DQ1PSX_BENCH_MOVERS="$MOVERS" -DQ1PSX_BENCH_ZONES="$ZONES" -DQ1PSX_BENCH_CAPTURE="$CAPTURE" -DQ1PSX_BENCH_WORLD_HZ="$WORLD_HZ" -DQ1PSX_BENCH_GPUTIME="$GPUTIME" -DQ1PSX_BENCH_IRQTIME="$IRQTIME" -DQ1PSX_BENCH_SLOWSTAT="$SLOWSTAT" -DQ1PSX_BENCH_WARPDYN="$WARPDYN" -DQ1PSX_BENCH_TMAX="$TMAX" -DQ1PSX_BENCH_SEQCHK="$SEQCHK" -DQ1PSX_BENCH_VRAMCHK="$VRAMCHK" -DQ1PSX_TESS_MAPS="$TESS" -DQ1PSX_TESS_KMAX="$TESSK" -DQ1PSX_TESS_CAP="$TESSC" -DQ1PSX_LOD="$LOD" -DQ1PSX_LOD_BUDGET="$LODBUDGET" -DQ1PSX_LOD_FLOOR="$LODFLOOR" -DQ1PSX_LOD_CAP="$LODCAP" -DQ1PSX_ZONES="$([ "$WHOLE" = 1 ] && echo OFF || echo ON)" \
       -DQ1PSX_BENCH_CDLOG="$CDLOG" -DQ1PSX_BENCH_CDMODEL="$CDMODEL" -DQ1PSX_BENCH_MEMLOG="$MEMLOG" -DQ1PSX_MUSIC_RING="$MUSIC_RING" -DQ1PSX_MUSIC_REFILL="$MUSIC_REFILL" -DQ1PSX_MUSIC_SEEK_MS="$MUSIC_SEEK" \
       "$ROOT" >/dev/null
 cmake --build "$OUT" > "$OUT/build.log" 2>&1 \

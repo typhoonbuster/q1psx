@@ -168,7 +168,8 @@ if(Q1PSX_RELEASE)
 endif()
 # The build's choices (docs/porting-notes.md §52, engine/settings.h), every
 # build's alike: the textures the disc carries (4-bit; the geometry and the
-# models are low on every disc), the gun, the draw distance.
+# models are low on every disc), the gun. The draw distance is fixed
+# (1536 units: engine/render.h R_DRAW_DIST, §119).
 set(Q1PSX_TEXTURES "high" CACHE STRING "The textures on the disc: high or medium (4-bit)")
 set_property(CACHE Q1PSX_TEXTURES PROPERTY STRINGS high medium)
 if(NOT Q1PSX_TEXTURES MATCHES "^(high|medium)$")
@@ -183,9 +184,6 @@ elseif(Q1PSX_WEAPON STREQUAL "3d")
 else()
 	message(FATAL_ERROR "Q1PSX_WEAPON: 3d or 2d, not ${Q1PSX_WEAPON}")
 endif()
-set(Q1PSX_DRAWDIST 1536 CACHE STRING "The draw distance, world units: 1536 or 1024 (the bench takes any)")
-set_property(CACHE Q1PSX_DRAWDIST PROPERTY STRINGS 1536 1024)
-target_compile_definitions(q1psx PRIVATE Q1PSX_DRAWDIST=${Q1PSX_DRAWDIST})
 # A scripted pad (engine/pad.c pad_script): the release flow checked headless
 option(Q1PSX_PADSCRIPT "Replace the pad by a scripted sequence of presses" OFF)
 if(Q1PSX_PADSCRIPT)
@@ -287,7 +285,6 @@ target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,IRQT
 set(Q1PSX_BENCH_SLOWSTAT 0 CACHE STRING "1: the slow path counts its paths: the bench's slowstat lines (engine/r_slow.s STAT)")
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,SLOWSTAT=$<AND:$<BOOL:${Q1PSX_BENCH}>,$<BOOL:${Q1PSX_BENCH_SLOWSTAT}>>>)
 set(Q1PSX_BENCH_GPUTIME 0 CACHE STRING "1: each frame's display list drawn alone, the CPU waiting: the bench lines' gpu= (an emulator that counts the GPU's time: DuckStation)")
-set(Q1PSX_BENCH_RES 0 CACHE STRING "The 3D view's internal resolution the bench renders with: engine/render.c r_res_table's index (0: 320, the screen's)")
 set(Q1PSX_BENCH_WORLD_HZ 30 CACHE STRING "The world's tick rate the bench runs at: 60 or 30 (the game's default; the player's: 60)")
 set(Q1PSX_BENCH_CAPTURE 0 CACHE STRING "1: the capture's scenarios: the sounds read from the disc in their worst cases, played in real time for an emulator's recording")
 set(Q1PSX_BENCH_ZONES 0 CACHE STRING "1: the zones' walk: every zoned map walked through its items, the chunk reads, switches and late frames (bench zones lines); 2: every map, the whole ones too (their sounds)")
@@ -314,7 +311,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_TICKS=${Q1PSX_BENCH_TICKS} Q1PSX_BENCH_USE="${Q1PSX_BENCH_USE}" Q1PSX_BENCH_SKILL=${Q1PSX_BENCH_SKILL} Q1PSX_BENCH_RESIDENCY=${Q1PSX_BENCH_RESIDENCY}
 		Q1PSX_BENCH_MOVERS=${Q1PSX_BENCH_MOVERS} Q1PSX_BENCH_ZONES=${Q1PSX_BENCH_ZONES}
 		Q1PSX_BENCH_CAPTURE=${Q1PSX_BENCH_CAPTURE}
-		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ} Q1PSX_BENCH_RES=${Q1PSX_BENCH_RES}
+		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ}
 		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN} Q1PSX_BENCH_TMAX=${Q1PSX_BENCH_TMAX}
 		Q1PSX_BENCH_SEQCHK=${Q1PSX_BENCH_SEQCHK} Q1PSX_BENCH_VRAMCHK=${Q1PSX_BENCH_VRAMCHK})
 	if(Q1PSX_BENCH_VIEW)
@@ -368,13 +365,10 @@ endif()
 # names others, or none) goes on the disc as its skeleton
 # (<MAP>_G0.WLD) and its chunks at the build's texture level
 # (<MAP>_Z<N>.ZON); OFF, or a map left whole, its whole world. The tables
-# hold every record the PSX may draw within 1536 units (+ a margin): a
-# draw distance past it (or none) takes the whole worlds.
+# hold every record the PSX may draw within the draw distance, 1536 units
+# (+ a margin).
 option(Q1PSX_ZONES "The zoned maps' skeletons and chunks on the disc (the whole worlds when OFF)" ON)
-if(Q1PSX_DRAWDIST EQUAL 0 OR Q1PSX_DRAWDIST GREATER 1536)
-	set(_disc_zones 0)
-	message(STATUS "q1psx: the draw distance ${Q1PSX_DRAWDIST}: the whole worlds on the disc (the zones hold 1536)")
-elseif(Q1PSX_ZONES)
+if(Q1PSX_ZONES)
 	set(_disc_zones 1)
 else()
 	set(_disc_zones 0)
@@ -393,15 +387,15 @@ endif()
 if(_disc_zones AND _zone_tables AND _zone_tables MATCHES "(pvs|seen|auto)_([0-9]+)_s?([0-9]+)/?$")
 	set(_tables_kind ${CMAKE_MATCH_1})
 	set(_tables_dist ${CMAKE_MATCH_2})
-	if(_tables_dist LESS Q1PSX_DRAWDIST)
-		message(FATAL_ERROR "q1psx: the zone tables ${_zone_tables} are cut at ${_tables_dist} units, the draw distance is ${Q1PSX_DRAWDIST}: "
-		        "the walls between the two would be missing from afar. Point Q1PSX_ZONE_TABLES (local.env) at a *_${Q1PSX_DRAWDIST}_* set, "
-		        "or build with -DQ1PSX_DRAWDIST=${_tables_dist}, or -DQ1PSX_ZONES=OFF for the whole worlds.")
+	if(_tables_dist LESS 1536)
+		message(FATAL_ERROR "q1psx: the zone tables ${_zone_tables} are cut at ${_tables_dist} units, the draw distance is 1536: "
+		        "the walls between the two would be missing from afar. Point Q1PSX_ZONE_TABLES (local.env) at a *_1536_* set, "
+		        "or build with -DQ1PSX_ZONES=OFF for the whole worlds.")
 	endif()
 	if(_tables_kind STREQUAL "seen")
 		message(STATUS "q1psx: zone tables ${_tables_kind}_${_tables_dist}: the chunks hold what the analysis' renders saw only (a wall the scan never looked at is missing there; the pvs tables are exact)")
 	else()
-		message(STATUS "q1psx: zone tables ${_tables_kind}_${_tables_dist}, the draw distance ${Q1PSX_DRAWDIST}")
+		message(STATUS "q1psx: zone tables ${_tables_kind}_${_tables_dist}")
 	endif()
 endif()
 
@@ -470,8 +464,7 @@ file(GLOB _cooked CONFIGURE_DEPENDS ${PROJECT_SOURCE_DIR}/cooked/id1/*.wld
 if(NOT _cooked)
 	message(STATUS "q1psx: no cooked assets yet (the build cooks them: scripts/cook.sh)")
 else()
-	message(STATUS "q1psx: the textures ${Q1PSX_TEXTURES}, the gun ${Q1PSX_WEAPON}, "
-	               "the draw distance ${Q1PSX_DRAWDIST}")
+	message(STATUS "q1psx: the textures ${Q1PSX_TEXTURES}, the gun ${Q1PSX_WEAPON}")
 endif()
 
 set(_music "")

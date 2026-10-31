@@ -84,18 +84,18 @@ Three presets:
 | Preset | Directory | What it is |
 |---|---|---|
 | `default` | `build/` | The development build: a map menu (SELECT + START), the debug overlay (START) |
-| `release` | `build-release/` | Quake's own menu (START), no debug tools; the high textures, the 3D gun, 1536 units of view |
+| `release` | `build-release/` | Quake's own menu (START), no debug tools; the high textures, the 3D gun |
 | `release-medium` | `build-release-medium/` | The same with the medium textures |
 
 The build's choices (`docs/porting-notes.md` §52), CMake variables every
 preset takes: `Q1PSX_TEXTURES` (`high` or `medium`, 4-bit: the disc's one
-texture set), `Q1PSX_WEAPON` (`3d` or `2d`), `Q1PSX_DRAWDIST` (`1536` or
-`1024` world units, the walls past 512 units flat-shaded). The map
-geometry and the models are low on every disc; the guns are Quake's
-rebuilt by hand (`tools/qcook/game.c`). In Graphics: the effects (medium or
-high), the dithering, the HUD, the 3D view's resolution (320×240, 256×224,
-240×180, 200×150), the dynamic lights, the frame rate cap (60, 45, 30) and
-the tick rate (60, 30). The music is Quake's CD tracks streamed
+texture set) and `Q1PSX_WEAPON` (`3d` or `2d`). Fixed: the 3D view at
+320×240, the draw distance at 1536 world units (the walls past 512 units
+flat-shaded). The map geometry and the models are low on every disc; the
+guns are Quake's rebuilt by hand (`tools/qcook/game.c`). In Graphics: the
+effects (medium or high), the dithering, the HUD, the anti-warping (low,
+default, medium, high, ultra), the dynamic lights, the frame rate cap (60,
+45, 30) and the tick rate (60, 30). The music is Quake's CD tracks streamed
 by the SPU (22.05 kHz, the menu's theme 32 kHz).
 
 ```bash

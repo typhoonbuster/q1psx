@@ -71,73 +71,6 @@ int vid_viewport_rows(void)
 	return viewport_rows;
 }
 
-/* The internal resolution's packets (docs/porting-notes.md §78). The target
-   R is the viewport's bottom-right w x h corner, stretched over it by
-   raw textured quads whose texture is the framebuffer (15-bit pages): the
-   pixel (x, y) reads R's texel (x w / 320, y h / rows), rounded to the
-   nearest (the GPU's, §71: w / 320 above 1/2 keeps it inside R; cut by an
-   emulator that does not round, inside too). That source is never left
-   of the pixel nor above it, and the GPU draws each triangle top-down,
-   each row left to right: the stretch reads every pixel of R before it
-   writes over it, in place. R starts left of x 128, so its first columns
-   are page 64's, up to a column whose source is whole, the rest page
-   128's (u up to 192 at x 320); its rows lie in one page (h <= rows - 16:
-   render.c). A texel 0 is transparent: the mask bit set while R draws
-   (GP0(E6h)) makes every pixel of R a texel the stretch draws. GP0(E6h)
-   acts on VRAM transfers too: OT_SKY's are before it, and it is reset
-   before the overlay (the next frame's). The texture cache is cleared
-   before each quad (R is new; the second quad's page aliases the first's
-   lines). The stretch covers the viewport: the frame's draw environment
-   clears nothing then (isbg, set again once the list is kicked). */
-__attribute__((noinline)) Q_COLD static uint32_t gp_area(int x0, int y0, int x1, int y1, uint32_t *w)
-{
-	w[0] = 0xe3000000u | (uint32_t) (y0 & 0x3ff) << 10 | (uint32_t) (x0 & 0x3ff);
-	w[1] = 0xe4000000u | (uint32_t) (y1 & 0x3ff) << 10 | (uint32_t) (x1 & 0x3ff);
-	return 0xe5000000u | (uint32_t) (y0 & 0x7ff) << 11 | (uint32_t) (x0 & 0x7ff);   /* (its offset) */
-}
-
-Q_COLD void vid_res_frame(int w, int h, int xs)
-{
-	int rows = viewport_rows, by = back * VID_H;  /* (this frame's buffer) */
-	int rx = VID_W - w, ry = by + rows - h;       /* R's top left */
-	uint32_t *t = vid_alloc((8 + 5 + 11 + 11) * 4), *u = t + 8;
-	if (!t)
-		return;
-	DRAWENV *d = &buf[back].draw;
-	d->isbg = 0;
-	t[0] = 7u << 24 | 0xffffffu;
-	t[3] = gp_area(rx, ry, VID_W - 1, by + rows - 1, &t[1]);
-	t[4] = 0xe6000001u;                           /* the mask bit set while drawing */
-	t[5] = 0x60000000u | (uint32_t) d->b0 << 16 | (uint32_t) d->g0 << 8 | d->r0;   /* R cleared */
-	t[6] = 0;
-	t[7] = (uint32_t) h << 16 | (uint32_t) w;
-	addPrim(&vid_frame.ot[OT_TARGET], t);
-
-	int page_y = ry >= 256 ? 256 : 0;
-	uint32_t v0 = (uint32_t) (ry - page_y), v1 = v0 + (uint32_t) h, y1 = (uint32_t) rows << 16;
-	uint32_t us = (uint32_t) (rx - 64 + xs * w / VID_W);
-	u[0] = 4u << 24 | ((uint32_t) &u[5] & 0xffffffu);
-	u[1] = 0xe6000000u;                           /* (before the overlay's transfers) */
-	u[4] = gp_area(0, by, VID_W - 1, by + rows - 1, &u[2]);
-	for (int i = 0; i < 2; i++) {
-		uint32_t *q = &u[5 + 11 * i];
-		uint32_t x0 = i ? (uint32_t) xs : 0, x1 = i ? VID_W : (uint32_t) xs;
-		uint32_t u0 = i ? us - 64 : (uint32_t) rx - 64, u1 = i ? 192 : us;
-		q[0] = 10u << 24 | ((uint32_t) &u[16] & 0xffffffu);   /* (the second's: addPrims) */
-		q[1] = 0x01000000u;                       /* the texture cache cleared */
-		q[2] = 0x2d808080u;                       /* textured quad, raw */
-		q[3] = x0;
-		q[4] = v0 << 8 | u0;
-		q[5] = x1;
-		q[6] = (uint32_t) getTPage(2, 0, i ? 128 : 64, page_y) << 16 | v0 << 8 | u1;
-		q[7] = y1 | x0;
-		q[8] = v1 << 8 | u0;
-		q[9] = y1 | x1;
-		q[10] = v1 << 8 | u1;
-	}
-	addPrims(&vid_frame.ot[OT_STRETCH], u, &u[16]);
-}
-
 void *vid_ovl_alloc_run(int bytes, int n)
 {
 	uint32_t *p = vid_alloc(bytes * n);
@@ -285,12 +218,10 @@ void *vid_hud_block(int previous)
 	return buf[back ^ previous].arena + VID_ARENA_BYTES - VID_HUD_BYTES;
 }
 
-/* the GPU started on a buffer's list (its clear: none under the internal
-   resolution's stretch, for this frame only) */
+/* the GPU started on a buffer's list */
 static void start(vid_buffer_t *b)
 {
 	DrawOTagEnv(&b->ot[VID_OT_LEN - 1], &b->draw);
-	b->draw.isbg = 1;
 }
 
 /* The vblank's interrupt (VSyncCallback, after the SDK's count): the pad's
@@ -489,8 +420,6 @@ void vid_dump(int hash_only)
 	}
 	if (!hash_only)
 		printf("V %d\n", viewport_rows);
-	if (!hash_only && !buf[back].draw.isbg)  /* (the target's packets tell its size) */
-		printf("R\n");
 	uint32_t at = (uint32_t) &ot[VID_OT_LEN - 1];
 	uint32_t hash = 2166136261u, words = 0;   /* FNV-1a over the payloads */
 	uint32_t set = 0, windows = 0;

@@ -82,7 +82,7 @@ static void lod_level(void)
    rho its radius there; counted unless wholly past the draw distance */
 static int lod_count(const qst_lod *l, int d, int32_t z, int32_t rho)
 {
-	if (z - rho >= r_draw_z)
+	if (z - rho >= R_DRAW_Z)
 		return d;
 	int cap = z > 0 ? (int) (((uint32_t) z * Q1PSX_LOD_CAP) >> 16) : 0;
 	if (cap > QST_LOD_BANDS - 1)

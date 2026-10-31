@@ -33,50 +33,6 @@
 	.include "inline_s.inc"
 	.include "r_defs.inc"
 
-# The far polygons' screen bounds (CAREFUL's other exits, below): each test's
-# "lui v0, 240" and "lui v0, 320" as a pair in this table, which render.c
-# r_set_res patches to a smaller target's rows and width (the 3D view's
-# internal resolution, docs/porting-notes.md §78). FARSITE in each. A pair
-# is one word (SITES, the link moving the renderer's chains apart, §81.5):
-# the first's address, the second's distance from it in bits 21-30 (the
-# addresses' bits 21-30 are 0: 2 MB of RAM in KSEG0); the two lie in one
-# chain.
-	.pushsection .rodata.r_far_sites, "a", @progbits
-	.align  2
-	.global r_far_sites
-r_far_sites:
-	.popsection
-
-.macro FARSITE rows, cols
-	.pushsection .rodata.r_far_sites, "a", @progbits
-	.word   \rows + ((\cols - \rows) << 21)
-	.popsection
-.endm
-
-# The frustum's vertical planes (FRUSTUM's boxes, the records' and the
-# sorted models' spheres): 3z -+ 4y, the spheres 8 r from them. A target
-# whose pixels are not square (256 x 224) takes the view's y row x b
-# (render.c r_set_view, b up to 7/6): r_set_res then makes them 7z -+ 8y,
-# the spheres 24 r from them (rho x 16: the sphere an ellipsoid, its reach
-# sqrt(64 b^2 + 49) x 1.5 r = 17.5 r at most). YSITE2 puts two
-# instructions in this table as FARSITE does, each one's kind in its low
-# bits (the first's in bits 0-1, the second's in bits 21-22): 0 sll 2 (4y) or 3 (8y),
-# 1 sll 1 or 3 (the 3z's or 7z's first), 2 addu or subu (its second), 3
-# sll t5, t3, 3 (8 r) or sll t5, t7, 4 (24 r: t7 = rho there).
-	.pushsection .rodata.r_ysites, "a", @progbits
-	.align  2
-	.global r_ysites
-r_ysites:
-	.popsection
-
-.macro YSITE2 a, ka, b, kb              # (none in a R_YSLOPE 5 build: render.c
-.if R_YSLOPE == 4                        #  then has no 256 x 224)
-	.pushsection .rodata.r_ysites, "a", @progbits
-	.word   \a + \ka + ((\b - \a + \kb) << 21)
-	.popsection
-.endif
-.endm
-
 # FRUSTUM cull: test the box whose centre / half extents are in V0 / V1
 # (vertex units; loaded by the caller at least two instructions back) against
 # the frustum planes still set in s2. A plane's bit is cleared once the box is
@@ -95,35 +51,26 @@ r_ysites:
 	mfc2    $t0, C2_IR1                  # x
 	mfc2    $t1, C2_IR2                  # y
 	mfc2    $t2, C2_IR3                  # z
-.Lfy\@:
 	sll     $v0, $t1, 2                  # 4y
 	MVMVA   1, 1, 1, 3, 0                # IR = |rot| * half extents
-.Lfz\@:
 	sll     $a1, $t2, 1
 .if R_YSLOPE == 5
 	addu    $v0, $v0, $t1                # 5y (a 192-row viewport: R_YSLOPE)
 .endif
-.Lfz2\@:
 	addu    $a1, $a1, $t2                # 3z
 	\s2a
 	\s2b
 	mfc2    $t3, C2_IR1                  # rx
 	mfc2    $t4, C2_IR2                  # ry
 	mfc2    $t5, C2_IR3                  # rz
-.Lfry\@:
 	sll     $t7, $t4, 2                  # 4 ry
 	addu    $t6, $t5, $t3                # rz + rx: radius for left/right
-.Lfrz\@:
 	sll     $t9, $t5, 1
 .if R_YSLOPE == 5
 	addu    $t7, $t7, $t4                # 5 ry
 .endif
-.Lfrz2\@:
 	addu    $t9, $t9, $t5
 	addu    $t7, $t7, $t9                # 3 rz + 4 ry: radius for top/bottom
-	YSITE2  .Lfy\@, 0, .Lfz\@, 1
-	YSITE2  .Lfz2\@, 2, .Lfry\@, 0
-	YSITE2  .Lfrz\@, 1, .Lfrz2\@, 2
 	beqz    $at, 1f
 	andi    $at, $s2, 2
 	subu    $t3, $t2, $t0                # right: z - x
@@ -792,7 +739,6 @@ r_ysites:
 	bltz    $t9, \q\()_quad_off         # all y < 0
 	andi    $t9, $t9, 0x8000
 	bnez    $t9, \q\()_quad_off         # all x < 0
-\q\()_fq_r:
 	lui     $v0, 240
 	subu    $t9, $t0, $v0
 	subu    $v1, $t1, $v0
@@ -802,9 +748,7 @@ r_ysites:
 	subu    $v1, $t7, $v0
 	or      $t9, $t9, $v1
 	bgez    $t9, \q\()_quad_off         # all y >= 240
-\q\()_fq_c:
 	lui     $v0, 320
-	FARSITE \q\()_fq_r, \q\()_fq_c
 	sll     $t0, $t0, 16
 	sll     $t1, $t1, 16
 	sll     $t2, $t2, 16
@@ -837,7 +781,6 @@ r_ysites:
 	lw      $t1, SP_SXY($t4)
 	lw      $t2, SP_SXY($t5)
 .endif
-\q\()_ft_r:
 	lui     $v0, 240
 	and     $t9, $t0, $t1
 	and     $t9, $t9, $t2
@@ -850,9 +793,7 @@ r_ysites:
 	subu    $v1, $t2, $v0
 	or      $t9, $t9, $v1
 	bgez    $t9, \q\()_tri_off          # all y >= 240
-\q\()_ft_c:
 	lui     $v0, 320
-	FARSITE \q\()_ft_r, \q\()_ft_c
 .if \var
 	mfc2    $t9, C2_MAC0
 .endif
@@ -955,27 +896,24 @@ r_ysites:
 
 .endm
 
-# RECLOOP p, exit, var [, opt]: the record loop, labels prefixed by p,
-# leaving for `exit` when the block is done or the arena is full.
-# Instantiated for the world's face blocks (dr, back to the walk; var = 0:
-# the careful test's near bound is 96) and for a model's records (de,
-# draw_model; var = 1: the bound is SP_SZCLIP, the view model's 124). The
-# comment above describes it. opt: the graphics options' copies, entered
-# instead while an option is on (render.c r_set_options patches the first
-# word of dr_records / de_records into a jump to dro<opt>_records /
-# deo1_records). opt bit 0, the draw distance: a record wholly beyond it
-# is culled, one reaching into the fog goes through the fogged transform
-# (XFORM fog). opt bit 1, the world's flat shading: a record wholly beyond
-# its start (or any), its block without a dynamic light, is drawn in one
-# colour, its average light (times the fog's factor at its centre): its
-# vertices without their lights (their colour words that colour, for the
-# slow path), its polygons POLY_FT4 / POLY_FT3 (POLYS flat). The
-# thresholds are slti immediates (\p\()_o_dcull, \p\()_o_fogz,
-# \p\()_o_flatz), patched (the flat shading everywhere: li 0).
-.macro RECLOOP p, exit, var, opt=0, wx=0
-.if \opt
-	ICSEC   \p\()_records             # (dr, de: the walk, draw_model fall in)
-.endif
+# RECLOOP p, exit, var [, flat, wx]: the record loop, labels prefixed by p,
+# a chain of its own (entered by a jump), leaving for `exit` when the block
+# is done or the arena is full. Instantiated for the world's face blocks
+# (dr, back to the walk; var = 0: the careful test's near bound is 96) and
+# for a model's records (de, draw_model; var = 1: the bound is SP_SZCLIP,
+# the view model's 124). The comment above describes it. The draw
+# distance (render.h R_DRAW_DIST): a record wholly beyond it is culled
+# (R_DRAW_Z), one reaching into the fog (R_FOG_Z) goes through the fogged
+# transform (XFORM fog). flat = 1, the world's flat shading: a record
+# wholly beyond its start (R_FLAT_Z), its block without a dynamic light, is
+# drawn in one colour, its average light (times the fog's factor at its
+# centre): its vertices without their lights (their colour words that
+# colour, for the slow path), its polygons POLY_FT4 / POLY_FT3 (POLYS
+# flat). The bench's other flat shadings: everywhere, \p\()_o_flatz
+# patched into li 0; none, the copy drn entered instead (render.c
+# r_set_flat).
+.macro RECLOOP p, exit, var, flat=0, wx=0
+	ICSEC   \p\()_records
 	.globl  \p\()_records
 \p\()_records:
 .if R_PROFILE
@@ -1047,20 +985,14 @@ r_ysites:
 	addu    $t6, $t4, $t0                # left: z + x
 	addu    $t6, $t6, $t5
 	bltz    $t6, \p\()_cull
-\p\()_ys_r:
 	sll     $t5, $t3, 3                  # 8 r
-\p\()_ys_z:
 	sll     $t6, $t4, 1
-\p\()_ys_z2:
 	addu    $t6, $t6, $t4                # 3z
-\p\()_ys_y:
 	sll     $t0, $t1, 2                  # 4y
 .if R_YSLOPE == 5
 	addu    $t5, $t5, $t3                # 9 r: |n| = sqrt(34) x 1.5 = 8.75
 	addu    $t0, $t0, $t1                # 5y (a 192-row viewport: R_YSLOPE)
 .endif
-	YSITE2  \p\()_ys_r, 3, \p\()_ys_z, 1
-	YSITE2  \p\()_ys_z2, 2, \p\()_ys_y, 0
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, \p\()_cull
@@ -1070,14 +1002,10 @@ r_ysites:
 	sll     $t5, $t3, 1                  # delay: 2r
 \p\()_join:
 	subu    $t6, $t4, $t7                # nearest depth z - rho
-.if \opt & 1
 	addu    $t3, $t4, $t7                # farthest depth z + rho (the fog's
-	.globl  \p\()_o_dcull               #  test, below; t4 = z kept there)
-\p\()_o_dcull:
-	slti    $t0, $t6, 0                  # nearer than the draw distance?
-	beqz    $t0, \p\()_cull              # (wholly beyond it: black, culled)
-.endif
-.if \opt & 2
+	slti    $t0, $t6, R_DRAW_Z           #  test, below; t4 = z kept there)
+	beqz    $t0, \p\()_cull              # wholly beyond the draw distance: black, culled
+.if \flat
 	move    $t1, $t6                     # (the flat shading's test, below)
 .endif
 	lw      $t7, SP_SZFAST($t8)
@@ -1125,7 +1053,7 @@ r_ysites:
 	sw      $v1, SP_TPAGE16($t8)
 \p\()_tex_done:
 .if R_PROFILE
-.if \opt & 2
+.if \flat
 	lw      $t9, SP_RECORDS($t8)         # (t1 kept)
 	nop
 	addiu   $t9, $t9, 1
@@ -1143,10 +1071,10 @@ r_ysites:
 	sw      $t9, SP_VERTS($t8)
 .endif
 .endif
-.if \opt & 2
+.if \flat
 	.globl  \p\()_o_flatz
 \p\()_o_flatz:
-	slti    $t5, $t1, 0                  # nearest depth (the join's) beyond the
+	slti    $t5, $t1, R_FLAT_Z           # nearest depth (the join's) beyond the
 	beqz    $t5, \p\()_o_flat            #  flat shading's start: flat (a dynamic
 \p\()_o_gouraud:                          #  light on the block: back here)
 	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
@@ -1155,26 +1083,16 @@ r_ysites:
 	andi    $t1, $t1, 0xfc
 	addu    $t0, $t0, $a0
 	subu    $at, $t0, $t1
-.if \opt & 1
-	.globl  \p\()_o_fogz
-\p\()_o_fogz:
-	slti    $t0, $t3, 0                  # farthest depth (the join's) before the fog?
-.endif
+	slti    $t0, $t3, R_FOG_Z            # farthest depth (the join's) before the fog?
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
-.if !(\opt & 2)
+.if !\flat
 	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
 .endif
-.if \opt & 1
 	beqz    $t0, \p\()_o_fog             # reaching into the fog: the fogged
-	addiu   $t5, $t2, -2                 #  transforms
-	beqz    $a2, \p\()_xfn
-	move    $t4, $t8                     # cache cursor
-.else
-	move    $t4, $t8                     # cache cursor
-	beqz    $a2, \p\()_xfn                  # nothing near or warping: no SZ (only
-	addiu   $t5, $t2, -2                 # CAREFUL and \p\()_nz read it). Vertices
-.endif
-	XFORM   1, \p\()_xf, \p\()_one, \p\()_xf_done #  left - 2: RTPT while 3+
+	addiu   $t5, $t2, -2                 #  transforms (vertices left - 2)
+	beqz    $a2, \p\()_xfn               # nothing near or warping: no SZ (only
+	move    $t4, $t8                     #  CAREFUL and \p\()_nz read it); cache cursor
+	XFORM   1, \p\()_xf, \p\()_one, \p\()_xf_done #  RTPT while 3+
 \p\()_xf_done:                              # (a2 != 0 here)
 	move    $t4, $t8
 	andi    $t0, $a2, 4                  # big or warping: careful regardless
@@ -1197,10 +1115,10 @@ r_ysites:
 	b       \p\()_polys_1
 	lhu     $t0, R_POLYS($a0)            # (\p\()_polys's first)
 
-.if \opt & 1
 .if !\var
-	# the dynamic lights' way back here (render.c points dr_light_rec's
-	# returns at it): t3, the far depth, is lost: the fog's test passed
+	# the dynamic lights' way back here (dr_light_rec's returns; render.c
+	# points them at drn's while the bench runs that copy): t3, the far
+	# depth, is lost: the fog's test passed
 	ICSEC   \p\()_lit_ret
 	.globl  \p\()_lit_ret
 \p\()_lit_ret:
@@ -1215,9 +1133,7 @@ r_ysites:
 	ICSEC   \p\()_o_fog
 \p\()_o_fog:
 .if !\var
-	.globl  \p\()_o_fogc
-\p\()_o_fogc:
-	slti    $t0, $t4, 0                  # the centre before the fog?
+	slti    $t0, $t4, R_FOG_Z            # the centre before the fog?
 	beqz    $t0, \p\()_o_fflat
 	nop
 \p\()_o_fogv:
@@ -1236,8 +1152,6 @@ r_ysites:
 	lbu     $t2, R_NVERTS($a0)           # (the vertex count and SZ_FAST back:
 	b       \p\()_xf_done                #  the table and the fog's temporary
 	lw      $t7, SP_SZFAST($t8)          #  had their registers)
-.endif
-.if \opt
 .if !\var
 	# flat: unless a dynamic light reaches the block (its records lit
 	# vertex by vertex: back to the Gouraud or the fog's way), one colour,
@@ -1245,17 +1159,14 @@ r_ysites:
 	# times the fog's factor at its centre (t4, the join's z): in
 	# SP_FT4COL / SP_FT3COL with the codes for POLYS, in every vertex's
 	# colour word for the slow path (XFORM light 2, at = the colour)
-.if \opt & 2
+.if \flat
 	ICSEC   \p\()_o_flat
 \p\()_o_flat:                              # (the flat shading's)
 	bnez    $gp, \p\()_o_gouraud
 	lbu     $t1, R_FLAGS($a0)            # (t0, the polygons' offset, kept for there)
-.if \opt & 1
 	b       \p\()_o_flat_2
 	sra     $t3, $t4, 31
 .endif
-.endif
-.if \opt & 1
 	ICSEC   \p\()_o_fflat
 \p\()_o_fflat:                             # (the fog's: the centre in it)
 	bnez    $gp, \p\()_o_fogv
@@ -1272,10 +1183,6 @@ r_ysites:
 	mult    $t1, $t3
 	mflo    $t1
 	srl     $t1, $t1, 7
-.else
-	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
-	andi    $t1, $t1, 0xfc               # the average light
-.endif
 	sll     $at, $t1, 8                  # grey c -> 0x00cccccc
 	or      $at, $at, $t1
 	sll     $t1, $at, 8
@@ -1286,9 +1193,7 @@ r_ysites:
 	or      $t9, $t9, $at
 	sw      $t1, SP_FT4COL($t8)
 	sw      $t9, SP_FT3COL($t8)
-.if \opt & 1
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
-.endif
 	lw      $t9, SP_VERTPOOL($t8)
 	move    $t4, $t8                     # cache cursor
 	bnez    $a2, \p\()_fsz
@@ -1313,7 +1218,6 @@ r_ysites:
 	bgtz    $t5, \p\()_fnz
 	addiu   $t4, $t4, 4
 	POLYS   \p\()f, \var, 1, \p\()_rec_1
-.endif
 .endif
 
 .if !\var
@@ -1436,11 +1340,6 @@ r_render:
 	sw      $t4, SP_SZCLIP($t8)          # (= 96 = R_SZ_FAST: r_slow.c SZ_CLIP)
 	li      $t4, 48
 	sw      $t4, SP_ZNEAR($t8)           # (8 world units: r_slow.c ZNEAR)
-	.global r_o_hshift
-r_o_hshift:
-	li      $t4, 5
-	sw      $t4, SP_HSHIFT($t8)          # (the GTE's H, 160 = 5 << 5: render.c R_SCREEN_H;
-	                                     #  r_set_res patches the shift, the mul in sp_proj)
 	andi    $t0, $t0, 0xffff
 	sll     $t1, $t1, 16
 	or      $t0, $t0, $t1
@@ -1529,8 +1428,8 @@ fl_done:
 	beqz    $t1, mark_done
 	lw      $s5, RS_VISFRAME($s0)        # (the walk's; mark_pvs sets it too)
 do_mark:
-	.globl  mark_call                    # (render.c: mark_pvs_far while the
-mark_call:                               #  draw distance is on)
+	.globl  mark_call                    # (render.c: zone_mark while a zoned
+mark_call:                               #  map is loaded)
 	jal     mark_pvs
 	nop
 mark_done:
@@ -1915,11 +1814,12 @@ pop_1:                                   # (t0 loaded; draw_ents, wl_ents come h
 # record of such a block against the lights and lights it in place before
 # drawing it (dr_light_rec), the walk being the one place that holds the
 # drawn records and their plane together.
-	bne     $t7, $s4, dr_lit
+	bne     $t7, $s4, dr_records         # (no light reaches the node: gp 0)
 	move    $gp, $zero
+	j       dr_records
 	move    $gp, $t2
-dr_lit:
-	RECLOOP dr, walk, 0, 0, 1
+
+	RECLOOP dr, walk, 0, 1, 1
 
 # dr_light_rec: the stamped record a0 of a block a dynamic light reaches
 # (gp = the node), in view (past the frustum test, so no light is spent on
@@ -1941,8 +1841,8 @@ dr_light_rec:
 	lw      $t1, SP_RSTATE($t8)
 	andi    $t0, $t0, 3                  # sky | liquid
 	.globl  dlr_ret0                     # (the three ways back: render.c
-dlr_ret0:                                #  points them at dro_lit_back when
-	bnez    $t0, dr_lit_back             #  the options' loop runs)
+dlr_ret0:                                #  points them at drn_lit_ret while
+	bnez    $t0, dr_lit_ret              #  the bench runs that copy)
 	lh      $t3, R_SC+0($a0)             # the record's sphere
 	lw      $a3, RS_LIGHTS($t1)
 	lw      $t2, RS_NLIGHTS($t1)
@@ -1983,7 +1883,7 @@ dlr_test:
 	lhu     $a3, R_TEX($a0)              # no light reaches it: the loop's a3, at
 	.globl  dlr_ret1
 dlr_ret1:
-	j       dr_lit_back
+	j       dr_lit_ret
 	lw      $at, SP_LASTTEX($t8)
 
 	.set DLR_A0,    16     # dr_light_full's keeps of the record loop (0..15: the
@@ -2326,7 +2226,7 @@ dlr_back:
 	lw      $at, SP_LASTTEX($t8)
 	.globl  dlr_ret2
 dlr_ret2:
-	j       dr_lit_back
+	j       dr_lit_ret
 	addiu   $sp, $sp, DLR_SIZE
 
 # -----------------------------------------------------------------------------
@@ -2664,7 +2564,9 @@ dm_lit_done:
 .endif
 	lw      $t0, SP_FULL($t8)
 	lw      $a1, RE_RECS_END($a0)
+	j       de_records
 	lw      $a0, RE_RECS($a0)
+
 	RECLOOP de, dm_exit, 1
 	ICSEC   dm_exit
 dm_exit:
@@ -2787,10 +2689,8 @@ dm_sort_1:
 	b       ds_records
 	lw      $a0, RE_RECS($a0)
 
-# The sorted model's record loop: RECLOOP de's with the draw distance
-# (deo1's cull and fog, their thresholds patched the same way: ds_o_dcull,
-# ds_o_fogz; render.c sets both to their most when the distance is off),
-# for a model of triangles only (the cook's, QSTM_SORT), each emitted into
+# The sorted model's record loop: RECLOOP de's with its draw distance (its
+# cull and fog at R_DRAW_Z, R_FOG_Z), for a model of triangles only (the cook's, QSTM_SORT), each emitted into
 # its bucket (the GTE's AVSZ3 of its corners' SZ: every vertex's SZ goes
 # to the cache), the slow path's pieces into the bucket of the triangle
 # they cut. Its records' face ids are not looked at (a model's are 0, the
@@ -2854,20 +2754,14 @@ ds_rec:
 	addu    $t6, $t4, $t0                # left: z + x
 	addu    $t6, $t6, $t5
 	bltz    $t6, ds_cull
-ds_ys_r:
 	sll     $t5, $t3, 3                  # 8 r
-ds_ys_z:
 	sll     $t6, $t4, 1
-ds_ys_z2:
 	addu    $t6, $t6, $t4                # 3z
-ds_ys_y:
 	sll     $t0, $t1, 2                  # 4y
 .if R_YSLOPE == 5
 	addu    $t5, $t5, $t3                # 9 r
 	addu    $t0, $t0, $t1                # 5y
 .endif
-	YSITE2  ds_ys_r, 3, ds_ys_z, 1
-	YSITE2  ds_ys_z2, 2, ds_ys_y, 0
 	subu    $t9, $t6, $t0                # bottom: 3z - 4y
 	addu    $t9, $t9, $t5
 	bltz    $t9, ds_cull
@@ -2877,9 +2771,7 @@ ds_ys_y:
 	sll     $t5, $t3, 1                  # delay: 2r
 	subu    $t6, $t4, $t7                # nearest depth z - rho
 	addu    $t3, $t4, $t7                # farthest depth z + rho
-	.globl  ds_o_dcull
-ds_o_dcull:
-	slti    $t0, $t6, 0                  # nearer than the draw distance?
+	slti    $t0, $t6, R_DRAW_Z           # nearer than the draw distance?
 	beqz    $t0, ds_cull                 # (wholly beyond it: culled)
 	lw      $t7, SP_SZFAST($t8)
 	subu    $t5, $t4, $t5                # nearest possible SZ (>= 1.5 r away)
@@ -2916,9 +2808,7 @@ ds_tex_done:
 	sw      $t9, SP_RECORDS($t8)
 	sw      $t2, SP_VERTS($t8)
 .endif
-	.globl  ds_o_fogz
-ds_o_fogz:
-	slti    $t0, $t3, 0                  # farthest depth before the fog?
+	slti    $t0, $t3, R_FOG_Z            # farthest depth before the fog?
 	addiu   $t3, $a0, R_VERTS            # the record's indices into the pool
 	lw      $t9, SP_VERTPOOL($t8)        # (padded to threes: no stray reads)
 	move    $t2, $t4
@@ -3188,7 +3078,6 @@ ds_tri_far:
 	lw      $t0, SP_SXY($t3)
 	lw      $t1, SP_SXY($t4)
 	lw      $t2, SP_SXY($t5)
-ds_ft_r:
 	lui     $v0, 240
 	and     $t9, $t0, $t1
 	and     $t9, $t9, $t2
@@ -3201,9 +3090,7 @@ ds_ft_r:
 	subu    $v1, $t2, $v0
 	or      $t9, $t9, $v1
 	bgez    $t9, ds_tri_off              # all y >= 240
-ds_ft_c:
 	lui     $v0, 320
-	FARSITE ds_ft_r, ds_ft_c
 	sll     $t0, $t0, 16
 	sll     $t1, $t1, 16
 	sll     $t2, $t2, 16
@@ -4006,13 +3893,10 @@ seq_keep:                                # s1, s2, s0 across a leaf's render lis
 	.space  16
 
 # -----------------------------------------------------------------------------
-# The graphics options' record loops (RECLOOP opt): entered from the
-# first word of dr_records / de_records, patched into a jump here while an
-# option is on (render.c r_set_options); they leave as those do.
-	RECLOOP dro1, walk, 0, 1, 1          # the draw distance
-	RECLOOP dro2, walk, 0, 2, 1          # the flat shading
-	RECLOOP dro3, walk, 0, 3, 1          # both
-	RECLOOP deo1, dm_exit, 1, 1          # the models': the draw distance
+# The world's record loop without the flat shading (the bench's FLAT=0):
+# entered from the first word of dr_records, patched into a jump here
+# while it runs (render.c r_set_flat); it leaves as dr does.
+	RECLOOP drn, walk, 0, 0, 1
 
 # -----------------------------------------------------------------------------
 # mark_pvs: a0 = new camera leaf. visframe++, then the leaf's PVS row
@@ -4021,17 +3905,15 @@ seq_keep:                                # s1, s2, s0 across a leaf's render lis
 # §90.9; no row = everything visible), then each visible leaf and its
 # not-yet-stamped ancestors stamped, a byte of the row at a time. A byte's
 # leaves go highest first. Only the row's last byte can name a leaf past the
-# array: it is masked (r_state vis_lastmask), no other byte is tested.
-# Clobbers t0-t7, t9, a1-a3, s5 (ra kept in the scratchpad's walk stack:
-# empty before the walk).
-# mark_pvs_far (the draw distance's, called instead: render.c patches the
-# call): a leaf whose box is farther from the camera than r_state.mark_r
-# on an axis (vertex units: past the draw distance's depth anywhere in the
-# frustum, and the camera's moves before the next marking) is not stamped.
-# Clobbers v0, v1, at, a0 too.
-.macro MARKPVS n, far
-	ICSEC   \n
-\n:
+# array: it is masked (r_state vis_lastmask), no other byte is tested. A
+# leaf whose box is farther from the camera than R_MARK_R on an axis (vertex
+# units: past the draw distance's depth anywhere in the frustum, and the
+# camera's moves before the next marking) is not stamped. Clobbers t0-t7,
+# t9, a0-a3, v0, v1, at, s5 (ra kept in the scratchpad's walk stack: empty
+# before the walk).
+	ICSEC   mark_pvs
+	.globl  mark_pvs                     # (engine/zone.s zone_mark goes on to it)
+mark_pvs:
 .if R_PROFILE
 	lhu     $t9, TIMER2($t8)
 .endif
@@ -4055,35 +3937,32 @@ seq_keep:                                # s1, s2, s0 across a leaf's render lis
 	lw      $t5, RS_VIS_LASTMASK($s0)
 	lui     $a1, %hi(r_vis_row)
 	addiu   $a1, $a1, %lo(r_vis_row)
-.if \far
 	lw      $v0, SP_CAM+0($t8)           # the camera, and the reach
 	lw      $v1, SP_CAM+4($t8)
 	lw      $a0, SP_CAM+8($t8)
-	lw      $at, RS_MARK_R($s0)
-.endif
+	li      $at, R_MARK_R
 	addiu   $a2, $a2, -1                 # a2 = row bytes left - 1
 	addiu   $a3, $a3, 8 * L_SIZE         # byte 0's highest leaf: leaf 8
-\n\()_byte:                               # a1 = the byte, a3 = its leaf 8
-	blez    $a2, \n\()_last
+mark_pvs_byte:                            # a1 = the byte, a3 = its leaf 8
+	blez    $a2, mark_pvs_last
 	lbu     $t0, 0($a1)                  # (none left: a harmless read)
 	addiu   $a1, $a1, 1
 	addiu   $a2, $a2, -1
-	bnez    $t0, \n\()_bits
+	bnez    $t0, mark_pvs_bits
 	move    $t9, $a3                     # (the bits' leaf cursor)
-	b       \n\()_byte
+	b       mark_pvs_byte
 	addiu   $a3, $a3, 8 * L_SIZE         # a zero byte: the next
-\n\()_last:                               # the last byte (t0)
-	bltz    $a2, \n\()_done                 # (none: done)
+mark_pvs_last:                            # the last byte (t0)
+	bltz    $a2, mark_pvs_done              # (none: done)
 	and     $t0, $t0, $t5                # (its bits past the last leaf off)
 	addiu   $a2, $a2, -1
-	beqz    $t0, \n\()_done
+	beqz    $t0, mark_pvs_done
 	move    $t9, $a3
-\n\()_bits:                               # t0: a byte's bits, t9: its leaf 8
+mark_pvs_bits:                            # t0: a byte's bits, t9: its leaf 8
 	sll     $t0, $t0, 24                 # this leaf's bit at bit 31
-\n\()_bit:
-	bgez    $t0, \n\()_skip
+mark_pvs_bit:
+	bgez    $t0, mark_pvs_skip
 	sll     $t0, $t0, 1
-.if \far
 	# |cam - c| > h + reach on an axis: unsigned (cam - c) + (h + reach)
 	# > 2 (h + reach)
 	lh      $t2, L_C+0($t9)
@@ -4093,7 +3972,7 @@ seq_keep:                                # s1, s2, s0 across a leaf's render lis
 	addu    $t2, $t2, $t3
 	sll     $t3, $t3, 1
 	sltu    $t2, $t3, $t2
-	bnez    $t2, \n\()_skip
+	bnez    $t2, mark_pvs_skip
 	lh      $t2, L_C+2($t9)
 	lh      $t3, L_H+2($t9)
 	subu    $t2, $v1, $t2
@@ -4101,7 +3980,7 @@ seq_keep:                                # s1, s2, s0 across a leaf's render lis
 	addu    $t2, $t2, $t3
 	sll     $t3, $t3, 1
 	sltu    $t2, $t3, $t2
-	bnez    $t2, \n\()_skip
+	bnez    $t2, mark_pvs_skip
 	lh      $t2, L_C+4($t9)
 	lh      $t3, L_H+4($t9)
 	subu    $t2, $a0, $t2
@@ -4109,27 +3988,26 @@ seq_keep:                                # s1, s2, s0 across a leaf's render lis
 	addu    $t2, $t2, $t3
 	sll     $t3, $t3, 1
 	sltu    $t2, $t3, $t2
-	bnez    $t2, \n\()_skip
+	bnez    $t2, mark_pvs_skip
 	nop
-.endif
 	lhu     $t2, L_PARENT($t9)
 	sh      $s5, L_VISFRAME($t9)
-\n\()_up:
-	beq     $t2, $t6, \n\()_skip            # past the root
+mark_pvs_up:
+	beq     $t2, $t6, mark_pvs_skip         # past the root
 	sll     $t2, $t2, 2
 	addu    $t2, $t2, $t7                # word offset -> node
 	lhu     $t1, N_VISFRAME($t2)
 	lhu     $t3, N_PARENT($t2)
-	beq     $t1, $s5, \n\()_skip            # ancestors already stamped
+	beq     $t1, $s5, mark_pvs_skip         # ancestors already stamped
 	sh      $s5, N_VISFRAME($t2)         # (stamped again then: harmless)
-	b       \n\()_up
+	b       mark_pvs_up
 	move    $t2, $t3
-\n\()_skip:
-	bnez    $t0, \n\()_bit                  # set bits left in this byte
+mark_pvs_skip:
+	bnez    $t0, mark_pvs_bit               # set bits left in this byte
 	addiu   $t9, $t9, -L_SIZE
-	b       \n\()_byte
+	b       mark_pvs_byte
 	addiu   $a3, $a3, 8 * L_SIZE
-\n\()_done:
+mark_pvs_done:
 .if R_PROFILE
 	lhu     $t0, TIMER2($t8)
 	lw      $t9, SP_T0($t8)
@@ -4143,11 +4021,6 @@ seq_keep:                                # s1, s2, s0 across a leaf's render lis
 	jr      $ra
 	nop
 .endif
-.endm
-
-	MARKPVS mark_pvs, 0
-	.globl  mark_pvs_far
-	MARKPVS mark_pvs_far, 1
 
 # vis_expand: a0 = the camera leaf (KUSEG), s0 = r_state. The leaf's PVS row
 # into r_vis_row, r_state.rowbytes bytes: no row, every bit; a plain row (its
@@ -4240,12 +4113,3 @@ ve_al:
 	jr      $ra
 	nop
 	.size   vis_expand, . - vis_expand
-
-	.pushsection .rodata.r_far_sites, "a", @progbits
-	.global r_far_sites_end
-r_far_sites_end:
-	.popsection
-	.pushsection .rodata.r_ysites, "a", @progbits
-	.global r_ysites_end
-r_ysites_end:
-	.popsection
