@@ -23,14 +23,13 @@
 #                each leaf's zone and its nearest by walking distance; made
 #                outside the repo, analysis/export.py): each map split into
 #                its skeleton and zone chunks (docs/porting-notes.md §57),
-#                or left whole where that saves no RAM. Default:
-#                zones/auto_1536_s3, the repo's copy of the cut in use (§93,
-#                §118; a path from the repo's root, or absolute); "none" (or
-#                empty): every map whole
-#   Q1PSX_ZONE_SLOTS   with the tables, the chunks resident at once (3, the
-#                default; 4: the three nearest zones; 5: and the last left)
-# The command line's Q1PSX_ZONE_TABLES and Q1PSX_ZONE_SLOTS win over
-# local.env's.
+#                or left whole where that saves no RAM (three chunks
+#                resident at once: a camera leaf's zone and its two nearest,
+#                tools/qcook/zones.c). Default: zones/auto_1536_s3, the
+#                repo's copy of the cut in use (§93, §118; a path from the
+#                repo's root, or absolute); "none" (or empty): every map
+#                whole
+# The command line's Q1PSX_ZONE_TABLES wins over local.env's.
 #
 # A cook writes what its output depends on, besides the cooker's sources
 # (CMake tracks those), to cooked/settings.txt: the settings above, the paks,
@@ -88,13 +87,11 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT"
 
 _zone_tables=${Q1PSX_ZONE_TABLES-unset}            # (the command line's wins over local.env's)
-_zone_slots=${Q1PSX_ZONE_SLOTS-unset}
 [ -f local.env ] && set -a && . ./local.env && set +a
 [ "$_zone_tables" != unset ] && Q1PSX_ZONE_TABLES=$_zone_tables
-[ "$_zone_slots" != unset ] && Q1PSX_ZONE_SLOTS=$_zone_slots
 Q1PSX_ZONE_TABLES=${Q1PSX_ZONE_TABLES-zones/auto_1536_s3}   # (the defaults, docs/porting-notes.md §118;
-Q1PSX_ZONE_SLOTS=${Q1PSX_ZONE_SLOTS:-3}                      #  CMakeLists.txt checks the tables' draw
-export QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-98}              #  distance; 98: tools/qcook/sound.c's)
+export QCOOK_SOUND_KEEP=${QCOOK_SOUND_KEEP:-98}              #  CMakeLists.txt checks the tables' draw
+                                                             #  distance; 98: tools/qcook/sound.c's)
 [ "$Q1PSX_ZONE_TABLES" = none ] && Q1PSX_ZONE_TABLES=
 if [ -n "$Q1PSX_ZONE_TABLES" ] && [ ! -d "$Q1PSX_ZONE_TABLES" ]; then
 	echo "cook: no zone tables at $Q1PSX_ZONE_TABLES (Q1PSX_ZONE_TABLES; none: every map whole)" >&2
@@ -126,8 +123,7 @@ settings() {   # what the cooked files depend on, besides the cooker's sources
 	echo "light gain: ${LIGHT_GAIN:-1.66}"
 	if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 		echo "zone tables: $(cd "$Q1PSX_ZONE_TABLES" && pwd -P)," \
-		     "contents $( (cat "$Q1PSX_ZONE_TABLES"/*.zones 2>/dev/null || true) | md5sum | cut -c1-32)," \
-		     "slots $Q1PSX_ZONE_SLOTS"
+		     "contents $( (cat "$Q1PSX_ZONE_TABLES"/*.zones 2>/dev/null || true) | md5sum | cut -c1-32)"
 	else
 		echo "zone tables: none"
 	fi
@@ -159,10 +155,9 @@ make -s -C tools/qcook
 # start clean: the disc carries every cooked file, so a map cooked earlier
 # (another COOK_MAPS, an older format) must not linger
 mkdir -p cooked/id1
-rm -f cooked/id1/*.tex cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
+rm -f cooked/id1/*.tx4 cooked/id1/*.wld cooked/id1/*.mdl cooked/id1/*.snd \
       cooked/id1/*.skl cooked/id1/*.zon cooked/id1/*.sndset cooked/id1/*.dat \
       cooked/settings.txt           # (written last: a cook cut short is cooked again)
-rm -rf cooked/xa                    # (the XA streams and their carousels: none since §52)
 LOGS=$(mktemp -d)
 trap 'rm -rf "$LOGS"' EXIT
 tools/qcook/qcook game --pak "$QUAKE_PAK0" --out cooked/id1/game.dat > "$LOGS/game.log" 2>&1 \
@@ -228,16 +223,13 @@ cat "$LOGS"/*_s.log | grep '^qcook: ' | sed 's|^qcook: .*/|section: |' || true
 # the world's zones (docs/porting-notes.md §57): each map with a table split
 # into its skeleton and its chunks (the world's records as they are, their
 # UVs on the texture set's tiles), or left whole where that saves no
-# RAM (the cook says which); Q1PSX_ZONE_SLOTS the chunks resident at once
-# (3: the camera's zone and its two nearest; 4: its three nearest; 5: and the
-# last one left, kept)
+# RAM (the cook says which)
 if [ -n "${Q1PSX_ZONE_TABLES:-}" ] && [ -d "$Q1PSX_ZONE_TABLES" ]; then
 	export Q1PSX_ZONE_TABLES
-	export Q1PSX_ZONE_SLOTS
 	for m in $MAPS; do echo "$m"; done | xargs -P "$(nproc)" -I{} bash -c \
 	    't="$Q1PSX_ZONE_TABLES/{}.zones"; [ -f "$t" ] || exit 0
 	     fm=""; [ "$FMAP" = 1 ] && fm="--fmap $LOGS/{}.unmerged.fmap $LOGS/{}.fmap"   # (QCOOK_MERGE)
-	     tools/qcook/qcook zones --resident "$Q1PSX_ZONE_SLOTS" --world cooked/id1/{}.wld --tables "$t" $fm --skeleton cooked/id1/{}.skl \
+	     tools/qcook/qcook zones --world cooked/id1/{}.wld --tables "$t" $fm --skeleton cooked/id1/{}.skl \
 	         --chunks cooked/id1/{}.zon > "$LOGS/{}_z.log" 2>&1 \
 	     || { echo "cook FAILED: zones {}"; cat "$LOGS/{}_z.log"; exit 1; }'
 	echo "zones: $(ls cooked/id1/*.skl 2>/dev/null | wc -l) of $(echo $MAPS | wc -w) maps split ($Q1PSX_ZONE_TABLES)"

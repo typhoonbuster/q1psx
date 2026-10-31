@@ -40,8 +40,6 @@
                                           checked a frame (mem_stack_ok, all of it in 16
                                           frames): reached, the game stops on a red
                                           screen (vid_fatal) */
-#define MEM_LEVEL_MIN   (1243 * 1024)  /* the least level arena the link accepts
-                                          (scripts/ramcheck.sh): its size until §81.7 */
 #ifndef Q1PSX_LEVEL_CAP
 #define Q1PSX_LEVEL_CAP 0              /* the arena capped at that many bytes (0: none;
                                           CMakeLists.txt, bench.sh LEVEL_CAP: a bench

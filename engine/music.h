@@ -30,13 +30,11 @@ void music_level(const char *map);   /* the map being loaded: its section's copy
 void music_play(int track);      /* the CD track number (2: the theme, ...) */
 void music_stop(void);
 void music_tick(void);           /* once per frame: the stream kept going  */
-int  music_track(void);          /* the one playing, 0 = none */
 
 /* The music shares the drive with the streamed assets' reads
    (engine/stream.c): a read of `sectors` may start when the ring holds
    the music for it (and the refill after it) and the music is not
    reading; the music refills when the stream is not (stream_reading). */
 int  music_read_ok(int sectors);
-int  music_reading(void);
 
 #endif

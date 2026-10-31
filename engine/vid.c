@@ -66,11 +66,6 @@ void vid_set_viewport(int rows)
 		buf[i].draw.clip.h = (int16_t) rows;
 }
 
-int vid_viewport_rows(void)
-{
-	return viewport_rows;
-}
-
 void *vid_ovl_alloc_run(int bytes, int n)
 {
 	uint32_t *p = vid_alloc(bytes * n);

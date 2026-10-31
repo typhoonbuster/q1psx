@@ -77,7 +77,6 @@ void  vid_set_bg(int r, int g, int b);
 void  vid_set_viewport(int rows);              /* the 3D view's draw area: 240 rows, or
                                                   192 above the original status bar;
                                                   from the next frame */
-int   vid_viewport_rows(void);
 void *vid_alloc(int bytes);                    /* NULL when the arena is full */
 void  vid_link(int bucket, void *packet);
 void  vid_text(int x, int y, const char *s);   /* debug font, overlay bucket */

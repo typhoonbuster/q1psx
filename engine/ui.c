@@ -137,22 +137,6 @@ void ui_text(int x, int y, const char *s)
 	ui_text_shaded(x, y, s, 0, 128);
 }
 
-void ui_text_alt(int x, int y, const char *s)
-{
-	ui_text_shaded(x, y, s, 128, 128);
-}
-
-void ui_fill(int x, int y, int w, int h, int r, int g, int b)
-{
-	TILE *t = vid_ovl_alloc(sizeof *t);
-	if (!t)
-		return;
-	setTile(t);
-	setXY0(t, x, y);
-	setWH(t, w, h);
-	setRGB0(t, r, g, b);
-}
-
 /* Draw_FadeScreen: a semi-transparent black over everything (B - F, mode
    2: the screen at a quarter of its brightness... Quake's fade keeps about
    a fifth of it in a dither; B/2 + F/2 of black twice keeps a quarter) */
@@ -173,31 +157,6 @@ void ui_fade(void)
 		setRGB0(t, 0, 0, 0);
 	}
 	cur_tpage = -1;
-}
-
-/* M_DrawTextBox: corners, edges and the middle in 8 x 8 / 16 x 8 pieces */
-void ui_text_box(int x, int y, int width, int lines)
-{
-	int cx = x, cy = y;
-	ui_aux(QGA_BOX_TL, cx, cy);
-	for (int n = 0; n < lines; n++) { cy += 8; ui_aux(QGA_BOX_ML, cx, cy); }
-	ui_aux(QGA_BOX_BL, cx, cy + 8);
-	cx += 8;
-	while (width > 0) {
-		cy = y;
-		ui_aux(QGA_BOX_TM, cx, cy);
-		for (int n = 0; n < lines; n++) {
-			cy += 8;
-			ui_aux(n == 1 ? QGA_BOX_MM2 : QGA_BOX_MM, cx, cy);
-		}
-		ui_aux(QGA_BOX_BM, cx, cy + 8);
-		width -= 2;
-		cx += 16;
-	}
-	cy = y;
-	ui_aux(QGA_BOX_TR, cx, cy);
-	for (int n = 0; n < lines; n++) { cy += 8; ui_aux(QGA_BOX_MR, cx, cy); }
-	ui_aux(QGA_BOX_BR, cx, cy + 8);
 }
 
 /* ------------------------------------------- the console's background -- */

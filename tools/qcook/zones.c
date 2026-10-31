@@ -4,7 +4,7 @@
  * tables (formats/qworld.h "zones", docs/porting-notes.md §56, §57).
  *
  *   qcook zones --world <map>.wld --tables <dir>/<map>.zones
- *               --skeleton <out.skl> [--resident 3] --chunks <out.zon>
+ *               --skeleton <out.skl> --chunks <out.zon>
  *
  * The tables (one text file a map: analysis/export.py's docstring gives
  * the format) are made outside the repo from Quake's maps; the cut in use
@@ -12,9 +12,9 @@
  * unless Q1PSX_ZONE_TABLES names another (docs/porting-notes.md §118:
  * numbers only). They list each zone's
  * records (the world records' visibility ids) and, for each leaf, its zone
- * and the three nearest other zones by walking distance. `--resident`: the
- * zones a camera leaf wants at once (its own and the nearest): the slots
- * the engine keeps (each the size of the biggest chunk).
+ * and the three nearest other zones by walking distance. The engine keeps
+ * ZONE_SLOTS slots, each the size of the biggest chunk: a camera leaf's
+ * zone and its two nearest.
  *
  * The map stays whole (nothing written, an older skeleton removed) when
  * its skeleton and slots would take as much RAM as its whole world,
@@ -36,6 +36,9 @@
 #include "../../formats/qworld.h"
 
 #define SECTOR    2048
+#define ZONE_SLOTS 3u      /* the chunks resident at once (engine/zone.c MAX_RES): a camera
+                              leaf's zone and its two nearest (docs/porting-notes.md §93;
+                              4 and 5 until §119) */
 
 /* ---------------------------------------------------------- the world -- */
 
@@ -302,7 +305,6 @@ static void put_record(buf_t *out, const qw_record *src, pool_t *pool, int loade
 int cmd_zones(int argc, char **argv)
 {
 	const char *wld = 0, *tab = 0, *skl = 0, *zon = 0, *fm_from = 0, *fm_to = 0;
-	int want = 3;
 	for (int i = 2; i < argc; i++) {
 		if (i + 1 >= argc)
 			die("zones: %s needs a value", argv[i]);
@@ -313,13 +315,11 @@ int cmd_zones(int argc, char **argv)
 		}
 		else if (!strcmp(argv[i], "--tables"))     tab = argv[++i];
 		else if (!strcmp(argv[i], "--skeleton"))   skl = argv[++i];
-		else if (!strcmp(argv[i], "--resident"))   want = atoi(argv[++i]);
 		else if (!strcmp(argv[i], "--chunks"))     zon = argv[++i];
 		else die("zones: unknown option %s", argv[i]);
 	}
-	if (!wld || !tab || !skl || !zon || want < 1 || want > 5)
-		die("usage: qcook zones --world <wld> --tables <zones> --skeleton <skl> [--resident 1..5] "
-		    "--chunks <zon>");
+	if (!wld || !tab || !skl || !zon)
+		die("usage: qcook zones --world <wld> --tables <zones> --skeleton <skl> --chunks <zon>");
 	remove(skl);                              /* (a map kept whole leaves none) */
 	remove(zon);
 
@@ -558,10 +558,10 @@ int cmd_zones(int argc, char **argv)
 		leaf_set[l] = (uint16_t) i;
 	}
 
-	/* the slots: `want` of them (but no more than the zones), each the
+	/* the slots: ZONE_SLOTS of them (but no more than the zones), each the
 	   biggest chunk in whole sectors (a chunk is read whole) */
 	const uint32_t slot_bytes = sectors_of(max_bytes) * SECTOR;
-	const uint32_t nslots = (uint32_t) want < nz ? (uint32_t) want : nz;
+	const uint32_t nslots = ZONE_SLOTS < nz ? ZONE_SLOTS : nz;
 
 	/* the skeleton: the header (the zones' after it), the sections */
 	uint32_t stamp = fnv(2166136261u, &flen, sizeof flen);

@@ -16029,3 +16029,41 @@ Removed (2026-10-31): the two leftovers 119.7 listed:
   the boot reads GAME.DAT, STREAM.DAT and START.TX4. The release's level
   arena 1371872 → 1372256 B (+384: `.text` −384; the load overlay −56);
   the default preset builds.
+
+### 119.9 What was left unused
+
+Removed (2026-10-31), from a list made by relinking the four
+builds with `--print-gc-sections` (the sections every build drops: their
+code nothing calls, a call inlined aside) and by searching the macros,
+scripts and settings nothing reads:
+
+- **Seven functions without a caller** in any build or bench setting:
+  `hud_style`, `music_reading`, `music_track`, `ui_fill`, `ui_text_alt`,
+  `ui_text_box` (Quake's M_DrawTextBox: no menu draws a box; its ten
+  pictures, `QGA_BOX_*`, stay in GAME.DAT for now) and
+  `vid_viewport_rows`.
+- **Five calls of psxetc's interrupt API** that `engine/irq.c` carried for
+  completeness and nothing makes: `GetInterruptCallback`,
+  `GetDMACallback`, `GetDMAPriority`, `RestartCallback`, `StopCallback`
+  (a library that came to want one would pull psxetc's object in, and the
+  link would stop on the calls defined twice).
+- **Three macros nothing reads**: `MEM_LEVEL_MIN` (CMake's
+  `Q1PSX_LEVEL_MIN` is the one `scripts/ramcheck.sh` takes), the menu's
+  `GREY`, `QSTF_KEEP_SKIN` (a flag no file ever set). The other unread
+  macros are Quake's tables (`IT_SIGIL1`, `FL_GODMODE`,
+  `QW_CONTENTS_SKY`, the MDL's `EF_*` in `QSTM_EF_*`): kept.
+- **`scripts/cook.sh`** no longer removes the 8-bit sets (`*.tex`) and the
+  XA streams (`cooked/xa`) of the cooks before §52.
+- **`scripts/run-emu.sh`**, a launcher nothing called (README gives the
+  emulator's command).
+- **The zones' four-slot cut** (`zones/auto_1536_s4`, 32 tables, 1.6 MB),
+  which zoned no map, and the slots' setting (`Q1PSX_ZONE_SLOTS`, `qcook
+  zones --resident`): three, a camera leaf's zone and its two nearest
+  (`tools/qcook/zones.c` `ZONE_SLOTS`; the engine's `MAX_RES` 5 → 3).
+- **Checked** (TESTING 11.106): the cook's 230 files the same,
+  `settings.txt` aside (no `slots`); against 119.6's display lists:
+  START's 12 views, the 128 spawn views, the game bench's 28 dumps (the
+  menus' warp fixed for the test) the same, the C engine's START frames
+  119.8's C engine's. The release's level arena 1372256 → 1372304 B
+  (+48: `.text` −32, the zones' two slots −16; the dead functions were
+  the linker's to drop already); the default preset builds.

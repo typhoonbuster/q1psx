@@ -77,11 +77,6 @@ Q_COLD void hud_set_style(int s)
 	r_set_viewport(rows);
 }
 
-int hud_style(void)
-{
-	return style;
-}
-
 /* ------------------------------------------------------------- drawing -- */
 
 /* a part of a picture, its texels (sx, sy) .. + (w, h), at (x, y); its

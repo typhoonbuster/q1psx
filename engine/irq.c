@@ -4,10 +4,14 @@
    The calls and their effects are PSn00bSDK v0.24 psxetc's (libpsxetc
    interrupts.c), whose object the link then leaves out: psxgpu, psxcd and
    psxspu register their callbacks here as before. Only the way in differs:
-   RestartCallback points the RAM exception vector (0x80000080) at q_exc,
+   ResetCallback points the RAM exception vector (0x80000080) at q_exc,
    which runs the callbacks itself, the kernel's dispatch skipped (no
    HookEntryInt, no ChangeClearPAD / ChangeClearRCnt: the kernel no longer
-   sees an interrupt). StopCallback gives the kernel its vector back. */
+   sees an interrupt). The calls nothing makes are left out (psxetc's
+   GetInterruptCallback, GetDMACallback, GetDMAPriority, RestartCallback,
+   StopCallback, until docs/porting-notes.md §119): a library wanting one
+   would pull psxetc's object in, and the link would stop on the twice
+   defined calls. */
 
 #include <stdint.h>
 #include <stdio.h>
@@ -42,11 +46,6 @@ void *InterruptCallback(IRQ_Channel irq, void (*func)(void))
 	return old;
 }
 
-void *GetInterruptCallback(IRQ_Channel irq)
-{
-	return (void *) q_irq_handlers[irq];
-}
-
 /* (psxetc's own order and register writes, the flags DICR holds written
    back as they read too) */
 void *DMACallback(DMA_Channel dma, void (*func)(void))
@@ -75,11 +74,6 @@ void *DMACallback(DMA_Channel dma, void (*func)(void))
 	return old;
 }
 
-void *GetDMACallback(DMA_Channel dma)
-{
-	return (void *) q_dma_handlers[dma];
-}
-
 int SetDMAPriority(DMA_Channel dma, int priority)
 {
 	int      sh  = dma * 4;
@@ -89,12 +83,6 @@ int SetDMAPriority(DMA_Channel dma, int priority)
 		reg |= (uint32_t) ((priority & 7) | 8) << sh;
 	DMA_DPCR = reg;
 	return was & 8 ? (int) (was & 7) : -1;
-}
-
-int GetDMAPriority(DMA_Channel dma)
-{
-	uint32_t v = DMA_DPCR >> (dma * 4);
-	return v & 8 ? (int) (v & 7) : -1;
 }
 
 /* the vector: the kernel's four words kept (run from q_bios_vec for every
@@ -149,33 +137,6 @@ Q_COLD int ResetCallback(void)
 	_96_remove();
 	restart();
 	return 0;
-}
-
-Q_COLD void RestartCallback(void)
-{
-	if (!installed)
-		restart();
-}
-
-Q_COLD void StopCallback(void)
-{
-	if (!installed)
-		return;
-	EnterCriticalSection();
-	saved_mask = IRQ_MASK;
-	saved_dpcr = DMA_DPCR;
-	saved_dicr = DMA_DICR;
-	IRQ_STAT = 0;
-	IRQ_MASK = 0;
-	DMA_DPCR = saved_dpcr & 0x07777777;
-	DMA_DICR = 0;
-	for (int i = 0; i < 4; i++)
-		VECTOR[i] = q_bios_vec[i];
-	FlushCache();
-	ChangeClearPAD(1);
-	for (int i = 0; i < 4; i++)
-		ChangeClearRCnt(i, 1);
-	installed = 0;
 }
 
 /* the bench: the interrupt stack's bytes no callback reached */

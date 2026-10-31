@@ -35,7 +35,6 @@ static const uint8_t sp_rows[]    = { 0 };
 #define SINGLEPLAYER_ITEMS (int) sizeof sp_rows
 enum { O_RESET, O_BRIGHTNESS, O_MUSIC, O_SOUND, O_GRAPHICS, OPTIONS_ITEMS };
 #define SLIDER_RANGE       10
-#define GREY               56          /* a greyed entry's shade (128: as it is) */
 #define HINT_SHADE         88          /* the graphics page's hint: under the rows' 128 */
 #define HINT_GAP           4           /* px between the rows and the hint, then the
                                           note: 16 rows end it at row 192, where

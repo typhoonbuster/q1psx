@@ -20,20 +20,15 @@ void ui_aux_shaded(int id, int x, int y, int shade);
 /* a part of an aux picture: its rows sy .. sy + h at (x, y) */
 void ui_aux_rows(int id, int x, int y, int sy, int h, int shade);
 
-/* Draw_Character, a string of them; ui_text_alt adds 128 (the bronze set,
-   M_Print); `shade` as above */
+/* Draw_Character, a string of them; `add` 128 the bronze set (M_Print);
+   `shade` as above */
 void ui_char(int x, int y, int c, int shade);
 void ui_chars(int x, int y, const char *s, int n, int add, int shade);   /* n of s, a run */
 void ui_text(int x, int y, const char *s);
-void ui_text_alt(int x, int y, const char *s);
 void ui_text_shaded(int x, int y, const char *s, int add, int shade);
 
-/* a flat rectangle; Draw_FadeScreen: the screen darkened */
-void ui_fill(int x, int y, int w, int h, int r, int g, int b);
+/* Draw_FadeScreen: the screen darkened */
 void ui_fade(void);
-
-/* M_DrawTextBox: the box pieces around width x lines of characters */
-void ui_text_box(int x, int y, int width, int lines);
 
 /* The console's background (formats/qmenu.h), what the release shows
    before any map is loaded (Quake's forced console: no world, no demo).

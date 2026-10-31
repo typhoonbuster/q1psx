@@ -99,7 +99,6 @@ typedef struct {
 	uint32_t size;           /* bytes                                        */
 } qst_asset;                 /* 16 bytes */
 
-#define QSTF_KEEP_SKIN 1     /* (unused yet) */
 #define QSTF_RAM       2     /* a level's file: this sound is read into main RAM at the
                                 map's load with the others so flagged (they lie first in
                                 the file, one read) and played from there, its samples

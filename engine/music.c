@@ -281,15 +281,4 @@ int music_read_ok(int sectors)
 	return held_ms > need_ms;
 }
 
-int music_reading(void)
-{
-	return reading_n != 0;
-}
-
-
-
-int music_track(void)
-{
-	return playing;
-}
 

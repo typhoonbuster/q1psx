@@ -9,7 +9,7 @@
  *   qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>
  *                                                     (tools/qcook/stream.c)
  *   qcook zones --world <map>.wld --tables <map>.zones --skeleton <out.skl>
- *               [--resident n] --chunks <out.zon>
+ *               --chunks <out.zon>
  *                                                     (tools/qcook/zones.c)
  *
  * Reads the map straight from the pak (gfx/palette.lmp for the CLUT) and
@@ -435,7 +435,7 @@ int main(int argc, char **argv)
 	        "  qcook stream --pak <pak0.pak> [--pak1 <pak1.pak>] --out <stream.dat>\n"
 	        "  qcook menu --pak <pak0.pak> --sounds <menu.snd> --conback <conback.dat>\n"
 	        "  qcook spumusic --music <dir> --track <n> [--rate <hz>] --out <spu_nn.dat>\n"
-	        "  qcook zones --world <wld> --tables <map.zones> --skeleton <out.skl> [--resident n]\n"
+	        "  qcook zones --world <wld> --tables <map.zones> --skeleton <out.skl>\n"
 	        "              --chunks <out.zon>\n");
 	return 2;
 }

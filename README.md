@@ -71,7 +71,7 @@ outside the repo (numbers only). By default it takes `zones/auto_1536_s3`
 (§93) with three chunk slots, and keeps 98 % of every sound's energy
 (§87). `local.env` or the command line (which wins) may set others:
 `Q1PSX_ZONE_TABLES` (another folder, or `none`: every map whole),
-`Q1PSX_ZONE_SLOTS`, `QCOOK_SOUND_KEEP`. The build cooks again when the
+`QCOOK_SOUND_KEEP`. The build cooks again when the
 cook's settings change (`scripts/cook.sh`'s header lists them; §118).
 
 ```bash

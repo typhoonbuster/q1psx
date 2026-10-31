@@ -2635,3 +2635,10 @@ followed by R0-R4.
   old one put through the load's old mapping, byte for byte; the display
   lists are the same; the release's level arena +384 B, and 184 to 792 B more
   of it free while a level plays (the maps' table).
+- **What was left unused** (§119.9, provisional number, 2026-10-31). Seven functions no build
+  calls, five calls of psxetc's interrupt API nothing makes, three unread
+  macros, the cook script's clean-up of the 8-bit and XA files of the
+  cooks before §52, `scripts/run-emu.sh`, the zones' four-slot cut (it
+  zoned no map) and the slots' setting (three). The cooked files are the
+  same (`settings.txt` aside); the display lists are the same; the
+  release's level arena +48 B.
