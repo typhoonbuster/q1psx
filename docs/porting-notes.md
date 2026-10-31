@@ -14417,3 +14417,39 @@ lists change with it: a `scripts/dlcheck.sh` reference saved before must
 be saved again. Checked: the release folder's cache moved to `all` at
 its build; E2M3's views benched with the defaults draw what `TESS=all`
 drew (its frames' cycles within 20 of them), not the old default's.
+
+## §109 — A door seen through: the brush models' triangles turned round (2026-10-31)
+
+- **The report**: on E2M1 a door was transparent until it began to open,
+  and then only one of its four triangles showed (the robot's capture).
+  It is the door at x 737-751, y -255 to -129: four `func_door`s (`*13`
+  up, `*14` down, `*15` north, `*16` south), four wedges whose faces
+  toward the corridors are triangles meeting in an X.
+- **The cause**: the model loop (r_world.s `RECLOOP de`: `draw_model`, a
+  brush model's blocks, the pieces of it the world's BSP cuts, §46)
+  leaves out a triangle whose NCLIP is 0 or more, the alias models'
+  back faces (`tri_emit`, §54; `_tri_far`, §93); a quad is never tested.
+  The cook wrote a brush model's polygons in Quake's winding, the
+  world's (the walk takes the world's faces by their planes, not by
+  NCLIP), which gives a face seen from its front a positive NCLIP: every
+  triangle of a brush model was left out seen from the front and drawn
+  seen from behind. Most brush faces are quads (a fan of quads, a
+  triangle when the count is odd) and lost only their odd triangle; the
+  X door's faces are triangles, and the closed door, inside the wall's
+  leaves, is drawn as pieces the cut makes (engine/bmfrag.c), triangles
+  as often as not: all of it gone.
+- **The fix**: the cook turns a brush model's polygons the alias models'
+  way round (tools/qcook/world.c `bmodel_turn`: corners 1 and 2
+  swapped, a quad's too, which keeps its diagonal: the GPU's two
+  triangles are the same), and the cut keeps the turn in every piece it
+  makes of them. The item boxes were turned in §93 (their fans).
+- **Checked**: `BENCH_MAPS=1 MAP=E2M1 SKILL=2 VIEW=772,-156,46,186,0
+  TICKS=64` (the door opening, a picture every 8 ticks: closed, then four
+  triangles parting), the door from both corridors (`VIEW=690,-192,48,0,0`
+  and `620,-192,48,0,0`; `870,-192,48,180,0` with the barrier beside it
+  opened, `USE=t44`) before and after the turn (pktview); E2M1's twelve
+  other views: the same pixels, but for 42 of one view (a dither step on
+  a lift's triangle). The display lists change wherever a brush model's
+  triangle is drawn: a `scripts/dlcheck.sh` reference saved before must
+  be saved again.
+

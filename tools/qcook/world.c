@@ -351,6 +351,24 @@ static int quad_fan_degenerate(const vkey *k, int n)
 	return i + 1 < n && tri_area2(&k[0], &k[i], &k[i + 1]) <= 0.25;
 }
 
+/* A brush model's polygon turned the alias models' way round: the model
+   loop (r_world.s RECLOOP de: draw_model, a brush model's blocks, its cut
+   pieces) leaves out a triangle whose NCLIP is >= 0 (§54, §93), where
+   Quake's winding (the world's faces, which the walk takes by their
+   planes) gives a front face's a positive one: corners 1 and 2 swapped, a
+   triangle's and a quad's alike (the quad keeps its diagonal: the GPU's two
+   halves the same triangles), so the cut (engine/bmfrag.c) keeps the turn
+   in every piece it makes of them (docs/porting-notes.md §109) */
+static void bmodel_turn(uint8_t *idx, uint16_t *uv)
+{
+	uint8_t i = idx[1];
+	idx[1] = idx[2];
+	idx[2] = i;
+	uint16_t u = uv[1];
+	uv[1] = uv[2];
+	uv[2] = u;
+}
+
 /* Add one convex piece (UVs already local to its tile) to the record,
    flushing first if its vertices would not fit: a fan of quads from vertex 0
    (+ a triangle when odd), or ear-clipped triangles when the piece has
@@ -441,6 +459,8 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 				q->idx[k] = (uint8_t) (idx[pairs[e][k]] * 4);
 				q->uv[k]  = uvword(uv[pairs[e][k]][0], uv[pairs[e][k]][1]);
 			}
+			if (o->bmodel)
+				bmodel_turn(q->idx, q->uv);
 		}
 		for (int e = 0; e < nsingle; e++) {
 			qw_tri *t = &r->t[r->nt++];
@@ -448,6 +468,8 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 				t->idx[q] = (uint8_t) (idx[ears[single[e]][q]] * 4);
 				t->uv[q]  = uvword(uv[ears[single[e]][q]][0], uv[ears[single[e]][q]][1]);
 			}
+			if (o->bmodel)
+				bmodel_turn(t->idx, t->uv);
 			t->pad = 0;
 			t->pad2 = 0;
 		}
@@ -464,6 +486,8 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 			q->idx[k] = (uint8_t) (idx[c[k]] * 4);
 			q->uv[k]  = uvword(uv[c[k]][0], uv[c[k]][1]);
 		}
+		if (o->bmodel)
+			bmodel_turn(q->idx, q->uv);
 	}
 	if (i + 1 < pc->n) {                       /* one triangle left */
 		qw_tri *t = &r->t[r->nt++];
@@ -472,6 +496,8 @@ static void rec_add_piece(out_t *o, rec_t *r, const poly_t *pc, const double (*u
 			t->idx[k] = (uint8_t) (idx[c[k]] * 4);
 			t->uv[k]  = uvword(uv[c[k]][0], uv[c[k]][1]);
 		}
+		if (o->bmodel)
+			bmodel_turn(t->idx, t->uv);
 		t->pad = 0;
 		t->pad2 = 0;
 	}

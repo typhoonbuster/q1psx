@@ -2425,3 +2425,10 @@ followed by R0-R4.
   folder still caching the old `START,E1M1` moves to it): the 128 views
   -5.7 %, E2M7's fight -1.75 %, the pictures moving by a texel where a
   polygon is cut.
+- **A door seen through** (§109, 2026-10-31). The model loop leaves out a triangle whose NCLIP is
+  0 or more (§54, §93), and a brush model's polygons were cooked in
+  Quake's winding: its triangles were left out seen from the front. E2M1's
+  X door (four wedges, triangles) was transparent until it opened, then
+  showed one triangle of four. The cook turns a brush model's polygons the
+  alias models' way round (corners 1 and 2 swapped, a quad's diagonal
+  kept), the BSP cut keeping the turn.
