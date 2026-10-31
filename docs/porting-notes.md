@@ -14819,6 +14819,286 @@ measures (the fight's vblanks a frame over each window of 300 frames;
   now: a call left open, whether a frame just over a vblank should keep
   the 32 px warp instead.
 
+## §112 — The slow stage cheaper, the same display lists: the grid's levels tested inline, the slow path's stack of pool entries (2026-10-31)
+
+The third lever after §108 (the order of 2026-10-31: the vblank's
+wait §111, this one, the coplanar faces and the dynamic lights §113): the
+slow path itself, with no loss, every display list the base's word for
+word. §92.7 named its lever: the midpoints by the GTE instead of a
+division each, and a stack without copies. The measures came first
+(112.1): half of the slow stage's work is in the grid's tests and in the
+slow path's stack and tests, not in the divisions. What is built (112.2,
+112.3) changes no decision and no packet. The GTE's midpoints are left
+out (112.5): they cannot draw the same pixels, and the cost model gives
+them little. Provisional section number (§111 and §113 ran beside this
+one; §114-§116 were merged before it).
+
+### 112.1 Where the slow stage's cycles went
+
+The sampler (`SAMPLE=1`, §106) over the 128 views (`BENCH_MAPS=1
+HASHONLY=1 PROFILE=0`, master d7de758), its samples put on the asm's
+lines through `objdump -dl` (a scratch symbolizer):
+
+| part | the 128 views | the 16 past a vblank |
+|---|---|---|
+| the waits for the vblank (psxgpu) | 48.6 % | 34.5 % |
+| r_world.s: the walk, the records | 19.3 % | 31.9 % |
+| r_slow.s: the slow path | 15.5 % | 14.1 % |
+| r_tess.s: the grid (§92) | 11.7 % | 14.5 % |
+
+The grid costs as much as the slow path on the heavy views. Of its share,
+the five edges' levels (`tess_edge`: 3.2 % of all the samples) and the
+points' means (`MID`: 1.7 %). A caveat when reading them: PCSX-Redux
+looks at its timers at the end of a block of code, so a sample lands
+where the next block starts, and a loop's body charges its time to the
+loop's head (`sp_emit`'s goes to `sp_sub`). The lines say where, roughly;
+the counts below say how much.
+
+The slow path's own counts, START's 12 views, a frame each (`SLOWSTAT=1`,
+with its new counters `one`, `two`, `three`, `looks`, `marked`):
+
+- 199 polygons, 129 of them near-clipped;
+- 2 970 triangles popped, 932 of them dropped off the screen;
+- 929 split: 265 on one edge, 609 on two, 47 on three; 1 109 leaves;
+- 1 646 midpoint lookups for 1 125 midpoints made; 1 886 edges refined.
+
+With the cost model of §21.1, their shares of START's slow stage (`r_slow`
+with `PROFILE=1`, the grid's work in it: 2.78 M cycles over the 12 views):
+
+| item | cycles, about |
+|---|---|
+| the grid's prologue (five `tess_edge` calls, ~640 cycles a polygon, 728 polygons) | 470 k |
+| the three edge tests of a triangle (NOSPLIT) | 230 k |
+| the midpoints (`sm_new`, ~165 cycles each, two divisions in it) | 186 k |
+| the pops (a load and nine instructions of decoding) | 125 k |
+| REFINE | 116 k |
+| the off-screen tests | 95 k |
+| the leaves' packets | 80 k |
+| the splits' bookkeeping | 67 k |
+| the table's lookups | 66 k |
+
+### 112.2 The grid's levels inline (engine/r_tess.s)
+
+`tess_poly` called `tess_edge` for each of its five edges (§92.2: the top
+and bottom ones give the rows' level, the left and right ones the
+columns', the diagonal raises the larger). Each call loaded the two
+corners' SXY and SZ from the cache again, unpacked them, and took three
+products one after the other with five `nop`s between them: about 60
+instructions an edge. Now:
+
+- The corners' x and y are unpacked once, while their range is tested
+  (`TRANGE` keeps them). The near test and the range test are as before,
+  in the same order of exits. x, y, z sit in s0-s5 and t0-t5.
+- The edges need every register. The corners' cache addresses wait in
+  slow_poly's lists (`SP_PLA`, `SP_PLB`: unused until slow_poly runs).
+  The record, the polygon and its corner count are read back from
+  draw_records' saves (`SP_SAVE` +4, +16, +32; r_world.s RECLOOP's slow
+  call, the only caller).
+- Each edge's test at level 0 is inline (`EDGE`, about 28 instructions).
+  It is the slow path's own: |ds| |dz| <= T2 (za + zb), |ds| the
+  octagon, T2 (za + zb) one short product; and |dx| + |dy| <= SPAN.
+  Most edges pass it and cost nothing more.
+- An edge that fails calls `tess_lvl`, the levels past 0 by the same
+  bounds as before: 4^m 2 T2 zm + 2^m T2 |dz| (zm the nearer end's
+  depth). The span's test is now ceil(span / 2^m) <= SPAN, the same as
+  span <= 2^m SPAN.
+- A triangle (its corner 3 is its corner 2) tests three edges, not five:
+  its bottom edge was a point, its right edge the diagonal again. ku is
+  the top edge's level, kv the greater of the left edge's and the
+  diagonal's, as the five tests gave.
+- An edge past KMAX no longer leaves at once. Its level KMAX + 1 goes
+  into ku or kv, and the test after the edges (a level past KMAX: to the
+  slow path) takes the same exit. The order of the exits is kept: a near
+  corner first, then a level past KMAX, then the cap.
+- The exits to the slow path (`tess_near`, `tess_fine`, `tess_capped`)
+  enter slow_poly past its seven saves (`slow_poly_1`): ra and s0-s5 are
+  in the same slots already, tess_poly's.
+- `MID` writes a point's z and its pad (0) as one word, its light's load
+  delay filled.
+
+### 112.3 The slow path (engine/r_slow.s)
+
+- **The stack of pool entries.** A triangle on the stack was one word:
+  its three pool indices and its depth (i0 | i1 << 9 | i2 << 18 | depth <<
+  27). A pop was a load and nine instructions of decoding into three
+  addresses. It is now three words, its corners' pool entries
+  (addresses). The first one's low four bits hold the depth (an entry is
+  32 bytes: those bits are 0), and a 0 word under the first triangle ends
+  the polygon. A pop is three loads and two instructions. The triangle in
+  hand keeps its words in its stack entry (a3 points there): a split
+  reads its corners back from it, its children overwrite it. 28 entries
+  of 12 bytes (the end, a fan's 3, then 3 more a level for MAXD levels):
+  336 bytes where the words took 256.
+- **A split's last child goes straight on** (`NEXT3`). The child sp_sub
+  would pop next is written to its entry (its own split reads it there)
+  and taken into a0-a2 and s2, with no load. A polygon's first triangle
+  goes the same way (`sp_tri0`, the straight quad).
+- **MIDLOOK and sm_new by entries.** The edge's ends come as entries (a0,
+  a1) and the midpoint goes out as one. The key (lower index << 9 |
+  higher: the same keys, the same slots) comes from the entries'
+  offsets. sm_new's own three address instructions are gone, p's x and z
+  loaded in MIDLOOK's load and branch slots. The entry a slot of the
+  table names is read before the slot is checked against this polygon's
+  count, which takes the found path's `nop` away. The table can hold a
+  pusher's moved edicts' words (`ents_moved` overlaps it, §77), so that
+  read may land past the pool, at most 2 MB on, within the 8 MB where
+  KSEG0 repeats the RAM: a harmless read, whose key is not believed.
+- **REFINE** reads its product in the shadow of the span's test and of the
+  bound's sum (it waited 4 cycles on it), its octagon without the swap.
+- **sm_new and sp_lerp** read the lights with `lbu`, a colour word's low
+  byte, not a word and a mask.
+
+The slow path's decisions, its midpoints, its packets and their order are
+the same: every SLOWSTAT counter of 112.1 is the same before and after.
+
+### 112.4 Measured
+
+On master 5cf05f5 (§111 and §114-§116 merged in), against the same master
+without this branch's four files; PCSX-Redux in fast forward, T 4 unless
+said.
+
+START's 12 views with `PROFILE=1`, the frame and the slow stage (`r_slow`,
+the grid's work in it):
+
+| view | frame base | frame §112 | d | slow base | slow §112 | d |
+|---|---|---|---|---|---|---|
+| v0 | 793 213 | 766 353 | −3.4 % | 259 869 | 233 009 | −10.3 % |
+| v1 | 534 678 | 512 541 | −4.1 % | 349 410 | 327 272 | −6.3 % |
+| v2 | 155 184 | 149 962 | −3.4 % | 91 352 | 86 137 | −5.7 % |
+| v3 | 503 987 | 483 644 | −4.0 % | 312 268 | 291 949 | −6.5 % |
+| v4 | 559 566 | 533 487 | −4.7 % | 207 376 | 180 842 | −12.8 % |
+| v5 | 495 342 | 473 066 | −4.5 % | 231 931 | 209 610 | −9.6 % |
+| v6 | 549 531 | 524 500 | −4.6 % | 264 935 | 240 100 | −9.4 % |
+| v7 | 439 773 | 419 672 | −4.6 % | 216 042 | 195 945 | −9.3 % |
+| v8 | 500 471 | 482 049 | −3.7 % | 232 356 | 213 973 | −7.9 % |
+| v9 | 583 019 | 554 828 | −4.8 % | 293 527 | 265 540 | −9.5 % |
+| v10 | 259 610 | 251 352 | −3.2 % | 123 204 | 114 934 | −6.7 % |
+| v11 | 257 363 | 245 017 | −4.8 % | 202 080 | 189 726 | −6.1 % |
+| total | 5 631 737 | 5 396 471 | −4.18 % | 2 784 350 | 2 549 037 | −8.45 % |
+
+With `PROFILE=0`: START 5 484 909 → 5 250 320 (−4.3 %).
+
+The 128 views (`BENCH_MAPS=1 HASHONLY=1 PROFILE=0`): 40 293 541 → 38 715 825
+cycles (−3.9 %); the worst, E3M4.v0, 1 048 865 → 1 005 112. Past a vblank
+(the bench's `vbl` column): 15 views before and after, the same ones. On
+d7de758, before §111, it was 16 → 15 (E3M3.v1: 575 883 → 559 932 cycles).
+
+At T 32 (`T=32`, where the dynamic warp takes the heavy frames): START
+3 260 311 → 3 188 099 (−2.2 %), the 128 views 24 106 137 → 23 639 252
+(−1.9 %).
+
+E2M7's fight (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0 SKILL=2
+VIEW=1780,1803,-304,204,0`), window by window:
+
+| window | frame base | frame §112 | d | vblanks a frame |
+|---|---|---|---|---|
+| t 300 | 1 430 106 | 1 395 945 | −2.39 % | 3.84 → 3.79 |
+| t 600 | 1 192 074 | 1 167 142 | −2.09 % | 3.17 → 3.13 |
+| t 900 | 1 148 033 | 1 136 863 | −0.97 % | 3.09 → 3.07 |
+| t 1200 | 1 082 049 | 1 071 070 | −1.01 % | 3.03 → 3.01 |
+| t 1500 | 1 029 761 | 1 018 165 | −1.13 % | 2.83 → 2.81 |
+| t 1800 | 990 989 | 979 827 | −1.13 % | 2.77 → 2.75 |
+| t 2100 | 1 035 076 | 1 024 265 | −1.04 % | 2.85 → 2.83 |
+| t 2400 | 1 032 879 | 1 021 441 | −1.11 % | 2.83 → 2.80 |
+| t 2700 | 1 047 860 | 1 036 566 | −1.08 % | 2.89 → 2.87 |
+| t 3000 | 1 011 781 | 1 000 536 | −1.11 % | 2.80 → 2.78 |
+| t 3300 | 973 465 | 961 958 | −1.18 % | 2.66 → 2.64 |
+| t 3600 | 932 473 | 920 440 | −1.29 % | 2.67 → 2.64 |
+| total | 12 906 546 | 12 734 218 | −1.34 % | 2.95 → 2.93 |
+
+The same streamed models are drawn and left out in each window.
+
+The steps, START's 12 views at T 4 on d7de758 (`PROFILE=0`):
+
+| step | cycles | d |
+|---|---|---|
+| the base | 5 478 040 | |
+| the grid's levels inline | 5 306 329 | −3.1 % |
+| the exits past the saves, the last child straight on, REFINE, the lights | 5 287 871 | −0.3 % |
+| MID's stores | 5 279 568 | −0.2 % |
+| the stack of entries | 5 244 047 | −0.7 % |
+
+The display lists are identical to the base's on START's 12 views and on
+the 128 views, at T 4 and T 32 (`scripts/dlcheck.sh`), and under
+`EMU_ARGS=-interpreter` too (START and the 128 views). The interpreter's
+console doubles a character now and then, so its `H` lines were compared
+allowing that. hazcheck, iccheck and ramcheck pass at every link.
+
+The C engine (`ENGINE_C=1`, §55) does not run this code (r_slow.c and
+r_tess.c are its slow path). Its lists differ from the asm's on START.v0
+and on 29 of the 128 views, the same with master's own files: checked on
+d7de758, its lists are the base's byte for byte. Not this branch's
+(112.6).
+
+The RAM: the code is 440 bytes longer (r_tess.s +516, r_slow.s −76) and
+the stack 80: the release's level arena goes from 1 349 520 to 1 349 008
+bytes.
+
+### 112.5 The midpoints by the GTE: weighed, not built
+
+§92.7's lever: a midpoint made from its ends' world coordinates and
+projected by the GTE (RTPS), as the grid's points are, instead of s = (sa
+za + sb zb) / (za + zb) and a division an axis.
+
+It cannot keep the display lists:
+
+- the GTE divides by its own reciprocal (UNR) and rounds the screen
+  position its own way;
+- the midpoint's depth becomes the GTE's SZ of a rounded world point,
+  where it was (za + zb) / 2 exactly;
+- the decisions downstream follow the depths: the result is another
+  subdivision, not only other pixels.
+
+And it saves little in the emulator's cost model. sm_new is about 78
+instructions and 165 cycles. Its two divisions (36 cycles each) hide in
+its other work but for some 5 cycles: the multiplier is busy about 120 of
+its cycles, the instructions take the rest. An RTPS version would average
+the world coordinates (6 loads, 6 instructions, 3 stores), feed and read
+the GTE (5 instructions), and take z T2 by a product (§21.4's identity
+needs z as (za + zb) / 2): about 25 cycles less a midpoint. But every
+corner would need its world coordinates in its pool entry (the record's
+vertex through `R_VERTS`: about 20 cycles a corner), and a crossing of the
+near plane its own (a lerp of three more coordinates). On START's 12 views
+(1 125 midpoints, 199 polygons) that is about −28 k + 13 k cycles, some
+−0.3 % of the frames, for pictures that change. And a pool entry has no
+room left for the coordinates: its 32 bytes are all used, 64-byte entries
+cost 16 KB, and a repacked entry changes every reader of it. Left out,
+to be made an option if wanted, with pktview's boards then.
+
+"A stack without copies": the asm's stack never copied a triangle (one
+word of indices since §19). The copies are the C version's (`r_slow.c`
+`push`: three `sv_t` a triangle), which follows the asm's decisions, not
+its form. The stack of entries (112.3) is the asm's own step past the
+indices.
+
+### 112.6 Left
+
+- DuckStation (TESTING 11.91): the walls and floors near the
+  eye as before (nothing should move a pixel); the near-clipped polygons
+  (a wall right in front, a floor under the feet, looking down a
+  stair); a monster through a liquid's surface (`slow_wpoly`); the heavy
+  views' frame rate.
+- The C engine's lists against the asm's (START.v0 and 29 of the 128
+  views, master's): to trace, as §92.7 left START's.
+- The instruction cache's order (`engine/icache.ld`, §81.5) is not made
+  again: `tess_lvl` took `tess_edge`'s place, `tess_poly` is 516 bytes
+  longer. scripts/icache.sh's traces would place the chains again
+  (PCSX-Redux has no instruction cache: these measures do not see it).
+- The RAM (+520 bytes, 112.4) is a call left open, as §81.3's was.
+- Weighed, not built:
+  - the off-screen children dropped before they are pushed (932 of
+    START's 2 970 pops; the test moves to the push): about −0.3 %;
+  - the clip path's divisions: `sp_proj` waits about 50 cycles a
+    projection, some 450 projections on START's views; about −0.2 % if a
+    projection's work were spread over the next one's;
+  - the grid's `EDGE` by |dx| + |dy| first, the octagon only when that
+    fails (NOSPLIT and REFINE's way). A test by the octagon alone lost at
+    T 32 in §81.3.
+- PCSX-Redux in fast forward stopped printing twice in some 25 runs of the
+  128 views, each while a map loaded (E3M4's the first time), with no
+  exception and no engine message. The same binaries passed when run
+  again: the hang headless.sh's `STALL` check was made for.
+
 ## §114 — The monsters' shared detail budget (2026-10-31)
 
 (The number is provisional: §111-§113 are the levers' branches, not

@@ -95,7 +95,7 @@ static int off4(uint32_t a, uint32_t b, uint32_t c, uint32_t d, uint32_t wide, u
 	return 0;
 }
 
-/* the level an edge needs (the asm's tess_edge): -1 past KMAX */
+/* the level an edge needs (the asm's EDGE and tess_lvl): -1 past KMAX */
 static int level(const uint32_t *c_sxy, const uint32_t *c_sz, uint32_t t4, int a, int b)
 {
 	int32_t xa = (int16_t) (c_sxy[a] & 0xffff), ya = (int16_t) (c_sxy[a] >> 16);
