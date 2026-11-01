@@ -16587,3 +16587,24 @@ once never can).
   (a scratch script), 12-15 and 16 on as before; its size the same; booted
   by Mednafen's SCPH-5501 BIOS (`Disc 1: SCEA`, `BOOT = cdrom:\Q1PSX.EXE;1`),
   the menu's music recorded for 284 s.
+
+### §123.4 — The pad's configuration on Mednafen
+
+- **The symptom**: Mednafen's DualShock never went into analog mode
+  (`pad: analog mode not set`, then the two tries of `pad_frame`), the
+  game reading it as a digital pad. A temporary print showed the
+  configuration's first exchange taking no byte at all (`n=0`).
+- **The cause**: `pad_configure` resets the port (JOY_CTRL bit 6), and
+  `pad_sio_exchange` waits for each answer (JOY_STAT bit 1) before it
+  reads it. Mednafen's serial port takes no answer after a reset until
+  JOY_DATA has been read once. The interrupt-driven poll reads DATA at
+  each /ACK whatever STAT says, so it works from its second byte on (the
+  first answer, the address byte's, is unused); the memory card's
+  exchanges come after the polls have read it (`card: load 3`: a card
+  with no save file, read).
+- **The fix**: a read of JOY_DATA before an exchange's first byte (the
+  FIFO is empty there: nothing is lost).
+- Mednafen's alone: the MiSTer's pad took the configuration; the pad lost
+  on E2M1 is another fault.
+- **Checks**: Mednafen: `pad: analog mode on` at the boot; the release
+  built (the level arena the same, 1350288 B).

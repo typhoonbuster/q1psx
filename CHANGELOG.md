@@ -2711,3 +2711,8 @@ followed by R0-R4.
   after mkpsxiso (zeros as before: no licence string, no logo). The image
   runs on Mednafen with `-force_module psx` and a US BIOS (README,
   TESTING.md).
+- **The pad's configuration on Mednafen** (§123.4, 2026-11-01). Mednafen's
+  serial port takes no answer after a reset until its data register has
+  been read once, so the synchronous exchanges that switch a DualShock to
+  analog mode got nothing and the pad stayed digital; an exchange now
+  reads the register once before its first byte.

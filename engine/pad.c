@@ -47,6 +47,10 @@ Q_COLD int pad_sio_exchange(int port, const uint8_t *tx, int n, uint8_t *rx)
 	sio_delay(500);
 	SIO_CTRL(0) = 0x1003 | sel;            /* TX on, the port selected, /ACK raises the IRQ */
 	sio_delay(500);
+	(void) SIO_DATA(0);                    /* the receiver armed: Mednafen takes no answer
+	                                          after the port's reset until DATA is read
+	                                          once (the interrupt-driven poll reads it on
+	                                          each /ACK; the FIFO is empty here) */
 	for (int i = 0; i < n; i++) {
 		SIO_DATA(0) = tx[i];
 		if (!sio_wait(0x0002, 0x2000))     /* the answer byte */
