@@ -395,9 +395,16 @@ void vid_flip(void)
 /* The frame's packets drawn over the frame on display, which stays there
    (no flip, no clear: the loading screen's bar, engine/loading.c); its
    arena begun again. The last frame built is waited for first (drawn and
-   shown). */
+   shown). The overlay's DR_AREA (begin_buffer's, the viewport above the
+   status bar) is the shown buffer's here: the built one's, it clipped
+   every packet away. */
 void vid_draw_over(void)
 {
+	if (ovl_head && ovl_head[1] >> 24 == 0xe3) {   /* (GP0(E3h), GP0(E4h)) */
+		uint32_t y = (uint32_t) (back ^ 1) * VID_H;
+		ovl_head[1] = 0xe3000000u | y << 10;
+		ovl_head[2] = 0xe4000000u | (y + VID_H - 1) << 10 | (VID_W - 1);
+	}
 	if (ovl_head)
 		addPrims(&vid_frame.ot[OT_OVERLAY], ovl_head, ovl_tail);
 	DrawSync(0);
@@ -408,6 +415,22 @@ void vid_draw_over(void)
 	DrawOTagEnv(&buf[back].ot[VID_OT_LEN - 1], &env);
 	DrawSync(0);
 	begin_buffer(back);
+}
+
+/* a DR_MOVE (GP0(80h)), its words written whole: from the buffer shown
+   once vid_draw_over has waited for it (back ^ 1) to the one being built,
+   or the other way */
+Q_COLD void vid_ovl_keep(int x, int y, int w, int h, int to_shown)
+{
+	uint32_t *m = vid_ovl_alloc(sizeof (DR_MOVE));
+	if (!m)
+		return;
+	uint32_t from = (uint32_t) ((back ^ 1 ^ to_shown) * VID_H + y) << 16 | (uint32_t) x;
+	uint32_t to   = (uint32_t) ((back ^ to_shown) * VID_H + y) << 16 | (uint32_t) x;
+	m[1] = 0x80000000u;
+	m[2] = from;
+	m[3] = to;
+	m[4] = (uint32_t) h << 16 | (uint32_t) w;
 }
 
 /* After a long stop (a load): the next frame's times measured from now,

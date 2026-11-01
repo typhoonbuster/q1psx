@@ -25,7 +25,9 @@
    America, "SLUS-nnnnn", up to 8 more characters) */
 static const char file_name[] = "BASLUS-99999QUAKE";
 
-card_save_t card_save;
+card_save_t  card_save;
+card_busy_fn card_busy_hook;
+static card_busy_fn writing;         /* card_busy_hook while card_store or card_format runs */
 
 _Static_assert(sizeof (card_slot_t) == 32 && sizeof (card_save_t) == 448, "card_save_t's layout");
 
@@ -36,6 +38,8 @@ _Static_assert(sizeof (card_slot_t) == 32 && sizeof (card_save_t) == 448, "card_
 static int frame_read(int sector, uint8_t *buf)
 {
 	uint8_t tx[140], rx[140];
+	if (writing)
+		writing(1);
 	for (int t = 0; t < TRIES; t++) {
 		memset(tx, 0, sizeof tx);
 		tx[0] = 0x81;
@@ -65,6 +69,8 @@ static int frame_read(int sector, uint8_t *buf)
 static int frame_write(int sector, const uint8_t *buf)
 {
 	uint8_t tx[138], rx[138];
+	if (writing)
+		writing(1);
 	memset(tx, 0, sizeof tx);
 	tx[0] = 0x81;
 	tx[1] = 'W';
@@ -123,6 +129,22 @@ static int scan(uint8_t *f, int *ours, int *free_block)
 			*free_block = b;
 	}
 	return CARD_OK;
+}
+
+/* card_store's and card_format's start and end: the pad's poll suspended
+   (the card is on its port), the hook called while they run */
+static void write_begin(void)
+{
+	pad_suspend();
+	writing = card_busy_hook;
+}
+
+static void write_end(void)
+{
+	if (writing)
+		writing(0);
+	writing = 0;
+	pad_resume();
 }
 
 /* --------------------------------------------------------- the file -- */
@@ -200,7 +222,7 @@ int card_store(void)
 	card_save.version = CARD_VERSION;
 	settings_pack(card_save.settings);
 	card_save.sum = data_sum(&card_save);
-	pad_suspend();
+	write_begin();
 	int ours, free_block, r = scan(f, &ours, &free_block);
 	if (r == CARD_OK && !ours) {
 		if (!free_block) {
@@ -229,7 +251,7 @@ int card_store(void)
 		memcpy(f, d + i * FRAME, n < FRAME ? n : FRAME);
 		r = frame_write(ours * BLOCK_FRAMES + 2 + i, f);
 	}
-	pad_resume();
+	write_end();
 	printf("card: store %d\n", r);
 	return r;
 }
@@ -237,7 +259,7 @@ int card_store(void)
 int card_format(void)
 {
 	uint8_t f[FRAME];
-	pad_suspend();
+	write_begin();
 	int r = CARD_OK;
 	for (int i = 0; i < BLOCK_FRAMES && r == CARD_OK; i++) {
 		memset(f, 0, FRAME);
@@ -257,7 +279,7 @@ int card_format(void)
 			f[FRAME - 1] = xor_sum(f);
 		r = frame_write(i, f);
 	}
-	pad_resume();
+	write_end();
 	printf("card: format %d\n", r);
 	return r;
 }

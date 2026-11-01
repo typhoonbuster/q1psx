@@ -69,4 +69,11 @@ int card_store(void);
    free), everything on it lost; the result */
 int card_format(void);
 
+/* While card_store or card_format runs (engine/loading.c loading_card:
+   Quake's disc blinking in the corner of the frame on display): called
+   with 1 before each frame they read or write, with 0 once they are over.
+   NULL: nothing. */
+typedef void (*card_busy_fn)(int busy);
+extern card_busy_fn card_busy_hook;
+
 #endif

@@ -4,6 +4,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <psxgpu.h>
 
 #include "cd.h"
 #include "loading.h"
@@ -78,6 +79,35 @@ static void meter(uint32_t sectors)
 	draw(px);
 }
 
+/* Quake's disc in the top right corner (Draw_BeginDisc, Draw_EndDisc: the
+   software renderer's D_BeginDirectRect, D_EndDirectRect) over the frame
+   on display: what it covers kept in the buffer being built the first
+   time, put back to take it off (engine/vid.h vid_ovl_keep) */
+#define DISC_X (VID_W - 24)
+static int disc_kept;          /* what the disc covers is kept */
+
+Q_COLD static void disc(int on)
+{
+	if (!gdata.aux)
+		return;
+	ui_begin();
+	if (!disc_kept)
+		vid_ovl_keep(DISC_X, 0, 24, 24, 0);
+	disc_kept = 1;
+	if (on)
+		ui_aux(QGA_DISC, DISC_X, 0);
+	else
+		vid_ovl_keep(DISC_X, 0, 24, 24, 1);
+	vid_draw_over();
+}
+
+Q_COLD static void disc_end(void)   /* Draw_EndDisc: off, what it covered no longer kept */
+{
+	if (disc_kept)
+		disc(0);
+	disc_kept = 0;
+}
+
 void loading_overlay(const char *title)
 {
 	ui_begin();
@@ -85,8 +115,6 @@ void loading_overlay(const char *title)
 	bar_track();
 	if (title)
 		ui_text_shaded((VID_W - 8 * (int) strlen(title)) / 2, TITLE_Y, title, 128, 128);   /* (bronze) */
-	if (gdata.aux)
-		ui_aux(QGA_DISC, VID_W - 24, 0);
 }
 
 static void start(uint32_t sectors)
@@ -103,6 +131,7 @@ void loading_begin(uint32_t sectors)
 {
 	boot = 0;
 	start(sectors);
+	disc(1);
 }
 
 void loading_rest(uint32_t sectors)
@@ -120,6 +149,7 @@ void loading_end(void)
 		return;
 	if (shown < BAR_W)
 		draw(BAR_W);
+	disc_end();
 	cd_meter_hook = 0;
 	boot = 0;
 	vid_resync();
@@ -130,4 +160,22 @@ void loading_boot(uint32_t sectors)
 	boot = 1;
 	start(sectors);
 	draw(0);
+}
+
+/* ------------------------------------------- the memory card's writes -- */
+
+static uint32_t card_vbl;      /* VSync(-1) as the write began */
+static int      card_writing;
+
+Q_COLD void loading_card(int busy)
+{
+	uint32_t now = (uint32_t) VSync(-1);
+	if (!busy) {
+		disc_end();
+	} else {
+		if (!card_writing)
+			card_vbl = now;
+		disc(!((now - card_vbl) & 8));
+	}
+	card_writing = busy;
 }

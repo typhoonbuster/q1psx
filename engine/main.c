@@ -4169,6 +4169,7 @@ int main(void)
 #endif
 	apply_settings();
 	gdata_load();
+	card_busy_hook = loading_card;               /* (the disc blinking while the card is written) */
 	stream_init();
 	dl_init();
 	game_init();

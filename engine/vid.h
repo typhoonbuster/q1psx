@@ -108,6 +108,12 @@ void  vid_flip(void);                          /* (the stack's guard checked: me
 void  vid_draw_over(void);                     /* this frame's packets drawn over the frame
                                                   on display, no flip, no clear (the loading
                                                   screen's bar); the arena begun again */
+/* in the overlay, a copy in VRAM of a rectangle of the frame on display
+   into the same place of the buffer being built (which the next frame
+   clears), or with `to_shown` from there back onto the frame on display:
+   a picture put on and taken off a frame that stays, drawn by
+   vid_draw_over (Quake's disc, engine/loading.c) */
+void  vid_ovl_keep(int x, int y, int w, int h, int to_shown);
 void  vid_resync(void);                        /* after a long stop: the frame times from now */
 void  vid_fatal(void);                         /* a red screen, the game stopped */
 /* the frame rate cap: 60 (none), 45, 30 or 15 frames a second. A frame is
