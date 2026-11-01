@@ -187,7 +187,6 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 	const int stick_turn = 48, stick_look = 36;   /* right stick, full deflection */
 	int sel = p->held & PAD_SELECT;
 	memset(cmd, 0, sizeof *cmd);
-	cmd->weapon_group = -1;
 
 #if !Q1PSX_RELEASE
 	if (sel && (p->pressed & PAD_CROSS))  pl.pm.noclip = !pl.pm.noclip;
@@ -1515,7 +1514,6 @@ static void bench_view_ticks(const char *view)
 	memset(pl.pm.vel, 0, sizeof pl.pm.vel);
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.weapon_group = -1;
 	game_active = 1;
 	for (int t = 0; t <= Q1PSX_BENCH_TICKS; t++) {
 	if (Q1PSX_BENCH_USE[0] && t == 8) {      /* the targets used, as a button's press would
@@ -1610,7 +1608,6 @@ static void bench_intermission(void)
 		}
 		game_cmd_t cmd;
 		memset(&cmd, 0, sizeof cmd);
-		cmd.weapon_group = -1;
 		ents_place_at(cl, 0);
 		int t = 0;
 		for (; t < 120 && !level_intermission; t++)
@@ -2033,7 +2030,6 @@ static void bench_ents(void)
 	static const char *const maps[2] = { "E1M1", "START" };
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.weapon_group = -1;
 	ents_log = 1;
 	game_active = 1;
 	for (int mi = 0; mi < 2; mi++) {
@@ -2290,7 +2286,6 @@ static void bench_movers(void)
 	static const edict_t *seen[MV_PATH];
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.weapon_group = -1;
 	game_active = 1;
 	for (unsigned ti = 0; ti < sizeof mv_targets / sizeof mv_targets[0]; ti++) {
 		const char *map = mv_targets[ti].map;
@@ -2600,7 +2595,6 @@ static void bench_tick_cost(void)
 	for (int k = 0; k < 3; k++) {
 		game_cmd_t cmd;
 		memset(&cmd, 0, sizeof cmd);
-		cmd.weapon_group = -1;
 		if (k == 0) { cmd.fwd = PM_AXIS; cmd.side = 30; }
 		if (k == 1) { cmd.fire = 1; }
 		if (k == 1)                                    /* the nailgun */
@@ -2785,7 +2779,6 @@ static void bench_game(void)
 		hud_set_style(w == W_COUNT + 1 ? HUD_Q2PSX : HUD_ORIGINAL);
 		game_cmd_t cmd;
 		memset(&cmd, 0, sizeof cmd);
-		cmd.weapon_group = -1;
 		/* select it: cycle until it is current */
 		for (int n = 0; n < W_COUNT && pl.weapon != weapon; n++) {
 			cmd.weapon_next = 1;
@@ -2830,7 +2823,6 @@ static void bench_game(void)
 		pl.pm.pitch = 0;
 		game_cmd_t cmd;
 		memset(&cmd, 0, sizeof cmd);
-		cmd.weapon_group = -1;
 		cmd.fwd  = PM_AXIS;
 		cmd.side = 20;
 		for (int t = 0; t < 48; t++) {
@@ -2871,7 +2863,6 @@ static void bench_game(void)
 			pl.pm.pitch = ANG_TURN * 20 / 360;                /* looking down: swims down */
 			game_cmd_t cmd;
 			memset(&cmd, 0, sizeof cmd);
-			cmd.weapon_group = -1;
 			cmd.fwd = PM_AXIS;
 			for (int t = 0; t < 180; t++) {
 				cmd.jump = t >= 60 && t < 120;
@@ -3005,7 +2996,6 @@ static void bench_monsters(void)
 	game_active = 1;
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.weapon_group = -1;
 	game_spawn();
 	ents_ticks(60, &cmd);                         /* the monsters' delayed starts */
 #if Q1PSX_BENCH_VIEW_SET
@@ -3345,7 +3335,6 @@ static void clear_map(void)
 {
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.weapon_group = -1;
 	ents_ticks(60, &cmd);
 	pl.items |= IT_ROCKET_LAUNCHER;
 	game_give_weapon(W_RLAUNCHER);
@@ -3475,7 +3464,6 @@ static void bench_clear(void)
 			return;
 		game_cmd_t cmd;
 		memset(&cmd, 0, sizeof cmd);
-		cmd.weapon_group = -1;
 		edict_t *cl = ents_first(QE_TRIGGER_CHANGELEVEL, 0);
 		if (!cl) {
 			printf("clear: %s has no exit\n", world.map_name);
@@ -3530,7 +3518,6 @@ static void key_phase(const char *what, int ticks, int yaw)
 {
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.weapon_group = -1;
 	for (int t = 0; t < ticks; t++) {
 		pl.health = 100;
 		pl.dead = 0;
@@ -3614,7 +3601,6 @@ static int cap_turn(int want)
 static void cap_cmd(game_cmd_t *cmd)
 {
 	memset(cmd, 0, sizeof *cmd);
-	cmd->weapon_group = -1;
 	for (; cap_step->kind != CS_END; cap_step++, cap_left = -1) {
 		const cap_step_t *s = cap_step;
 		int32_t at[3] = { s->x * CLIP_SUB, s->y * CLIP_SUB, s->z * CLIP_SUB };
@@ -3835,7 +3821,6 @@ static void bench_key(void)
 	game_give_weapon(W_RLAUNCHER);
 	game_cmd_t cmd;
 	memset(&cmd, 0, sizeof cmd);
-	cmd.weapon_group = -1;
 	ents_ticks(60, &cmd);
 	edict_t *key = ents_first(QE_ITEM_KEY2, 0);
 	if (!key) {

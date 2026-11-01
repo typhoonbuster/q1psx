@@ -2660,7 +2660,8 @@ followed by R0-R4.
   DualShock's vibration (shots, wounds, the death, explosions), the
   crosshair, Customize controls (read only), the level's name at its
   start, the menu when the pad is pulled out. Fixed: the d-pad changed
-  the weapon as it walked; the intermission's stats came over a zone not
-  in yet (its camera's zone now read before them). `GAME.DAT` `QGMB` →
-  `QGMC`. The 128 spawn views' display lists are master's; the release's
-  level arena −19152 B.
+  the weapon as it walked (its weapon groups' code removed, with
+  W_ChangeWeapon's port, never called); the intermission's stats came
+  over a zone not in yet (its camera's zone now read before them).
+  `GAME.DAT` `QGMB` → `QGMC`. The 128 spawn views' display lists are
+  master's; the release's level arena −18688 B.

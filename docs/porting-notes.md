@@ -16291,8 +16291,10 @@ Vibration turns it off; the menu and the loads stop it.
 - **The d-pad no longer changes the weapon**: with an analog pad it
   walked and selected the weapon groups at once (up the shotguns, right
   the nailguns...). It only walks now; the weapons are R1 / L1 (and
-  the mouse's shoulders). `game.c`'s `w_group` (the groups) is left
-  without a caller: a candidate for removal.
+  the mouse's shoulders). The groups' code went with it (`game.c`'s
+  `w_group`, the command's `weapon_group`: 464 B of the level arena
+  back), and `w_change` (W_ChangeWeapon, the choice by number), which
+  nothing had called since its port (§22.5).
 - **The intermission waits for its camera's zone**: on a zoned map the
   intermission's spot is often in another zone than the player's, and its
   chunk came in under the stats (late frames: the old zone drawn).
@@ -16307,13 +16309,14 @@ Vibration turns it off; the menu and the loads stop it.
 
 ### 120.8 The cost
 
-The release's level arena 1372304 → 1353152 B (−19152 B: the stream's
+The release's level arena 1372304 → 1353616 B (−18688 B: the stream's
 pool), by object (`mipsel-none-elf-size`): the menus +6.9 KB (the new
 pages and their strings, `-Os`), the card 3.0 KB (448 B of it the save),
 `main.c` +2.0 KB (the loads' requests, the hooks, the boot), the pad
 +1.3 KB, the loading screens 1.0 KB, the UI's boot strip 0.8 KB, the
-vibration 0.8 KB, the zones' wait 0.8 KB, the game, the HUD, the
-settings and the video 0.4-0.6 KB each. `engine/card.c` and
+vibration 0.8 KB, the zones' wait 0.8 KB, the HUD, the settings and the
+video 0.4-0.6 KB each, the game 0.1 KB (its weapon groups gone, 120.7).
+`engine/card.c` and
 `engine/loading.c` are compiled at `-Os` with the menus. The frames' hot
 paths are unchanged: the 128 spawn views' display lists are master
 6267338's (`scripts/dlcheck.sh`, `BENCH_MAPS=1 HASHONLY=1`), their

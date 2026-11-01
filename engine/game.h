@@ -112,7 +112,6 @@ typedef struct {
 	int walk;                  /* held                                        */
 	int fire;                  /* held                                        */
 	int weapon_next, weapon_prev;   /* edges: cycle                           */
-	int weapon_group;          /* -1, or 0..3: the d-pad's direct choice      */
 	int centre;                /* edge: level the view                        */
 } game_cmd_t;
 

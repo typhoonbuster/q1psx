@@ -1724,14 +1724,6 @@ static void w_attack(void)
 	}
 }
 
-/* W_ChangeWeapon: the weapon, if owned with ammo */
-static void w_change(int w)
-{
-	if (!(pl.items & weapon_item[w]) || !has_ammo_for(w))
-		return;
-	w_set_current(w);
-}
-
 /* CycleWeaponCommand / CycleWeaponReverseCommand */
 static void w_cycle(int dir)
 {
@@ -1744,27 +1736,6 @@ static void w_cycle(int dir)
 	}
 }
 
-/* the d-pad's groups: the next owned weapon of the group after the current */
-static void w_group(int g)
-{
-	static const int groups[4][3] = {
-		{ W_SHOTGUN, W_SSHOTGUN, W_AXE }, { W_NAILGUN, W_SNAILGUN, -1 },
-		{ W_GLAUNCHER, W_RLAUNCHER, -1 }, { W_LIGHTNING, -1, -1 },
-	};
-	int start = 0;
-	for (int i = 0; i < 3; i++)
-		if (groups[g][i] == pl.weapon)
-			start = i + 1;
-	for (int n = 0; n < 3; n++) {
-		int w = groups[g][(start + n) % 3];
-		if (w >= 0 && (pl.items & weapon_item[w]) && has_ammo_for(w)) {
-			if (w != pl.weapon)
-				w_set_current(w);
-			return;
-		}
-	}
-}
-
 /* W_WeaponFrame */
 static void w_weapon_frame(const game_cmd_t *cmd)
 {
@@ -1772,7 +1743,6 @@ static void w_weapon_frame(const game_cmd_t *cmd)
 		return;
 	if (cmd->weapon_next) w_cycle(1);
 	if (cmd->weapon_prev) w_cycle(-1);
-	if (cmd->weapon_group >= 0) w_group(cmd->weapon_group);
 	if (pl.fire)
 		w_attack();
 }
