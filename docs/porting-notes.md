@@ -16492,7 +16492,10 @@ as the console does) found two faults neither DuckStation nor PCSX-Redux
 shows: no music anywhere, the menu's included; and, on E2M1 at Hard, the
 pad lost for good after a kill (the "pad unplugged" pause up from then
 on). Mednafen 1.32.1 shows the first (the emulators that end a DMA at
-once never can).
+once never can). A hands-on play on Mednafen with §123.1-§123.4: the
+music and the pad (a DualSense mapped to the emulated DualShock, its
+analog mode set by the game). The MiSTer's play is left; E2M1's fault is
+open.
 
 ### §123.1 — The SPU's DMA waited for
 
