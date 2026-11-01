@@ -2704,3 +2704,10 @@ followed by R0-R4.
   refill's four DMAs now go one a frame, each started once the SPU's is
   through, as the streamed sounds' pieces go; a track's first fill still
   waits. The release's level arena −128 B.
+- **The disc's system area as a pressed disc's** (§123.3, 2026-11-01).
+  mkpsxiso wrote the empty system area as Form 2 sectors; Mednafen reads
+  sectors 4-11 as Form 1 and took the image for no PS1 disc.
+  `scripts/sysarea.py` writes sectors 0-11 again as empty Form 1 sectors
+  after mkpsxiso (zeros as before: no licence string, no logo). The image
+  runs on Mednafen with `-force_module psx` and a US BIOS (README,
+  TESTING.md).

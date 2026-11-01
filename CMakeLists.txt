@@ -416,8 +416,10 @@ add_custom_command(
 	        -DMUSIC=${_disc_music}
 	        -DSDK_VERSION=${PSN00BSDK_VERSION} -P ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake
 	COMMAND ${MKPSXISO} -y -q -o q1psx.bin -c q1psx.cue ${_cd_xml}
+	COMMAND python3 ${PROJECT_SOURCE_DIR}/scripts/sysarea.py q1psx.bin   # (sectors 0-11 as Form 1: §123.3)
 	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/iso/iso.xml
 	        ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake   # (a manual cook too)
+	        ${PROJECT_SOURCE_DIR}/scripts/sysarea.py
 	WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
 	COMMENT "Building CD image q1psx"
 	VERBATIM)

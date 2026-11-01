@@ -16559,3 +16559,31 @@ once never can).
   seconds, the one silence (2.1 s before the loop) the track's own end
   (track02.ogg's last 2.05 s are under −60 dB); no "the ring ran dry";
   the release built (hazcheck, iccheck, ramcheck, ovlcheck).
+
+### §123.3 — The disc's system area as a pressed disc's
+
+- **Why**: Mednafen took the image for no PS1 disc ("Not recognized as a
+  PS1 disc"): its BIOS went to the CD player and its drive refused the
+  data reads (as a console with no modchip does with a CD-R). It reads the
+  system area's sectors 4-11 as Form 1 (their EDC) before it falls back on
+  the volume descriptor's "PLAYSTATION"; mkpsxiso, given no licence file,
+  writes the sixteen sectors as empty Form 2 ones, which fail that read.
+  A pressed disc's sectors 0-11 are Form 1 (psx-spx, CDROM Disk Format:
+  0-3 zeros, 4 the licence string, 5-11 the logo; 12-15 Form 2 zeros).
+- **The change**: `scripts/sysarea.py`, run at the build on the image
+  after mkpsxiso, writes sectors 0-11 again as empty Form 1 sectors (the
+  subheader's data bit, the EDC, the P and Q parity; the code checked
+  first on sector 16, the volume descriptor mkpsxiso wrote: the image is
+  left as it is when it disagrees). No licence string and no logo: they
+  are Sony's. The sectors stay zeros, as they were, so a console's BIOS
+  and the other emulators read the same bytes.
+- **Mednafen**: the image is a PS1 disc to it, a US console's (a disc
+  without Sony's licence data fails the Japanese BIOS's checks of the
+  system area, so Mednafen emulates an American console for it: a US BIOS,
+  `scph5501.bin`); its module detection reads the licence string still:
+  `mednafen -force_module psx` (README, TESTING.md's way to run it
+  headless).
+- **Checks**: the release image's sectors 0-11 Form 1, their EDC right
+  (a scratch script), 12-15 and 16 on as before; its size the same; booted
+  by Mednafen's SCPH-5501 BIOS (`Disc 1: SCEA`, `BOOT = cdrom:\Q1PSX.EXE;1`),
+  the menu's music recorded for 284 s.

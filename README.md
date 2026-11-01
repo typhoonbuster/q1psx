@@ -60,6 +60,9 @@ Details and fish notes: [`third_party/README.md`](third_party/README.md).
 - **PCSX-Redux** — ships OpenBIOS, no PS1 BIOS needed. Used for automated
   validation.
 - **DuckStation** — fast iteration; requires a PS1 BIOS (not provided).
+- **Mednafen** — times the console's DMAs as the hardware does (a fault
+  only a console showed, §123); requires a US PS1 BIOS (`scph5501.bin`, not
+  provided) and `-force_module psx` (the disc carries no licence string).
 
 ## Build
 
@@ -115,6 +118,8 @@ Run the resulting image:
 pcsx-redux -loadiso build/q1psx.bin -run
 # or
 duckstation-qt -batch build/q1psx.cue
+# or
+mednafen -force_module psx build-release/q1psx.cue
 ```
 
 ## Layout

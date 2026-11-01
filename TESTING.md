@@ -10,6 +10,7 @@ test is additionally required before checking it off.
 |---|---|---|
 | DuckStation | The hands-on tests (play, picture, timing as a console) | in use; needs a PS1 BIOS |
 | PCSX-Redux | Every headless check: the boot, the benches, the dumps (`EMU` in `local.env`) | in use; bundled OpenBIOS |
+| Mednafen | The console's timing: a block-mode DMA beside the CPU (§123), the release's sound recorded headless | in use since §123; needs a US PS1 BIOS (`scph5501.bin`) |
 
 ⚠️ Do not use ePSXe or MAME-based cores (inaccurate — PSn00bSDK docs).
 
@@ -18,6 +19,28 @@ test is additionally required before checking it off.
 Open the build's `q1psx.cue` (`build/` or `build-release/`) in DuckStation,
 or run `pcsx-redux -loadiso build/q1psx.bin -run` (OpenBIOS, no PS1 BIOS
 required); `scripts/headless.sh` runs an image without a window (below).
+
+**Mednafen** (§123) takes the image with `-force_module psx` (the disc carries
+no licence string, which its detection reads) and a US BIOS in its firmware
+folder (`scph5501.bin`: a disc without Sony's licence data is a US console's
+to Mednafen). It runs without a window and records the sound:
+
+```bash
+MEDNAFEN_HOME=<scratch> SDL_VIDEODRIVER=dummy SDL_AUDIO_DRIVER=disk \
+SDL_AUDIO_DISK_OUTPUT_FILE=/dev/null SDL_AUDIO_DISK_TIMESCALE=0 \
+mednafen -force_module psx -video.driver softfb -sound 1 -sound.driver sdl \
+  -psx.input.port1 dualshock -psx.dbg_mask stdout -soundrecord out.wav build-release/q1psx.cue
+```
+
+`MEDNAFEN_HOME` keeps a scratch configuration (Mednafen saves the command
+line's settings into its own); `<scratch>/firmware` holds the BIOS.
+`SDL_AUDIO_DISK_TIMESCALE=0` lifts the pace (about 8x real time; the value
+multiplies the audio driver's wait; SDL3's names: Mednafen's SDL2 calls go
+through sdl2-compat here). `-qtrecord out.mov` adds the frames
+(CamStudio lossless, about 22 MB a second). `-psx.dbg_mask stdout` prints
+the BIOS's console as far as it goes through A(3Ch), A(3Eh), B(3Dh) or
+B(3Fh): a game's `printf`, A(3Fh), is not seen (the release prints nothing
+in any case).
 
 **Headless speed.** PCSX-Redux builds since 2026-10 run `-no-ui` at about
 real-time speed (the earlier ones ran unthrottled) and write the console at
@@ -189,6 +212,7 @@ dumps a frame's packets and `tools/pktview` draws them as the GPU would
 | 11.109 | The repository's audit (§122): every preset built (default, release, bench: no warning); the release's `ramcheck` line; the disc's size and root directory without `PAK0.PAK`; `BENCH_MAPS=1` over the 32 maps (every map loaded from the new layout, the 128 views' hashes the same as before); the release booted headless to its menu; `git grep` for the licenses' notices, paths and provisional marks | headless bench, host | recommended (DuckStation: the release's disc boots, a level loads, a zone and a level change read) |
 | 11.110 | The SPU's DMA waited for (§123.1): Mednafen 1.32.1 headless (SDL's dummy video and disk audio, `-soundrecord`, the SCPH-5501 BIOS, the system area rewritten as Form 1), the release with its `printf` through the BIOS's `puts`: the menu recorded before the fix (left and right at 0 for 160 s) and after (the music in both channels, different, from the menu's first second to the 268th); the uploads' ticks (temporary prints, removed); the release built (hazcheck, iccheck, ramcheck, ovlcheck) | Mednafen | required (on the MiSTer: the menu's music, a level's track, a track change, a level change, the RAM sounds after a teleport; on DuckStation: the same as before) |
 | 11.111 | The music's DMAs while the game runs (§123.2): Mednafen 1.32.1 as 11.110, the menu's track recorded for 413 s, past its end and round again (left and right different in 412 seconds; the one silence, 2.1 s before the loop, matched against track02.ogg's own end with ffmpeg's `silencedetect`), no `the ring ran dry`; the release built (hazcheck, iccheck, ramcheck, ovlcheck), its `mipsel-none-elf-size` against master's | Mednafen, host | required (on the MiSTer: a level's track through a fight and through zones streamed, no gap; a track change; on DuckStation: the same as before) |
+| 11.112 | The disc's system area as a pressed disc's (§123.3): the release image's first 17 sectors read by a scratch script (0-11 Form 1, their EDC right; 12-15 Form 2 and 16 as mkpsxiso wrote them), its size the same as master's; Mednafen 1.32.1 with the SCPH-5501 BIOS, `-force_module psx`: `Disc 1: SCEA`, the BIOS's boot of `Q1PSX.EXE`, the menu's music recorded for 284 s; TESTING.md's headless line run as written | Mednafen, host | recommended (DuckStation and the MiSTer: the disc boots as before) |
 _(to be completed as phases progress)_
 
 ## Real-hardware test log
