@@ -10,6 +10,12 @@ PlayStation 1, written from the original
 > The renderer is hand-written MIPS assembly — design in
 > [`docs/architecture.md`](docs/architecture.md).
 
+## Status
+
+The game runs on Mednafen, DuckStation and PCSX-Redux with no known
+fault, and on a MiSTer FPGA (its PlayStation core, timed as the
+console), where one bug, seen there only, is not resolved yet.
+
 ## What you need
 
 ### Game data (not included, never versioned)

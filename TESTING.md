@@ -218,4 +218,10 @@ _(to be completed as phases progress)_
 
 ## Real-hardware test log
 
-_(empty — no hardware testing done)_
+- **2026-11-01, MiSTer FPGA** (its PS1 core: an FPGA re-implementation timed
+  as the console, not a console): the release of master 02809a4 boots and
+  plays, three levels of episode 1 at Normal. No music anywhere: fixed by
+  §123.1, to be played again. On E2M1 at Hard the game stopped answering
+  the pad after a kill, the menu up from then on: open (§123); not seen on
+  Mednafen, DuckStation or PCSX-Redux, Mednafen's play meant to reproduce it
+  included.
