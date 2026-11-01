@@ -16536,3 +16536,26 @@ once never can).
   left and right different in every second, no silent one; the release
   built (hazcheck, iccheck, ramcheck, ovlcheck: the level arena the same,
   1350416 B; the code 8 B larger).
+
+### §123.2 — The music's DMAs while the game runs
+
+- §123.1's waits hold the CPU through a refill's four DMAs, a chunk's
+  channel 1.5 ms each on the console: about 6 ms of one frame every two
+  chunks (0.45 s of the menu's 32 kHz track, 0.65 s of a level's
+  22.05 kHz one). A refill's DMAs now go one a frame: `upload_step`
+  (engine/music.c) starts the next once the SPU's is through, as the
+  streamed sounds' pieces go (engine/stream.c); a track's first fill
+  (`music_play`: a load, a track change) still waits through them. The
+  staging buffer stays the music's until the last is through
+  (`music_read_ok` false while `reading_n`), `music_read_ok`'s margin
+  counts the frames they take (`UPLOAD_MS`: five frames at 20 fps), and
+  `music_stop` waits for the one in flight before the buffer is read
+  into.
+- **Measured**: the CPU no longer waits on a refill's DMAs (about 6 ms of
+  a frame every 0.45 to 0.65 s on the console); the release's code
+  +120 B, the level arena 1350288 B (−128 B against master's).
+- **Checks**: Mednafen 1.32.1 as in §123.1, the menu's track recorded for
+  413 s, past its end and round again: left and right different in 412
+  seconds, the one silence (2.1 s before the loop) the track's own end
+  (track02.ogg's last 2.05 s are under −60 dB); no "the ring ran dry";
+  the release built (hazcheck, iccheck, ramcheck, ovlcheck).

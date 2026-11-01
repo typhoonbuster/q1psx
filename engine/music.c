@@ -34,7 +34,9 @@ static int playing;               /* the track, 0 none                   */
    ring's last block loops to its first (the flags set at the upload), so
    the voices never stop; the drive refills the chunks they are through,
    READ_CHUNKS at a time, between the streamed assets' reads (stream.c
-   asks music_read_ok before each). Where the voices are comes from root
+   asks music_read_ok before each), and their DMAs follow one a frame,
+   each started once the SPU's is through (a chunk's channel takes 1.5 ms
+   on the console: §123.2). Where the voices are comes from root
    counter 2, sysclock / 8, which the SPU's clock shares (44.1 kHz is
    sysclock / 768): a sample at the voices' pitch p (the track's rate x
    4096 / 44100) is 393216 / p of its ticks (192 at 22.05 kHz, the
@@ -50,6 +52,9 @@ static int playing;               /* the track, 0 none                   */
 #define SEEK_MS        100       /* a seek's guess: a hop within a level's
                                     section (the music files lie next to the
                                     streamed assets: short ones; §84) */
+#define UPLOAD_MS      ((2 * READ_CHUNKS + 1) * 50)   /* a refill's DMAs, one a frame,
+                                                         and the frame that sees them
+                                                         through, at 20 fps */
 #define MUSIC_VOL      0x2ccc    /* as the CD's (engine/snd.c CD_VOL)        */
 
 static uint32_t track_lba[MAX_TRACK + 1];   /* \MUSIC\SPU_<nn>.DAT's first sector, 0 none */
@@ -61,6 +66,8 @@ static uint32_t ticks_chunk;       /* root counter 2's ticks a chunk lasts      
 static uint32_t filled;            /* chunks put in the ring since the start    */
 static uint32_t base, t_base;      /* chunks the voices were through at t_base  */
 static int      reading_n;         /* a refill in flight: its chunks             */
+static int      sent;              /* its DMAs started, two a chunk; -1 while
+                                      the drive reads it                        */
 static uint8_t *buf;               /* the refills' (the stream's staging buffer,
                                       or the level arena's before any map)      */
 static int      volume = -1;
@@ -122,23 +129,6 @@ static uint32_t played(uint32_t *samples)
 	return base;
 }
 
-/* the read chunk at src into its ring slot, both channels; the ring's
-   first block marked its loop's start, its last its end */
-static void upload(uint8_t *src, uint32_t slot)
-{
-	for (int c = 0; c < 2; c++) {
-		uint8_t *d = src + c * QSPU_CHUNK;
-		d[1] = slot == 0 ? 0x04 : 0;
-		d[QSPU_CHUNK - 16 + 1] = slot == RING_CHUNKS - 1 ? 0x03 : 0;
-		snd_dma_wait();                          /* (the other channel's, a RAM sound's swap:
-		                                            engine/stream.c) */
-		SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
-		SpuSetTransferStartAddr((c ? RING_R : RING_L) + slot * QSPU_CHUNK);
-		SpuWrite((const uint32_t *) d, QSPU_CHUNK);
-	}
-	snd_dma_wait();                              /* (the buffer read into again) */
-}
-
 /* a refill: the next chunks of the file into the buffer (to its end at most) */
 static int refill_start(uint32_t n)
 {
@@ -149,15 +139,33 @@ static int refill_start(uint32_t n)
 	                   (int) k))
 		return 0;
 	reading_n = (int) n;
+	sent = -1;
 	return 1;
 }
 
-static void refill_done(void)
+/* the read refill's next DMA, once the SPU's is through: a chunk's
+   channel into its ring slot, the ring's first block marked its loop's
+   start, its last its end; 1 when they are all through, the chunks in */
+static int upload_step(void)
 {
-	for (int j = 0; j < reading_n; j++)
-		upload(buf + (uint32_t) j * 2 * QSPU_CHUNK, (filled + (uint32_t) j) % RING_CHUNKS);
-	filled += (uint32_t) reading_n;
-	reading_n = 0;
+	if (!snd_dma_done())                         /* (the last one's, a RAM sound's swap:
+		                                            engine/stream.c) */
+		return 0;
+	if (sent == 2 * reading_n) {
+		filled += (uint32_t) reading_n;
+		reading_n = 0;
+		return 1;
+	}
+	int c = sent & 1;
+	uint32_t slot = (filled + (uint32_t) (sent >> 1)) % RING_CHUNKS;
+	uint8_t *d = buf + (uint32_t) sent * QSPU_CHUNK;   /* (a chunk's left channel, its right) */
+	d[1] = slot == 0 ? 0x04 : 0;
+	d[QSPU_CHUNK - 16 + 1] = slot == RING_CHUNKS - 1 ? 0x03 : 0;
+	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
+	SpuSetTransferStartAddr((c ? RING_R : RING_L) + slot * QSPU_CHUNK);
+	SpuWrite((const uint32_t *) d, QSPU_CHUNK);
+	sent++;
+	return 0;
 }
 
 void music_play(int track)
@@ -194,7 +202,9 @@ void music_play(int track)
 			printf("music: SPU_%02d.DAT unreadable\n", track);
 			return;
 		}
-		refill_done();
+		sent = 0;
+		while (!upload_step())
+			;
 	}
 	for (int c = 0; c < 2; c++) {
 		int v = c ? V_RIGHT : V_LEFT;
@@ -217,14 +227,19 @@ void music_play(int track)
 void music_stop(void)
 {
 	if (reading_n) {
-		/* a refill cut short: the drive paused, and that waited for, before
-		   the next command (without the wait, a map's first read after the
-		   menu's music took one of the refill's sectors: START.SND "not
-		   found", the drive's error 20h; docs/porting-notes.md §53) */
-		cd_read_cut();
-		cd_read_sync();
-		CdControlB(CdlPause, 0, 0);
-		cd_busy();
+		if (sent < 0) {
+			/* a refill cut short: the drive paused, and that waited for,
+			   before the next command (without the wait, a map's first read
+			   after the menu's music took one of the refill's sectors:
+			   START.SND "not found", the drive's error 20h;
+			   docs/porting-notes.md §53) */
+			cd_read_cut();
+			cd_read_sync();
+			CdControlB(CdlPause, 0, 0);
+			cd_busy();
+		} else {
+			snd_dma_wait();                      /* (its DMA reading the buffer: read into next) */
+		}
 		reading_n = 0;
 	}
 	if (!playing)
@@ -246,13 +261,17 @@ void music_tick(void)
 	if (!playing)
 		return;
 	if (reading_n) {
-		int left = cd_poll();                    /* (also runs CdReadRetry's retries) */
-		if (left > 0)
-			return;
-		if (left < 0)
-			reading_n = 0;                       /* (an error: read again) */
-		else
-			refill_done();
+		if (sent < 0) {
+			int left = cd_poll();                /* (also runs CdReadRetry's retries) */
+			if (left > 0)
+				return;
+			if (left < 0)
+				reading_n = 0;                   /* (an error: read again) */
+			else
+				sent = 0;
+		}
+		if (reading_n && !upload_step())
+			return;                              /* (the next DMA a frame later) */
 	}
 	uint32_t p = played(0);
 	if (p >= filled) {                           /* the voices past the music in: the ring
@@ -267,8 +286,9 @@ void music_tick(void)
 		                                                    Pause done, engine/cd.h) */
 }
 
-/* a read of `sectors` may start: the music not reading, and what the ring
-   holds lasting through it, its seek and the refill after */
+/* a read of `sectors` may start: the music neither reading nor sending a
+   refill (the staging buffer its), and what the ring holds lasting through
+   the read, its seek and the refill after, read and sent */
 int music_read_ok(int sectors)
 {
 	if (!playing)
@@ -278,7 +298,8 @@ int music_read_ok(int sectors)
 	uint32_t s;
 	played(&s);
 	uint32_t held_ms = (filled * QSPU_SAMPLES - s) * 1000u / rate;
-	uint32_t need_ms = (uint32_t) (sectors + READ_CHUNKS * QSPU_CHUNK_SECTORS) * 1000u / 150u + 3 * SEEK_MS;
+	uint32_t need_ms = (uint32_t) (sectors + READ_CHUNKS * QSPU_CHUNK_SECTORS) * 1000u / 150u + 3 * SEEK_MS +
+	                   UPLOAD_MS;
 	return held_ms > need_ms;
 }
 

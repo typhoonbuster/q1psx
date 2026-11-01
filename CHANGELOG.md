@@ -2699,3 +2699,8 @@ followed by R0-R4.
   sounds) now waits for DMA4's channel to stop, then for the SPU's FIFO
   (`snd_dma_done`, `snd_dma_wait`). The emulators that end a DMA at once
   are unchanged.
+- **The music's DMAs while the game runs** (§123.2, 2026-11-01). §123.1's
+  waits held the CPU about 6 ms per music refill on the console; a
+  refill's four DMAs now go one a frame, each started once the SPU's is
+  through, as the streamed sounds' pieces go; a track's first fill still
+  waits. The release's level arena −128 B.
