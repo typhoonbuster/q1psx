@@ -120,7 +120,8 @@ static void stick(int *x, int *y)
 /* A pad poll -> the game's command for its tick. Scheme B
    (2026-10-17):
      analog pad   left stick walk / strafe (speed follows the stick), right
-                  stick look (up / down inverted, finer near the centre);
+                  stick look (up looks down as in the console games of the
+                  time, up with Invert Y Axis; finer near the centre);
                   R2 / Square fire, L2 / Cross jump, R1 / L1 next / previous
                   weapon, Triangle walk, Circle level the view, the d-pad
                   walk / strafe at full speed (it selected weapon groups
@@ -130,7 +131,7 @@ static void stick(int *x, int *y)
      mouse        with a PlayStation Mouse (the Options' Use Mouse, §120):
                   the mouse turns and looks (Quake's IN_MouseMove: m_yaw and
                   m_pitch 0.022 degrees a count, times the sensitivity; Invert
-                  Mouse its pitch), its left button fires, the right one
+                  Y Axis its pitch), its left button fires, the right one
                   jumps (swapped: Swap Mouse Buttons); the pad, held in
                   either hand, is the same on both sides: the d-pad and the
                   face buttons walk and strafe (up / Triangle forward, down /
@@ -174,7 +175,7 @@ static void mouse_cmd(game_cmd_t *cmd, const pad_t *p, int *yaw, int *pitch)
 	/* 0.022 degrees x sensitivity (mouse_speed / 2) a count, in 1/256 of
 	   the binary degree (4096 a turn): 0.022 x 4096 / 360 / 2 x 256 = 32 */
 	mouse_yaw256   -= p->mdx * settings.mouse_speed * 32;
-	mouse_pitch256 += p->mdy * settings.mouse_speed * 32 * (settings.invert_mouse ? -1 : 1);
+	mouse_pitch256 += p->mdy * settings.mouse_speed * 32 * (settings.invert_y ? -1 : 1);
 	*yaw   += mouse_yaw256 / 256;
 	*pitch += mouse_pitch256 / 256;
 	mouse_yaw256   %= 256;
@@ -205,7 +206,8 @@ static void player_cmd(game_cmd_t *cmd, const pad_t *p)
 			mouse_cmd(cmd, p, &yaw, &pitch);
 	} else if (p->analog) {
 		yaw   -= stick_turn * rx * (rx < 0 ? -rx : rx) / (PM_AXIS * PM_AXIS);
-		pitch -= stick_look * ry * (ry < 0 ? -ry : ry) / (PM_AXIS * PM_AXIS);   /* inverted */
+		int look_y = stick_look * ry * (ry < 0 ? -ry : ry) / (PM_AXIS * PM_AXIS);
+		pitch -= settings.invert_y ? -look_y : look_y;   /* up looks down (Invert Y Axis: up) */
 		cmd->fwd  = -ly;                                /* stick up = forward */
 		cmd->side = lx;
 		if (p->held & PAD_UP)    cmd->fwd  =  PM_AXIS;     /* (the d-pad too) */

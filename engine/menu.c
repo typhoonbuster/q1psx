@@ -327,7 +327,7 @@ static void options_draw(void)
 {
 	static const char *const label[OPTIONS_ITEMS] = {
 		"    Customize controls", "     Reset to defaults", "            Brightness", "           Mouse Speed",
-		"       CD Music Volume", "          Sound Volume", "          Invert Mouse", "             Use Mouse",
+		"       CD Music Volume", "          Sound Volume", "         Invert Y Axis", "             Use Mouse",
 		"    Swap Mouse Buttons", "             Vibration", "              Graphics" };
 	draw_header(QGA_P_OPTION);
 	for (int i = 0; i < OPTIONS_ITEMS; i++)
@@ -336,7 +336,7 @@ static void options_draw(void)
 	draw_slider(220, 32 + O_MOUSE_SPEED * 8, (settings.mouse_speed - 2) / 2);   /* (sensitivity - 1) / 10 */
 	draw_slider(220, 32 + O_MUSIC * 8, settings.music);
 	draw_slider(220, 32 + O_SOUND * 8, settings.volume);
-	draw_checkbox(220, 32 + O_INVERT * 8, settings.invert_mouse);
+	draw_checkbox(220, 32 + O_INVERT * 8, settings.invert_y);
 	draw_checkbox(220, 32 + O_USE_MOUSE * 8, settings.mouse);
 	draw_checkbox(220, 32 + O_SWAP * 8, settings.swap_mouse);
 	draw_checkbox(220, 32 + O_VIBRATION * 8, settings.vibration);
@@ -678,7 +678,7 @@ static void options_adjust(int dir)
 	case O_MOUSE_SPEED: v = &settings.mouse_speed; lo = 2; hi = 22; break;
 	case O_MUSIC:       v = &settings.music; break;
 	case O_SOUND:       v = &settings.volume; break;
-	case O_INVERT:      settings.invert_mouse ^= 1; break;
+	case O_INVERT:      settings.invert_y ^= 1; break;
 	case O_USE_MOUSE:   settings.mouse ^= 1; break;
 	case O_SWAP:        settings.swap_mouse ^= 1; break;
 	case O_VIBRATION:   settings.vibration ^= 1; break;

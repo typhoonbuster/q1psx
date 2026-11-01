@@ -36,7 +36,8 @@ typedef struct {
 	int mouse;       /* the PlayStation Mouse played with when it answers (port 2
 	                    polled: engine/pad.h pad_port2)                      */
 	int mouse_speed; /* Quake's sensitivity x 2: 2 .. 22 (1 .. 11, 3 by default) */
-	int invert_mouse;   /* m_pitch < 0                                       */
+	int invert_y;    /* the mouse's pitch negated (m_pitch < 0), and the right
+	                    stick's: up looks up (engine/main.c player_cmd)      */
 	int swap_mouse;  /* the buttons swapped: the right one fires (the mouse in the
 	                    left hand)                                            */
 	int vibration;   /* the DualShock's motors (engine/rumble.c)             */

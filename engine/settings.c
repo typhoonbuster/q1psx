@@ -46,7 +46,7 @@ void settings_defaults(void)
 	settings.brightness = 0;                    /* Quake's v_gamma 1 */
 	settings.mouse      = 0;
 	settings.mouse_speed = 6;                   /* sensitivity 3 (default.cfg) */
-	settings.invert_mouse = 0;
+	settings.invert_y   = 0;
 	settings.swap_mouse = 0;
 	settings.vibration  = 1;
 }
@@ -54,7 +54,7 @@ void settings_defaults(void)
 /* the order the card keeps them in, and each one's values (0 .. max) */
 static int *const packed[] = {
 	&settings.hud, &settings.dlights, &settings.volume, &settings.music, &settings.fps_cap, &settings.tick,
-	&settings.warp, &settings.brightness, &settings.mouse, &settings.mouse_speed, &settings.invert_mouse,
+	&settings.warp, &settings.brightness, &settings.mouse, &settings.mouse_speed, &settings.invert_y,
 	&settings.swap_mouse, &settings.vibration,
 };
 #define PACKED (int) (sizeof packed / sizeof packed[0])
