@@ -99,6 +99,10 @@ typedef void (*world_progress_fn)(uint32_t done, uint32_t total);
    arena. `progress` may be NULL (the reads then block). */
 int world_load(int map, world_progress_fn progress);
 
+/* the loaded records' light bytes through t (engine/gamma.h
+   gamma_light_change: the Brightness's light at another level) */
+void world_relight(const uint8_t *t);
+
 /* Leaf containing a point (world units). */
 const qw_leaf *world_point_leaf(const int32_t pos[3]);
 /* the PVS row of a leaf (the walk's KUSEG pointer or the table's; NULL, or

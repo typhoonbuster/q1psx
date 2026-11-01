@@ -36,6 +36,9 @@ extern gdata_t gdata;
    area). 1 on success. */
 int gdata_load(void);
 
+/* the models' normal factors through t (engine/gamma.h gamma_light_change) */
+void gdata_relight(const uint8_t *t);
+
 /* the view model's frame being drawn, expanded (engine/rlist.c rl_view_gun:
    formats/qgame.h qg_view): the largest view model's vertices */
 extern qw_vert *gd_view_pool;

@@ -16322,3 +16322,133 @@ paths are unchanged: the 128 spawn views' display lists are master
 6267338's (`scripts/dlcheck.sh`, `BENCH_MAPS=1 HASHONLY=1`), their
 cycles +0.02 % in all (the pad's short way keeps the port's select: an
 instruction and a load more a byte, with Use Mouse off).
+
+## §121 — The Brightness on the light too, and a brighter default (2026-11-01, provisional number)
+
+(Provisional number: another session may take §121.)
+
+- **The report**: the episodes after the first too dark to play, E4M4's
+  corridors black even with the Brightness at its top, where QuakeSpasm
+  and the 2021 release show them at their defaults; was any light cooked
+  past episode 1?
+- **Every map is lit**: the cook samples each face's lightmaps (its four
+  styles, `face_light_at`) the same way for every map. The area mean of
+  id's lightmaps against the cooked records' (their corners' light, by
+  area) gives a ratio of 1.44-1.50 over the 32 maps (E1M1 62.0 → 89.5,
+  E2M7 36.2 → 54.4, E4M4 37.1 → 53.6: the cook's gain is 1.66, the clamp
+  at 255 and the faces without a lightmap take the rest). Episodes 2-4
+  are darker in id's own data: lightmap means 36-50 in E2, 38-69 in E3,
+  37-54 in E4 against 42-62 in E1; in E4 about half the surface lies under
+  light 32, in E1 a quarter to two fifths.
+- **Against QuakeSpasm**: QuakeSpasm 0.97 at its defaults (gamma 1,
+  `gl_overbright 1`), shot offscreen
+  (`SDL_VIDEODRIVER=offscreen`, `setpos` at the bench's views, 320 x 240,
+  no HUD), against pktview's renders of the same views: the mean luma of
+  E4M4's eleven views 10.0 against the port's 9.8, E2M2's 17.6 against
+  14.8, E1M1's start 20.7 against 25.4 (its other views are under water).
+  For a given light the port's is 1.6 times QuakeSpasm's (and software
+  Quake's: the colormap's row 32 at light 123), but the PS1 cuts every
+  colour to 5 bits by truncation, the CLUTs (`r >> 3`, tools/qcook/tex.c)
+  and the GPU's product (dithered by -4..+3, then cut): about 4 of 255
+  off every channel, a third to a half of a dark pixel. The darker the
+  map, the larger that share: E1 ends brighter than QuakeSpasm, E2-E4 as
+  dark or darker. Some places lose a light pool besides: a world face
+  carries its light at the corners of its cuts, up to 256 texels apart on
+  a power-of-two texture (E4M4's view 5: a column QuakeSpasm lights is
+  black here).
+- **Why the Brightness did nothing there**: §116 put Quake's curve on the
+  CLUTs alone. Quake's palette is the colour after the colormap's light,
+  so v_gamma brightens the light as well: a power curve splits over a
+  product, g(t x l) = g(t) x g(l). At the top level a wall at id's light
+  10 (cooked 17) takes 2.7 times more with the light's share than with
+  the CLUTs' alone (128 x (17 / 128) ^ 0.5 = 47); where the light is near
+  nothing, a brighter texel times that light stays black.
+- **The light's share** (engine/gamma.c): a light byte L (128: the texel
+  as it is) becomes 128 x (L / 128) ^ (1 - level / 20), 255 at most. The
+  bytes in RAM are rewritten, so a frame's work does not change:
+  - the world's records at the load (`world_load`; a zoned map's
+    skeleton holds its brush models' records);
+  - a zone's chunk while it is read: each frame, the records whose
+    sectors are in (CdReadSync's count, one sector held back), the rest
+    when the read ends; a retry (the count going up) starts again from
+    the chunk's first record (engine/zone.c `relight`,
+    `relight_reading`);
+  - the brush models' cut pieces at a change (engine/bmfrag.c
+    `bmf_relight`; a later cut takes the rewritten records);
+  - the models' normal factors (`gdata.dots`, x128): a vertex's light x
+    factor takes the curve as both factors do;
+  - a model's light (the leaf's, engine/rlist.c) through `gamma_light`
+    as it is taken.
+- **A change of level** (engine/main.c `light_commit`): between frames
+  (the dynamic lights' bytes put back), with no menu up (the world is
+  paused and faded under it): one pass for all the slider's steps; and
+  before a load. Each level's curve is built on the one before
+  (`light_curve`): the x one level merges, every brighter level merges
+  too (the curve taken at the run's first x, 3 at most from the exact
+  rounding). A byte goes back to its run's first x, then through the new
+  curve, so whatever the changes it stays within the run of the brightest
+  level it went through (near white, 5 of 255 at most). Simulated over
+  300 sequences of 60 random levels: 6 at worst; the exact curves taken
+  back by their runs' middles drifted to 21. A load reads the originals
+  again; the factors' table is the game's, loaded at boot.
+- **The record pass** (engine/zone.s `gamma_light_records`; the C
+  engine's in gamma.c): the light bytes a word at a time through the
+  curve (the padding's zeros stay: the curve keeps 0), summed; the
+  average's division (the flat shading's, engine/world.c) by the high
+  word of a product with 2^32 / 4n rounded up (`light_recip`, 43 words:
+  exact for every sum of n bytes, checked over all of them).
+- **Not followed**: the dynamic lights add to the rewritten bytes (Quake
+  adds them before its gamma: at the higher levels they show a little
+  stronger on a lit wall, a little weaker in the dark); the particles
+  keep their colours (§116); the fog's factor takes the rewritten light.
+- **Every map** (the four spawn views of the 32, a bench with every
+  frame dumped in full, against QuakeSpasm's shots of the same views;
+  the levels other than 0 by pktview's light curve on the level 0's
+  packets, which the engine's level-5 frames of E4M4 match): the mean
+  luma by episode, QuakeSpasm at its defaults / the port at the levels
+  0, 2, 3, 5, 10:
+
+  | | QuakeSpasm | 0 | 2 | 3 | 5 | 10 |
+  |---|---|---|---|---|---|---|
+  | E1 | 18.8 | 16.2 | 21.7 | 24.1 | 31.1 | 62.2 |
+  | E2 | 16.9 | 15.4 | 20.3 | 23.3 | 29.5 | 58.9 |
+  | E3 | 13.9 | 11.1 | 15.5 | 17.6 | 23.4 | 50.9 |
+  | E4 | 20.0 | 19.1 | 23.7 | 26.5 | 32.1 | 58.6 |
+
+  At the level 0 the port was under QuakeSpasm on 27 maps of 32 (E3M4
+  at 40 %, E3M5 52 %, E4M3 66 %, E2M2 68 %); at the level 5 every map is
+  above it (126 % to 225 %).
+- **The default**: level 5 (v_gamma 0.75), the slider's middle; Quake's
+  own 1 is its left end. A card's saved settings keep theirs (Options,
+  Reset to defaults).
+- **The bench**: `BRIGHT=<level>` (default 0: the references' level),
+  pktview's `PKTVIEW_GAMMA` the CLUTs at that level (the dumps' light is
+  at it already), `LITLOG=1` a hash of each zone chunk's light bytes as
+  it comes in ("zone lit" lines).
+- **Checks**:
+  - `BENCH_MAPS=1 MAP=E4M4` at `BRIGHT=0`: the 12 views' packets and
+    hashes master's (the record pass recomputes the average as the load
+    did).
+  - At `BRIGHT=5`: the views against master's level-0 dumps put through
+    the curve by a scratch pktview: within a step of 5 bits, but for the
+    slow path's near polygons (their split points take the Gouraud of
+    the converted corners: up to 1.5 of mean luma on the two near views).
+    The views' cycles are the level 0's (within 0.05 %).
+  - `ZONES=1 MAP=E4M4 BRIGHT=5 LITLOG=1` under `EMU_ARGS=-interpreter`:
+    14 zones, 49 reads, each chunk the same hash whether read in play or
+    loaded whole (one of them finished at its read's end: 37656 of 40340
+    bytes lit during the read); with `ENGINE_C=1` the same 14 hashes.
+  - The curves' code replayed on the host: the level 0 the identity, 3 at
+    most from the exact rounding, 6 at most after 60 random changes.
+- **The cost**:
+  - `ZONES=1 MAP=E4M4` (3600 frames walked at running speed): frames
+    313177 cycles on average at the level 0, 315484 at the level 5
+    (+0.74 %; the pass in C: +1.0 %), the worst frame the same (1231864,
+    1231576); the reads' frames take the pass, about 12000 cycles each.
+  - The release's level arena 1352976 → 1350416 B (-2560 B): the record
+    pass 276 B (assembly), the reads' lighting 488 B, the changes' passes
+    (the curves, the zones, the pieces, the factors, the world: -Os) 1.1
+    KB, the curve's table 256 B and the reciprocals 172 B, the models'
+    and the loads' lookups 150 B. `load_level` is kept out of line: GCC
+    inlined it into `run_frame`, which the load overlay may not be called
+    from (scripts/ovlcheck.py).

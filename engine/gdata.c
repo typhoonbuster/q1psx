@@ -32,6 +32,18 @@ static const uint8_t *gdata_file(uint32_t *size)
 	return f;
 }
 
+/* the models' normal factors (x128) through t: the Brightness's light,
+   a power curve, is a product's (light x factor) on each of them
+   (engine/gamma.h; engine/main.c light_commit) */
+Q_COLD void gdata_relight(const uint8_t *t)
+{
+	uint8_t *d = (uint8_t *) gdata.dots;
+	if (!d)
+		return;
+	for (uint32_t i = 0; i < QG_LIGHT_YAWS * QG_NORMALS; i++)
+		d[i] = t[d[i]];
+}
+
 Q_COLD int gdata_load(void)
 {
 	uint32_t mark = mem_level_mark(), size;
@@ -74,7 +86,10 @@ Q_COLD int gdata_load(void)
 	uint8_t *p = t;
 	memcpy(p, f + h->ofs_models, QGM_COUNT * sizeof(qg_model)); gdata.models = (const qg_model *) p; p += QGM_COUNT * sizeof(qg_model);
 	memcpy(p, f + h->ofs_pics, QGP_COUNT * sizeof(qg_pic));     gdata.pics = (const qg_pic *) p;     p += QGP_COUNT * sizeof(qg_pic);
-	memcpy(p, f + h->ofs_dots, QG_LIGHT_YAWS * QG_NORMALS);      gdata.dots = p;                      p += QG_LIGHT_YAWS * QG_NORMALS;
+	memcpy(p, f + h->ofs_dots, QG_LIGHT_YAWS * QG_NORMALS);      gdata.dots = p;
+	if (gamma_light_level())                                     /* (the Brightness's light: */
+		gdata_relight(gamma_light);                              /*  the factors' curve too) */
+	p += QG_LIGHT_YAWS * QG_NORMALS;
 	memcpy(p, f + h->ofs_rgb, 256 * 4);                          gdata.rgb = (const uint32_t *) p;    p += 256 * 4;
 	memcpy(p, f + h->ofs_aux, QGA_COUNT * sizeof(qg_aux));       gdata.aux = (const qg_aux *) p;      p += QGA_COUNT * sizeof(qg_aux);
 	memcpy(p, f + h->ofs_icon, sizeof(qg_icon));                 gdata.icon = (const qg_icon *) p;

@@ -43,7 +43,9 @@ void settings_defaults(void)
 	settings.fps_cap = 0;                       /* 60: no cap */
 	settings.tick    = 1;                       /* the world at 30 ticks a second */
 	settings.warp    = WARP_DEFAULT;
-	settings.brightness = 0;                    /* Quake's v_gamma 1 */
+	settings.brightness = 5;                    /* v_gamma 0.75: the dark maps seen at once
+	                                               (Quake's own default is 1, the left end;
+	                                               docs/porting-notes.md §121) */
 	settings.mouse      = 0;
 	settings.mouse_speed = 6;                   /* sensitivity 3 (default.cfg) */
 	settings.invert_y   = 0;

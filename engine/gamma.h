@@ -1,7 +1,8 @@
 /*
  * q1psx — the Options menu's Brightness: Quake's gamma (menu.c
  * M_AdjustSliders: v_gamma from 1 down to 0.5, a twentieth a step;
- * view.c BuildGammaTable on the palette), on the CLUTs (engine/gamma.c).
+ * view.c BuildGammaTable on the palette), on the CLUTs and on the light
+ * (engine/gamma.c).
  */
 
 #ifndef Q1PSX_GAMMA_H
@@ -31,5 +32,23 @@ void gamma_keep_map(const qtex_rect *rects, const uint8_t *base, uint32_t n);
 #ifdef Q1PSX_BENCH
 uint32_t gamma_kept_hash(int *rects);
 #endif
+
+/* The light's share (engine/gamma.c): the light bytes in RAM are at
+   gamma_light_level(); what the disc gives goes through gamma_light (the
+   curve at that level, the identity at 0), and so does a model's light. */
+extern uint8_t gamma_light[256];
+int  gamma_light_level(void);
+
+/* the slider's level for the light (gamma_set's) differs from the bytes'?
+   t[256] then takes each byte from the old level to the new one, which
+   becomes gamma_light_level(); the caller puts every resident byte through
+   t (between frames: engine/main.c light_commit) */
+int  gamma_light_change(uint8_t t[256]);
+
+/* the whole records in [p, end), n at most, until one of size 0: their
+   light bytes through t, their average light in their flags again (the
+   flat shading's, engine/world.c); where it stopped (the first record
+   left). engine/zone.s (the C engine: engine/gamma.c). */
+uint8_t *gamma_light_records(uint8_t *p, const uint8_t *end, uint32_t n, const uint8_t *t);
 
 #endif

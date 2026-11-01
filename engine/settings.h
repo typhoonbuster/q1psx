@@ -32,7 +32,7 @@ typedef struct {
 	int warp;        /* the anti-warping: low, default, medium, high, ultra
 	                    (the dynamic warp control's floor and cap, settings.c) */
 	int brightness;  /* the Options' Brightness, 0-10: Quake's v_gamma 1 down
-	                    to 0.5 on the CLUTs (engine/gamma.c)                 */
+	                    to 0.5 on the CLUTs and the light (engine/gamma.c)   */
 	int mouse;       /* the PlayStation Mouse played with when it answers (port 2
 	                    polled: engine/pad.h pad_port2)                      */
 	int mouse_speed; /* Quake's sensitivity x 2: 2 .. 22 (1 .. 11, 3 by default) */

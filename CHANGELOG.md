@@ -2665,3 +2665,22 @@ followed by R0-R4.
   over a zone not in yet (its camera's zone now read before them).
   `GAME.DAT` `QGMB` → `QGMC`. The 128 spawn views' display lists are
   master's; the release's level arena −18688 B.
+- **The Brightness on the light too, and a brighter default** (§121,
+  provisional number, 2026-11-01). Every map's light is cooked (the
+  ratio of the cooked light to id's lightmaps is the same over the four
+  episodes); episodes 2-4 are darker in id's data, and the PS1's 5-bit
+  truncation takes a larger share of a dark picture (QuakeSpasm's
+  defaults, shot at the bench's views: E4M4 as dark, E2M2 lighter, E1M1
+  darker than the port). Quake's gamma works on the colour after the
+  light, so the Options' Brightness now puts its curve on the light as
+  well as on the CLUTs: the light bytes in RAM are rewritten at the
+  load, as a zone's chunk is read, and between frames when the menu
+  closes on another level (the world's records, the zones' chunks, the
+  brush models' pieces, the models' normal factors; a model's light as
+  it is taken), the levels' curves nested so a byte stays within one
+  run whatever the changes; the record pass in assembly
+  (`engine/zone.s`). The default level is 5 (v_gamma 0.75); Quake's 1 is
+  the slider's left end. `BRIGHT=` and `LITLOG=` in the bench, pktview's
+  `PKTVIEW_GAMMA`. At the level 0 the display lists are master's; a
+  zoned map's walk +0.74 % of cycles at the level 5 (the chunks lit as
+  they are read); the release's level arena −2560 B (1350416 B).

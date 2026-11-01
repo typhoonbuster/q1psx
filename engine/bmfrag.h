@@ -34,6 +34,10 @@ void bmf_level(void);
 void bmf_reserve(void);
 void bmf_load(void);
 
+/* the resident pieces' light bytes through t (engine/gamma.h
+   gamma_light_change: the Brightness's light at another level) */
+void bmf_relight(const uint8_t *t);
+
 /* This level's caches by brush model (NULL before the load, or without
    room): a model with one has pieces. Not in the edict, whose size stays
    384 bytes (an index is two shifts). */

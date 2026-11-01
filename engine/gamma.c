@@ -16,7 +16,23 @@
  *   - the menu's pictures (rows 505-506) and the particles' colours keep
  *     theirs.
  * Black with its STP bit clear (0x0000) is the GPU's transparent texel and
- * stays so. Nothing changes in a frame's work.
+ * stays so.
+ *
+ * Quake's palette is the colour after the light (the colormap's row), so
+ * its gamma brightens the light too: a power curve splits over a product,
+ * g(t x l) = g(t) x g(l), and the light bytes (128 = the texel as it is)
+ * take 128 x (L / 128) ^ (1 - level / 20). Without that share a dark
+ * place stays dark at any level: a texel brightened, times a light near
+ * nothing (docs/porting-notes.md §121). The bytes in RAM are rewritten
+ * (gamma_light_level: the level they are at): the world's records, the
+ * zones' chunks as they arrive, the brush models' pieces, the models'
+ * normal factors; a model's light goes through gamma_light as it is
+ * taken. A new level rewrites them between frames with no menu up
+ * (engine/main.c light_commit: once a menu, whatever the slider's steps):
+ * the levels' curves are nested (light_curve), so a byte stays within the
+ * run of values the brightest level it went through merged (near white, 5
+ * at most), however many times the level changes; a load reads the
+ * originals again. Nothing changes in a frame's work.
  */
 
 #include <stdint.h>
@@ -24,6 +40,8 @@
 #include <psxgpu.h>
 
 #include "gamma.h"
+#include "mem.h"
+#include "qworld.h"
 
 #define COLS 320                 /* the CLUT rows' width (halfwords)          */
 
@@ -44,6 +62,8 @@ static const uint8_t gamma5[GAMMA_LEVELS][32] = {
 };
 
 static int cur;                                   /* the level in VRAM */
+static int light_level;                           /* the level the light bytes in RAM are at */
+static int light_want;                            /* the slider's, for them */
 static uint16_t row[COLS] __attribute__((aligned(4)));   /* (640 bytes: LoadImage's 64-byte units) */
 static uint16_t game_pal[256] __attribute__((aligned(4)));   /* the game's palette as cooked */
 static int game_pal_ok;
@@ -116,6 +136,7 @@ void gamma_set(int level)
 		level = 0;
 	if (level >= GAMMA_LEVELS)
 		level = GAMMA_LEVELS - 1;
+	light_want = level;                           /* (the light's: between frames, no menu up) */
 	if (level == cur)
 		return;
 	cur = level;
@@ -126,3 +147,123 @@ void gamma_set(int level)
 	if (game_pal_ok)
 		gamma_upload((const uint8_t *) game_pal, 0, 504, 256, 1);
 }
+
+/* ------------------------------------------------------------ the light -- */
+
+uint8_t gamma_light[256] = {                      /* the curve at light_level */
+#define ROW(x) x, x + 1, x + 2, x + 3, x + 4, x + 5, x + 6, x + 7
+#define ROWS(x) ROW(x), ROW(x + 8), ROW(x + 16), ROW(x + 24)
+	ROWS(0), ROWS(32), ROWS(64), ROWS(96), ROWS(128), ROWS(160), ROWS(192), ROWS(224),
+#undef ROWS
+#undef ROW
+};
+
+int gamma_light_level(void)
+{
+	return light_level;
+}
+
+/* log2(x) x 65536, x in 1 .. 65535: the top bit, then the fraction's bits
+   by squaring (x / 2^15 in [1, 2): over 2, a bit and halved) */
+Q_COLD static int32_t log2_16(uint32_t x)
+{
+	int32_t r = 15;
+	while (x < 32768) {
+		x <<= 1;
+		r--;
+	}
+	r <<= 16;
+	for (int32_t b = 32768; b; b >>= 1) {
+		x = x * x >> 15;
+		if (x >= 65536) {
+			x >>= 1;
+			r += b;
+		}
+	}
+	return r;
+}
+
+/* The curve at a level: 128 x (x / 128) ^ (1 - level / 20), rounded (255
+   at most), the levels nested: each one is built on the one before and
+   gives the same byte to the x the one before merged (the curve taken at
+   the run's first x; 3 at most from the exact rounding). So a byte at a
+   level stands for its run of x, the first of which (gamma_light_change)
+   is the same at every level as fine or finer: a byte goes through any
+   number of changes within the run of the brightest level it was at (5
+   at most near white, at the top level), where steps of the exact curve
+   from the runs' middles drifted 20 in 60 changes. The logs (x 65536,
+   less 7: 128's) are taken once: x's, and y + 1/2's, the bounds y is
+   counted up to. */
+Q_COLD static void light_curve(uint8_t g[256], int level)
+{
+	int32_t lx[256], ly[256];
+	for (uint32_t i = 1; i < 256; i++) {
+		lx[i] = log2_16(i) - (7 << 16);
+		ly[i - 1] = log2_16(2 * i - 1) - (8 << 16);
+	}
+	for (uint32_t x = 0; x < 256; x++)
+		g[x] = (uint8_t) x;
+	for (int k = 1; k <= level; k++) {
+		uint32_t y = 0, old = 0, v = 0;
+		for (uint32_t x = 1; x < 256; x++) {
+			uint32_t was = g[x];
+			if (was != old) {                         /* a run's first x: the curve there */
+				int32_t e = lx[x] * (20 - k) / 20;
+				while (y < 255 && e >= ly[y])
+					y++;
+				v = y;
+			}
+			old = was;
+			g[x] = (uint8_t) v;
+		}
+	}
+}
+
+Q_COLD int gamma_light_change(uint8_t t[256])
+{
+	if (light_want == light_level)
+		return 0;
+	uint8_t g[256];
+	light_curve(g, light_want);
+	for (uint32_t y = 0; y < 256; y++)            /* (a byte the old curve never gives) */
+		t[y] = g[y];
+	for (uint32_t x = 256; x-- > 0;)              /* each y: the first x the old curve gives it */
+		t[gamma_light[x]] = g[x];
+	memcpy(gamma_light, g, sizeof g);
+	light_level = light_want;
+	return 1;
+}
+
+/* 2^32 / 4n rounded up, n = 0 .. QW_MAX_VERTS: a record's average light,
+   (sum + 2n) / 4n, by a product's high word (engine/zone.s
+   gamma_light_records; exact for every sum of n bytes) */
+const uint32_t light_recip[QW_MAX_VERTS + 1] = {
+	0x00000000, 0x40000000, 0x20000000, 0x15555556, 0x10000000, 0x0ccccccd, 0x0aaaaaab, 0x0924924a,
+	0x08000000, 0x071c71c8, 0x06666667, 0x05d1745e, 0x05555556, 0x04ec4ec5, 0x04924925, 0x04444445,
+	0x04000000, 0x03c3c3c4, 0x038e38e4, 0x035e50d8, 0x03333334, 0x030c30c4, 0x02e8ba2f, 0x02c8590c,
+	0x02aaaaab, 0x028f5c29, 0x02762763, 0x025ed098, 0x02492493, 0x0234f72d, 0x02222223, 0x02108422,
+	0x02000000, 0x01f07c20, 0x01e1e1e2, 0x01d41d42, 0x01c71c72, 0x01bacf92, 0x01af286c, 0x01a41a42,
+	0x0199999a, 0x018f9c19, 0x01861862,
+};
+
+#if Q1PSX_ENGINE_C
+/* the C engine's (engine/zone.s's asm, followed) */
+uint8_t *gamma_light_records(uint8_t *p, const uint8_t *end, uint32_t n, const uint8_t *t)
+{
+	for (; n; n--) {
+		qw_record *r = (qw_record *) p;
+		if (p + sizeof *r > end || !r->size || p + r->size > end)
+			break;
+		uint32_t words = ((uint32_t) r->num_verts + 3) >> 2, sum = 0;
+		uint8_t *light = p + r->polys - words * 4;
+		for (uint32_t k = 0; k < words * 4; k++) {   /* (the padding's zeros: t[0] = 0) */
+			light[k] = t[light[k]];
+			sum += light[k];
+		}
+		uint32_t avg = (uint32_t) (((uint64_t) (sum + 2u * r->num_verts) * light_recip[r->num_verts]) >> 32);
+		r->flags = (uint8_t) ((r->flags & (QWF_SKY | QWF_LIQUID)) | (avg > 63 ? 63 : avg) << 2);
+		p += r->size;
+	}
+	return p;
+}
+#endif

@@ -17,9 +17,14 @@
 #   zone_patch   C ABI: a chunk's patch words into the world nodes' face
 #                blocks (formats/qworld.h QZP_*): a0 = the first node, a1 =
 #                the words, a2 = their count, a3 = the chunk's records
+#   gamma_light_records
+#                C ABI (engine/gamma.h): the Brightness's light on records,
+#                a chunk's as its sectors come in (engine/zone.c relight),
+#                the world's at its load, the brush models' pieces
 #
-# The C engine (CMake Q1PSX_ENGINE_C: ZONE_C = 1) takes zone_patch in C
-# (engine/zone.c); zone_mark is the renderer's (r_world.s has no C).
+# The C engine (CMake Q1PSX_ENGINE_C: ZONE_C = 1) takes zone_patch and
+# gamma_light_records in C (engine/zone.c, engine/gamma.c); zone_mark is the
+# renderer's (r_world.s has no C).
 
 	.set noreorder
 	.set noat
@@ -111,4 +116,91 @@ zp_node:
 	nop
 	.size   zone_patch, . - zone_patch
 
+# gamma_light_records: a0 = the first record, a1 = the end, a2 = the most
+# records, a3 = the curve (256 bytes); v0 = where it stopped. Each whole
+# record before a1 (until one of size 0): its light bytes through the
+# curve, a word at a time over their run padded to 4 (the padding's zeros
+# stay: the curve keeps 0), summed; its average light, (sum + 2n) / 4n by
+# the high word of a product with 2^32 / 4n rounded up (gamma.c
+# light_recip: exact for every sum of n <= QW_MAX_VERTS bytes), 63 at
+# most, into its flags' bits 2-7 (QWF_SKY and QWF_LIQUID kept). A word:
+# 27 instructions; a record's own: 36 and the product's wait.
+	.section .text.gamma_light_records, "ax", @progbits
+	.global gamma_light_records
+	.type   gamma_light_records, @function
+gamma_light_records:
+	lui     $t9, %hi(light_recip)
+	addiu   $t9, $t9, %lo(light_recip)
+glr_rec:
+	beqz    $a2, glr_done
+	addiu   $t0, $a0, 20                 # (the header's end)
+	sltu    $t0, $a1, $t0
+	bnez    $t0, glr_done                # no whole header before the end
+	lhu     $t1, R_SIZE($a0)
+	lbu     $t2, R_NVERTS($a0)
+	beqz    $t1, glr_done                # size 0: the stream's end
+	addu    $t3, $a0, $t1                # the next record
+	sltu    $t0, $a1, $t3
+	bnez    $t0, glr_done                # not whole before the end
+	lhu     $t4, R_POLYS($a0)
+	addiu   $t5, $t2, 3
+	srl     $t5, $t5, 2                  # the light bytes' words
+	sll     $t6, $t5, 2
+	addu    $t4, $t4, $a0
+	subu    $t4, $t4, $t6                # the light bytes
+	beqz    $t5, glr_avg
+	move    $v1, $zero                   # the sum
+glr_word:
+	lw      $t6, 0($t4)
+	addiu   $t5, $t5, -1
+	andi    $t7, $t6, 0xff
+	srl     $t8, $t6, 8
+	andi    $t8, $t8, 0xff
+	addu    $t7, $t7, $a3
+	addu    $t8, $t8, $a3
+	lbu     $t7, 0($t7)
+	lbu     $t8, 0($t8)
+	srl     $t0, $t6, 16
+	andi    $t0, $t0, 0xff
+	srl     $t6, $t6, 24
+	addu    $t0, $t0, $a3
+	addu    $t6, $t6, $a3
+	lbu     $t0, 0($t0)
+	lbu     $t6, 0($t6)
+	addu    $v1, $v1, $t7
+	addu    $v1, $v1, $t8
+	addu    $v1, $v1, $t0
+	addu    $v1, $v1, $t6
+	sll     $t8, $t8, 8
+	sll     $t0, $t0, 16
+	sll     $t6, $t6, 24
+	or      $t7, $t7, $t8
+	or      $t0, $t0, $t6
+	or      $t7, $t7, $t0
+	sw      $t7, 0($t4)
+	bnez    $t5, glr_word
+	addiu   $t4, $t4, 4
+glr_avg:
+	sll     $t5, $t2, 2
+	addu    $t5, $t5, $t9
+	lw      $t5, 0($t5)                  # 2^32 / 4n rounded up (n = 0: 0)
+	sll     $t6, $t2, 1
+	addu    $t6, $t6, $v1                # sum + 2n
+	multu   $t6, $t5
+	lbu     $t7, R_FLAGS($a0)
+	addiu   $a2, $a2, -1
+	andi    $t7, $t7, 3                  # QWF_SKY | QWF_LIQUID
+	mfhi    $t6                          # the average (waits for the product)
+	sltiu   $t0, $t6, 64
+	bnez    $t0, 1f
+	sll     $t6, $t6, 2
+	li      $t6, 63 << 2
+1:	or      $t7, $t7, $t6
+	sb      $t7, R_FLAGS($a0)
+	b       glr_rec
+	move    $a0, $t3
+glr_done:
+	jr      $ra
+	move    $v0, $a0
+	.size   gamma_light_records, . - gamma_light_records
 .endif

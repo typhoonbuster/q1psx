@@ -228,6 +228,8 @@ set(Q1PSX_BENCH_RESIDENCY 0 CACHE STRING "1: the maps bench reports what the str
 set(Q1PSX_BENCH_NOENTS 0 CACHE STRING "1: the map's entities are not drawn (an A / B of the brush models)")
 set(Q1PSX_BENCH_WARPDYN 0 CACHE STRING "1: the views with the game's dynamic warp control (T its floor), the T each ends at printed")
 set(Q1PSX_BENCH_TMAX 32 CACHE STRING "The dynamic warp control's cap with WARPDYN=1 (px; the anti-warping's: low 48, default 32, medium 16, high 8, ultra 4)")
+set(Q1PSX_BENCH_LITLOG 0 CACHE STRING "1: each zone chunk's light bytes hashed as it comes in at a Brightness level (\"zone lit\" lines: the reads' progressive lighting against the whole loads')")
+set(Q1PSX_BENCH_BRIGHT 0 CACHE STRING "The Brightness's level the bench renders at, 0-10 (Quake's v_gamma 1 - level / 20, on the CLUTs and the light: engine/gamma.c)")
 set(Q1PSX_BENCH_VRAMCHK 0 CACHE STRING "1: each streamed image's VRAM place also searched the way before §100 (every resident image for every candidate), the two compared (stream: vramchk lines)")
 set(Q1PSX_BENCH_IRQTIME 0 CACHE STRING "1: the interrupts' handler times itself: the bench lines' irq= (cycles a frame, entries x 100)")
 target_compile_options(q1psx PRIVATE $<$<COMPILE_LANGUAGE:ASM>:-Wa,--defsym,IRQTIME=$<AND:$<BOOL:${Q1PSX_BENCH}>,$<BOOL:${Q1PSX_BENCH_IRQTIME}>>>)
@@ -262,6 +264,7 @@ if(Q1PSX_BENCH)
 		Q1PSX_BENCH_CAPTURE=${Q1PSX_BENCH_CAPTURE}
 		Q1PSX_BENCH_WORLD_HZ=${Q1PSX_BENCH_WORLD_HZ}
 		Q1PSX_BENCH_GPUTIME=${Q1PSX_BENCH_GPUTIME} Q1PSX_BENCH_WARPDYN=${Q1PSX_BENCH_WARPDYN} Q1PSX_BENCH_TMAX=${Q1PSX_BENCH_TMAX}
+		Q1PSX_BENCH_BRIGHT=${Q1PSX_BENCH_BRIGHT} Q1PSX_BENCH_LITLOG=${Q1PSX_BENCH_LITLOG}
 		Q1PSX_BENCH_VRAMCHK=${Q1PSX_BENCH_VRAMCHK})
 	if(Q1PSX_BENCH_VIEW)
 		# groups of five numbers, one definition with no spaces (a quoted string

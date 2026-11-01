@@ -85,6 +85,11 @@ static int      map_index;      /* into world_map_name(); R2 cycles it */
 #define Q1PSX_BENCH_TMAX 32                    /* its cap, px (TMAX= scripts/bench.sh; the
                                                   default anti-warping's, engine/settings.c) */
 #endif
+#ifndef Q1PSX_BENCH_BRIGHT
+#define Q1PSX_BENCH_BRIGHT 0                   /* the Brightness's level, 0-10 (BRIGHT=
+                                                  scripts/bench.sh: Quake's v_gamma 1 the
+                                                  references') */
+#endif
 #endif
 
 /* The settings (engine/settings.c); the bench renders with its own. */
@@ -93,6 +98,8 @@ static void apply_settings(void)
 #ifdef Q1PSX_BENCH
 	r_set_warp(Q1PSX_BENCH_WARPDYN ? R_WARP_DYNAMIC : R_WARP_FIXED, Q1PSX_BENCH_T, Q1PSX_BENCH_TMAX);
 	game_world_hz = Q1PSX_BENCH_WORLD_HZ;
+	settings.brightness = Q1PSX_BENCH_BRIGHT;     /* (the menu walk's slider from it) */
+	gamma_set(Q1PSX_BENCH_BRIGHT);
 #else
 	settings_apply();
 #endif
@@ -404,8 +411,26 @@ static void bench_level_wants(void)
 }
 #endif
 
-Q_COLD static int load_level(int map)
+/* The light bytes at the Brightness's level (engine/gamma.h): between
+   frames (the dynamic lights' bytes back), no menu up (one pass for the
+   slider's steps; the world under the menu is faded anyway), and before a
+   load (the disc's bytes then go straight to the level). */
+Q_COLD static void light_commit(void)
 {
+	uint8_t t[256];
+	if (!gamma_light_change(t))
+		return;
+	world_relight(t);
+	zone_relight(t);
+	bmf_relight(t);
+	gdata_relight(t);
+}
+
+Q_COLD __attribute__((noinline)) static int load_level(int map)   /* (its callers are not the
+                                               overlay's: scripts/ovlcheck.py) */
+{
+	light_commit();                             /* (the old world's at the level: harmless;
+	                                               the factors and the new world at it) */
 	world_ok = 0;
 	load_map = map;
 	cd_log_mark(world_map_name(map));           /* (the bench's drive journal: the load's phase) */
@@ -694,6 +719,8 @@ static void run_frame(int interactive, int dump)
 			}
 		}
 	}
+	if (!menu_active())
+		light_commit();
 	PLAY_STEP("render");
 #ifdef Q1PSX_BENCH
 	if (dump) {

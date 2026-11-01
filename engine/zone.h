@@ -73,6 +73,11 @@ void zone_require(const int32_t eye[3]);
 /* once a frame between frames, before stream_frame: see above */
 void zone_frame(void);
 
+/* the light bytes of the chunks in (and of the read in flight, as far as
+   it lit them) through t: the Brightness's light at another level
+   (engine/gamma.h gamma_light_change; engine/main.c light_commit) */
+void zone_relight(const uint8_t *t);
+
 /* engine/zone.s, inside r_render before the walk: the camera leaf's set
    changed (QZ_NONE: the camera in solid, its zone kept) */
 void zone_enter(uint32_t set);

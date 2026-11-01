@@ -12,6 +12,7 @@
 #include "zone.h"
 
 world_t world;
+static uint8_t *faces_end;           /* the face stream's end, its records lit (world_relight) */
 
 /* Every Quake map, in play order; the disc carries some of them
    (scripts/cook.sh: episode 1 by default, all with COOK_MAPS=all). */
@@ -257,6 +258,7 @@ Q_COLD int world_load(int map, world_progress_fn progress)
 	zone_abort();                        /* (a chunk read stopped before the arena goes) */
 	mem_level_reset();
 	memset(&world, 0, sizeof world);
+	faces_end = 0;
 	for (int i = 0; i < QIM_COUNT; i++)
 		world.model_of[i] = -1;
 	if (map < 0 || map >= num_disc_maps)
@@ -381,9 +383,9 @@ Q_COLD int world_load(int map, world_progress_fn progress)
 	memset(world.face_visframe, 0, h->num_faces * 2);
 
 	/* each record's face index -> its byte offset in face_visframe (the
-	   asm adds it to the array as it is; faces < 32768); its average light
-	   / 4 into its flags' bits 2 - 7 (the flat shading's colour: r_world.s
-	   RECLOOP opt) */
+	   asm adds it to the array as it is; faces < 32768); its light bytes at
+	   the Brightness's level (engine/gamma.c), their average / 4 into its
+	   flags' bits 2 - 7 (the flat shading's colour: r_world.s RECLOOP opt) */
 	{
 		uint8_t *r = (uint8_t *) world.faces;
 		for (uint32_t i = 0; i < h->num_records; i++) {
@@ -391,14 +393,10 @@ Q_COLD int world_load(int map, world_progress_fn progress)
 			if (!rec->size)
 				break;
 			rec->face_id = (uint16_t) (rec->face_id << 1);
-			const uint8_t *light = r + rec->polys - ((rec->num_verts + 3) & ~3);
-			uint32_t sum = 0, n = rec->num_verts;
-			for (uint32_t k = 0; k < n; k++)
-				sum += light[k];
-			uint32_t avg = n ? (sum + n * 2) / (n * 4) : 0;
-			rec->flags = (uint8_t) ((rec->flags & (QWF_SKY | QWF_LIQUID)) | (avg > 63 ? 63 : avg) << 2);
 			r += rec->size;
 		}
+		faces_end = f + h->ofs_faces + h->len_faces;
+		gamma_light_records((uint8_t *) world.faces, faces_end, h->num_records, gamma_light);
 	}
 
 	load_step(tex_size + wld_size);
@@ -417,6 +415,15 @@ Q_COLD int world_load(int map, world_progress_fn progress)
 	       h->num_bmodels ? h->num_bmodels - 1 : 0, h->num_ents, world.num_models, mem_level_used() / 1024);
 	load_step(load_total);
 	return 1;
+}
+
+/* the records' light bytes (the world's, or a zoned map's brush models')
+   through t: the Brightness's light at another level (engine/main.c
+   light_commit) */
+Q_COLD void world_relight(const uint8_t *t)
+{
+	if (faces_end)
+		gamma_light_records((uint8_t *) world.faces, faces_end, world.num_records, t);
 }
 
 /* the box (vertex units: centre c, half extents h) down the tree from a

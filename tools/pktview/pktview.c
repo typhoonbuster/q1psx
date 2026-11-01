@@ -27,9 +27,13 @@
  * rasterizers, which follow the hardware), instead of cutting them: a texel
  * shows from half a texel before its place, and a polygon whose UV reaches
  * its tile's end reads the texel past it along that edge
- * (docs/porting-notes.md §71).
+ * (docs/porting-notes.md §71). PKTVIEW_GAMMA=<0-10> draws the CLUTs the
+ * Options' Brightness puts through its curve (rows 480-504, as
+ * engine/gamma.c: the dumps' light bytes are at that level already, the
+ * VRAM rebuilt here from the cooked files is not; scripts/bench.sh BRIGHT=).
  */
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -248,6 +252,10 @@ static const int dither[4][4] = {
 };
 
 static uint32_t twin;   /* current GP0 E2h texture window (0 = none) */
+static uint8_t  gamma5[32];   /* PKTVIEW_GAMMA: a CLUT channel's 5 bits through the Brightness's
+                                 curve (engine/gamma.c's table: BuildGammaTable at v_gamma
+                                 1 - level / 20 on c << 3 | c >> 2, back x 31 / 255) */
+static int      gamma_on;
 static int uv_round;        /* PKTVIEW_UVROUND=1: the GPU's texture coordinates */
 
 static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque)
@@ -271,6 +279,8 @@ static void texel(int tpage, int clut, int u, int v, uint8_t out[3], int *opaque
 	} else {                   /* 15bpp */
 		c = vram[(py + v) & 511][(px + u) & 1023];
 	}
+	if (gamma_on && mode != 2 && cy >= 480 && cy <= 504 && cx < 320 && c)
+		c = (uint16_t) ((c & 0x8000) | gamma5[c & 31] | gamma5[(c >> 5) & 31] << 5 | gamma5[(c >> 10) & 31] << 10);
 	*opaque = c != 0;
 	out[0] = (uint8_t) ((c & 31) << 3);
 	out[1] = (uint8_t) (((c >> 5) & 31) << 3);
@@ -570,6 +580,15 @@ int main(int argc, char **argv)
 	if (argc == 6)
 		load_stream(argv[5]);
 	load_tex(argv[2]);
+	const char *gam = getenv("PKTVIEW_GAMMA");
+	int level = gam ? atoi(gam) : 0;
+	gamma_on = level > 0 && level <= 10;
+	for (int c = 0; c < 32; c++) {
+		int c8 = c << 3 | c >> 2;
+		int g = (int) (255 * pow((c8 + 0.5) / 255.5, 1 - level / 20.0) + 0.5);
+		g = g < 0 ? 0 : g > 255 ? 255 : g;
+		gamma5[c] = (uint8_t) (g * 31 / 255.0 + 0.5);
+	}
 	const char *uvr = getenv("PKTVIEW_UVROUND");
 	uv_round = uvr && uvr[0] == '1';
 	const char *occ = getenv("PKTVIEW_OCCL");

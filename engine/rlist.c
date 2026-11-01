@@ -5,6 +5,7 @@
 #include <inline_c.h>
 
 #include "bmfrag.h"
+#include "gamma.h"
 #include "gdata.h"
 #include "mdl.h"
 #include "prof.h"
@@ -218,7 +219,7 @@ static void ent_model(r_ent_t *e, const qg_model *m, int frame, int light)
 	e->tex = (m->flags & QGF_MAP) ? (uint32_t) world.model_tex[m - world.models] : (uint32_t) &m->tex;
 	if (light > 170) light = 170;
 	if (light < 0) light = 0;
-	e->light = (uint32_t) light;
+	e->light = gamma_light[light];            /* (the Brightness's light: engine/gamma.h) */
 	e->dots  = 0;
 	e->flags = 0;
 }
@@ -299,7 +300,7 @@ r_ent_t *rl_model_stream(int a, int frame, const int32_t org[3], int yaw, int pi
 		                                             game's models and the gun keep the table's) */
 	if (light > 170) light = 170;
 	if (light < 0) light = 0;
-	e->light = (uint32_t) light;
+	e->light = gamma_light[light];            /* (the Brightness's light: engine/gamma.h) */
 	e->dots  = 0;
 	e->flags = 0;
 	e->lod_band = 0;
@@ -442,7 +443,7 @@ r_ent_t *rl_view_gun(const qg_model *m, int frame, int yaw, int pitch, const int
 	e->tex      = (uint32_t) &m->tex;
 	if (light > 170) light = 170;
 	if (light < 0) light = 0;
-	e->light = (uint32_t) light;
+	e->light = gamma_light[light];            /* (the Brightness's light: engine/gamma.h) */
 	e->dots  = (uint32_t) (gdata.dots + ((yaw * QG_LIGHT_YAWS / ANG_TURN) & (QG_LIGHT_YAWS - 1)) * QG_NORMALS);
 	e->flags = RE_VIEW;
 

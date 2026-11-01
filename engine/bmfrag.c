@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "bmfrag.h"
+#include "gamma.h"
 #include "mem.h"
 #include "prof.h"
 #include "q_fixed.h"
@@ -986,6 +987,19 @@ void bmf_level(void)
 #ifdef Q1PSX_BENCH
 	memset(bmf_stats, 0, sizeof bmf_stats);
 #endif
+}
+
+/* the pieces' light bytes through t (engine/gamma.h: the Brightness's
+   light at another level; engine/main.c light_commit) */
+BMF_COLD void bmf_relight(const uint8_t *t)
+{
+	if (!bmf_models)
+		return;
+	for (uint32_t m = 1; m < world.num_bmodels; m++) {
+		bmf_cache *c = bmf_models[m];
+		if (c && c->resident && c->recs_len)
+			gamma_light_records(c->recs, c->recs + c->recs_len, 0xffffffffu, t);
+	}
 }
 
 static int drawn_model(const edict_t *e)

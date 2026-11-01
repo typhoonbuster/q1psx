@@ -9,6 +9,7 @@
 #include <psxcd.h>
 
 #include "cd.h"
+#include "gamma.h"
 #include "mem.h"
 #include "music.h"
 #include "prof.h"
@@ -32,7 +33,16 @@ typedef struct {
 	int16_t  zone;         /* -1: free                               */
 	uint8_t  ready;        /* read and checked                       */
 	uint32_t at;           /* its place: i x slot_bytes              */
+	uint32_t lit;          /* its records before this offset have their
+	                          light at the Brightness's level, those
+	                          after it are the disc's (0: none yet; LIT_BAD:
+	                          not this zone's chunk): relight            */
 } slot_t;
+
+#define LIT_BAD 0xffffffffu
+#ifndef Q1PSX_BENCH_LITLOG
+#define Q1PSX_BENCH_LITLOG 0  /* 1: "zone lit" lines (LITLOG=1 scripts/bench.sh) */
+#endif
 
 static const qw_zone_header *zh;   /* NULL: the map is whole */
 static const qw_chunk_dir   *zdir;
@@ -48,6 +58,7 @@ static uint32_t  want_set = SET_NONE;     /* the camera leaf's set              
 static int       reading  = -1;           /* the slot being read                 */
 static int       placed   = -1;           /* a slot placed, waiting for the drive */
 static uint32_t  frame_no, read_frame, backoff_until;
+static int       read_left;               /* the sectors the read had left at the last poll */
 #ifdef Q1PSX_BENCH
 int zone_sync;
 #endif
@@ -103,6 +114,87 @@ static int is_wanted(int z, const uint8_t want[WANT], int upto)
 	return 0;
 }
 
+/* The light bytes of slot s's chunk at the Brightness's level (engine/
+   gamma.h), as far as `upto` bytes of it are in (the drive's sectors so
+   far: a read's records are lit while it goes on, a frame's sectors at a
+   time; all of them once it is done). At the level 0 nothing is to do:
+   the disc's bytes are the level's. */
+static void relight(slot_t *s, uint32_t upto)
+{
+	if (!gamma_light_level() || s->lit == LIT_BAD)
+		return;
+	const qw_chunk *c = (const qw_chunk *) (arena + s->at);
+	if (!s->lit) {
+		if (upto < sizeof *c)
+			return;
+		if (c->zone != (uint16_t) s->zone || c->stamp != zh->stamp) {
+			s->lit = LIT_BAD;                     /* (read_done says it is unreadable) */
+			return;
+		}
+		s->lit = c->ofs_records;
+	}
+	uint32_t end = c->ofs_records + c->len_records;
+	if (upto > end)
+		upto = end;
+	if (s->lit < upto)
+		s->lit = (uint32_t) (gamma_light_records(arena + s->at + s->lit, arena + s->at + upto, 0xffffffffu,
+		                                         gamma_light) - (arena + s->at));
+}
+
+Q_COLD void zone_relight(const uint8_t *t)
+{
+	if (!zh)
+		return;
+	for (uint32_t i = 0; i < nslots; i++) {
+		slot_t *s = &slots[i];
+		if (s->zone < 0 || s->lit == LIT_BAD)
+			continue;
+		const qw_chunk *c = (const qw_chunk *) (arena + s->at);
+		uint32_t to = s->ready ? c->ofs_records + c->len_records : s->lit;
+		if (to > c->ofs_records)              /* (a read's records lit so far; a chunk
+		                                         read at the level 0: all of them) */
+			gamma_light_records(arena + s->at + c->ofs_records, arena + s->at + to, 0xffffffffu, t);
+	}
+}
+
+#if defined(Q1PSX_BENCH) && Q1PSX_BENCH_LITLOG
+/* (the bench at a Brightness level, LITLOG=1: a chunk's light bytes as it
+   comes in, FNV-1a over its records', the same whichever way it was read) */
+static void lit_print(const slot_t *s)
+{
+	if (!gamma_light_level())
+		return;
+	const qw_chunk *c = (const qw_chunk *) (arena + s->at);
+	const uint8_t *p = arena + s->at + c->ofs_records, *end = p + c->len_records;
+	uint32_t h = 2166136261u;
+	while (p < end && ((const qw_record *) p)->size) {
+		const qw_record *r = (const qw_record *) p;
+		const uint8_t *l = p + r->polys - ((r->num_verts + 3) & ~3);
+		for (uint32_t k = 0; k < r->num_verts; k++)
+			h = (h ^ l[k]) * 16777619u;
+		h = (h ^ r->flags) * 16777619u;
+		p += r->size;
+	}
+	printf("zone lit %d level %d: %08x\n", s->zone, gamma_light_level(), (unsigned) h);
+}
+#else
+#define lit_print(s)
+#endif
+
+/* the read in flight: its records lit as far as its sectors are in (a
+   retry reads the chunk from its start again: its records anew) */
+static void relight_reading(int left)
+{
+	slot_t *s = &slots[reading];
+	uint32_t total = (zdir[s->zone].bytes + SECTOR - 1) / SECTOR;
+	if (left > read_left)
+		s->lit = 0;
+	read_left = left;
+	if ((uint32_t) left + 1 < total)
+		relight(s, (total - (uint32_t) left - 1) * SECTOR);   /* (the last sector counted
+		                                                         may still be on its way) */
+}
+
 /* the chunk drawn: the world nodes' blocks into it, its pool the renderer's */
 static void make_current(int s)
 {
@@ -141,6 +233,7 @@ static int place(int z, const uint8_t want[WANT], int rank)
 		zone_stats.evictions++;
 	slots[v].zone  = (int16_t) z;
 	slots[v].ready = 0;
+	slots[v].lit   = 0;
 	return v;
 }
 
@@ -149,6 +242,13 @@ static void read_done(int ok)
 	slot_t *s = &slots[reading];
 	const qw_chunk *c = (const qw_chunk *) (arena + s->at);
 	if (ok && c->zone == (uint16_t) s->zone && c->stamp == zh->stamp) {
+#if defined(Q1PSX_BENCH) && Q1PSX_BENCH_LITLOG
+		if (gamma_light_level())
+			printf("zone lit %d during the read: %u of %u bytes\n", s->zone, (unsigned) (s->lit ? s->lit - c->ofs_records : 0),
+			       (unsigned) c->len_records);
+#endif
+		relight(s, 0xffffffffu);                  /* (the records the last polls left) */
+		lit_print(s);
 		s->ready = 1;
 		zone_stats.loads++;
 		zone_stats.load_bytes += zdir[s->zone].bytes;
@@ -188,6 +288,9 @@ static int load_now(int z, const uint8_t want[WANT], int rank)
 		slots[s].zone = -1;
 		return -1;
 	}
+	slots[s].lit = 0;
+	relight(&slots[s], 0xffffffffu);
+	lit_print(&slots[s]);
 	slots[s].ready = 1;
 	return s;
 }
@@ -243,6 +346,8 @@ static void next_read(void)
 	}
 	reading = s;
 	read_frame = frame_no;
+	read_left = (int) sectors;
+	slots[s].lit = 0;
 }
 
 /* ---------------------------------------------------------- the map -- */
@@ -306,6 +411,7 @@ Q_COLD int zone_map_start(const uint8_t *f, const char *map)
 	for (uint32_t i = 0; i < nslots; i++) {
 		slots[i].zone = -1;
 		slots[i].at   = i * h->slot_bytes;
+		slots[i].lit  = 0;
 	}
 	skel_bytes = h->ofs_sets + h->num_sets * (uint32_t) sizeof(qw_zone_set);
 	zone_rt.leaves   = (uint32_t) world.leaves & 0x00ffffffu;
@@ -420,8 +526,10 @@ void zone_frame(void)
 	frame_no++;
 	if (reading >= 0) {
 		int left = cd_poll();                     /* (also runs CdReadRetry's retries) */
-		if (left > 0)
+		if (left > 0) {
+			relight_reading(left);
 			return;
+		}
 		read_done(left == 0);
 	}
 	if (want_set < zh->num_sets && zsets[want_set].zone != cur_zone) {
