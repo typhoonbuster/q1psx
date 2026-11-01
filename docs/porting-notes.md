@@ -11644,9 +11644,6 @@ chosen:
 
 ## §90 — The stream's pool grown: nine RAM levers in three batches (2026-10-28)
 
-(Provisional number: §89, the draw distance of 1024, is on a branch of its
-own, not merged; the numbers get settled at the merge.)
-
 The stream's pool is the first thing to run short: on E1M3 (release) it is
 348 KB and full at the spawn, 13 KB free (the RAM report of 2026-10-25,
 outside the repository, on master 795bfb2 with the pvs_1536_64 tables and
@@ -12784,8 +12781,7 @@ distance band, the reverse of the monsters' bands (§88), picked per record by
 its distance; what is built is its runtime form, for the reasons of 92.6:
 the polygon the record loop hands to the slow path is cut on a regular grid
 whose fineness its own corners decide, in the frame. The slow path stays for
-what the grid does not take. Provisional section number, as §91's: §89 lives
-on the draw distance's branch, not merged.
+what the grid does not take.
 
 ### 92.1 What the slow path does with a polygon, and what costs
 
@@ -13077,8 +13073,7 @@ polygon's distance) without the RAM.
 
 A DuckStation screenshot: a medkit a few steps away hollow, its
 lid's texture at its bottom front, the inner sides of its far walls on
-top; the ammo boxes behind it as flat. Provisional section number, as
-§91's and §92's.
+top; the ammo boxes behind it as flat.
 
 ### 94.1 What happened
 
@@ -13387,8 +13382,6 @@ cut with its leaf, written for this (the pieces were all there).
 - The release builds.
 
 ## §97 — The registered game's six monsters, by hand, and the animations thinned (2026-10-28)
-
-(Provisional number then: §96 was another session's, merged into master on 2026-10-31 with §109-§110.)
 
 ### 97.1 The ask
 
@@ -14830,8 +14823,7 @@ division each, and a stack without copies. The measures came first
 slow path's stack and tests, not in the divisions. What is built (112.2,
 112.3) changes no decision and no packet. The GTE's midpoints are left
 out (112.5): they cannot draw the same pixels, and the cost model gives
-them little. Provisional section number (§111 and §113 ran beside this
-one; §114-§116 were merged before it).
+them little.
 
 ### 112.1 Where the slow stage's cycles went
 
@@ -15100,207 +15092,10 @@ indices.
   exception and no engine message. The same binaries passed when run
   again: the hang headless.sh's `STALL` check was made for.
 
-## §114 — The monsters' shared detail budget (2026-10-31)
-
-(The number is provisional: §111-§113 are the levers' branches, not
-merged.)
-
-- **The request**: the compromise that keeps the bodies readable and
-  coherent, chosen from the shared-budget LOD's proof of concept. That
-  is an HTML page outside the repo: it draws the cooked bodies band by
-  band as the engine does, reads `STREAM_0.DAT` at run time and holds no
-  data of its own. The result goes in a release to play before
-  any merge.
-- **What the page showed**:
-  - The starting rule pulls a near body straight to L: a body's band is
-    `max(d, L)`, d its depth's band, L a level the bodies in view share
-    (the least level whose total fits the budget, a floor at most).
-    Example: a shambler at 68 units goes from band 1 to band 10.
-  - The error that rule adds: band b's collapses are within 2 px at 64 b
-    units (§110), about 0.8 b world units, so 128 b / d px at depth d.
-    The shambler above shows up to 19 px of error: unreadable.
-  - The fix is a cap: a body's band at most k times its depth's band, so
-    its error at most k times today's (3 px at a band's start: §88's
-    bands of 42.7 units, z >> 8 in the view's units).
-- **The choice** (the page's `tune.mjs`, the cooked tables alone): 300
-  random fights a size, 64-900 units from the eye, the 13 kinds without
-  the bosses. Triangles saved against the distance alone, and the error
-  added on the bodies raised:
-
-  | budget, floor, cap | 10 / 14 / 20 / 26 bodies | error added, worst / mean |
-  |---|---|---|
-  | 800, 16, none | 2.4 / 23.3 / 45.6 / 46.5 % | 32 / 7.5 px |
-  | 800, 16, k 2 | 2.3 / 20.1 / 29.1 / 29.1 % | 6.0 / 4.8 px |
-  | 800, 16, k 1.5 | 1.9 / 15.5 / 19.5 / 19.6 % | 4.5 / 4.0 px |
-  | 800, 16, k 1.25 | 1.4 / 9.9 / 11.9 / 11.8 % | 3.7 / 3.5 px |
-  | **600, 16, k 1.5** | 12.2 / 19.6 / 19.5 / 19.6 % | 4.5 / 4.0 px |
-
-  k = 1.5 keeps the error within 4.5 px, near the worst §110 leaves
-  today (2.8 px at 64 b units, 4.2 px at the engine's band starts). The
-  budget only decides how often the bodies are raised, never how far.
-  600 vertices was chosen on the fight below; the page and the release
-  default to it.
-- **The engine** (engine/rlist.c, `rl_model_stream`, `rl_begin`):
-  - The settings: CMake `Q1PSX_LOD_BUDGET` (600 expanded vertices a
-    frame; 0: none, the code compiled out), `Q1PSX_LOD_FLOOR` (16),
-    `Q1PSX_LOD_CAP` (384, k = 1.5 in 256ths); `scripts/bench.sh` takes
-    `LODBUDGET`, `LODFLOOR` and `LODCAP`.
-  - A body's band d is taken from its depth as before. Then `lod_count`:
-    - its cap c = z x `Q1PSX_LOD_CAP` >> 16 (z its depth in the view's
-      units, d = z >> 8; at least d);
-    - its band max(d, min(L, c)), L the frame's level;
-    - it adds to the frame's sums what each level would draw of it, as
-      expanded vertices (the band's `num_verts`: the cooked qst_lod, no
-      new data): the base, its depth's band; the levels between d and its
-      cap, theirs; past its cap, its cap's (a difference array);
-    - a body wholly past the draw distance (`r_draw_z`, render.c) is not
-      counted.
-  - `rl_begin` (`lod_level`) finds the least level within the budget
-    from the last frame's sums. L moves one band a frame toward it, and
-    goes down only once a lower level fits within 7/8 of the budget:
-    - a crowd turning into view is raised one band a frame;
-    - no level flickers at the budget's edge.
-  - About 150 bytes of BSS (the release's arena 1 352 416 B). The bench's
-    fight prints a `mon lod` line a window: the level, the bodies raised.
-- **Measured**: §106's fight (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0
-  SKILL=2 VIEW=1780,1803,-304,204,0`), against the budget off
-  (`LODBUDGET=0`: master's bands, the code compiled out), window by
-  window. The game is the same: the same models drawn and monsters alive
-  in each window.
-
-  | | budget 600 (the default) | budget 800 |
-  |---|---|---|
-  | drawing (12 windows) | -3.57 % (13.38 M -> 12.90 M cycles) | -0.40 % |
-  | windows at work | 7 | 3 |
-  | those windows | -3.6 to -8.1 % | -0.2 to -3.0 % |
-  | the idle windows (its sums) | +0.1 % | +0.1 % |
-  | level a frame | 1-14 on average, 16 at most | about 6, 8 at most |
-  | bodies raised a frame | 3.9 to 7.7 | about 4.5 |
-  | samples | -1.09 % | |
-  | models left out for the packets' room | 203 -> 1 | 203 -> 22 |
-
-  The models left out (`r_model_skipped`) are monsters not drawn at all
-  in master's busiest window, for want of packet room.
-- **For a test**: the release (`cmake --preset release`) carries the
-  600-vertex budget; `-DQ1PSX_LOD_BUDGET=0` builds without it. To be
-  seen in play on DuckStation: a big fight's near and mid-range
-  monsters, no part lost, the bodies' detail changing one band at a
-  time.
-
-## §115 — The monsters lit as Quake lights them (2026-10-31)
-
-(The number is provisional, like §114's.)
-
-- **The report**: the maps were brightened to 1.66 (the cook's
-  `LIGHT_GAIN`, §79), but the monsters seemed left as they were. Very
-  dark, they could not be seen in places; E4M2 is the darkest.
-- **The gain is every map's**: `scripts/cook.sh` passes `--light-gain`
-  to every map's cook. The monsters' light (a leaf's, `qw_leaf.light`)
-  was made from the faces' gained vertex lights.
-- **Why the monsters fell behind the walls** (a scratch tool on the
-  paks; for every monster's spawn point, before the gain):
-  - **The light's source.** Quake lights a model with R_LightPoint
-    (r_light.c): the lightmap where a line straight down from its origin
-    first meets a lit face, the floor under it. The cook took the
-    average of the leaf's faces, the walls and ceilings in it. Quake's
-    is 1.04-1.27 times brighter (median per map):
-
-    | map | Quake's light, median | the leaf average, median | Quake / port, median |
-    |---|---|---|---|
-    | E1M1 | 81 | 72 | 1.24 |
-    | E2M7 | 49 | 42 | 1.18 |
-    | E4M2 | 38 | 34 | 1.24 |
-    | E4M3 | 45 | 36 | 1.19 |
-
-  - **The shading.** Quake shades an alias model from its light up to
-    twice it on the side the light comes from (r_alias.c: ambient +
-    shade x cos, both the model's light below 96). The port's light
-    table (`gdata.dots`, tools/qcook/game.c) spans 1 to 1.5 times.
-  - Against the walls at 1.66 times Quake's, the bodies came out about
-    30 % darker than Quake drew them beside the same walls.
-- **The fix**:
-  - The cook (tools/qcook/world.c):
-    - a leaf's light is now Quake's R_LightPoint, ported
-      (`light_point_rec`: the front side first, the node's faces at the
-      crossing within Quake's CalcSurfaceExtents, then the back side;
-      sky and liquids skipped);
-    - it is averaged over the points of a 3 x 3 x 3 grid in the leaf's
-      box that lie in the leaf, at the cook's gain;
-    - a leaf no line reaches keeps the faces' average.
-    - The monsters' leaves are covered at 95-100 %. Their light (median
-      before the gain) comes out at Quake's own: E1M1 80 (Quake 81),
-      E4M2 42 (38), E4M3 45 (45). The cook's log prints a line a map.
-  - The engine (engine/rlist.c `rl_model_stream`):
-    - the streamed models' light (the monsters, their heads, the items'
-      models; not the flat ones) is multiplied by 4/3 before its bound,
-      which puts the lit side at Quake's twice;
-    - the game's models and the gun keep the table's span, because the
-      2D gun's pictures are cooked at it.
-- **Checked**: E1M1's monsters' frames (`MONSTERS=1 MAP=E1M1`), before
-  and after, side by side. The grunt and the dog in the dark corners,
-  nearly black before, now stand out; the grunt near has Quake's lit
-  side. The cycles are unchanged (the light is a value a body).
-
-## §116 — The Options menu's Brightness (2026-10-31)
-
-(The number is provisional, like §114's and §115's.)
-
-- **The request**: a brightness slider in the options, for the darkest
-  levels (E4M2).
-- **Quake's**: the Options menu's Brightness (menu.c `M_Options_Draw`,
-  `M_AdjustSliders`) moves `v_gamma` from 1 down to 0.5, a twentieth a
-  step. `BuildGammaTable` (view.c) takes the palette through
-  255 x ((i + 0.5) / 255.5) ^ gamma: it lifts the dark colours most and
-  white not at all.
-- **On the PlayStation** (engine/gamma.c): every texel is drawn through a
-  CLUT, so the CLUTs take the same curve on their 5-bit channels. The
-  eleven tables are computed on the host (each channel to 8 bits, through
-  `BuildGammaTable`, back to 5 bits) and held as constants.
-  - Which CLUTs:
-    - the map's textures' (VRAM rows 481-502: the world, its brush
-      models, the sky, the liquids, the far walls drawn flat);
-    - the game's palette (row 504: the monsters, the items, the gun, the
-      status bar's pictures);
-    - the console's (row 480).
-    - The menu's 4-bit pictures (rows 505-506), the 2D gun's CLUTs (its
-      packets) and the particles' colours keep theirs.
-  - Each upload of one of those goes through the current level's table
-    (engine/world.c `vram_upload`, ui.c), a row at a time from a
-    640-byte buffer. Black with its STP bit clear, the GPU's transparent
-    texel, stays so.
-  - A change sends the map's and the game's CLUTs again through the new
-    level's table, from copies of them as cooked:
-    - the map's are kept after its texture tables, 1.3-3.2 KB a map;
-    - the game's palette is kept in a 512-byte array.
-    - Reading the rows back from VRAM instead was tried on the host and
-      dropped: a 5-bit table merges neighbours near white, and a colour
-      drifted by up to 2 steps after a few moves of the slider.
-  - Nothing changes in a frame's work. The release's level arena is
-    1 352 416 -> 1 349 888 B (the code, the palette's copy, the row's
-    buffer), less the map's copy while it plays.
-- **The menu**: Brightness, Quake's row, between Reset to defaults and
-  the volumes; its slider at (1 - `v_gamma`) / 0.5; `settings.brightness`
-  0-10, 0 by default (Quake's 1); Reset to defaults puts it back.
-- **Checked**:
-  - on the host (engine/gamma.c with a VRAM in an array): ten moves of
-    the slider, the CLUTs at each level exactly the table's image of the
-    cooked colours, at 0 the cooked colours again, the transparent texels
-    and the STP bits kept;
-  - in the game bench (`BENCH_GAME=1`), its walk through the release menu
-    now moves the slider 5 steps and back:
-    - the CLUTs go to level 5, then back to 0;
-    - the map's kept CLUTs hash as START's cooked ones do (FNV
-      `dd8a42d1`);
-    - the walk goes on as before.
-  - The release builds with it.
-  - The colours on screen are to be judged on DuckStation:
-    PCSX-Redux runs without a GPU here.
-
 ## §113 — Two small CPU levers: the coplanar faces merged in the cook, lighter dynamic lights (2026-10-31)
 
 The fourth lever after §106's profile (the vblank wait and the slow
-path went to their own branches, §111 and §112; the section numbers are
-provisional): two small ones, a slight loss allowed for a real gain, each
+path went to their own branches, §111 and §112): two small ones, a slight loss allowed for a real gain, each
 in its own commit and behind an option that can be turned off.
 
 ### 113.1 The coplanar faces merged in the cook (`QCOOK_MERGE`)
@@ -15507,9 +15302,196 @@ The same models drawn in every window, the same 17 maps zoned. The
 branch's merge into master was approved with its defaults (the merge on,
 its light bound 16, the floor 32) after the test images (2026-10-31).
 
-## §117 — The Graphics page's Anti-warping (2026-10-31)
+## §114 — The monsters' shared detail budget (2026-10-31)
 
-(Provisional number: §113 is another branch's.)
+- **The request**: the compromise that keeps the bodies readable and
+  coherent, chosen from the shared-budget LOD's proof of concept. That
+  is an HTML page outside the repo: it draws the cooked bodies band by
+  band as the engine does, reads `STREAM_0.DAT` at run time and holds no
+  data of its own. The result goes in a release to play before
+  any merge.
+- **What the page showed**:
+  - The starting rule pulls a near body straight to L: a body's band is
+    `max(d, L)`, d its depth's band, L a level the bodies in view share
+    (the least level whose total fits the budget, a floor at most).
+    Example: a shambler at 68 units goes from band 1 to band 10.
+  - The error that rule adds: band b's collapses are within 2 px at 64 b
+    units (§110), about 0.8 b world units, so 128 b / d px at depth d.
+    The shambler above shows up to 19 px of error: unreadable.
+  - The fix is a cap: a body's band at most k times its depth's band, so
+    its error at most k times today's (3 px at a band's start: §88's
+    bands of 42.7 units, z >> 8 in the view's units).
+- **The choice** (the page's `tune.mjs`, the cooked tables alone): 300
+  random fights a size, 64-900 units from the eye, the 13 kinds without
+  the bosses. Triangles saved against the distance alone, and the error
+  added on the bodies raised:
+
+  | budget, floor, cap | 10 / 14 / 20 / 26 bodies | error added, worst / mean |
+  |---|---|---|
+  | 800, 16, none | 2.4 / 23.3 / 45.6 / 46.5 % | 32 / 7.5 px |
+  | 800, 16, k 2 | 2.3 / 20.1 / 29.1 / 29.1 % | 6.0 / 4.8 px |
+  | 800, 16, k 1.5 | 1.9 / 15.5 / 19.5 / 19.6 % | 4.5 / 4.0 px |
+  | 800, 16, k 1.25 | 1.4 / 9.9 / 11.9 / 11.8 % | 3.7 / 3.5 px |
+  | **600, 16, k 1.5** | 12.2 / 19.6 / 19.5 / 19.6 % | 4.5 / 4.0 px |
+
+  k = 1.5 keeps the error within 4.5 px, near the worst §110 leaves
+  today (2.8 px at 64 b units, 4.2 px at the engine's band starts). The
+  budget only decides how often the bodies are raised, never how far.
+  600 vertices was chosen on the fight below; the page and the release
+  default to it.
+- **The engine** (engine/rlist.c, `rl_model_stream`, `rl_begin`):
+  - The settings: CMake `Q1PSX_LOD_BUDGET` (600 expanded vertices a
+    frame; 0: none, the code compiled out), `Q1PSX_LOD_FLOOR` (16),
+    `Q1PSX_LOD_CAP` (384, k = 1.5 in 256ths); `scripts/bench.sh` takes
+    `LODBUDGET`, `LODFLOOR` and `LODCAP`.
+  - A body's band d is taken from its depth as before. Then `lod_count`:
+    - its cap c = z x `Q1PSX_LOD_CAP` >> 16 (z its depth in the view's
+      units, d = z >> 8; at least d);
+    - its band max(d, min(L, c)), L the frame's level;
+    - it adds to the frame's sums what each level would draw of it, as
+      expanded vertices (the band's `num_verts`: the cooked qst_lod, no
+      new data): the base, its depth's band; the levels between d and its
+      cap, theirs; past its cap, its cap's (a difference array);
+    - a body wholly past the draw distance (`r_draw_z`, render.c) is not
+      counted.
+  - `rl_begin` (`lod_level`) finds the least level within the budget
+    from the last frame's sums. L moves one band a frame toward it, and
+    goes down only once a lower level fits within 7/8 of the budget:
+    - a crowd turning into view is raised one band a frame;
+    - no level flickers at the budget's edge.
+  - About 150 bytes of BSS (the release's arena 1 352 416 B). The bench's
+    fight prints a `mon lod` line a window: the level, the bodies raised.
+- **Measured**: §106's fight (`MAP=E2M7 MONSTERS=3 SAMPLE=1 PROFILE=0
+  SKILL=2 VIEW=1780,1803,-304,204,0`), against the budget off
+  (`LODBUDGET=0`: master's bands, the code compiled out), window by
+  window. The game is the same: the same models drawn and monsters alive
+  in each window.
+
+  | | budget 600 (the default) | budget 800 |
+  |---|---|---|
+  | drawing (12 windows) | -3.57 % (13.38 M -> 12.90 M cycles) | -0.40 % |
+  | windows at work | 7 | 3 |
+  | those windows | -3.6 to -8.1 % | -0.2 to -3.0 % |
+  | the idle windows (its sums) | +0.1 % | +0.1 % |
+  | level a frame | 1-14 on average, 16 at most | about 6, 8 at most |
+  | bodies raised a frame | 3.9 to 7.7 | about 4.5 |
+  | samples | -1.09 % | |
+  | models left out for the packets' room | 203 -> 1 | 203 -> 22 |
+
+  The models left out (`r_model_skipped`) are monsters not drawn at all
+  in master's busiest window, for want of packet room.
+- **For a test**: the release (`cmake --preset release`) carries the
+  600-vertex budget; `-DQ1PSX_LOD_BUDGET=0` builds without it. To be
+  seen in play on DuckStation: a big fight's near and mid-range
+  monsters, no part lost, the bodies' detail changing one band at a
+  time.
+
+## §115 — The monsters lit as Quake lights them (2026-10-31)
+
+- **The report**: the maps were brightened to 1.66 (the cook's
+  `LIGHT_GAIN`, §79), but the monsters seemed left as they were. Very
+  dark, they could not be seen in places; E4M2 is the darkest.
+- **The gain is every map's**: `scripts/cook.sh` passes `--light-gain`
+  to every map's cook. The monsters' light (a leaf's, `qw_leaf.light`)
+  was made from the faces' gained vertex lights.
+- **Why the monsters fell behind the walls** (a scratch tool on the
+  paks; for every monster's spawn point, before the gain):
+  - **The light's source.** Quake lights a model with R_LightPoint
+    (r_light.c): the lightmap where a line straight down from its origin
+    first meets a lit face, the floor under it. The cook took the
+    average of the leaf's faces, the walls and ceilings in it. Quake's
+    is 1.04-1.27 times brighter (median per map):
+
+    | map | Quake's light, median | the leaf average, median | Quake / port, median |
+    |---|---|---|---|
+    | E1M1 | 81 | 72 | 1.24 |
+    | E2M7 | 49 | 42 | 1.18 |
+    | E4M2 | 38 | 34 | 1.24 |
+    | E4M3 | 45 | 36 | 1.19 |
+
+  - **The shading.** Quake shades an alias model from its light up to
+    twice it on the side the light comes from (r_alias.c: ambient +
+    shade x cos, both the model's light below 96). The port's light
+    table (`gdata.dots`, tools/qcook/game.c) spans 1 to 1.5 times.
+  - Against the walls at 1.66 times Quake's, the bodies came out about
+    30 % darker than Quake drew them beside the same walls.
+- **The fix**:
+  - The cook (tools/qcook/world.c):
+    - a leaf's light is now Quake's R_LightPoint, ported
+      (`light_point_rec`: the front side first, the node's faces at the
+      crossing within Quake's CalcSurfaceExtents, then the back side;
+      sky and liquids skipped);
+    - it is averaged over the points of a 3 x 3 x 3 grid in the leaf's
+      box that lie in the leaf, at the cook's gain;
+    - a leaf no line reaches keeps the faces' average.
+    - The monsters' leaves are covered at 95-100 %. Their light (median
+      before the gain) comes out at Quake's own: E1M1 80 (Quake 81),
+      E4M2 42 (38), E4M3 45 (45). The cook's log prints a line a map.
+  - The engine (engine/rlist.c `rl_model_stream`):
+    - the streamed models' light (the monsters, their heads, the items'
+      models; not the flat ones) is multiplied by 4/3 before its bound,
+      which puts the lit side at Quake's twice;
+    - the game's models and the gun keep the table's span, because the
+      2D gun's pictures are cooked at it.
+- **Checked**: E1M1's monsters' frames (`MONSTERS=1 MAP=E1M1`), before
+  and after, side by side. The grunt and the dog in the dark corners,
+  nearly black before, now stand out; the grunt near has Quake's lit
+  side. The cycles are unchanged (the light is a value a body).
+
+## §116 — The Options menu's Brightness (2026-10-31)
+
+- **The request**: a brightness slider in the options, for the darkest
+  levels (E4M2).
+- **Quake's**: the Options menu's Brightness (menu.c `M_Options_Draw`,
+  `M_AdjustSliders`) moves `v_gamma` from 1 down to 0.5, a twentieth a
+  step. `BuildGammaTable` (view.c) takes the palette through
+  255 x ((i + 0.5) / 255.5) ^ gamma: it lifts the dark colours most and
+  white not at all.
+- **On the PlayStation** (engine/gamma.c): every texel is drawn through a
+  CLUT, so the CLUTs take the same curve on their 5-bit channels. The
+  eleven tables are computed on the host (each channel to 8 bits, through
+  `BuildGammaTable`, back to 5 bits) and held as constants.
+  - Which CLUTs:
+    - the map's textures' (VRAM rows 481-502: the world, its brush
+      models, the sky, the liquids, the far walls drawn flat);
+    - the game's palette (row 504: the monsters, the items, the gun, the
+      status bar's pictures);
+    - the console's (row 480).
+    - The menu's 4-bit pictures (rows 505-506), the 2D gun's CLUTs (its
+      packets) and the particles' colours keep theirs.
+  - Each upload of one of those goes through the current level's table
+    (engine/world.c `vram_upload`, ui.c), a row at a time from a
+    640-byte buffer. Black with its STP bit clear, the GPU's transparent
+    texel, stays so.
+  - A change sends the map's and the game's CLUTs again through the new
+    level's table, from copies of them as cooked:
+    - the map's are kept after its texture tables, 1.3-3.2 KB a map;
+    - the game's palette is kept in a 512-byte array.
+    - Reading the rows back from VRAM instead was tried on the host and
+      dropped: a 5-bit table merges neighbours near white, and a colour
+      drifted by up to 2 steps after a few moves of the slider.
+  - Nothing changes in a frame's work. The release's level arena is
+    1 352 416 -> 1 349 888 B (the code, the palette's copy, the row's
+    buffer), less the map's copy while it plays.
+- **The menu**: Brightness, Quake's row, between Reset to defaults and
+  the volumes; its slider at (1 - `v_gamma`) / 0.5; `settings.brightness`
+  0-10, 0 by default (Quake's 1); Reset to defaults puts it back.
+- **Checked**:
+  - on the host (engine/gamma.c with a VRAM in an array): ten moves of
+    the slider, the CLUTs at each level exactly the table's image of the
+    cooked colours, at 0 the cooked colours again, the transparent texels
+    and the STP bits kept;
+  - in the game bench (`BENCH_GAME=1`), its walk through the release menu
+    now moves the slider 5 steps and back:
+    - the CLUTs go to level 5, then back to 0;
+    - the map's kept CLUTs hash as START's cooked ones do (FNV
+      `dd8a42d1`);
+    - the walk goes on as before.
+  - The release builds with it.
+  - The colours on screen are to be judged on DuckStation:
+    PCSX-Redux runs without a GPU here.
+
+## §117 — The Graphics page's Anti-warping (2026-10-31)
 
 - **The request**: a Graphics row choosing how much the textures may
   warp: the dynamic warp control's floor and cap set by a level, low,
@@ -16068,7 +16050,7 @@ scripts and settings nothing reads:
   (+48: `.text` −32, the zones' two slots −16; the dead functions were
   the linker's to drop already); the default preset builds.
 
-## §120 — The game's presentation and its last features (2026-11-01, provisional number)
+## §120 — The game's presentation and its last features (2026-11-01)
 
 The game as a disc of its time would present it: a boot that shows it is
 loading, Quake's loading plaque at every map, the saves on the memory
@@ -16323,9 +16305,7 @@ paths are unchanged: the 128 spawn views' display lists are master
 cycles +0.02 % in all (the pad's short way keeps the port's select: an
 instruction and a load more a byte, with Use Mouse off).
 
-## §121 — The Brightness on the light too, and a brighter default (2026-11-01, provisional number)
-
-(Provisional number: another session may take §121.)
+## §121 — The Brightness on the light too, and a brighter default (2026-11-01)
 
 - **The report**: the episodes after the first too dark to play, E4M4's
   corridors black even with the Brightness at its top, where QuakeSpasm
@@ -16452,3 +16432,55 @@ instruction and a load more a byte, with Use Mouse off).
     and the loads' lookups 150 B. `load_level` is kept out of line: GCC
     inlined it into `run_frame`, which the load overlay may not be called
     from (scripts/ovlcheck.py).
+
+## §122 — The repository's audit (2026-11-01)
+
+- **The licenses**: the repository is under the GPL version 2. The engine
+  ports id Software's code: the Quake engine (Copyright (C) 1996-1997 Id
+  Software, Inc.) and the 2021 re-release's QuakeC (Copyright (C)
+  1996-2022 id Software LLC), both under the GPL version 2 or later;
+  `tools/qcook/anorms.h` is Quake's own file, its header kept.
+  `engine/q1psx.ld` is PSn00bSDK's `ldscripts/exe.ld`, modified, under the
+  Mozilla Public License 2.0 with its notice, which allows it beside GPL
+  code (MPL 2.0 §3.3); PSn00bSDK's libraries (MPL 2.0) are linked,
+  `mkpsxiso` (GPLv2) is a tool of the build. The cook's hand-made tables
+  (the monsters' edge collapses, the guns' boxes) are the port's own
+  numbers, not id's data. The README's License says all of it now, with
+  the game data's terms (the disc image carries data converted from the
+  paks: it is not to be shared, the shareware's included, whose terms
+  cover the original package only) and the trademarks (no affiliation
+  with id Software, ZeniMax Media, Microsoft or Sony).
+- **The history**: master's 404 commits carry no id or Sony data (the
+  largest blob is these notes), no path of a machine, no personal mention;
+  the files removed over time are code, tools and zone tables.
+- **The disc**: it carried `pak0.pak` whole (18.7 MB, §5), which nothing
+  has read since R0 (2026-10-14: the engine reads the cooked files only);
+  it is gone (CMakeLists.txt, scripts/cd_image.cmake, iso/iso.xml), the
+  cook still reads the pak `local.env` names. The ISO's copyright
+  identifier named a `README.TXT` the disc never had: gone too.
+- **Removed**:
+  - `tools/pmsim` (§13.5: the player's physics on the host): it read the
+    clip hulls of an older world file and its player no longer stood on
+    any floor; the bench compares the asm physics with the C call by call
+    in the emulator (§13, CMakeLists.txt's `PHYS_C_REFERENCE`);
+  - `tools/cdsim` (§83, §84: the drive's journal replayed on other
+    layouts): the disc's layout is settled; the bench's journal (`CDLOG=1`)
+    stays;
+  - `ui_conback_ready` (§120), never called: the four builds linked again
+    with `--print-gc-sections` drop it, as they drop functions whose calls
+    are all inlined or made by bench modes none of them builds;
+  - five `.gitignore` lines nothing makes any more (`/local.config.json`,
+    `/assets/`, `/build-c/`, `/build-release-c/`, the old `wldref`), and
+    pmsim's.
+- **The docs**: TESTING.md's way to run an image and its emulators' table;
+  docs/architecture.md's memory map (the release's of 2026-11-01), the
+  QuakeC (rewritten in C, §28), the roadmap marked done, the second timing
+  reference answered (DuckStation); the section numbers settled (no
+  "provisional" left; §113 back before §114); scripts/bench.sh's help
+  names `ENTS=1`.
+- **Checks**: the default, release and bench presets built with no
+  warning; the release's level arena unchanged (1350416 B: the removed
+  function was never linked); the release's disc 21.5 MB smaller (its raw
+  sectors: the pak's 18.7 MB of data); `BENCH_MAPS=1` over the 32 maps,
+  every one loaded from the new layout, the 128 views' hashes the same as
+  before; the release booted headless for 40 s, clean.

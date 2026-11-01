@@ -2,9 +2,8 @@
  * q1psx — hull trace, C reference.
  *
  * The PS1 build links the asm port (engine/clip.s); this file is the
- * specification it follows. tools/pmsim runs it on the host, and the bench
- * build links it too (as clip_trace_c / clip_contents_c) to compare both
- * on every call. Keep the arithmetic identical: 32-bit integers, plus
+ * specification it follows. The bench build links it too (as
+ * clip_trace_c / clip_contents_c) to compare both on every call. Keep the arithmetic identical: 32-bit integers, plus
  * 32 x 32 -> 64-bit products (one MIPS mult), nothing else.
  *
  * Plane distances t = n.p - dist are x4096 in 1/CLIP_SUB units (the cook

@@ -39,7 +39,6 @@ void ui_fade(void);
 int  ui_conback_load(void);
 void ui_conback(void);
 void ui_conback_forget(void);
-int  ui_conback_ready(void);         /* in VRAM (no map's textures over it) */
 
 /* The loading screen's pieces (engine/loading.c): the plaque
    (gfx/loading.lmp) at (x, y), a glyph of the bar (conchars 128, 129, 130,

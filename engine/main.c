@@ -4029,7 +4029,7 @@ static void run_bench(void)
 	}
 	/* scripted movement (no pad in headless runs): settle, accelerate,
 	   jump, run north into the end wall (stairs down, ramp up), then turn
-	   around and come back up the stairs. Same path as tools/pmsim. */
+	   around and come back up the stairs. */
 	{
 		pmove_cmd_t c;
 		uint32_t    cyc_sum = 0, cyc_max = 0, ticks = 0;

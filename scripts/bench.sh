@@ -24,6 +24,11 @@
 #         fullest rooms; "bmf room" lines: a room that is not the cut
 #         where its model stands, every bench checks it at the load;
 #         docs/porting-notes.md §44, §46).
+#         ENTS=1 plays the map entities' scenarios on E1M1 and START (a
+#         door, a plat, the buttons, a teleporter, the secrets, the exit and
+#         its intermission, every item taken, a quad, a hurt): "door",
+#         "plat", "item", "teleport", "changelevel" lines, the dumps
+#         e<map>_<what> and i<MAP>_<n> (drawn with E1M1's textures).
 #         MOVERS=1 moves the big movers in view (E1M6's train *39, E1M3's
 #         biggest train, E3M4's biggest door; MAP= one of them, a frame
 #         dumped): "bench mv.*" and "bmfcut" lines, the frame's, the ents'
@@ -120,8 +125,7 @@
 #         mechanism, and the sectors at double speed): the walk's late
 #         frames, the stream's reads and the music's underruns as on a
 #         console, in fast forward (docs/porting-notes.md §83). Both go
-#         with MUSIC=1; tools/cdsim/cdsim.py replays a journal on another
-#         disc layout. MEMLOG=1 logs the level arena: a "memlog" line per
+#         with MUSIC=1. MEMLOG=1 logs the level arena: a "memlog" line per
 #         block taken or given back, with its caller's return address
 #         (addr2line -e build-bench/q1psx.elf): a map's RAM block by block
 #         (docs/porting-notes.md §90). CARD=1 checks the memory card in

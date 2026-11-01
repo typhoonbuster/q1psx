@@ -5,7 +5,7 @@
 # configure step, they would miss that build: the cook runs after it.)
 #
 #   cmake -DROOT=<source dir> -DOUT=<xml> -DMUSIC=0|1
-#         [-DPAK0=<pak0.pak>] -DSDK_VERSION=<v> -P scripts/cd_image.cmake
+#         -DSDK_VERSION=<v> -P scripts/cd_image.cmake
 #
 # The disc's layout (docs/porting-notes.md §84): the root's files (the
 # executable, the game data, the console's background, the pool of streamed
@@ -21,7 +21,7 @@
 # \MUSIC after the levels). The levels' directories sit under \LVL: the
 # root's records must fit its first sector, the only one the BIOS reads,
 # with SYSTEM.CNF and the executable in it. iso.xml's slots: @ROOT_ENTRIES@,
-# @LEVEL_DIRS@ (inside <dir name="LVL">), @MUSIC_ENTRIES@, @PAK0_ENTRY@.
+# @LEVEL_DIRS@ (inside <dir name="LVL">), @MUSIC_ENTRIES@.
 
 set(_cooked_dir ${ROOT}/cooked)
 
@@ -134,11 +134,6 @@ if(MUSIC)
 			math(EXPR _ntracks "${_ntracks} + 1")
 		endif()
 	endforeach()
-endif()
-
-set(PAK0_ENTRY "")
-if(PAK0 AND EXISTS "${PAK0}")
-	set(PAK0_ENTRY "<file name=\"PAK0.PAK\" type=\"data\" source=\"${PAK0}\" />")
 endif()
 
 set(PROJECT_SOURCE_DIR ${ROOT})                         # (iso.xml's own paths)

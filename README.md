@@ -19,7 +19,9 @@ version (episode 1), or `pak0.pak` and `pak1.pak` for the full game (the four
 episodes).
 They are **not** in this repo.
 
-- **`pak0.pak`** (shareware): freely redistributable by id Software.
+- **`pak0.pak`** (shareware): id Software lets the original shareware
+  package be shared as it is; files converted from it are not covered (see
+  [License](#license)).
 - **`pak1.pak`** (full version): commercial content. Usable **only** if you own
   a legal copy of the game, provided locally. Never committed, never
   redistributed.
@@ -131,7 +133,24 @@ duckstation-qt -batch build/q1psx.cue
 
 ## License
 
-Code in this repo: **GPLv2** (see [`LICENSE`](LICENSE)), consistent with the
-`id-Software/Quake` engine it derives from architecturally. Quake game data
-remains the property of id Software / ZeniMax and is not covered by this
-license.
+Code in this repo: **GPLv2** (see [`LICENSE`](LICENSE)). The engine ports id
+Software's code, both under the GPL version 2 or later: the Quake engine
+([`id-Software/Quake`](https://github.com/id-Software/Quake), Copyright (C)
+1996-1997 Id Software, Inc.) and the QuakeC of the 2021 re-release
+([`id-Software/quake-rerelease-qc`](https://github.com/id-Software/quake-rerelease-qc),
+Copyright (C) 1996-2022 id Software LLC); `tools/qcook/anorms.h` is Quake's
+own file. One file is under another license: `engine/q1psx.ld` is
+PSn00bSDK's linker script (`ldscripts/exe.ld`, Copyright (C) 2021
+spicyjpeg), modified, under the Mozilla Public License 2.0, which allows
+it beside GPL code (MPL 2.0 §3.3).
+
+Quake's game data (the `.pak` files: their maps, models, sounds, pictures,
+and the music) remains the property of id Software and is not covered by
+this license. The disc image the build makes carries data converted from
+the paks it was given: it is for their owner alone and must not be shared,
+the shareware's too (its terms cover the original package only).
+
+Quake is a trademark of id Software LLC, a ZeniMax Media company;
+PlayStation is a trademark of Sony Interactive Entertainment. This project
+is not affiliated with, endorsed or sponsored by id Software, ZeniMax
+Media, Microsoft or Sony.

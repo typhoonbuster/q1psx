@@ -15,7 +15,6 @@
 			publisher      ="TYPHOONBUSTER"
 			data_preparer  ="PSN00BSDK ${PSN00BSDK_VERSION}"
 			application    ="PLAYSTATION"
-			copyright      ="README.TXT;1"
 		/>
 
 		<directory_tree>
@@ -24,7 +23,6 @@
 			<!-- the root's: the game data, the console's background, the pool of
 			     streamed assets (its directory read at boot), the menu's bank -->
 			@ROOT_ENTRIES@
-			@PAK0_ENTRY@
 			<!-- one directory a level under LVL (the BIOS only reads the root
 			     directory's first sector, where SYSTEM.CNF and the executable must
 			     stay: 32 more records in the root pushed them to its second): its

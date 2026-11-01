@@ -202,11 +202,6 @@ void ui_conback_forget(void)
 	conback_in = 0;
 }
 
-int ui_conback_ready(void)
-{
-	return conback_in;
-}
-
 /* Draw_ConsoleBackground (vid.height): its 200 rows stretched over the
    screen's 240 (Quake's v = y * 200 / conheight), the columns as they are;
    in three strips, a texture page being 256 texels wide and a UV at most

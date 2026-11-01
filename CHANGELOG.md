@@ -2302,7 +2302,7 @@ followed by R0-R4.
   the ultra level's grid). The bench gains `BMFTRACE=<model>` (BMF_C=1:
   every piece of a model's cut, its leaf) and a `sham bolt` line.
 - **The registered game's six monsters, by hand, and the animations
-  thinned** (§97, provisional number, 2026-10-28). The enforcer, the hell knight, the spawn, the
+  thinned** (§97, 2026-10-28). The enforcer, the hell knight, the spawn, the
   vore, the rotfish and Shub-Niggurath (423 monsters on hard over 21
   maps, removed at their spawn until now) transcribed state by state
   from the 1.06 progs.dat: the laser (EF_DIMLIGHT), the knight's spikes
@@ -2471,8 +2471,7 @@ followed by R0-R4.
   (`vid_stats.vbl_whole`). The bench's fight lines give each window's
   vblanks a frame; the game bench ends with the caps' pacing (`bench
   pace`).
-- **The slow stage cheaper, the same display lists** (§112, provisional
-  number, 2026-10-31). The
+- **The slow stage cheaper, the same display lists** (§112, 2026-10-31). The
   grid's (§92) five edge tests a polygon run inline, each corner unpacked
   once, the levels past 0 alone in a subroutine; the slow path's stack
   holds its triangles' pool entries (three words: nothing to decode at a
@@ -2483,7 +2482,7 @@ followed by R0-R4.
   the 128 views -3.9 % (-1.9 % at T 32), E2M7's fight -1.34 %; +520
   bytes. The midpoints by the GTE weighed, not built: another
   subdivision, for about -0.3 %.
-- **The monsters' shared detail budget** (§114, provisional number, 
+- **The monsters' shared detail budget** (§114,
   2026-10-31). The bodies drawn share 600
   expanded vertices a frame. A level common to them raises each body's
   band toward it, by one band a frame; it goes down only once a lower
@@ -2493,7 +2492,7 @@ followed by R0-R4.
   which showed the plain shared level unreadable near the eye. E2M7's
   fight: the drawing -3.6 % (-3.6 to -8.1 % in the 7 windows where the
   budget works); the models left out for the packets' room 203 -> 1.
-- **The monsters lit as Quake lights them** (§115, provisional number,
+- **The monsters lit as Quake lights them** (§115,
   2026-10-31). The maps' 1.66 gain is
   every map's, but the monsters fell behind the walls. A leaf's light
   was the average of its faces, where Quake lights a model with the
@@ -2503,7 +2502,7 @@ followed by R0-R4.
   points of a 3 x 3 x 3 grid in the leaf), and the streamed models'
   light is multiplied by 4/3: the monsters in the dark corners stand
   out.
-- **The Options menu's Brightness** (§116, provisional number, 
+- **The Options menu's Brightness** (§116,
   2026-10-31). Quake's row, between Reset to
   defaults and the volumes: `v_gamma` from 1 down to 0.5 in ten steps,
   `BuildGammaTable` on the CLUTs. It covers the map's textures, the
@@ -2511,7 +2510,7 @@ followed by R0-R4.
   the console's. The map's and the game's CLUTs are kept as cooked and
   sent again through the new table at each step. Nothing changes in a
   frame's work.
-- **The coplanar faces merged in the cook** (§113.1, provisional number,
+- **The coplanar faces merged in the cook** (§113.1,
   2026-10-31). A node's faces
   with one texture mapping, marked by the same leaves and connected, are
   cut on one cell grid and their pieces in a cell merged while convex;
@@ -2523,7 +2522,7 @@ followed by R0-R4.
   maps, the 128 views −0.55 % (16 → 15 views past a vblank), E2M7's
   fight's drawing −1.2 %, the stream's pool +7 KB a map on average;
   every map's display lists change. `QCOOK_MERGE=0` cooks as before.
-- **Lighter dynamic lights** (§113.2, provisional number, 
+- **Lighter dynamic lights** (§113.2,
   2026-10-31). Measured by turning
   parts off, the dynamic lights took 10.4 % of E2M7's fight's drawing (the
   world's 9.1 %: the nodes' stamping 3.0 %, the records' tests 1.4 %, the
@@ -2534,7 +2533,7 @@ followed by R0-R4.
   (`Q1PSX_DLIGHT_MINLIGHT`, 0: Quake's look): its faintest edge is not
   drawn, its reach 32 units shorter; the fight −1.73 %, the rocket
   launcher's view −4.05 % (48: −2.49 / −8.54 %, 64: −3.24 / −10.54 %).
-- **The Graphics page's Anti-warping** (§117, provisional number, 
+- **The Graphics page's Anti-warping** (§117,
   2026-10-31). A row choosing the dynamic
   warp control's floor and cap: low 16 / 48 px, default 4 / 32 (the
   control as it was), medium 4 / 16, high 4 / 8, ultra 1 / 4; the menu
@@ -2548,7 +2547,7 @@ followed by R0-R4.
   the default's 4 px), no arena filled. The release's level arena
   -800 B.
 - **The zone tables in the repo, the cook's settings by default** (§118,
-  provisional number, 2026-10-31). The cut in use (§93's `auto_1536_s3`)
+   2026-10-31). The cut in use (§93's `auto_1536_s3`)
   and its four-slot twin sit in `zones/`, byte for byte the analysis'
   export: numbers only. The cook takes the cut in use by default
   (`Q1PSX_ZONE_TABLES`; `none`: every map whole; a missing folder now
@@ -2560,7 +2559,7 @@ followed by R0-R4.
   finale names carried the stack's leftovers after their NUL
   (`tools/qcook/game.c`), different at every cook.
 - **The draw distance and the 3D view's resolution fixed** (§119,
-  provisional number, 2026-10-31). The draw distance is 1536 units in
+   2026-10-31). The draw distance is 1536 units in
   every build: `Q1PSX_DRAWDIST` and the bench's `DRAWDIST=` are gone, and
   so are the record loops' and the PVS marking's copies without it; its
   thresholds are assembled in, and the game patches no code for it. The
@@ -2571,7 +2570,7 @@ followed by R0-R4.
   same (START's 12 views, the 128 spawn views, `FLAT=0`; the game bench
   but the Graphics pages, one row shorter), the views 0.04 to 0.5 %
   faster; the release's level arena +14000 B.
-- **The clean-up's unused leftovers** (§119.2, provisional number, 
+- **The clean-up's unused leftovers** (§119.2,
   2026-10-31). Removed:
   the frustum's never-built 192-row variant (`R_YSLOPE` 5);
   the bench's flat shading (`FLAT=`: its copy of the world's record loop,
@@ -2580,7 +2579,7 @@ followed by R0-R4.
   four empty buckets (8 → 4, the same order); the grid's per-map choice
   (`Q1PSX_TESS_MAPS`, `TESS=`: on every map, the call assembled); a
   missing `<stdio.h>`. The display lists are the same; the release's level arena +5488 B (+19488 B with §119.1).
-- **The effects at high, the dithering on** (§119.3, provisional number,
+- **The effects at high, the dithering on** (§119.3,
   2026-10-31). Two more
   Graphics rows fixed: every effect makes the port's high count of
   particles (the game's default was medium), and the effects are no
@@ -2590,13 +2589,11 @@ followed by R0-R4.
   the anti-warping, the dynamic lights, the frame rate cap and the tick
   rate. The display lists are master's at `EFFECTS=2` but the Graphics
   pages; the release's level arena +1408 B (+20896 B with §119.1-2).
-- **The release flow's scripted pad removed** (§119.4, provisional
-  number, 2026-10-31).
+- **The release flow's scripted pad removed** (§119.4, 2026-10-31).
   `Q1PSX_PADSCRIPT` still walked the Graphics page as it was before §52;
   the option, the script and its prints are gone. The release's and the
   default preset's executables are byte for byte the same.
-- **The cooked walk removed, five settings frozen** (§119.5, provisional
-  number, 2026-10-31). The
+- **The cooked walk removed, five settings frozen** (§119.5, 2026-10-31). The
   cooked walk of §91 (off by default, slower than the tree walk) is gone
   from the engine, the cook and the format. The monsters' level of
   detail and its budget, the near polygons' grid, the world lights' least
@@ -2604,7 +2601,7 @@ followed by R0-R4.
   values every build used; their CMake settings and bench knobs are gone.
   The display lists are the same; the release's level arena +1760 B.
 - **The cook's leftovers, the medium textures, the 2D gun** (§119.6,
-  provisional number, 2026-10-31). The cook no longer makes what no
+   2026-10-31). The cook no longer makes what no
   disc carries: the geometry and the models above low, the 8-bit texture
   sets (and pktview's `wldref`), the guns' skins at Quake's resolution,
   its debug and A / B knobs. The medium textures (`Q1PSX_TEXTURES`, the
@@ -2614,7 +2611,7 @@ followed by R0-R4.
   GAME_0.DAT is 89 KB smaller and its images packed anew: the display
   lists' texture words move, the pictures are the same pixels; the
   release's level arena +304 B.
-- **The quality levels' machinery removed** (§119.7, provisional number,
+- **The quality levels' machinery removed** (§119.7,
   2026-10-31). With one
   level of each on every disc, the levels go: `formats/qlevels.h`, the
   engine's look at a map's files at boot and its level settings (the
@@ -2626,7 +2623,7 @@ followed by R0-R4.
   those two headers; the display lists are the same; the release's level
   arena +800 B.
 - **The disc's names without digits, the UVs mapped by the cook** (§119.8,
-  provisional number, 2026-10-31). The cooked files and the disc lose
+   2026-10-31). The cooked files and the disc lose
   the levels' digits (`<MAP>.TX4`, `.WLD`, `.MDL`, `.ZON`, `_S.DAT`,
   GAME.DAT, STREAM.DAT). The world's and the map's models' UVs go onto
   the texture set's tiles in the cook instead of at the load: the
@@ -2635,15 +2632,14 @@ followed by R0-R4.
   old one put through the load's old mapping, byte for byte; the display
   lists are the same; the release's level arena +384 B, and 184 to 792 B more
   of it free while a level plays (the maps' table).
-- **What was left unused** (§119.9, provisional number, 2026-10-31). Seven functions no build
+- **What was left unused** (§119.9, 2026-10-31). Seven functions no build
   calls, five calls of psxetc's interrupt API nothing makes, three unread
   macros, the cook script's clean-up of the 8-bit and XA files of the
   cooks before §52, `scripts/run-emu.sh`, the zones' four-slot cut (it
   zoned no map) and the slots' setting (three). The cooked files are the
   same (`settings.txt` aside); the display lists are the same; the
   release's level arena +48 B.
-- **The game's presentation and its last features** (§120, provisional
-  number, 2026-11-01). Quake's
+- **The game's presentation and its last features** (§120, 2026-11-01). Quake's
   loading plaque at every map's load over the last frame, with a bar
   (the console font's slider track and separator line, from the drive's
   meter) and the level's name, the disc in the corner; the boot's screen
@@ -2666,7 +2662,7 @@ followed by R0-R4.
   `GAME.DAT` `QGMB` → `QGMC`. The 128 spawn views' display lists are
   master's; the release's level arena −18688 B.
 - **The Brightness on the light too, and a brighter default** (§121,
-  provisional number, 2026-11-01). Every map's light is cooked (the
+   2026-11-01). Every map's light is cooked (the
   ratio of the cooked light to id's lightmaps is the same over the four
   episodes); episodes 2-4 are darker in id's data, and the PS1's 5-bit
   truncation takes a larger share of a dark picture (QuakeSpasm's
@@ -2684,3 +2680,13 @@ followed by R0-R4.
   `PKTVIEW_GAMMA`. At the level 0 the display lists are master's; a
   zoned map's walk +0.74 % of cycles at the level 5 (the chunks lit as
   they are read); the release's level arena −2560 B (1350416 B).
+- **The repository's audit** (§122, 2026-11-01). The licenses checked:
+  the GPLv2 code ports id's GPL code (the Quake engine, the re-release's
+  QuakeC), `engine/q1psx.ld` is PSn00bSDK's script under the MPL 2.0; the
+  README's License says so, with the game data's terms (the disc image is
+  never to be shared) and the trademarks. The history holds no id or Sony
+  data. The disc no longer carries `pak0.pak` whole (18.7 MB nothing read)
+  nor names a missing copyright file. Removed: `tools/pmsim` (broken),
+  `tools/cdsim` (the layout is settled), `ui_conback_ready` (never
+  called), five stale `.gitignore` lines. TESTING.md, docs/architecture.md
+  and the bench's help brought up to date; the section numbers settled.

@@ -18,7 +18,7 @@ file(GLOB ENGINE_SOURCES CONFIGURE_DEPENDS engine/*.c engine/*.s)
 # The physics' C reference is the specification of its asm port, which the
 # game links (engine/clip.s, engine/pmove.s). The bench links the C one too,
 # renamed, and compares the two call by call (see run_bench in
-# engine/main.c); tools/pmsim runs it on the host.
+# engine/main.c).
 set(PHYS_C_REFERENCE ${PROJECT_SOURCE_DIR}/engine/clip.c ${PROJECT_SOURCE_DIR}/engine/pmove.c)
 list(REMOVE_ITEM ENGINE_SOURCES ${PHYS_C_REFERENCE})
 
@@ -284,11 +284,8 @@ if(Q1PSX_BENCH)
 	endif()
 endif()
 
-# --- optional Quake game data on the disc ------------------------------------
-# pak0.pak is never committed. If the developer pointed local.env at their copy,
-# bundle it into the CD image so the engine can read it. iso.xml consumes
-# @PAK0_ENTRY@ (empty when no pak is configured).
-set(PAK0_ENTRY "")
+# --- the Quake data the cook reads (local.env: never committed) --------------
+# The disc carries the cooked files only (the engine reads no .pak).
 set(_zone_tables zones/auto_1536_s3)   # (scripts/cook.sh's default: the repo's tables, §118)
 if(EXISTS "${PROJECT_SOURCE_DIR}/local.env")
 	file(STRINGS "${PROJECT_SOURCE_DIR}/local.env" _local_env)
@@ -304,11 +301,8 @@ endif()
 if(DEFINED ENV{Q1PSX_ZONE_TABLES})     # (the command line's wins over local.env's, as in the cook)
 	set(_zone_tables "$ENV{Q1PSX_ZONE_TABLES}")
 endif()
-if(_pak0_path AND EXISTS "${_pak0_path}")
-	message(STATUS "q1psx: bundling pak0.pak from ${_pak0_path}")
-	set(PAK0_ENTRY "<file name=\"PAK0.PAK\" type=\"data\" source=\"${_pak0_path}\" />")
-else()
-	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — disc has no game data")
+if(NOT (_pak0_path AND EXISTS "${_pak0_path}"))
+	message(STATUS "q1psx: no pak0.pak configured (set QUAKE_PAK0 in local.env) — nothing to cook, the disc has no game data")
 endif()
 
 # The world's zones (docs/porting-notes.md §57): a map the cook split
@@ -419,7 +413,7 @@ set(_cd_xml ${CMAKE_CURRENT_BINARY_DIR}/cd_image.xml)
 add_custom_command(
 	OUTPUT  ${CMAKE_CURRENT_BINARY_DIR}/q1psx.bin ${CMAKE_CURRENT_BINARY_DIR}/q1psx.cue
 	COMMAND ${CMAKE_COMMAND} -DROOT=${PROJECT_SOURCE_DIR} -DOUT=${_cd_xml}
-	        -DMUSIC=${_disc_music} -DPAK0=${_pak0_path}
+	        -DMUSIC=${_disc_music}
 	        -DSDK_VERSION=${PSN00BSDK_VERSION} -P ${PROJECT_SOURCE_DIR}/scripts/cd_image.cmake
 	COMMAND ${MKPSXISO} -y -q -o q1psx.bin -c q1psx.cue ${_cd_xml}
 	DEPENDS q1psx ${_cooked_stamp} ${_cooked} ${_music} ${PROJECT_SOURCE_DIR}/iso/iso.xml
