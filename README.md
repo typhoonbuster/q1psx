@@ -5,7 +5,7 @@ PlayStation 1, written from the original
 [`id-Software/Quake`](https://github.com/id-Software/Quake) engine and
 [`PSn00bSDK`](https://github.com/Lameguy64/PSn00bSDK) only.
 
-> ⚠️ Very early development. See [`CHANGELOG.md`](CHANGELOG.md) for progress.
+> See [`CHANGELOG.md`](CHANGELOG.md) for progress.
 >
 > The renderer is hand-written MIPS assembly — design in
 > [`docs/architecture.md`](docs/architecture.md).
@@ -20,15 +20,14 @@ episodes).
 They are **not** in this repo.
 
 - **`pak0.pak`** (shareware): freely redistributable by id Software.
-  `scripts/fetch_shareware.sh` will download it and verify its hash
-  *(coming — Phase 1/3)*.
 - **`pak1.pak`** (full version): commercial content. Usable **only** if you own
   a legal copy of the game, provided locally. Never committed, never
   redistributed.
 
-Copy `local.env.example` to `local.env` and fill in the path to your Quake
-install *(`local.env.example` coming)*. `EMU` in it names the emulator the
-scripts run (the PCSX-Redux AppImage).
+`local.env` (never versioned) gives their paths: `QUAKE_PAK0`, and
+`QUAKE_PAK1` for the full game (`scripts/cook.sh`'s header lists the other
+keys). `EMU` in it names the emulator the scripts run (the PCSX-Redux
+AppImage).
 
 ### PS1 toolchain
 
@@ -125,7 +124,7 @@ duckstation-qt -batch build/q1psx.cue
 | `engine/` | PS1 engine code (C + hand-written MIPS asm renderer, PSn00bSDK) |
 | `tools/` | PC asset-conversion tools ("cooking") |
 | `iso/` | `mkpsxiso` config, boot files |
-| `scripts/` | `fetch_shareware.sh`, build/test helpers |
+| `scripts/` | Build and test helpers: the cook, the disc, the headless benches and checks |
 | `zones/` | The zone tables the cook cuts the levels by: numbers only, from the analysis outside the repo (`docs/porting-notes.md` §57, §93, §118) |
 | `third_party/` | Install instructions for external dependencies |
 | `reference/` | Clones of `id-Software/Quake`, `quake-rerelease-qc`, `PSn00bSDK` (not versioned, read-only) |
