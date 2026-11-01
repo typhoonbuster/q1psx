@@ -16484,3 +16484,55 @@ instruction and a load more a byte, with Use Mouse off).
   sectors: the pak's 18.7 MB of data); `BENCH_MAPS=1` over the 32 maps,
   every one loaded from the new layout, the 128 views' hashes the same as
   before; the release booted headless for 40 s, clean.
+
+## §123 — What the console's timing showed (2026-11-01)
+
+A hands-on play on a MiSTer FPGA (its PS1 core, which times the hardware
+as the console does) found two faults neither DuckStation nor PCSX-Redux
+shows: no music anywhere, the menu's included; and, on E2M1 at Hard, the
+pad lost for good after a kill (the "pad unplugged" pause up from then
+on). Mednafen 1.32.1 shows the first (the emulators that end a DMA at
+once never can).
+
+### §123.1 — The SPU's DMA waited for
+
+- **The symptom, on Mednafen**: the menu's track started (`music: track 2
+  at 32000 Hz, 1378 chunks, the ring at SPU 74000`), voices 22 and 23
+  keyed on, and their output silent from the first sample: a recording of
+  the menu held the menu's click and nothing else for 160 s, left and
+  right at 0.
+- **The cause**: PSn00bSDK's `SpuIsTransferCompleted` (psxspu `common.c`)
+  reads SPUSTAT bit 10 only, the SPU's transfer busy flag, which drops
+  between the blocks of a DMA of several (psx-spx's SPU page: waiting on
+  it does not work for those). A music chunk is two DMAs of 64 blocks of
+  16 words, the left's and the right's, back to back: the wait returned
+  with the left's still running, and the right's `SpuWrite`
+  (`_dma_transfer`: the SPU's transfer mode stopped, its address moved,
+  DMA4's registers written again) cut it. The ring got the first words of
+  each DMA and the last one whole, the loop flags of its first and last
+  blocks lost; the voices played zeros. A block-mode DMA runs beside the
+  CPU on the console (the CPU halted for each block only), and Mednafen
+  times it so; DuckStation and PCSX-Redux end it before the next
+  instruction.
+- **The fix**: `snd_dma_done` and `snd_dma_wait` (engine/snd.h, snd.c):
+  DMA4's CHCR bit 24 clear, the channel stopped, then SPUSTAT bit 10, the
+  SPU's FIFO written to its RAM. Every transfer to SPU RAM now waits on it
+  before it starts and before its source is written again: the music's
+  chunks (engine/music.c), the map's bank (engine/snd.c), the streamed
+  sounds' pieces and the RAM sounds' swaps (engine/stream.c, whose checks
+  were the same `SpuIsTransferCompleted`: a swap could cut a refill, a
+  refill a swap, a swap the next swap at a load).
+- **Measured** (Mednafen, the menu's track, temporary prints): a chunk's
+  two DMAs take 12650 ticks of root counter 2 (sysclock / 8: 3.0 ms), the
+  left's started 190 ticks in. The CPU waits through them in `upload`: a
+  refill, two chunks, holds about 6 ms of one frame (§123.2 sends them
+  while the game runs).
+- **Checks**: Mednafen 1.32.1 headless (SDL's dummy video and disk audio
+  drivers, `-soundrecord`; the SCPH-5501 BIOS; the image's system area
+  rewritten as Form 1, §123.3), the release with its `printf` sent through
+  the BIOS's `puts` (Mednafen hooks A(3Ch), A(3Eh), B(3Dh), B(3Fh), not
+  A(3Fh) printf; a header forced on the compiler, outside the repo): the
+  menu's music from its first second to the end of a 268 s recording,
+  left and right different in every second, no silent one; the release
+  built (hazcheck, iccheck, ramcheck, ovlcheck: the level arena the same,
+  1350416 B; the code 8 B larger).

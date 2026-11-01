@@ -20,6 +20,7 @@
 #define Q1PSX_SND_H
 
 #include <stdint.h>
+#include <hwregs_c.h>
 
 /* the named sounds the game code plays (resolved in the bank by name) */
 enum {
@@ -68,6 +69,21 @@ void snd_init(void);
    the CD music's (the SPU's CD input) */
 void snd_set_volume(int tenths);
 void snd_set_cd_volume(int tenths);
+
+/* The SPU's DMA through: its channel stopped (DMA4's CHCR bit 24), then the
+   SPU's FIFO written to its RAM (SPUSTAT bit 10). PSn00bSDK's
+   SpuIsTransferCompleted reads SPUSTAT only, which drops between the blocks
+   of a DMA of several (psx-spx): on the console a transfer started then
+   reprogrammed the channel while the last one ran, and the music's ring
+   stayed silent; the emulators that end a DMA at once never showed it
+   (docs/porting-notes.md §123). Before a transfer, and before its source
+   is written again. */
+static inline int snd_dma_done(void)
+{
+	return !(DMA_CHCR(4) & (1u << 24)) && !(SPU_STAT & (1u << 10));
+}
+
+void snd_dma_wait(void);
 
 /* the map's bank: MAPS/<MAP>.SND into SPU RAM (through the level arena,
    which it resets: call it before the world loads). 0 if there is none. */

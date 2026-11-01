@@ -1269,7 +1269,7 @@ static int sound_upload_piece(void)
 	}
 	if (bytes > sread.left)
 		bytes = sread.left;
-	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (a RAM sound's swap in flight: the
+	snd_dma_wait();                              /* (a RAM sound's swap in flight: the
 	                                               loading screen's back-to-back frames) */
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetTransferStartAddr(sread.spu);
@@ -1334,7 +1334,7 @@ static int sound_step(void)
 		}
 		return 0;
 	}
-	if (!SpuIsTransferCompleted(SPU_TRANSFER_PEEK))
+	if (!snd_dma_done())
 		return 0;
 	if (!sread.left) {
 		sound_done(1, 0);
@@ -1368,7 +1368,7 @@ static void sound_read_sync(void)
 			sound_done(0, 1);
 			return;
 		}
-		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
+		snd_dma_wait();
 		if (!sread.left)
 			sound_done(1, 0);
 	}
@@ -1507,7 +1507,7 @@ static int next_wanted(int which)
 int stream_reading(void)
 {
 	return reading >= 0 || (sread.a >= 0 && (sread.step == SR_READ ||
-	                        (sread.step == SR_UPLOAD && !SpuIsTransferCompleted(SPU_TRANSFER_PEEK)))) ||
+	                        (sread.step == SR_UPLOAD && !snd_dma_done()))) ||
 	       zone_reading();                   /* (a world chunk's read: the drive's too; a RAM
 	                                             sound's swap is not) */
 }
@@ -1577,7 +1577,7 @@ void stream_abort(void)
 		reading = -1;
 	}
 	if (sread.a >= 0 || swap_a >= 0) {
-		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (no DMA left reading the stage, the block) */
+		snd_dma_wait();                          /* (no DMA left reading the stage, the block) */
 		sread.a = swap_a = -1;
 	}
 	waiting = installing = -1;
@@ -1669,7 +1669,7 @@ static void trims(void)
    once its DMA is done, the next started while the SPU's DMA is free */
 static void swap_step(void)
 {
-	if (!SpuIsTransferCompleted(SPU_TRANSFER_PEEK))
+	if (!snd_dma_done())
 		return;                               /* (the swap's, or a disc sound's piece) */
 	if (swap_a >= 0) {
 		int a = swap_a;
@@ -1850,7 +1850,7 @@ Q_COLD void stream_preload(void)
 				if (!ram_start(a))
 					set_stuck(a);
 				else if (swap_a >= 0) {
-					SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
+					snd_dma_wait();
 					swap_a = -1;
 					sound_in(a, 1, 0);
 				}

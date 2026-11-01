@@ -126,16 +126,17 @@ static uint32_t played(uint32_t *samples)
    first block marked its loop's start, its last its end */
 static void upload(uint8_t *src, uint32_t slot)
 {
-	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);   /* (a RAM sound's swap in flight: engine/stream.c) */
 	for (int c = 0; c < 2; c++) {
 		uint8_t *d = src + c * QSPU_CHUNK;
 		d[1] = slot == 0 ? 0x04 : 0;
 		d[QSPU_CHUNK - 16 + 1] = slot == RING_CHUNKS - 1 ? 0x03 : 0;
+		snd_dma_wait();                          /* (the other channel's, a RAM sound's swap:
+		                                            engine/stream.c) */
 		SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 		SpuSetTransferStartAddr((c ? RING_R : RING_L) + slot * QSPU_CHUNK);
 		SpuWrite((const uint32_t *) d, QSPU_CHUNK);
-		SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
 	}
+	snd_dma_wait();                              /* (the buffer read into again) */
 }
 
 /* a refill: the next chunks of the file into the buffer (to its end at most) */

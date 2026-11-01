@@ -2690,3 +2690,12 @@ followed by R0-R4.
   `tools/cdsim` (the layout is settled), `ui_conback_ready` (never
   called), five stale `.gitignore` lines. TESTING.md, docs/architecture.md
   and the bench's help brought up to date; the section numbers settled.
+- **The SPU's DMA waited for** (§123.1, 2026-11-01). The music was silent on
+  a MiSTer FPGA and on Mednafen: PSn00bSDK's `SpuIsTransferCompleted`
+  reads the SPU's busy flag only, which drops between a DMA's blocks, so
+  a music chunk's right-channel DMA reprogrammed the left's while it ran
+  and the ring stayed mostly empty, its loop flags lost. Every transfer
+  to SPU RAM (the music's chunks, the map's bank, the streamed and RAM
+  sounds) now waits for DMA4's channel to stop, then for the SPU's FIFO
+  (`snd_dma_done`, `snd_dma_wait`). The emulators that end a DMA at once
+  are unchanged.

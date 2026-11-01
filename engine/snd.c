@@ -151,6 +151,12 @@ void snd_set_cd_volume(int tenths)
 	cd_volume_set();
 }
 
+void snd_dma_wait(void)
+{
+	while (!snd_dma_done())
+		;
+}
+
 /* sound s's samples (a bank sound, or a streamed one: SND_STREAM + its
    asset): their SPU address and header, 0 when they are not in */
 typedef struct { uint32_t addr, len, ticks; uint16_t pitch, flags; } sfx_t;
@@ -259,10 +265,11 @@ Q_COLD int snd_load_bank(const char *map)
 		named[i] = s >= 0 ? s : -1;
 	}
 	SpuSetKey(0, SND_VOICES);
+	snd_dma_wait();
 	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
 	SpuSetTransferStartAddr(QS_SPU_BASE);
 	SpuWrite((const uint32_t *) (f + h->ofs_data), (h->len_data + 63) & ~63u);
-	SpuIsTransferCompleted(SPU_TRANSFER_WAIT);
+	snd_dma_wait();
 	stream_spu_pool(QS_SPU_BASE + ((h->len_data + 63) & ~63u),   /* the rest: the streamed sounds' */
 	                512 * 1024 - MUSIC_SPU_BYTES);                /* (but the SPU music's ring) */
 	printf("snd: %s — %d sounds, %u KB of SPU RAM, %d static sounds, CD track %d\n",
